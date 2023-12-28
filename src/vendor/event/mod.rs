@@ -127,6 +127,11 @@ pub enum VendorEvent {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocConnectConfirm(L2CapCocConnectConfirm),
 
+    /// This event is generated when receiving a valid Credit Based Reconfigure Request packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocReconfig(L2CapCocReconfig),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -627,7 +632,9 @@ impl VendorEvent {
             0x0811 => Ok(VendorEvent::L2CapCocConnectConfirm(
                 to_l2cap_coc_connect_confirm(buffer)?,
             )),
-            // TODO: 0x0812 => todo!(),
+            0x0812 => Ok(VendorEvent::L2CapCocReconfig(to_l2cap_coc_reconfig(
+                buffer,
+            )?)),
             // TODO: 0x0813 => todo!(),
             // TODO: 0x0814 => todo!(),
             // TODO: 0x0815 => todo!(),
@@ -2792,6 +2799,53 @@ fn to_l2cap_coc_connect_confirm(
         initial_credits: LittleEndian::read_u16(&buffer[8..]),
         result: LittleEndian::read_u16(&buffer[10..]),
         channel_number: buffer[12],
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Credit Based Reconfigure Request packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocReconfig {
+    /// handle of the connection where this event occured.
+    pub connection_handle: ConnectionHandle,
+    /// Maximum Transmission Unit
+    ///
+    /// Values:
+    /// - 23 .. 65535
+    pub mtu: u16,
+    /// Maximum Payload Size (in octets)
+    ///
+    /// Values:
+    /// - 23 .. 248
+    pub mps: u16,
+    /// Number of channels to be created. If this parameter is
+    /// set to 0, it requests the creation of one LE credit based connection-
+    /// oriented channel. Otherwise, it requests the creation of one or more
+    /// enhanced credit based connection-oriented channels.
+    ///
+    /// Values:
+    /// - 0 .. 5
+    pub channel_number: u8,
+    /// List of channel indexes for which the primitives apply.
+    pub channel_index_list: [u8; 246],
+}
+
+fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event::Error> {
+    require_len_at_least!(buffer, 8);
+
+    // TODO: how does one determine the length of channel_index_list?
+    let mut channel_index_list = [0; 246];
+    let tmp = &buffer[7..];
+    channel_index_list[..tmp.len()].copy_from_slice(tmp);
+
+    Ok(L2CapCocReconfig {
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        mtu: LittleEndian::read_u16(&buffer[2..]),
+        mps: LittleEndian::read_u16(&buffer[4..]),
+        channel_number: buffer[6],
+        channel_index_list,
     })
 }
 
