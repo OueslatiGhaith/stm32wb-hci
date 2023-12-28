@@ -117,6 +117,11 @@ pub enum VendorEvent {
     /// Command Reject packet).
     L2CapCommandReject(L2CapCommandReject),
 
+    /// This event is generated when receiving a valid Credit Based Connection Request packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocConnect(L2CapCocConnect),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -613,7 +618,7 @@ impl VendorEvent {
             0x080A => Ok(VendorEvent::L2CapCommandReject(to_l2cap_command_reject(
                 buffer,
             )?)),
-            // TODO: 0x0810 => todo!(),
+            0x0810 => Ok(VendorEvent::L2CapCocConnect(to_l2cap_coc_connect(buffer)?)),
             // TODO: 0x0811 => todo!(),
             // TODO: 0x0812 => todo!(),
             // TODO: 0x0813 => todo!(),
@@ -2666,6 +2671,59 @@ fn to_l2cap_command_reject(buffer: &[u8]) -> Result<L2CapCommandReject, crate::e
         identifier: buffer[2],
         reason: LittleEndian::read_u16(&buffer[3..]),
         data,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Credit Based Connection
+/// Request packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocConnect {
+    /// handle of the connection where this event occured.
+    pub connection_handle: ConnectionHandle,
+    /// Simplified Protocol/Service Multiplexer
+    ///
+    /// Values:
+    /// - 0x0000 .. 0x00FF
+    pub spsm: u16,
+    /// Maximum Transmission Unit
+    ///
+    /// Values:
+    /// - 23 .. 65535
+    pub mtu: u16,
+    /// Maximum Payload Size (in octets)
+    ///
+    /// Values:
+    /// - 23 .. 248
+    pub mps: u16,
+    /// Number of K-frames that can be received on the created channel(s) by
+    /// the L2CAP layer entity sending this packet.
+    ///
+    /// Values:
+    /// - 0 .. 65535
+    pub initial_credits: u16,
+    /// Number of channels to be created. If this parameter is
+    /// set to 0, it requests the creation of one LE credit based connection-
+    /// oriented channel. Otherwise, it requests the creation of one or more
+    /// enhanced credit based connection-oriented channels.
+    ///
+    /// Values:
+    /// - 0 .. 5
+    pub channel_number: u8,
+}
+
+fn to_l2cap_coc_connect(buffer: &[u8]) -> Result<L2CapCocConnect, crate::event::Error> {
+    require_len!(buffer, 10);
+
+    Ok(L2CapCocConnect {
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        spsm: LittleEndian::read_u16(&buffer[2..]),
+        mtu: LittleEndian::read_u16(&buffer[4..]),
+        mps: LittleEndian::read_u16(&buffer[6..]),
+        initial_credits: LittleEndian::read_u16(&buffer[8..]),
+        channel_number: buffer[10],
     })
 }
 
