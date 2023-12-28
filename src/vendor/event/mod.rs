@@ -246,6 +246,10 @@ pub enum VendorEvent {
     /// and an error response will be sent to the client, with the error code as specified by the
     /// application.
     AttPrepareWritePermitRequest(AttPrepareWritePermitRequest),
+
+    /// This event informs the application of a change in status of the enhanced ATT bearer handled
+    /// by the special L2CAP channel.
+    GattEattBrearer(GattEattBrearer),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -537,6 +541,9 @@ pub enum VendorError {
     /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): one of the address type bytes was
     /// invalid. Includes the invalid byte.
     BadBdAddrType(u8),
+
+    /// For the [GATT EAT Bearer](crate::vendor::event::VendorEvent::GattEattBrearer) event: The EAB state was not recognized.
+    BadEabState(u8),
 }
 
 macro_rules! require_len {
@@ -606,14 +613,14 @@ impl VendorEvent {
             0x080A => Ok(VendorEvent::L2CapCommandReject(to_l2cap_command_reject(
                 buffer,
             )?)),
-            0x0810 => todo!(),
-            0x0811 => todo!(),
-            0x0812 => todo!(),
-            0x0813 => todo!(),
-            0x0814 => todo!(),
-            0x0815 => todo!(),
-            0x0816 => todo!(),
-            0x0817 => todo!(),
+            // TODO: 0x0810 => todo!(),
+            // TODO: 0x0811 => todo!(),
+            // TODO: 0x0812 => todo!(),
+            // TODO: 0x0813 => todo!(),
+            // TODO: 0x0814 => todo!(),
+            // TODO: 0x0815 => todo!(),
+            // TODO: 0x0816 => todo!(),
+            // TODO: 0x0817 => todo!(),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
             )),
@@ -673,11 +680,11 @@ impl VendorEvent {
             0x0C18 => Ok(VendorEvent::AttPrepareWritePermitRequest(
                 to_att_prepare_write_permit_request(buffer)?,
             )),
-            0x0C19 => todo!(),
-            0x0C1A => todo!(),
-            0x0C1D => todo!(),
-            0x0C1E => todo!(),
-            0x0C1F => todo!(),
+            0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(buffer)?)),
+            // TODO: 0x0C1A => todo!(),
+            // TODO: 0x0C1D => todo!(),
+            // TODO: 0x0C1E => todo!(),
+            // TODO: 0x0C1F => todo!(),
             _ => Err(crate::event::Error::Vendor(VendorError::UnknownEvent(
                 event_code,
             ))),
@@ -2029,13 +2036,15 @@ pub enum GattProcedureStatus {
 }
 
 impl TryFrom<u8> for GattProcedureStatus {
-    type Error = VendorError;
+    type Error = crate::event::Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x00 => Ok(GattProcedureStatus::Success),
             0x41 => Ok(GattProcedureStatus::Failed),
-            _ => Err(VendorError::BadGattProcedureStatus(value)),
+            _ => Err(crate::event::Error::Vendor(
+                VendorError::BadGattProcedureStatus(value),
+            )),
         }
     }
 }
@@ -2045,7 +2054,7 @@ fn to_gatt_procedure_complete(buffer: &[u8]) -> Result<GattProcedureComplete, cr
 
     Ok(GattProcedureComplete {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
-        status: buffer[4].try_into().map_err(crate::event::Error::Vendor)?,
+        status: buffer[4].try_into()?,
     })
 }
 
@@ -2657,5 +2666,48 @@ fn to_l2cap_command_reject(buffer: &[u8]) -> Result<L2CapCommandReject, crate::e
         identifier: buffer[2],
         reason: LittleEndian::read_u16(&buffer[3..]),
         data,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event informs the application of a change in status of the Enhanced ATT
+/// bearer handled by the specified L2CAP channel
+pub struct GattEattBrearer {
+    /// Index of the connection-oriented channel for which the primitive applies.
+    pub channel_index: u8,
+    /// Enhanced ATT bearer state.
+    pub eab_state: EabState,
+    /// Status error code
+    pub status: GattProcedureStatus,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Enhanced ATT bearer state.
+pub enum EabState {
+    AttBearerCreated = 0x00,
+    AttBearerTerminated = 0x01,
+}
+
+impl TryFrom<u8> for EabState {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(EabState::AttBearerCreated),
+            0x01 => Ok(EabState::AttBearerTerminated),
+            err => Err(crate::event::Error::Vendor(VendorError::BadEabState(err))),
+        }
+    }
+}
+
+fn to_gatt_eatt_bearer(buffer: &[u8]) -> Result<GattEattBrearer, crate::event::Error> {
+    require_len!(buffer, 3);
+
+    Ok(GattEattBrearer {
+        channel_index: buffer[0],
+        eab_state: EabState::try_from(buffer[1])?,
+        status: GattProcedureStatus::try_from(buffer[2])?,
     })
 }
