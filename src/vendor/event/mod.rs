@@ -158,7 +158,10 @@ pub enum VendorEvent {
     /// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
     /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
     /// information data only contains the K-frame information payload.
-    L2CapCocRxData(L2capCocRxData),
+    L2capCocRxData(L2capCocRxData),
+
+    /// Each time the
+    L2capCocTxPoolAvailable,
 
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
@@ -673,7 +676,7 @@ impl VendorEvent {
             0x0815 => Ok(VendorEvent::L2capCocFlowControl(to_l2cap_coc_flow_control(
                 buffer,
             )?)),
-            0x0816 => Ok(VendorEvent::L2CapCocRxData(to_l2cap_coc_rx_data(buffer)?)),
+            0x0816 => Ok(VendorEvent::L2capCocRxData(to_l2cap_coc_rx_data(buffer)?)),
             // TODO: 0x0817 => todo!(),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
@@ -1041,6 +1044,7 @@ impl GapDeviceFound {
 pub use crate::event::AdvertisementEvent as GapDeviceFoundEvent;
 
 use super::command::gap::EventFlags;
+use super::command::l2cap::L2CapCocConnect;
 
 fn to_gap_device_found(buffer: &[u8]) -> Result<GapDeviceFound, crate::event::Error> {
     const RSSI_UNAVAILABLE: i8 = 127;
@@ -2723,51 +2727,11 @@ fn to_l2cap_command_reject(buffer: &[u8]) -> Result<L2CapCommandReject, crate::e
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// This event is generated when receiving a valid Credit Based Connection
-/// Request packet.
-///
-/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-pub struct L2CapCocConnect {
-    /// handle of the connection where this event occured.
-    pub connection_handle: ConnectionHandle,
-    /// Simplified Protocol/Service Multiplexer
-    ///
-    /// Values:
-    /// - 0x0000 .. 0x00FF
-    pub spsm: u16,
-    /// Maximum Transmission Unit
-    ///
-    /// Values:
-    /// - 23 .. 65535
-    pub mtu: u16,
-    /// Maximum Payload Size (in octets)
-    ///
-    /// Values:
-    /// - 23 .. 248
-    pub mps: u16,
-    /// Number of K-frames that can be received on the created channel(s) by
-    /// the L2CAP layer entity sending this packet.
-    ///
-    /// Values:
-    /// - 0 .. 65535
-    pub initial_credits: u16,
-    /// Number of channels to be created. If this parameter is
-    /// set to 0, it requests the creation of one LE credit based connection-
-    /// oriented channel. Otherwise, it requests the creation of one or more
-    /// enhanced credit based connection-oriented channels.
-    ///
-    /// Values:
-    /// - 0 .. 5
-    pub channel_number: u8,
-}
-
 fn to_l2cap_coc_connect(buffer: &[u8]) -> Result<L2CapCocConnect, crate::event::Error> {
     require_len!(buffer, 10);
 
     Ok(L2CapCocConnect {
-        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         spsm: LittleEndian::read_u16(&buffer[2..]),
         mtu: LittleEndian::read_u16(&buffer[4..]),
         mps: LittleEndian::read_u16(&buffer[6..]),
