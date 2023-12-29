@@ -132,6 +132,11 @@ pub enum VendorEvent {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocReconfig(L2CapCocReconfig),
 
+    /// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocReconfigConfirm(L2CapCocReconfigConfirm),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -635,7 +640,9 @@ impl VendorEvent {
             0x0812 => Ok(VendorEvent::L2CapCocReconfig(to_l2cap_coc_reconfig(
                 buffer,
             )?)),
-            // TODO: 0x0813 => todo!(),
+            0x0813 => Ok(VendorEvent::L2CapCocReconfigConfirm(
+                to_l2cap_coc_reconfig_confirm(buffer)?,
+            )),
             // TODO: 0x0814 => todo!(),
             // TODO: 0x0815 => todo!(),
             // TODO: 0x0816 => todo!(),
@@ -2846,6 +2853,33 @@ fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event
         mps: LittleEndian::read_u16(&buffer[4..]),
         channel_number: buffer[6],
         channel_index_list,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocReconfigConfirm {
+    /// handle of the connection where this event occured.
+    pub connection_handle: ConnectionHandle,
+    /// This parameter indicates the outcome of the request. A value of 0x0000
+    /// indicates success while a non zero value indicates the request is refused
+    ///
+    /// Values:
+    /// - 0x0000 .. 0x000C
+    pub result: u16,
+}
+
+fn to_l2cap_coc_reconfig_confirm(
+    buffer: &[u8],
+) -> Result<L2CapCocReconfigConfirm, crate::event::Error> {
+    require_len_at_least!(buffer, 4);
+
+    Ok(L2CapCocReconfigConfirm {
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        result: LittleEndian::read_u16(&buffer[2..]),
     })
 }
 
