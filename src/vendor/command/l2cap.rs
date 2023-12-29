@@ -83,6 +83,19 @@ pub trait L2capCommands {
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
     async fn coc_flow_control(&mut self, params: &L2CapCocFlowControl);
+
+    /// This command sends a K-frame packet on the specified connection-oriented channel.
+    ///
+    /// See Bluetooth Core specification Vol.3 Part A.
+    ///
+    /// # Note
+    /// for the first K-frame of the SDU, the Information data shall contain
+    /// the L2CAP SDU Length coded on two octets followed by the K-frame information
+    /// payload. For the next K-frames of the SDU, the Information data shall only
+    /// contain the K-frame information payload.
+    /// The Length value must not exceed (BLE_CMD_MAX_PARAM_LEN - 3) i.e. 252 for
+    /// BLE_CMD_MAX_PARAM_LEN default value.
+    async fn coc_tx_data(&mut self, params: &L2CapCocTxData);
 }
 
 impl<T: Controller> L2capCommands for T {
@@ -134,6 +147,12 @@ impl<T: Controller> L2capCommands for T {
         coc_flow_control,
         L2CapCocFlowControl,
         crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL
+    );
+
+    impl_variable_length_params!(
+        coc_tx_data,
+        L2CapCocTxData,
+        crate::vendor::opcode::L2CAP_COC_TX_DATA
     );
 }
 
@@ -411,5 +430,26 @@ impl L2CapCocFlowControl {
 
         bytes[0] = self.channel_index;
         LittleEndian::write_u16(&mut bytes[1..], self.credits);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Parameter for the [coc_tx_data](L2capCommands::coc_tx_data) command
+pub struct L2CapCocTxData {
+    pub channel_index: u8,
+    pub length: u16,
+    pub data: [u8; 252],
+}
+
+impl L2CapCocTxData {
+    const MAX_LENGTH: usize = 256;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        bytes[0] = self.channel_index;
+        LittleEndian::write_u16(&mut bytes[1..], self.length);
+        bytes[3..].copy_from_slice(&self.data);
     }
 }

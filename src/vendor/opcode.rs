@@ -151,5 +151,6 @@ vendor_opcodes! {
         pub const L2CAP_COC_RECONFIG_CONFIRM = 0x0B;
         pub const L2CAP_COC_DISCONNECT = 0x0C;
         pub const L2CAP_COC_FLOW_CONTROL = 0x0D;
+        pub const L2CAP_COC_TX_DATA = 0x0E;
     }
 }
