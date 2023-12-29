@@ -137,6 +137,14 @@ pub enum VendorEvent {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocReconfigConfirm(L2CapCocReconfigConfirm),
 
+    /// This event is generated when a connection-oriented channel is disconnected following an
+    /// L2CAP channel termination procedure.
+    ///
+    /// Includes the channel index of the connection oriented channel for which the primitive applies
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocDisconnect(u8),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -643,7 +651,10 @@ impl VendorEvent {
             0x0813 => Ok(VendorEvent::L2CapCocReconfigConfirm(
                 to_l2cap_coc_reconfig_confirm(buffer)?,
             )),
-            // TODO: 0x0814 => todo!(),
+            0x0814 => Ok(VendorEvent::L2CapCocDisconnect({
+                require_len!(buffer, 1);
+                buffer[0]
+            })),
             // TODO: 0x0815 => todo!(),
             // TODO: 0x0816 => todo!(),
             // TODO: 0x0817 => todo!(),
