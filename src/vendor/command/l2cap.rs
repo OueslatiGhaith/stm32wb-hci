@@ -77,6 +77,12 @@ pub trait L2capCommands {
     /// A [L2CAP COC Disconnection](crate::vendor::event::VendorEvent::L2CapCocDisconnect) event is
     /// received when the disconnection of the channel is effective.
     async fn coc_disconnect(&mut self, channel_index: u8);
+
+    /// This command sends a Flow Control Credit signaling packet on the specified connection-oriented
+    /// channel.
+    ///
+    /// See Bluetooth Core specification Vol.3 Part A.
+    async fn coc_flow_control(&mut self, params: &L2CapCocFlowControl);
 }
 
 impl<T: Controller> L2capCommands for T {
@@ -123,6 +129,12 @@ impl<T: Controller> L2capCommands for T {
         )
         .await
     }
+
+    impl_params!(
+        coc_flow_control,
+        L2CapCocFlowControl,
+        crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL
+    );
 }
 
 /// Parameters for the
@@ -371,5 +383,33 @@ impl L2CapCocReconfigConfirm {
 
         LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
         LittleEndian::write_u16(&mut bytes[2..], self.result);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Flow Control Credit signaling packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocFlowControl {
+    /// Index of the connection-oriented channel for which the primitive applies.
+    pub channel_index: u8,
+    /// Number of credits the receiving device can increment, corresponding to the
+    /// number of K-frames that can be sent to the peer device sending Flow Control
+    /// Credit packet.
+    ///
+    /// Values:
+    /// - 0 .. 65535
+    pub credits: u16,
+}
+
+impl L2CapCocFlowControl {
+    const LENGTH: usize = 3;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert_eq!(bytes.len(), Self::LENGTH);
+
+        bytes[0] = self.channel_index;
+        LittleEndian::write_u16(&mut bytes[1..], self.credits);
     }
 }

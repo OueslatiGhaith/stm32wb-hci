@@ -1045,7 +1045,9 @@ impl GapDeviceFound {
 pub use crate::event::AdvertisementEvent as GapDeviceFoundEvent;
 
 use super::command::gap::EventFlags;
-use super::command::l2cap::{L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocReconfigConfirm};
+use super::command::l2cap::{
+    L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocFlowControl, L2CapCocReconfigConfirm,
+};
 
 fn to_gap_device_found(buffer: &[u8]) -> Result<GapDeviceFound, crate::event::Error> {
     const RSSI_UNAVAILABLE: i8 = 127;
@@ -2788,23 +2790,6 @@ fn to_l2cap_coc_reconfig_confirm(
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         result: LittleEndian::read_u16(&buffer[2..]),
     })
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// This event is generated when receiving a valid Flow Control Credit signaling packet.
-///
-/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-pub struct L2CapCocFlowControl {
-    /// Index of the connection-oriented channel for which the primitive applies.
-    pub channel_index: u8,
-    /// Number of credits the receiving device can increment, corresponding to the
-    /// number of K-frames that can be sent to the peer device sending Flow Control
-    /// Credit packet.
-    ///
-    /// Values:
-    /// - 0 .. 65535
-    pub credits: u16,
 }
 
 fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2CapCocFlowControl, crate::event::Error> {
