@@ -145,6 +145,11 @@ pub enum VendorEvent {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocDisconnect(u8),
 
+    /// This event is generated when receiving a valid Flow Control Credit signaling packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2capCocFlowControl(L2capCocFlowControl),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -655,7 +660,9 @@ impl VendorEvent {
                 require_len!(buffer, 1);
                 buffer[0]
             })),
-            // TODO: 0x0815 => todo!(),
+            0x0815 => Ok(VendorEvent::L2capCocFlowControl(to_l2cap_coc_flow_control(
+                buffer,
+            )?)),
             // TODO: 0x0816 => todo!(),
             // TODO: 0x0817 => todo!(),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
@@ -2891,6 +2898,32 @@ fn to_l2cap_coc_reconfig_confirm(
     Ok(L2CapCocReconfigConfirm {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         result: LittleEndian::read_u16(&buffer[2..]),
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Flow Control Credit signaling packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2capCocFlowControl {
+    /// Index of the connection-oriented channel for which the primitive applies.
+    pub channel_index: u8,
+    /// Number of credits the receiving device can increment, corresponding to the
+    /// number of K-frames that can be sent to the peer device sending Flow Control
+    /// Credit packet.
+    ///
+    /// Values:
+    /// - 0 .. 65535
+    pub credits: u16,
+}
+
+fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2capCocFlowControl, crate::event::Error> {
+    require_len!(buffer, 3);
+
+    Ok(L2capCocFlowControl {
+        channel_index: buffer[0],
+        credits: LittleEndian::read_u16(&buffer[1..]),
     })
 }
 
