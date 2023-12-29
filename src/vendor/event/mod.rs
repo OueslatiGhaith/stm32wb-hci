@@ -14,6 +14,7 @@ use core::mem;
 use core::time::Duration;
 
 pub use crate::types::{ConnectionInterval, ConnectionIntervalError};
+use crate::vendor::command::l2cap::L2CapCocReconfig;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 
 /// Vendor-specific events for the STM32WB5x radio coprocessor.
@@ -2761,36 +2762,6 @@ fn to_l2cap_coc_connect_confirm(
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// This event is generated when receiving a valid Credit Based Reconfigure Request packet.
-///
-/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-pub struct L2CapCocReconfig {
-    /// handle of the connection where this event occured.
-    pub connection_handle: ConnectionHandle,
-    /// Maximum Transmission Unit
-    ///
-    /// Values:
-    /// - 23 .. 65535
-    pub mtu: u16,
-    /// Maximum Payload Size (in octets)
-    ///
-    /// Values:
-    /// - 23 .. 248
-    pub mps: u16,
-    /// Number of channels to be created. If this parameter is
-    /// set to 0, it requests the creation of one LE credit based connection-
-    /// oriented channel. Otherwise, it requests the creation of one or more
-    /// enhanced credit based connection-oriented channels.
-    ///
-    /// Values:
-    /// - 0 .. 5
-    pub channel_number: u8,
-    /// List of channel indexes for which the primitives apply.
-    pub channel_index_list: [u8; 246],
-}
-
 fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event::Error> {
     require_len_at_least!(buffer, 8);
 
@@ -2800,7 +2771,7 @@ fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
 
     Ok(L2CapCocReconfig {
-        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         mtu: LittleEndian::read_u16(&buffer[2..]),
         mps: LittleEndian::read_u16(&buffer[4..]),
         channel_number: buffer[6],
