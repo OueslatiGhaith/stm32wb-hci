@@ -161,7 +161,9 @@ pub enum VendorEvent {
     /// information data only contains the K-frame information payload.
     L2CapCocRxData(L2CapCocRxData),
 
-    /// Each time the
+    /// Each time the [L2CAO COC Tx Data](crate::vendor::command::l2cap::L2capCommands::coc_tx_data) command
+    /// raises the error code [Insufficient Resources](VendorStatus::InsufficientResources) (0x64), this event
+    /// is generated as soon as there is a free buffer available for sending K-frames.
     L2CapCocTxPoolAvailable,
 
     /// This event is generated to the application by the ATT server when a client modifies any
@@ -678,7 +680,7 @@ impl VendorEvent {
                 buffer,
             )?)),
             0x0816 => Ok(VendorEvent::L2CapCocRxData(to_l2cap_coc_rx_data(buffer)?)),
-            // TODO: 0x0817 => todo!(),
+            0x0817 => Ok(VendorEvent::L2CapCocTxPoolAvailable),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
             )),
