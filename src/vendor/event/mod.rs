@@ -1045,7 +1045,7 @@ impl GapDeviceFound {
 pub use crate::event::AdvertisementEvent as GapDeviceFoundEvent;
 
 use super::command::gap::EventFlags;
-use super::command::l2cap::{L2CapCocConnect, L2CapCocConnectConfirm};
+use super::command::l2cap::{L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocReconfigConfirm};
 
 fn to_gap_device_found(buffer: &[u8]) -> Result<GapDeviceFound, crate::event::Error> {
     const RSSI_UNAVAILABLE: i8 = 127;
@@ -2779,29 +2779,13 @@ fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
-///
-/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-pub struct L2CapCocReconfigConfirm {
-    /// handle of the connection where this event occured.
-    pub connection_handle: ConnectionHandle,
-    /// This parameter indicates the outcome of the request. A value of 0x0000
-    /// indicates success while a non zero value indicates the request is refused
-    ///
-    /// Values:
-    /// - 0x0000 .. 0x000C
-    pub result: u16,
-}
-
 fn to_l2cap_coc_reconfig_confirm(
     buffer: &[u8],
 ) -> Result<L2CapCocReconfigConfirm, crate::event::Error> {
     require_len_at_least!(buffer, 4);
 
     Ok(L2CapCocReconfigConfirm {
-        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         result: LittleEndian::read_u16(&buffer[2..]),
     })
 }

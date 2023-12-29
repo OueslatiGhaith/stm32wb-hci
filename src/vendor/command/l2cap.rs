@@ -60,6 +60,13 @@ pub trait L2capCommands {
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
     async fn coc_reconfig(&mut self, params: &L2CapCocReconfig);
+
+    /// This command sends a Credit-Based Reconfigure Response packet. It must be use upon receipt
+    /// of a Credit-Based Reconfigure Request through
+    /// [L2CAP COC Reconfigure](crate::vendor::event::VendorEvent::L2CapCocReconfig) event.
+    ///
+    ///  See Bluetooth Core specification Vol.3 Part A.
+    async fn coc_reconfig_confirm(&mut self, params: &L2CapCocReconfigConfirm);
 }
 
 impl<T: Controller> L2capCommands for T {
@@ -91,6 +98,12 @@ impl<T: Controller> L2capCommands for T {
         coc_reconfig,
         L2CapCocReconfig,
         crate::vendor::opcode::L2CAP_COC_RECONFIG
+    );
+
+    impl_params!(
+        coc_reconfig_confirm,
+        L2CapCocReconfigConfirm,
+        crate::vendor::opcode::L2CAP_COC_RECONFIG_CONFIRM
     );
 }
 
@@ -313,5 +326,32 @@ impl L2CapCocReconfig {
         LittleEndian::write_u16(&mut bytes[4..], self.mps);
         bytes[6] = self.channel_number;
         bytes[7..].copy_from_slice(&self.channel_index_list);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocReconfigConfirm {
+    /// handle of the connection where this event occured.
+    pub conn_handle: ConnectionHandle,
+    /// This parameter indicates the outcome of the request. A value of 0x0000
+    /// indicates success while a non zero value indicates the request is refused
+    ///
+    /// Values:
+    /// - 0x0000 .. 0x000C
+    pub result: u16,
+}
+
+impl L2CapCocReconfigConfirm {
+    const LENGTH: usize = 4;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert_eq!(bytes.len(), Self::LENGTH);
+
+        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
+        LittleEndian::write_u16(&mut bytes[2..], self.result);
     }
 }
