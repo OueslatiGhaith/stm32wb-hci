@@ -44,10 +44,17 @@ pub trait L2capCommands {
         params: &ConnectionParameterUpdateResponse,
     );
 
-    /// This command sends a credit based connection request packet to the specified connection
+    /// This command sends a credit-based connection request packet to the specified connection
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
     async fn coc_connect(&mut self, params: &L2CapCocConnect);
+
+    /// This command sends a credit-based connection response packet. It must be used upon receipt
+    /// of a connection request though [L2CAP COC Connection](crate::vendor::event::VendorEvent::L2CapCocConnect)
+    /// event.
+    ///
+    /// See Bluetooth Core specification Vol.3 Part A.
+    async fn coc_connect_confirm(&mut self, params: &L2CapCocConnectConfirm);
 }
 
 impl<T: Controller> L2capCommands for T {
@@ -67,6 +74,12 @@ impl<T: Controller> L2capCommands for T {
         coc_connect,
         L2CapCocConnect,
         crate::vendor::opcode::L2CAP_COC_CONNECT
+    );
+
+    impl_variable_length_params!(
+        coc_connect_confirm,
+        L2CapCocConnectConfirm,
+        crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM
     );
 }
 
@@ -187,5 +200,63 @@ impl L2CapCocConnect {
         LittleEndian::write_u16(&mut bytes[6..], self.mps);
         LittleEndian::write_u16(&mut bytes[8..], self.initial_credits);
         bytes[10] = self.channel_number;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid Credit Based Connection Response packet.
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+pub struct L2CapCocConnectConfirm {
+    /// handle of the connection where this event occured.
+    pub conn_handle: ConnectionHandle,
+    /// Maximum Transmission Unit
+    ///
+    /// Values:
+    /// - 23 .. 65535
+    pub mtu: u16,
+    /// Maximum Payload Size (in octets)
+    ///
+    /// Values:
+    /// - 23 .. 248
+    pub mps: u16,
+    /// Number of K-frames that can be received on the created channel(s) by
+    /// the L2CAP layer entity sending this packet.
+    ///
+    /// Values:
+    /// - 0 .. 65535
+    pub initial_credits: u16,
+    /// This parameter indicates the outcome of the request. A value of 0x0000
+    /// indicates success while a non zero value indicates the request is refused
+    ///
+    /// Values:
+    /// - 0x0000 .. 0x000C
+    pub result: u16,
+    /// Number of channels to be created. If this parameter is
+    /// set to 0, it requests the creation of one LE credit based connection-
+    /// oriented channel. Otherwise, it requests the creation of one or more
+    /// enhanced credit based connection-oriented channels.
+    ///
+    /// Values:
+    /// - 0 .. 5
+    pub channel_number: u8,
+    /// List of channel indexes for which the primitives apply.
+    pub channel_index_list: [u8; 246],
+}
+
+impl L2CapCocConnectConfirm {
+    const MAX_LENGTH: usize = 258;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
+        LittleEndian::write_u16(&mut bytes[2..], self.mtu);
+        LittleEndian::write_u16(&mut bytes[4..], self.mps);
+        LittleEndian::write_u16(&mut bytes[6..], self.initial_credits);
+        LittleEndian::write_u16(&mut bytes[8..], self.result);
+        bytes[10] = self.channel_number;
+        bytes[11..].copy_from_slice(&self.channel_index_list);
     }
 }
