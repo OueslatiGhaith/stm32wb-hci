@@ -67,6 +67,16 @@ pub trait L2capCommands {
     ///
     ///  See Bluetooth Core specification Vol.3 Part A.
     async fn coc_reconfig_confirm(&mut self, params: &L2CapCocReconfigConfirm);
+
+    /// This command sends a Disconnection Request signaling packet on the specified connection-oriented
+    /// channel.
+    ///
+    /// See Bluetooth Core specification Vol.3 Part A.
+    ///
+    /// # Generated events
+    /// A [L2CAP COC Disconnection](crate::vendor::event::VendorEvent::L2CapCocDisconnect) event is
+    /// received when the disconnection of the channel is effective.
+    async fn coc_disconnect(&mut self, channel_index: u8);
 }
 
 impl<T: Controller> L2capCommands for T {
@@ -105,6 +115,14 @@ impl<T: Controller> L2capCommands for T {
         L2CapCocReconfigConfirm,
         crate::vendor::opcode::L2CAP_COC_RECONFIG_CONFIRM
     );
+
+    async fn coc_disconnect(&mut self, channel_index: u8) {
+        self.controller_write(
+            crate::vendor::opcode::L2CAP_COC_DISCONNECT,
+            &[channel_index],
+        )
+        .await
+    }
 }
 
 /// Parameters for the

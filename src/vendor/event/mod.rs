@@ -149,7 +149,7 @@ pub enum VendorEvent {
     /// This event is generated when receiving a valid Flow Control Credit signaling packet.
     ///
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-    L2capCocFlowControl(L2capCocFlowControl),
+    L2CapCocFlowControl(L2CapCocFlowControl),
 
     /// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
     ///
@@ -159,10 +159,10 @@ pub enum VendorEvent {
     /// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
     /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
     /// information data only contains the K-frame information payload.
-    L2capCocRxData(L2capCocRxData),
+    L2CapCocRxData(L2CapCocRxData),
 
     /// Each time the
-    L2capCocTxPoolAvailable,
+    L2CapCocTxPoolAvailable,
 
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
@@ -674,10 +674,10 @@ impl VendorEvent {
                 require_len!(buffer, 1);
                 buffer[0]
             })),
-            0x0815 => Ok(VendorEvent::L2capCocFlowControl(to_l2cap_coc_flow_control(
+            0x0815 => Ok(VendorEvent::L2CapCocFlowControl(to_l2cap_coc_flow_control(
                 buffer,
             )?)),
-            0x0816 => Ok(VendorEvent::L2capCocRxData(to_l2cap_coc_rx_data(buffer)?)),
+            0x0816 => Ok(VendorEvent::L2CapCocRxData(to_l2cap_coc_rx_data(buffer)?)),
             // TODO: 0x0817 => todo!(),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
@@ -2795,7 +2795,7 @@ fn to_l2cap_coc_reconfig_confirm(
 /// This event is generated when receiving a valid Flow Control Credit signaling packet.
 ///
 /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
-pub struct L2capCocFlowControl {
+pub struct L2CapCocFlowControl {
     /// Index of the connection-oriented channel for which the primitive applies.
     pub channel_index: u8,
     /// Number of credits the receiving device can increment, corresponding to the
@@ -2807,10 +2807,10 @@ pub struct L2capCocFlowControl {
     pub credits: u16,
 }
 
-fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2capCocFlowControl, crate::event::Error> {
+fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2CapCocFlowControl, crate::event::Error> {
     require_len!(buffer, 3);
 
-    Ok(L2capCocFlowControl {
+    Ok(L2CapCocFlowControl {
         channel_index: buffer[0],
         credits: LittleEndian::read_u16(&buffer[1..]),
     })
@@ -2826,7 +2826,7 @@ fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2capCocFlowControl, crate
 /// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
 /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
 /// information data only contains the K-frame information payload.
-pub struct L2capCocRxData {
+pub struct L2CapCocRxData {
     /// Index of the connection-oriented channel for which the primitive applie.
     pub channel_index: u8,
     /// Length of the data (in octets)
@@ -2835,14 +2835,14 @@ pub struct L2capCocRxData {
     pub data: [u8; 250],
 }
 
-fn to_l2cap_coc_rx_data(buffer: &[u8]) -> Result<L2capCocRxData, crate::event::Error> {
+fn to_l2cap_coc_rx_data(buffer: &[u8]) -> Result<L2CapCocRxData, crate::event::Error> {
     require_len_at_least!(buffer, 3);
 
     let length = LittleEndian::read_u16(&buffer[1..]);
     let mut data = [0; 250];
     data[..length as usize].copy_from_slice(&buffer[3..]);
 
-    Ok(L2capCocRxData {
+    Ok(L2CapCocRxData {
         channel_index: buffer[0],
         length,
         data,
