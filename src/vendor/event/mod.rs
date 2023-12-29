@@ -150,6 +150,16 @@ pub enum VendorEvent {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2capCocFlowControl(L2capCocFlowControl),
 
+    /// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    ///
+    /// # Note:
+    /// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
+    /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
+    /// information data only contains the K-frame information payload.
+    L2CapCocRxData(L2capCocRxData),
+
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
     /// - write without response
@@ -663,7 +673,7 @@ impl VendorEvent {
             0x0815 => Ok(VendorEvent::L2capCocFlowControl(to_l2cap_coc_flow_control(
                 buffer,
             )?)),
-            // TODO: 0x0816 => todo!(),
+            0x0816 => Ok(VendorEvent::L2CapCocRxData(to_l2cap_coc_rx_data(buffer)?)),
             // TODO: 0x0817 => todo!(),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
@@ -2927,6 +2937,38 @@ fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2capCocFlowControl, crate
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+///
+/// # Note:
+/// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
+/// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
+/// information data only contains the K-frame information payload.
+pub struct L2capCocRxData {
+    /// Index of the connection-oriented channel for which the primitive applie.
+    pub channel_index: u8,
+    /// Length of the data (in octets)
+    pub length: u16,
+    /// Information data
+    pub data: [u8; 250],
+}
+
+fn to_l2cap_coc_rx_data(buffer: &[u8]) -> Result<L2capCocRxData, crate::event::Error> {
+    require_len_at_least!(buffer, 3);
+
+    let length = LittleEndian::read_u16(&buffer[1..]);
+    let mut data = [0; 250];
+    data[..length as usize].copy_from_slice(&buffer[3..]);
+
+    Ok(L2capCocRxData {
+        channel_index: buffer[0],
+        length,
+        data,
+    })
+}
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// This event informs the application of a change in status of the Enhanced ATT
