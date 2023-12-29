@@ -299,6 +299,9 @@ pub enum VendorEvent {
     /// This event informs the application of a change in status of the enhanced ATT bearer handled
     /// by the special L2CAP channel.
     GattEattBrearer(GattEattBrearer),
+
+    /// This event is generated when a Multiple Handle Value Notification is received from the server.
+    GattMultiNotification(GattMultiNotification),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -741,7 +744,9 @@ impl VendorEvent {
                 to_att_prepare_write_permit_request(buffer)?,
             )),
             0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(buffer)?)),
-            // TODO: 0x0C1A => todo!(),
+            0x0C1A => Ok(VendorEvent::GattMultiNotification(
+                to_gatt_multi_notification(buffer)?,
+            )),
             // TODO: 0x0C1D => todo!(),
             // TODO: 0x0C1E => todo!(),
             // TODO: 0x0C1F => todo!(),
@@ -2875,5 +2880,36 @@ fn to_gatt_eatt_bearer(buffer: &[u8]) -> Result<GattEattBrearer, crate::event::E
         channel_index: buffer[0],
         eab_state: EabState::try_from(buffer[1])?,
         status: GattProcedureStatus::try_from(buffer[2])?,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when a Multiple Handle Value Notification is received from the server.
+pub struct GattMultiNotification {
+    /// Specifies the ATT bearer for which the event
+    pub conn_handle: ConnectionHandle,
+    /// - Bits 14-0: offset in octets from which Attribute_Value data starts.
+    /// - Bit 15 is used as flag: when set to 1 it indicates what more data are to come
+    /// (fragmented event in case of long attribute data)
+    pub offset: u16,
+    /// Length of the data in bytes
+    pub data_len: u16,
+    /// List of "Handle Length Value" tuples as define in Bluetooth Core Specification
+    pub data: [u8; 247],
+}
+
+fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, crate::event::Error> {
+    require_len_at_least!(buffer, 6);
+
+    let data_len = LittleEndian::read_u16(&buffer[4..]);
+    let mut data = [0; 247];
+    data[..data_len as usize].copy_from_slice(&buffer[4..]);
+
+    Ok(GattMultiNotification {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        offset: LittleEndian::read_u16(&buffer[2..]),
+        data_len,
+        data,
     })
 }
