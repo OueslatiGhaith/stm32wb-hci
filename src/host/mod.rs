@@ -186,6 +186,29 @@ pub trait HostHci {
         power_level_type: TxPowerLevel,
     );
 
+    /// This command is used by the Host to turn flow control on and off for data and/or voice
+    /// sent in the direction from the Controller to the Host.
+    ///
+    /// If the flow control is turned off, the Host should not send the
+    /// [Host Number of Completed Packets](HostHci::host_number_of_completed_packets) command.
+    /// That command will be ignored by the Controller it is sent by the Host and flow control is
+    /// off.
+    ///
+    /// If flow control is turned on for HCI ACL Data Packets and off for HCI synchronous
+    /// Data Packets, [Host Number of Completed Packets](HostHci::host_number_of_completed_packets)
+    /// commands sent by the Host should only contain [Connection Handles](ConnectionHandle)
+    /// for ACL connections.
+    ///
+    /// If flow control is turned off for HCI ACL Data Packets and on for HCI synchronous Data Packets,
+    /// [Host Number of Completed Packets](HostHci::host_number_of_completed_packets) commands sent
+    /// by the Host should only contain [Connection Handles](ConnectionHandle) for synchronous connections.
+    ///
+    /// If flow control is turned on for HCI ACL Data Packets and HCI synchronous Data Packets,
+    /// the Host will send [Host Number of Completed Packets](HostHci::host_number_of_completed_packets)
+    /// commands both for ACL connections and synchronous connections.
+    /// The [Flow Control](FlowControl) parameter shall only be changed if no connections exist.
+    async fn set_controller_to_host_flow_control(&mut self, flow_control: FlowControl);
+
     /// This command reads the values for the version information for the local Controller.
     ///
     /// Defined in Bluetooth Specification Vol 2, Part E, Section 7.4.1.
@@ -1154,6 +1177,14 @@ where
             .await;
     }
 
+    async fn set_controller_to_host_flow_control(&mut self, flow_control: FlowControl) {
+        self.controller_write(
+            crate::opcode::SET_CONTROLLER_TO_HOST_FLOW_CONTROL,
+            &[flow_control as u8],
+        )
+        .await;
+    }
+
     async fn read_local_version_information(&mut self) {
         self.controller_write(crate::opcode::READ_LOCAL_VERSION_INFO, &[])
             .await;
@@ -1655,6 +1686,28 @@ pub enum TxPowerLevel {
     Current = 0x00,
     /// Read Maximum Transmit Power Level.
     Maximum = 0x01,
+}
+
+/// For the [set_controller_to_host_flow_control](HostHci::set_controller_to_host_flow_control) command, the
+/// allowed values for flow control.
+///
+/// See Bluetooth spec. v.5.4 [Vol 4, Part E, 7.3.38].
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FlowControl {
+    /// Flow control off in direction from controller to host. `default`
+    #[default]
+    Off = 0x00,
+    /// Flow control on for HCI ACL Data Packets and off for HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    HciAclDataOnly = 0x01,
+    /// Flow control off for HCI ACL Data Packets and on for HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    HciSyncDataOnly = 0x02,
+    /// control on both for HCI ACL Data Packets and HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    Both = 0x03,
 }
 
 #[cfg(not(feature = "defmt"))]

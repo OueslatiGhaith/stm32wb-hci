@@ -49,6 +49,7 @@ opcodes! {
         pub const SET_EVENT_MASK = 0x0001;
         pub const RESET = 0x0003;
         pub const READ_TX_POWER_LEVEL = 0x002D;
+        pub const SET_CONTROLLER_TO_HOST_FLOW_CONTROL = 0x031;
     }
 
     InfoParam = 0x0004;
