@@ -1516,6 +1516,9 @@ bitflags::bitflags! {
         /// The application will be notified when a read request of any type is got for this
         /// attribute.
         const CONFIRM_READ = 0x04;
+
+        /// The application will be notified when a notification is complete
+        const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }
 }
 
@@ -1533,6 +1536,9 @@ defmt::bitflags! {
         /// The application will be notified when a read request of any type is got for this
         /// attribute.
         const CONFIRM_READ = 0x04;
+
+        /// The application will be notified when a notification is complete
+        const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }
 }
 

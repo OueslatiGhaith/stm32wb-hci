@@ -307,7 +307,6 @@ pub enum VendorEvent {
     /// the a local update of a characteristic value (if it is enabled at the creation of the characteristic
     /// with [GATT Notify Notification Completion](crate::vendor::command::gatt::CharacteristicEvent) mask
     /// and if the characteristic supports notifications).
-    // TODO: update crate::vendor::command::gatt::CharacteristicEvent
     GattNotificationComplete(AttributeHandle),
 
     // TODO: there is probably a better way to handle Read/Indication/Notification extended events, given
