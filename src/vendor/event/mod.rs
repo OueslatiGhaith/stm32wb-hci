@@ -310,6 +310,10 @@ pub enum VendorEvent {
     // TODO: update crate::vendor::command::gatt::CharacteristicEvent
     GattNotificationComplete(AttributeHandle),
 
+    // TODO: there is probably a better way to handle Read/Indication/Notification extended events, given
+    // TODO: that the offset param contains extra information
+    // TODO: also, the Read event has a different structure from Indication/Notification, unlike non-extended
+    // TODO: events
     /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
     /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
     /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
@@ -326,7 +330,15 @@ pub enum VendorEvent {
     /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when `ATT_MTU
     /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
-    GattIndicationExt(GattIndicationExt),
+    GattIndicationExt(AttributeValueExt),
+
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// this event is generated instead of [GATT Notification](VendorEvent::GattNotification) event.
+    ///
+    /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when `ATT_MTU
+    /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
+    /// default value.
+    GattNotificationExt(AttributeValueExt),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -777,10 +789,12 @@ impl VendorEvent {
                 AttributeHandle(LittleEndian::read_u16(buffer))
             })),
             0x0C1D => Ok(VendorEvent::GattReadExt(to_gatt_read_ext(buffer)?)),
-            0x0C1E => Ok(VendorEvent::GattIndicationExt(to_gatt_indication_ext(
+            0x0C1E => Ok(VendorEvent::GattIndicationExt(to_attribute_value_ext(
                 buffer,
             )?)),
-            // TODO: 0x0C1F => todo!(),
+            0x0C1F => Ok(VendorEvent::GattNotificationExt(to_attribute_value_ext(
+                buffer,
+            )?)),
             _ => Err(crate::event::Error::Vendor(VendorError::UnknownEvent(
                 event_code,
             ))),
@@ -2988,8 +3002,9 @@ impl GattReadExt {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Defines data returned by [GATT Indication Ext](VendorEvent::GattIndicationExt) event
-pub struct GattIndicationExt {
+/// Defines data returned by [GATT Indication Ext](VendorEvent::GattIndicationExt) or
+/// [GATT Notification Ext](VendorEvent::GattNotificationExt) event
+pub struct AttributeValueExt {
     /// The connection handle related to the event.
     pub conn_handle: ConnectionHandle,
     /// The handle of the attribute
@@ -3006,7 +3021,7 @@ pub struct GattIndicationExt {
     value_buf: [u8; MAX_ATTRIBUTE_VALUE_LEN],
 }
 
-fn to_gatt_indication_ext(buffer: &[u8]) -> Result<GattIndicationExt, crate::event::Error> {
+fn to_attribute_value_ext(buffer: &[u8]) -> Result<AttributeValueExt, crate::event::Error> {
     require_len_at_least!(buffer, 6);
 
     let value_len = LittleEndian::read_u16(&buffer[6..]) as usize;
@@ -3015,7 +3030,7 @@ fn to_gatt_indication_ext(buffer: &[u8]) -> Result<GattIndicationExt, crate::eve
     let mut value_buf = [0; MAX_ATTRIBUTE_VALUE_LEN];
     value_buf[..value_len].copy_from_slice(&buffer[8..]);
 
-    Ok(GattIndicationExt {
+    Ok(AttributeValueExt {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
         offset: LittleEndian::read_u16(&buffer[4..]),
@@ -3024,7 +3039,7 @@ fn to_gatt_indication_ext(buffer: &[u8]) -> Result<GattIndicationExt, crate::eve
     })
 }
 
-impl GattIndicationExt {
+impl AttributeValueExt {
     pub fn value(&self) -> &[u8] {
         &self.value_buf[..self.value_len]
     }
