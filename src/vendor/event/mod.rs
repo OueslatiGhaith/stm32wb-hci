@@ -302,6 +302,13 @@ pub enum VendorEvent {
 
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
     GattMultiNotification(GattMultiNotification),
+
+    /// This event is generated on server side after the transmission of all notifications linked with
+    /// the a local update of a characteristic value (if it is enabled at the creation of the characteristic
+    /// with [GATT Notify Notification Completion](crate::vendor::command::gatt::CharacteristicEvent) mask
+    /// and if the characteristic supports notifications).
+    // TODO: update crate::vendor::command::gatt::CharacteristicEvent
+    GattNotificationComplete(AttributeHandle),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -747,6 +754,11 @@ impl VendorEvent {
             0x0C1A => Ok(VendorEvent::GattMultiNotification(
                 to_gatt_multi_notification(buffer)?,
             )),
+            0x0C1B => Ok(VendorEvent::GattNotificationComplete({
+                require_len!(buffer, 2);
+                AttributeHandle(LittleEndian::read_u16(buffer))
+            })),
+            // TODO: 0x0C1C => todo!(),
             // TODO: 0x0C1D => todo!(),
             // TODO: 0x0C1E => todo!(),
             // TODO: 0x0C1F => todo!(),
