@@ -309,6 +309,16 @@ pub enum VendorEvent {
     /// and if the characteristic supports notifications).
     // TODO: update crate::vendor::command::gatt::CharacteristicEvent
     GattNotificationComplete(AttributeHandle),
+
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
+    /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
+    /// [ATT Read Multiple Response](VendorEvent::AttReadMultipleResponse).
+    ///
+    /// This event should be used instead of those events when `ATT_MTU >
+    /// (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
+    /// default value.
+    GattReadExt(GattReadExt),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -758,8 +768,7 @@ impl VendorEvent {
                 require_len!(buffer, 2);
                 AttributeHandle(LittleEndian::read_u16(buffer))
             })),
-            // TODO: 0x0C1C => todo!(),
-            // TODO: 0x0C1D => todo!(),
+            0x0C1D => Ok(VendorEvent::GattReadExt(to_gatt_read_ext(buffer)?)),
             // TODO: 0x0C1E => todo!(),
             // TODO: 0x0C1F => todo!(),
             _ => Err(crate::event::Error::Vendor(VendorError::UnknownEvent(
@@ -2924,4 +2933,45 @@ fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, cr
         data_len,
         data,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [GATT Read Ext](VendorEvent::GattReadExt) event
+pub struct GattReadExt {
+    /// The connection handle related to the event.
+    pub conn_handle: ConnectionHandle,
+    /// - Bits 14-0: offset in octets from which Attribute_Value data
+    /// starts.
+    /// - Bit 15 is used as flag: when set to 1 it indicates that more
+    /// data are to come (fragmented event in case of long attribute data).
+    pub offset: u16,
+
+    // Number of valid bytes in value_buf
+    value_len: usize,
+    // Current value of the attribute. Only the first value_len bytes are valid.
+    value_buf: [u8; MAX_ATTRIBUTE_VALUE_LEN],
+}
+
+fn to_gatt_read_ext(buffer: &[u8]) -> Result<GattReadExt, crate::event::Error> {
+    require_len_at_least!(buffer, 6);
+
+    let value_len = LittleEndian::read_u16(&buffer[4..]) as usize;
+    require_len!(buffer, 6 + value_len);
+
+    let mut value_buf = [0; MAX_ATTRIBUTE_VALUE_LEN];
+    value_buf[..value_len].copy_from_slice(&buffer[6..]);
+
+    Ok(GattReadExt {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        offset: LittleEndian::read_u16(&buffer[2..]),
+        value_len,
+        value_buf,
+    })
+}
+
+impl GattReadExt {
+    pub fn value(&self) -> &[u8] {
+        &self.value_buf[..self.value_len]
+    }
 }
