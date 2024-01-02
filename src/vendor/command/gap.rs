@@ -421,7 +421,13 @@ pub trait GapCommands {
         reason: crate::Status,
     ) -> Result<(), Error>;
 
-    /// Clear the security database. All the devices in the security database will be removed.
+    /// Clear the bonding table. All the devices in the bonding table are removed.
+    ///
+    /// See also [remove_bonded_device](GapCommands::remove_bonded_device) to remove only one device.
+    ///
+    /// # Note
+    /// As a fallback mode, in case the bonding table is full, the BLE stack automatically clears the bonding
+    /// table just before putting into it information about a new bonded device.
     ///
     /// # Errors
     ///
