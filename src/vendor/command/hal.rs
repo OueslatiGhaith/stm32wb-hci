@@ -224,11 +224,15 @@ pub struct ConfigData {
     ///- 0x00: CONFIG_DATA_PUBADDR_OFFSET;
     ///  Bluetooth public address; 6 bytes
     ///- 0x08: CONFIG_DATA_ER_OFFSET;
-    ///  Encryption root key used to derive LTK and CSRK; 16 bytes
+    ///  Encryption root key used to derive LTK (legacy) and CSRK; 16 bytes
     ///- 0x18: CONFIG_DATA_IR_OFFSET;
-    ///  Identity root key used to derive LTK and CSRK; 16 bytes
+    ///  Identity root key used to derive DHK (legacy) and IRK; 16 bytes
     ///- 0x2E: CONFIG_DATA_RANDOM_ADDRESS_OFFSET;
     ///  Static Random Address; 6 bytes
+    ///- 0x34: CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET;
+    ///  GAP service additional record number; 1 byte
+    ///- 0x35: CONFIG_DATA_SC_KEY_TYPE_OFFSET;
+    ///  Secure Connection key type (0: "normal", 1: "debug"); 1 byte
     ///- 0xB0: CONFIG_DATA_SMP_MODE_OFFSET;
     ///  SMP mode (0: "normal", 1: "bypass", 2: "no blacklist"); 1 byte
     ///- 0xC0: CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET (only for STM32WB);

@@ -145,5 +145,12 @@ vendor_opcodes! {
     {
         pub const L2CAP_CONN_PARAM_UPDATE_REQ = 0x01;
         pub const L2CAP_CONN_PARAM_UPDATE_RESP = 0x02;
+        pub const L2CAP_COC_CONNECT = 0x08;
+        pub const L2CAP_COC_CONNECT_CONFIRM = 0x09;
+        pub const L2CAP_COC_RECONFIG = 0x0A;
+        pub const L2CAP_COC_RECONFIG_CONFIRM = 0x0B;
+        pub const L2CAP_COC_DISCONNECT = 0x0C;
+        pub const L2CAP_COC_FLOW_CONTROL = 0x0D;
+        pub const L2CAP_COC_TX_DATA = 0x0E;
     }
 }

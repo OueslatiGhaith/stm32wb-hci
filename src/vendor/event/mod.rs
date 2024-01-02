@@ -14,6 +14,7 @@ use core::mem;
 use core::time::Duration;
 
 pub use crate::types::{ConnectionInterval, ConnectionIntervalError};
+use crate::vendor::command::l2cap::L2CapCocReconfig;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 
 /// Vendor-specific events for the STM32WB5x radio coprocessor.
@@ -116,6 +117,54 @@ pub enum VendorEvent {
     /// when the Central responds to the Connection Update Request packet with a
     /// Command Reject packet).
     L2CapCommandReject(L2CapCommandReject),
+
+    /// This event is generated when receiving a valid Credit Based Connection Request packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocConnect(L2CapCocConnect),
+
+    /// This event is generated when receiving a valid Credit Based Connection Response packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocConnectConfirm(L2CapCocConnectConfirm),
+
+    /// This event is generated when receiving a valid Credit Based Reconfigure Request packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocReconfig(L2CapCocReconfig),
+
+    /// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocReconfigConfirm(L2CapCocReconfigConfirm),
+
+    /// This event is generated when a connection-oriented channel is disconnected following an
+    /// L2CAP channel termination procedure.
+    ///
+    /// Includes the channel index of the connection oriented channel for which the primitive applies
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocDisconnect(u8),
+
+    /// This event is generated when receiving a valid Flow Control Credit signaling packet.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    L2CapCocFlowControl(L2CapCocFlowControl),
+
+    /// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+    ///
+    /// # Note:
+    /// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
+    /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
+    /// information data only contains the K-frame information payload.
+    L2CapCocRxData(L2CapCocRxData),
+
+    /// Each time the [L2CAO COC Tx Data](crate::vendor::command::l2cap::L2capCommands::coc_tx_data) command
+    /// raises the error code [Insufficient Resources](VendorStatus::InsufficientResources) (0x64), this event
+    /// is generated as soon as there is a free buffer available for sending K-frames.
+    L2CapCocTxPoolAvailable,
 
     /// This event is generated to the application by the ATT server when a client modifies any
     /// attribute on the server, as consequence of one of the following ATT procedures:
@@ -246,6 +295,49 @@ pub enum VendorEvent {
     /// and an error response will be sent to the client, with the error code as specified by the
     /// application.
     AttPrepareWritePermitRequest(AttPrepareWritePermitRequest),
+
+    /// This event informs the application of a change in status of the enhanced ATT bearer handled
+    /// by the special L2CAP channel.
+    GattEattBrearer(GattEattBrearer),
+
+    /// This event is generated when a Multiple Handle Value Notification is received from the server.
+    GattMultiNotification(GattMultiNotification),
+
+    /// This event is generated on server side after the transmission of all notifications linked with
+    /// the a local update of a characteristic value (if it is enabled at the creation of the characteristic
+    /// with [GATT Notify Notification Completion](crate::vendor::command::gatt::CharacteristicEvent) mask
+    /// and if the characteristic supports notifications).
+    GattNotificationComplete(AttributeHandle),
+
+    // TODO: there is probably a better way to handle Read/Indication/Notification extended events, given
+    // TODO: that the offset param contains extra information
+    // TODO: also, the Read event has a different structure from Indication/Notification, unlike non-extended
+    // TODO: events
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
+    /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
+    /// [ATT Read Multiple Response](VendorEvent::AttReadMultipleResponse).
+    ///
+    /// This event should be used instead of those events when `ATT_MTU >
+    /// (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
+    /// default value.
+    GattReadExt(GattReadExt),
+
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// this event is generated instead of [GATT Indication](VendorEvent::GattIndication) event.
+    ///
+    /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when `ATT_MTU
+    /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
+    /// default value.
+    GattIndicationExt(AttributeValueExt),
+
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// this event is generated instead of [GATT Notification](VendorEvent::GattNotification) event.
+    ///
+    /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when `ATT_MTU
+    /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
+    /// default value.
+    GattNotificationExt(AttributeValueExt),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -537,6 +629,9 @@ pub enum VendorError {
     /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): one of the address type bytes was
     /// invalid. Includes the invalid byte.
     BadBdAddrType(u8),
+
+    /// For the [GATT EAT Bearer](crate::vendor::event::VendorEvent::GattEattBrearer) event: The EAB state was not recognized.
+    BadEabState(u8),
 }
 
 macro_rules! require_len {
@@ -606,14 +701,25 @@ impl VendorEvent {
             0x080A => Ok(VendorEvent::L2CapCommandReject(to_l2cap_command_reject(
                 buffer,
             )?)),
-            0x0810 => todo!(),
-            0x0811 => todo!(),
-            0x0812 => todo!(),
-            0x0813 => todo!(),
-            0x0814 => todo!(),
-            0x0815 => todo!(),
-            0x0816 => todo!(),
-            0x0817 => todo!(),
+            0x0810 => Ok(VendorEvent::L2CapCocConnect(to_l2cap_coc_connect(buffer)?)),
+            0x0811 => Ok(VendorEvent::L2CapCocConnectConfirm(
+                to_l2cap_coc_connect_confirm(buffer)?,
+            )),
+            0x0812 => Ok(VendorEvent::L2CapCocReconfig(to_l2cap_coc_reconfig(
+                buffer,
+            )?)),
+            0x0813 => Ok(VendorEvent::L2CapCocReconfigConfirm(
+                to_l2cap_coc_reconfig_confirm(buffer)?,
+            )),
+            0x0814 => Ok(VendorEvent::L2CapCocDisconnect({
+                require_len!(buffer, 1);
+                buffer[0]
+            })),
+            0x0815 => Ok(VendorEvent::L2CapCocFlowControl(to_l2cap_coc_flow_control(
+                buffer,
+            )?)),
+            0x0816 => Ok(VendorEvent::L2CapCocRxData(to_l2cap_coc_rx_data(buffer)?)),
+            0x0817 => Ok(VendorEvent::L2CapCocTxPoolAvailable),
             0x0C01 => Ok(VendorEvent::GattAttributeModified(
                 to_gatt_attribute_modified(buffer)?,
             )),
@@ -673,11 +779,21 @@ impl VendorEvent {
             0x0C18 => Ok(VendorEvent::AttPrepareWritePermitRequest(
                 to_att_prepare_write_permit_request(buffer)?,
             )),
-            0x0C19 => todo!(),
-            0x0C1A => todo!(),
-            0x0C1D => todo!(),
-            0x0C1E => todo!(),
-            0x0C1F => todo!(),
+            0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(buffer)?)),
+            0x0C1A => Ok(VendorEvent::GattMultiNotification(
+                to_gatt_multi_notification(buffer)?,
+            )),
+            0x0C1B => Ok(VendorEvent::GattNotificationComplete({
+                require_len!(buffer, 2);
+                AttributeHandle(LittleEndian::read_u16(buffer))
+            })),
+            0x0C1D => Ok(VendorEvent::GattReadExt(to_gatt_read_ext(buffer)?)),
+            0x0C1E => Ok(VendorEvent::GattIndicationExt(to_attribute_value_ext(
+                buffer,
+            )?)),
+            0x0C1F => Ok(VendorEvent::GattNotificationExt(to_attribute_value_ext(
+                buffer,
+            )?)),
             _ => Err(crate::event::Error::Vendor(VendorError::UnknownEvent(
                 event_code,
             ))),
@@ -980,6 +1096,9 @@ impl GapDeviceFound {
 pub use crate::event::AdvertisementEvent as GapDeviceFoundEvent;
 
 use super::command::gap::EventFlags;
+use super::command::l2cap::{
+    L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocFlowControl, L2CapCocReconfigConfirm,
+};
 
 fn to_gap_device_found(buffer: &[u8]) -> Result<GapDeviceFound, crate::event::Error> {
     const RSSI_UNAVAILABLE: i8 = 127;
@@ -2029,13 +2148,15 @@ pub enum GattProcedureStatus {
 }
 
 impl TryFrom<u8> for GattProcedureStatus {
-    type Error = VendorError;
+    type Error = crate::event::Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x00 => Ok(GattProcedureStatus::Success),
             0x41 => Ok(GattProcedureStatus::Failed),
-            _ => Err(VendorError::BadGattProcedureStatus(value)),
+            _ => Err(crate::event::Error::Vendor(
+                VendorError::BadGattProcedureStatus(value),
+            )),
         }
     }
 }
@@ -2045,7 +2166,7 @@ fn to_gatt_procedure_complete(buffer: &[u8]) -> Result<GattProcedureComplete, cr
 
     Ok(GattProcedureComplete {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
-        status: buffer[4].try_into().map_err(crate::event::Error::Vendor)?,
+        status: buffer[4].try_into()?,
     })
 }
 
@@ -2658,4 +2779,267 @@ fn to_l2cap_command_reject(buffer: &[u8]) -> Result<L2CapCommandReject, crate::e
         reason: LittleEndian::read_u16(&buffer[3..]),
         data,
     })
+}
+
+fn to_l2cap_coc_connect(buffer: &[u8]) -> Result<L2CapCocConnect, crate::event::Error> {
+    require_len!(buffer, 10);
+
+    Ok(L2CapCocConnect {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        spsm: LittleEndian::read_u16(&buffer[2..]),
+        mtu: LittleEndian::read_u16(&buffer[4..]),
+        mps: LittleEndian::read_u16(&buffer[6..]),
+        initial_credits: LittleEndian::read_u16(&buffer[8..]),
+        channel_number: buffer[10],
+    })
+}
+
+fn to_l2cap_coc_connect_confirm(
+    buffer: &[u8],
+) -> Result<L2CapCocConnectConfirm, crate::event::Error> {
+    require_len!(buffer, 12);
+
+    // TODO: how does one determine the length of channel_index_list?
+    let mut channel_index_list = [0; 246];
+    let tmp = &buffer[7..];
+    channel_index_list[..tmp.len()].copy_from_slice(tmp);
+
+    Ok(L2CapCocConnectConfirm {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        mtu: LittleEndian::read_u16(&buffer[4..]),
+        mps: LittleEndian::read_u16(&buffer[6..]),
+        initial_credits: LittleEndian::read_u16(&buffer[8..]),
+        result: LittleEndian::read_u16(&buffer[10..]),
+        channel_number: buffer[12],
+        channel_index_list,
+    })
+}
+
+fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event::Error> {
+    require_len_at_least!(buffer, 8);
+
+    // TODO: how does one determine the length of channel_index_list?
+    let mut channel_index_list = [0; 246];
+    let tmp = &buffer[7..];
+    channel_index_list[..tmp.len()].copy_from_slice(tmp);
+
+    Ok(L2CapCocReconfig {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        mtu: LittleEndian::read_u16(&buffer[2..]),
+        mps: LittleEndian::read_u16(&buffer[4..]),
+        channel_number: buffer[6],
+        channel_index_list,
+    })
+}
+
+fn to_l2cap_coc_reconfig_confirm(
+    buffer: &[u8],
+) -> Result<L2CapCocReconfigConfirm, crate::event::Error> {
+    require_len_at_least!(buffer, 4);
+
+    Ok(L2CapCocReconfigConfirm {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        result: LittleEndian::read_u16(&buffer[2..]),
+    })
+}
+
+fn to_l2cap_coc_flow_control(buffer: &[u8]) -> Result<L2CapCocFlowControl, crate::event::Error> {
+    require_len!(buffer, 3);
+
+    Ok(L2CapCocFlowControl {
+        channel_index: buffer[0],
+        credits: LittleEndian::read_u16(&buffer[1..]),
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
+///
+/// See Bluetooth spec. v.5.4 [Vol 3, Part A].
+///
+/// # Note:
+/// For the first K-frame of the SDU, the information data contains the L2CAP SDU length coded in
+/// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
+/// information data only contains the K-frame information payload.
+pub struct L2CapCocRxData {
+    /// Index of the connection-oriented channel for which the primitive applie.
+    pub channel_index: u8,
+    /// Length of the data (in octets)
+    pub length: u16,
+    /// Information data
+    pub data: [u8; 250],
+}
+
+fn to_l2cap_coc_rx_data(buffer: &[u8]) -> Result<L2CapCocRxData, crate::event::Error> {
+    require_len_at_least!(buffer, 3);
+
+    let length = LittleEndian::read_u16(&buffer[1..]);
+    let mut data = [0; 250];
+    data[..length as usize].copy_from_slice(&buffer[3..]);
+
+    Ok(L2CapCocRxData {
+        channel_index: buffer[0],
+        length,
+        data,
+    })
+}
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event informs the application of a change in status of the Enhanced ATT
+/// bearer handled by the specified L2CAP channel
+pub struct GattEattBrearer {
+    /// Index of the connection-oriented channel for which the primitive applies.
+    pub channel_index: u8,
+    /// Enhanced ATT bearer state.
+    pub eab_state: EabState,
+    /// Status error code
+    pub status: GattProcedureStatus,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Enhanced ATT bearer state.
+pub enum EabState {
+    AttBearerCreated = 0x00,
+    AttBearerTerminated = 0x01,
+}
+
+impl TryFrom<u8> for EabState {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(EabState::AttBearerCreated),
+            0x01 => Ok(EabState::AttBearerTerminated),
+            err => Err(crate::event::Error::Vendor(VendorError::BadEabState(err))),
+        }
+    }
+}
+
+fn to_gatt_eatt_bearer(buffer: &[u8]) -> Result<GattEattBrearer, crate::event::Error> {
+    require_len!(buffer, 3);
+
+    Ok(GattEattBrearer {
+        channel_index: buffer[0],
+        eab_state: EabState::try_from(buffer[1])?,
+        status: GattProcedureStatus::try_from(buffer[2])?,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// This event is generated when a Multiple Handle Value Notification is received from the server.
+pub struct GattMultiNotification {
+    /// Specifies the ATT bearer for which the event
+    pub conn_handle: ConnectionHandle,
+    /// - Bits 14-0: offset in octets from which Attribute_Value data starts.
+    /// - Bit 15 is used as flag: when set to 1 it indicates what more data are to come
+    /// (fragmented event in case of long attribute data)
+    pub offset: u16,
+    /// Length of the data in bytes
+    pub data_len: u16,
+    /// List of "Handle Length Value" tuples as define in Bluetooth Core Specification
+    pub data: [u8; 247],
+}
+
+fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, crate::event::Error> {
+    require_len_at_least!(buffer, 6);
+
+    let data_len = LittleEndian::read_u16(&buffer[4..]);
+    let mut data = [0; 247];
+    data[..data_len as usize].copy_from_slice(&buffer[4..]);
+
+    Ok(GattMultiNotification {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        offset: LittleEndian::read_u16(&buffer[2..]),
+        data_len,
+        data,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [GATT Read Ext](VendorEvent::GattReadExt) event
+pub struct GattReadExt {
+    /// The connection handle related to the event.
+    pub conn_handle: ConnectionHandle,
+    /// - Bits 14-0: offset in octets from which Attribute_Value data
+    /// starts.
+    /// - Bit 15 is used as flag: when set to 1 it indicates that more
+    /// data are to come (fragmented event in case of long attribute data).
+    pub offset: u16,
+
+    // Number of valid bytes in value_buf
+    value_len: usize,
+    // Current value of the attribute. Only the first value_len bytes are valid.
+    value_buf: [u8; MAX_ATTRIBUTE_VALUE_LEN],
+}
+
+fn to_gatt_read_ext(buffer: &[u8]) -> Result<GattReadExt, crate::event::Error> {
+    require_len_at_least!(buffer, 6);
+
+    let value_len = LittleEndian::read_u16(&buffer[4..]) as usize;
+    require_len!(buffer, 6 + value_len);
+
+    let mut value_buf = [0; MAX_ATTRIBUTE_VALUE_LEN];
+    value_buf[..value_len].copy_from_slice(&buffer[6..]);
+
+    Ok(GattReadExt {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        offset: LittleEndian::read_u16(&buffer[2..]),
+        value_len,
+        value_buf,
+    })
+}
+
+impl GattReadExt {
+    pub fn value(&self) -> &[u8] {
+        &self.value_buf[..self.value_len]
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [GATT Indication Ext](VendorEvent::GattIndicationExt) or
+/// [GATT Notification Ext](VendorEvent::GattNotificationExt) event
+pub struct AttributeValueExt {
+    /// The connection handle related to the event.
+    pub conn_handle: ConnectionHandle,
+    /// The handle of the attribute
+    pub attribute_handle: AttributeHandle,
+    /// - Bits 14-0: offset in octets from which Attribute_Value data
+    /// starts.
+    /// - Bit 15 is used as flag: when set to 1 it indicates that more
+    /// data are to come (fragmented event in case of long attribute data).
+    pub offset: u16,
+
+    // Number of valid bytes in value_buf
+    value_len: usize,
+    // Current value of the attribute. Only the first value_len bytes are valid.
+    value_buf: [u8; MAX_ATTRIBUTE_VALUE_LEN],
+}
+
+fn to_attribute_value_ext(buffer: &[u8]) -> Result<AttributeValueExt, crate::event::Error> {
+    require_len_at_least!(buffer, 6);
+
+    let value_len = LittleEndian::read_u16(&buffer[6..]) as usize;
+    require_len!(buffer, 8 + value_len);
+
+    let mut value_buf = [0; MAX_ATTRIBUTE_VALUE_LEN];
+    value_buf[..value_len].copy_from_slice(&buffer[8..]);
+
+    Ok(AttributeValueExt {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
+        offset: LittleEndian::read_u16(&buffer[4..]),
+        value_len,
+        value_buf,
+    })
+}
+
+impl AttributeValueExt {
+    pub fn value(&self) -> &[u8] {
+        &self.value_buf[..self.value_len]
+    }
 }

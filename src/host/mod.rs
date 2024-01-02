@@ -8,6 +8,7 @@
 //! support sending the packet ID, as `uart` does. In that case, it would make sense to also remove
 //! `uart` and move its contents up one level.
 
+use crate::event::{NumberOfCompletedPackets, NUMBER_OF_COMPLETED_PACKETS_MAX_LEN};
 use crate::ConnectionHandle;
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::Into;
@@ -185,6 +186,81 @@ pub trait HostHci {
         conn_handle: ConnectionHandle,
         power_level_type: TxPowerLevel,
     );
+
+    /// This command is used by the Host to turn flow control on and off for data and/or voice
+    /// sent in the direction from the Controller to the Host.
+    ///
+    /// If the flow control is turned off, the Host should not send the
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command.
+    /// That command will be ignored by the Controller it is sent by the Host and flow control is
+    /// off.
+    ///
+    /// If flow control is turned on for HCI ACL Data Packets and off for HCI synchronous
+    /// Data Packets, [Number of Completed Packets](HostHci::number_of_completed_packets)
+    /// commands sent by the Host should only contain [Connection Handles](ConnectionHandle)
+    /// for ACL connections.
+    ///
+    /// If flow control is turned off for HCI ACL Data Packets and on for HCI synchronous Data Packets,
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) commands sent
+    /// by the Host should only contain [Connection Handles](ConnectionHandle) for synchronous connections.
+    ///
+    /// If flow control is turned on for HCI ACL Data Packets and HCI synchronous Data Packets,
+    /// the Host will send [Number of Completed Packets](HostHci::number_of_completed_packets)
+    /// commands both for ACL connections and synchronous connections.
+    /// The [Flow Control](FlowControl) parameter shall only be changed if no connections exist.
+    async fn set_controller_to_host_flow_control(&mut self, flow_control: FlowControl);
+
+    /// This command is used by the Host to notify the Controller about the Maximum size of the data portion
+    /// of HCI ACL and Synchronous Sata Packets sent from the controller to the Host.
+    ///
+    /// The Controller shal segment the data to be transmitted from the Controller to the Host according
+    /// to these sizes, so that the HCI Data Packets will contain data with up to these sizes.
+    ///
+    /// This command also notifies the Controller about the total number of HCI ACL and Synchronous Data Packets
+    /// that can be storede in the data buffers of the Host.
+    ///
+    /// If flow control from the Controller to the Host is turned off, and this command has not been issued
+    /// by the Host, this means the controller will send HCI Data Packets to the Host with any lengths the
+    /// Controlller wants to use, and it is assumed that the data buffer sizes of the Host are unlimited.
+    ///
+    /// If flow control from the Controller to the Host is turned on, this command shall after a power-on
+    /// or a reset always be sent by the Host before the first
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command is sent.
+    ///
+    /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) commad
+    /// is used to turn flow control on or off.
+    async fn host_buffer_size(&mut self, params: HostBufferSize);
+
+    /// This command is used by the Host to indicate to the Controller the number of HCI Data Packets
+    /// that have been completed for each [Connection Handle](ConnectionHandle) since the previous
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command was sent to
+    /// the Controller. This means that the corresponding buffer space has been freed in the Host.
+    ///
+    ///  Based on this information, and the
+    /// [Total Number of ACL Data Packets](HostBufferSize::total_acl_data_packets) and
+    /// [Total Number of Synchronous Data Packets](HostBufferSize::total_sync_data_packets)
+    /// parameters of the [Host Buffer Size](HostHci::host_buffer_size) command, the Controller can
+    /// determine for which [Connection Handles](ConnectionHandle) the following HCI Data Packets
+    /// should be sent to the Host.
+    ///
+    /// The command should only be issued  by the Host if flow control in the direction from the Controller
+    /// to the host is on and there is at least one connection, or if the Controller  is in local loopback
+    /// mode. Otherwise, the command will will be ignored by the Controller.
+    ///
+    /// When the Host has completed one or more HCI Data Packet(s) it shall send a
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command to the Controller,
+    /// unitl it finally reports that all pending HCI Data Packets have been completed. The frequency
+    /// at which this command is sent.
+    ///
+    /// # Note:
+    /// This command is a special command in the sense that no event is normally generated after the
+    /// command has completed. The command may be sent at any time by the Host when there is at leat
+    /// one connection, or if the Controller  is in local loopback mode independent of other commands.
+    /// The normal flow control for commands is not used for the
+    /// [Number of Complete Packets](HostHci::number_of_completed_packets) command.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 4, Part E, 7.3.40].
+    async fn number_of_completed_packets(&mut self, params: NumberOfCompletedPackets);
 
     /// This command reads the values for the version information for the local Controller.
     ///
@@ -1154,6 +1230,29 @@ where
             .await;
     }
 
+    async fn set_controller_to_host_flow_control(&mut self, flow_control: FlowControl) {
+        self.controller_write(
+            crate::opcode::SET_CONTROLLER_TO_HOST_FLOW_CONTROL,
+            &[flow_control as u8],
+        )
+        .await;
+    }
+
+    async fn host_buffer_size(&mut self, params: HostBufferSize) {
+        let mut bytes = [0; 6];
+        params.copy_into_slice(&mut bytes);
+        self.controller_write(crate::opcode::HOST_BUFFER_SIZE, &bytes)
+            .await;
+    }
+
+    async fn number_of_completed_packets(&mut self, params: NumberOfCompletedPackets) {
+        let mut bytes = [0; NUMBER_OF_COMPLETED_PACKETS_MAX_LEN + 1];
+        bytes[0] = params.num_handles as u8;
+        bytes[1..].copy_from_slice(&params.data_buf);
+        self.controller_write(crate::opcode::NUMBER_OF_COMPLETED_PACKETS, &bytes)
+            .await;
+    }
+
     async fn read_local_version_information(&mut self) {
         self.controller_write(crate::opcode::READ_LOCAL_VERSION_INFO, &[])
             .await;
@@ -1655,6 +1754,78 @@ pub enum TxPowerLevel {
     Current = 0x00,
     /// Read Maximum Transmit Power Level.
     Maximum = 0x01,
+}
+
+/// For the [set_controller_to_host_flow_control](HostHci::set_controller_to_host_flow_control) command, the
+/// allowed values for flow control.
+///
+/// See Bluetooth spec. v.5.4 [Vol 4, Part E, 7.3.38].
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FlowControl {
+    /// Flow control off in direction from controller to host. `default`
+    #[default]
+    Off = 0x00,
+    /// Flow control on for HCI ACL Data Packets and off for HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    HciAclDataOnly = 0x01,
+    /// Flow control off for HCI ACL Data Packets and on for HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    HciSyncDataOnly = 0x02,
+    /// control on both for HCI ACL Data Packets and HCI synchronous.
+    /// Data Packets in direction from Controller to Host.
+    Both = 0x03,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Parameters for the [host_buffer_size](HostHci::host_buffer_size) commad
+///
+/// # Note:
+/// The [Host ACL Data Packet Length](HostBufferSize::acl_data_packet_length) and
+/// [Host Synchronous Data Packet Length](HostBufferSize::sync_data_packet_length) command parameters
+/// do not include the length of the HCI Data Packet header.
+///
+/// See Bluetooth spec. v.5.4 [Vol 4, Part E, 7.3.39].
+pub struct HostBufferSize {
+    /// Maximum length (in octets) of the data portion of each HCI ACL Data Packet that the host is able
+    /// to accept.
+    ///
+    /// this parameter will be used to determine the size of the L2CAP segments contained in the ACL Data
+    /// Packets, which are transferred from the Controller to the Host.
+    ///
+    /// Values:
+    /// - 251 .. 65535
+    pub acl_data_packet_length: u16,
+    /// Maximum length (in octets) of the data portion of each HCI Synchronous Data Packet that the Host
+    /// is able to accept. `NOT USED`
+    ///
+    /// This parameter is used to determine the maximum size of HCI Synchronous Data Packets. Both the Host
+    /// and the Controller shall support command and event packets, zhere the data portion (excluding header)
+    /// contained in the packet is 255 octets is size.
+    pub sync_data_packet_length: u8,
+    /// The total number of HCI ACL Data Packets that can be stored in the data buffers of the Host.
+    ///
+    /// This parameter contains the total number of HCI ACL Data Packets that can be stored in the data buffers
+    /// of the Host. The Controller will determine how the buffers are to be divided between different
+    /// [Connection Handles](ConnectionHandle).
+    pub total_acl_data_packets: u16,
+    /// Total number of HCI Synchronous Data Packets that can be stored in the data buffers of the Host. `NOT USED`
+    ///
+    /// This parameter gives the save information for HCI Synchronous Data Packets.
+    pub total_sync_data_packets: u16,
+}
+
+impl HostBufferSize {
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert_eq!(bytes.len(), 6);
+
+        LittleEndian::write_u16(&mut bytes[0..], self.acl_data_packet_length);
+        bytes[2] = self.sync_data_packet_length;
+        LittleEndian::write_u16(&mut bytes[3..], self.total_acl_data_packets);
+        LittleEndian::write_u16(&mut bytes[5..], self.total_sync_data_packets);
+    }
 }
 
 #[cfg(not(feature = "defmt"))]
