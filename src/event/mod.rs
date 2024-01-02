@@ -596,15 +596,15 @@ fn to_hardware_error(payload: &[u8]) -> Result<HardwareError, Error> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NumberOfCompletedPackets {
     /// Number of connection handles whose data is sent in this event.
-    num_handles: usize,
+    pub(crate) num_handles: usize,
 
     /// Data buffer for the event.
-    data_buf: [u8; NUMBER_OF_COMPLETED_PACKETS_MAX_LEN],
+    pub(crate) data_buf: [u8; NUMBER_OF_COMPLETED_PACKETS_MAX_LEN],
 }
 
 // The maximum number of bytes in the buffer is the max HCI packet size (255) less the other data in
 // the packet.
-const NUMBER_OF_COMPLETED_PACKETS_MAX_LEN: usize = 254;
+pub(crate) const NUMBER_OF_COMPLETED_PACKETS_MAX_LEN: usize = 254;
 
 impl Debug for NumberOfCompletedPackets {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
@@ -617,6 +617,28 @@ impl Debug for NumberOfCompletedPackets {
 }
 
 impl NumberOfCompletedPackets {
+    pub fn new(items: impl Iterator<Item = NumberOfCompletedPacketsPair>) -> Self {
+        let mut data_buf = [0; NUMBER_OF_COMPLETED_PACKETS_MAX_LEN];
+
+        // let num_handles = &items.count();
+        let mut index = 0;
+        let mut num_handles = 0;
+        for item in items {
+            LittleEndian::write_u16(&mut data_buf[index..], item.conn_handle.0);
+            LittleEndian::write_u16(
+                &mut data_buf[index + 2..],
+                item.num_completed_packets as u16,
+            );
+            index += 4;
+            num_handles += 1;
+        }
+
+        Self {
+            num_handles,
+            data_buf,
+        }
+    }
+
     /// Returns an iterator over the connection handle-number of completed packet pairs.
     pub fn iter(&self) -> NumberOfCompletedPacketsIterator {
         NumberOfCompletedPacketsIterator {

@@ -8,6 +8,7 @@
 //! support sending the packet ID, as `uart` does. In that case, it would make sense to also remove
 //! `uart` and move its contents up one level.
 
+use crate::event::{NumberOfCompletedPackets, NUMBER_OF_COMPLETED_PACKETS_MAX_LEN};
 use crate::ConnectionHandle;
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::Into;
@@ -229,6 +230,37 @@ pub trait HostHci {
     /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) commad
     /// is used to turn flow control on or off.
     async fn host_buffer_size(&mut self, params: HostBufferSize);
+
+    /// This command is used by the Host to indicate to the Controller the number of HCI Data Packets
+    /// that have been completed for each [Connection Handle](ConnectionHandle) since the previous
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command was sent to
+    /// the Controller. This means that the corresponding buffer space has been freed in the Host.
+    ///
+    ///  Based on this information, and the
+    /// [Total Number of ACL Data Packets](HostBufferSize::total_acl_data_packets) and
+    /// [Total Number of Synchronous Data Packets](HostBufferSize::total_sync_data_packets)
+    /// parameters of the [Host Buffer Size](HostHci::host_buffer_size) command, the Controller can
+    /// determine for which [Connection Handles](ConnectionHandle) the following HCI Data Packets
+    /// should be sent to the Host.
+    ///
+    /// The command should only be issued  by the Host if flow control in the direction from the Controller
+    /// to the host is on and there is at least one connection, or if the Controller  is in local loopback
+    /// mode. Otherwise, the command will will be ignored by the Controller.
+    ///
+    /// When the Host has completed one or more HCI Data Packet(s) it shall send a
+    /// [Number of Completed Packets](HostHci::number_of_completed_packets) command to the Controller,
+    /// unitl it finally reports that all pending HCI Data Packets have been completed. The frequency
+    /// at which this command is sent.
+    ///
+    /// # Note:
+    /// This command is a special command in the sense that no event is normally generated after the
+    /// command has completed. The command may be sent at any time by the Host when there is at leat
+    /// one connection, or if the Controller  is in local loopback mode independent of other commands.
+    /// The normal flow control for commands is not used for the
+    /// [Number of Complete Packets](HostHci::number_of_completed_packets) command.
+    ///
+    /// See Bluetooth spec. v.5.4 [Vol 4, Part E, 7.3.40].
+    async fn number_of_completed_packets(&mut self, params: NumberOfCompletedPackets);
 
     /// This command reads the values for the version information for the local Controller.
     ///
@@ -1210,6 +1242,14 @@ where
         let mut bytes = [0; 6];
         params.copy_into_slice(&mut bytes);
         self.controller_write(crate::opcode::HOST_BUFFER_SIZE, &bytes)
+            .await;
+    }
+
+    async fn number_of_completed_packets(&mut self, params: NumberOfCompletedPackets) {
+        let mut bytes = [0; NUMBER_OF_COMPLETED_PACKETS_MAX_LEN + 1];
+        bytes[0] = params.num_handles as u8;
+        bytes[1..].copy_from_slice(&params.data_buf);
+        self.controller_write(crate::opcode::NUMBER_OF_COMPLETED_PACKETS, &bytes)
             .await;
     }
 
