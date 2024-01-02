@@ -483,6 +483,10 @@ pub enum VendorError {
     /// recognized. Includes the unrecognized byte.
     BadGapPairingStatus(u8),
 
+    /// For the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event: The error reason
+    /// was not recognized. Includes the unrecognized byte.
+    BadGapPairingErrorReason(u8),
+
     /// For the [GAP Device Found](VendorEvent::GapDeviceFound) event: the type of event was not
     /// recognized. Includes the unrecognized byte.
     BadGapDeviceFoundEvent(u8),
@@ -1024,6 +1028,9 @@ pub struct GapPairingComplete {
 
     /// Reason the pairing is complete.
     pub status: GapPairingStatus,
+
+    /// Pairing failed reason code (valid in case of pairing failed status)
+    pub reason: GapPairingReason,
 }
 
 /// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event was generated.
@@ -1052,11 +1059,54 @@ impl TryFrom<u8> for GapPairingStatus {
     }
 }
 
+/// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event failed.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GapPairingReason {
+    PasskeyEntryFailed = 0x01,
+    OobNotAvailable = 0x02,
+    AuthRequirements = 0x03,
+    ConfirmValueFailed = 0x04,
+    PairingNotSupported = 0x05,
+    EncryptionKeySize = 0x06,
+    CommandNotSupported = 0x07,
+    Unspecified = 0x08,
+    RepeatedAttemptes = 0x09,
+    InvalidParams = 0x0A,
+    DHKeyCheckFailed = 0x0B,
+    NumericComparisonFailed = 0x0C,
+    KeyRejected = 0x0F,
+}
+
+impl TryFrom<u8> for GapPairingReason {
+    type Error = VendorError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(GapPairingReason::PasskeyEntryFailed),
+            0x02 => Ok(GapPairingReason::OobNotAvailable),
+            0x03 => Ok(GapPairingReason::AuthRequirements),
+            0x04 => Ok(GapPairingReason::ConfirmValueFailed),
+            0x05 => Ok(GapPairingReason::PairingNotSupported),
+            0x06 => Ok(GapPairingReason::EncryptionKeySize),
+            0x07 => Ok(GapPairingReason::CommandNotSupported),
+            0x08 => Ok(GapPairingReason::Unspecified),
+            0x09 => Ok(GapPairingReason::RepeatedAttemptes),
+            0x0A => Ok(GapPairingReason::InvalidParams),
+            0x0B => Ok(GapPairingReason::DHKeyCheckFailed),
+            0x0C => Ok(GapPairingReason::NumericComparisonFailed),
+            0x0F => Ok(GapPairingReason::KeyRejected),
+            _ => Err(VendorError::BadGapPairingErrorReason(value)),
+        }
+    }
+}
+
 fn to_gap_pairing_complete(buffer: &[u8]) -> Result<GapPairingComplete, crate::event::Error> {
     require_len!(buffer, 6);
     Ok(GapPairingComplete {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
         status: buffer[4].try_into().map_err(crate::event::Error::Vendor)?,
+        reason: buffer[5].try_into().map_err(crate::event::Error::Vendor)?,
     })
 }
 
