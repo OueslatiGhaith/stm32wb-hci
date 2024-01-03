@@ -486,6 +486,14 @@ impl core::convert::From<Status> for u8 {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionHandle(pub u16);
 
+/// Newtype for an advertising handle.
+///
+/// Values:
+/// - 0x00 .. 0xEF
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AdvertisingHandle(pub u8);
+
 /// Newtype for BDADDR.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
