@@ -44,6 +44,17 @@ macro_rules! impl_variable_length_params {
             self.controller_write($opcode, &bytes).await
         }
     };
+    ($method:ident<$($genlife:lifetime),*>, $param_type:ident<$($lifetime:lifetime),*>, $opcode:path) => {
+        async fn $method<$($genlife),*>(
+            &mut self,
+            params: &$param_type<$($lifetime),*>
+        ) {
+            let mut bytes = [0; $param_type::MAX_LENGTH];
+            params.copy_into_slice(&mut bytes);
+
+            self.controller_write($opcode, &bytes).await;
+        }
+    };
 }
 
 macro_rules! impl_validate_variable_length_params {

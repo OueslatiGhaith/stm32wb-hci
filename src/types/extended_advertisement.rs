@@ -2,6 +2,8 @@ use core::time::Duration;
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use crate::AdvertisingHandle;
+
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     /// Extended advertising modes
@@ -150,4 +152,32 @@ pub enum AdvertisingPhy {
     Le1M = 0x01,
     /// Advertisement PHY is LE 2M
     Le2M = 0x02,
+}
+
+/// Advertising set
+pub struct AdvSet {
+    /// Used to identify an advertising set
+    pub handle: AdvertisingHandle,
+    /// Duration of advertising set.
+    ///
+    /// Values:
+    /// - 0x0000 (0 ms) : No advertising duration.
+    /// - 0x0001 (10 ms)  ... 0xFFFF (655350 ms) : Advertising duration
+    pub duration: u16,
+    /// Maximum number of advertising events.
+    ///
+    /// Values:
+    /// - 0x00: No maximum number of advertising events
+    /// - 0x01 .. 0xFF: Maximum number of extended advertising events the
+    /// Controller shall attempt to send prior to terminating the extended
+    /// advertising
+    pub max_extended_adv_events: u8,
+}
+
+impl AdvSet {
+    pub(crate) fn copy_into_slice(&self, bytes: &mut [u8]) {
+        bytes[0] = self.handle.0;
+        LittleEndian::write_u16(&mut bytes[1..], self.duration);
+        bytes[3] = self.max_extended_adv_events;
+    }
 }

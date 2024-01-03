@@ -4,7 +4,7 @@ extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
 use crate::types::extended_advertisement::{
-    AdvertisingEvent, AdvertisingPhy, ExtendedAdvertisingInterval,
+    AdvSet, AdvertisingEvent, AdvertisingPhy, ExtendedAdvertisingInterval,
 };
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
 use crate::{
@@ -806,6 +806,10 @@ pub trait GapCommands {
     // TODO: add adv_set_advertising_data
     // TODO: add adv_set_enable
     async fn adv_set_config(&mut self, params: &AdvSetConfig);
+
+    /// This command is used to request the Controller to enable or disbale one
+    /// or more extended advertising sets.
+    async fn adv_set_enable<'a>(&mut self, params: &AdvSetEnable<'a>);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1224,6 +1228,12 @@ impl<T: Controller> GapCommands for T {
         adv_set_config,
         AdvSetConfig,
         crate::vendor::opcode::GAP_ADV_SET_CONFIGURATION
+    );
+
+    impl_variable_length_params!(
+        adv_set_enable<'a>,
+        AdvSetEnable<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_ENABLE
     );
 }
 
@@ -2470,5 +2480,33 @@ impl AdvSetConfig {
         bytes[23] = self.secondary_adv_max_skip;
         bytes[24] = self.adv_sid;
         bytes[25] = self.scan_req_notification_enable as u8;
+    }
+}
+
+/// Params for the [adv_set_enable](GapCommands::adv_set_enable) command
+pub struct AdvSetEnable<'a> {
+    /// Enable/Disable advertising
+    pub enable: bool,
+    /// Number of advertising sets.
+    ///
+    /// Values
+    /// - 0x00: disable all advertising sets
+    /// - 0x01 .. 0x3F: Number of advertising sets to enable or disable
+    pub num_sets: u8,
+    /// Advertising sets
+    pub adv_set: &'a [AdvSet],
+}
+
+impl<'a> AdvSetEnable<'a> {
+    const MAX_LENGTH: usize = 254;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        bytes[0] = self.enable as u8;
+        bytes[1] = self.num_sets;
+        for (idx, set) in self.adv_set.iter().enumerate() {
+            set.copy_into_slice(&mut bytes[2 + (idx * 4)..]);
+        }
     }
 }
