@@ -817,7 +817,11 @@ pub trait GattCommands {
         attribute: AttributeHandle,
         permissions: AccessPermission,
     );
-    // TODO: store_db
+
+    /// This command forces the saving of the GATT database for all active connections. Note that,
+    /// by default, the GATT database is saved per active connection at the time of disconnecting.
+    async fn store_database(&mut self);
+
     // TODO: send_mult_notification
     // TODO: read_multiple_car_char_value
 }
@@ -1228,6 +1232,11 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut payload[2..], attribute.0);
         payload[4] = permissions.bits();
         self.controller_write(crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION, &payload)
+            .await;
+    }
+
+    async fn store_database(&mut self) {
+        self.controller_write(crate::vendor::opcode::GATT_STORE_DB, &[])
             .await;
     }
 }
