@@ -815,6 +815,9 @@ pub trait GapCommands {
     /// This command is used to provide scan response data used during extended
     /// advertising
     async fn adv_set_scan_response_data(&mut self, params: &AdvSetAdvertisingData);
+
+    /// This command is used to remove an advertising set from the Controller.
+    async fn adv_remove_set(&mut self, handle: AdvertisingHandle);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1252,6 +1255,11 @@ impl<T: Controller> GapCommands for T {
         AdvSetAdvertisingData<'a>,
         crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA
     );
+
+    async fn adv_remove_set(&mut self, handle: AdvertisingHandle) {
+        self.controller_write(crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0])
+            .await;
+    }
 }
 
 /// Potential errors from parameter validation.
