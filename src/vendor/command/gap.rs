@@ -818,6 +818,10 @@ pub trait GapCommands {
 
     /// This command is used to remove an advertising set from the Controller.
     async fn adv_remove_set(&mut self, handle: AdvertisingHandle);
+
+    /// This command is used to remove all exisiting advertising sets from
+    /// the Controller.
+    async fn adv_clear_sets(&mut self);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1258,6 +1262,11 @@ impl<T: Controller> GapCommands for T {
 
     async fn adv_remove_set(&mut self, handle: AdvertisingHandle) {
         self.controller_write(crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0])
+            .await;
+    }
+
+    async fn adv_clear_sets(&mut self) {
+        self.controller_write(crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[])
             .await;
     }
 }
