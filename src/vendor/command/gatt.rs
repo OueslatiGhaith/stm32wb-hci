@@ -809,7 +809,14 @@ pub trait GattCommands {
     /// [ATT Read Multiple Permit Request](crate::vendor::event::VendorEvent::AttReadMultiplePermitRequest)
     /// events; otherwise the GATT procedure issues a timeout
     async fn deny_read(&mut self, handle: ConnectionHandle, err: u8);
-    // TODO: set_access_permission
+
+    /// This command sets the access permission for the attribute handle specified.
+    async fn set_access_permission(
+        &mut self,
+        service: AttributeHandle,
+        attribute: AttributeHandle,
+        permissions: AccessPermission,
+    );
     // TODO: store_db
     // TODO: send_mult_notification
     // TODO: read_multiple_car_char_value
@@ -1207,6 +1214,20 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut payload[0..], handle.0);
         payload[2] = err;
         self.controller_write(crate::vendor::opcode::GATT_DENY_READ, &payload)
+            .await;
+    }
+
+    async fn set_access_permission(
+        &mut self,
+        service: AttributeHandle,
+        attribute: AttributeHandle,
+        permissions: AccessPermission,
+    ) {
+        let mut payload = [0; 5];
+        LittleEndian::write_u16(&mut payload[0..], service.0);
+        LittleEndian::write_u16(&mut payload[2..], attribute.0);
+        payload[4] = permissions.bits();
+        self.controller_write(crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION, &payload)
             .await;
     }
 }
@@ -1750,12 +1771,14 @@ bitflags::bitflags! {
     pub struct AccessPermission: u8 {
         /// Readable
         const READ = 0x01;
-
         /// Writable
         const WRITE = 0x02;
-
         /// Readable and writeable
         const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
+        /// Writeable without response
+        const WRITE_NO_RESP = 0x04;
+        /// Signed writeable
+        const SIGNED_WRITE = 0x08;
     }
 }
 
@@ -1765,12 +1788,14 @@ defmt::bitflags! {
     pub struct AccessPermission: u8 {
         /// Readable
         const READ = 0x01;
-
         /// Writable
         const WRITE = 0x02;
-
         /// Readable and writeable
         const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
+        /// Writeable without responseconst
+        WRITE_NO_RESP = 0x04;
+        /// Signed writeable
+        const SIGNED_WRITE = 0x08;
     }
 }
 
