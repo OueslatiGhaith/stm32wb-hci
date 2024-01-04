@@ -831,7 +831,20 @@ pub trait GattCommands {
         handles: &[AttributeHandle],
     );
 
-    // TODO: read_multiple_car_char_value
+    /// Starts a procedure to read multiple variable length characteristic values from a server;
+    ///
+    /// This command must specify the handles of the characteristic values to be read.
+    ///
+    /// When the procedure is completed, a
+    /// [GATT ProcedureComplete](crate::vendor::event::VendorEvent::GattProcedureComplete) event
+    /// is generated, Before procedure completion, the response packets are given through
+    /// [ATT Read Multiple Response](crate::vendor::event::VendorEvent::AttReadMultipleResponse)
+    /// event.
+    async fn read_multiple_variable_characteristic_value(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    );
 }
 
 impl<T: Controller> GattCommands for T {
@@ -1259,8 +1272,30 @@ impl<T: Controller> GattCommands for T {
         for (idx, handle) in handles.iter().enumerate() {
             LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
         }
-        self.controller_write(crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION, &payload)
-            .await;
+        self.controller_write(
+            crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION,
+            &payload[..2 + (handles.len() * 2)],
+        )
+        .await;
+    }
+
+    async fn read_multiple_variable_characteristic_value(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    ) {
+        let mut payload = [0; 255];
+        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
+        payload[1] = handles.len() as u8;
+        for (idx, handle) in handles.iter().enumerate() {
+            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
+        }
+
+        self.controller_write(
+            crate::vendor::opcode::GATT_READ_MULTIPLE_VAR_CHAR_VALUE,
+            &payload[..2 + (handles.len() * 2)],
+        )
+        .await;
     }
 }
 
