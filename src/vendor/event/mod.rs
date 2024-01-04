@@ -21,6 +21,7 @@ pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+// TODO: add missing events
 pub enum VendorEvent {
     /// When the radio coprocessor firmware is started normally, it gives this event to the user to
     /// indicate the system has started.

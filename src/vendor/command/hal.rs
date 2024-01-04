@@ -127,6 +127,14 @@ pub trait HalCommands {
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
     async fn get_link_status(&mut self);
 
+    /// This command sets the bitmask associated to
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    ///
+    /// Only the radio activities enabled in the mask will be reported to the application by the
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    // TODO: add EndOfRadioActivity event
+    async fn set_radio_activity_mask(&mut self, mask: RadioActivityMask);
+
     /// This command is intended to retrieve information about the current Anchor Interval and
     /// allocable timing slots.
     ///
@@ -138,6 +146,16 @@ pub trait HalCommands {
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
     async fn get_anchor_period(&mut self);
+
+    // TODO: set_event_mask
+    // TODO: get_pm_debug_info
+    // TODO: set_peripheral_latency
+    // TODO: read_rssi
+    // TODO: read_radio_reg
+    // TODO: read_raw_rssi
+    // TODO: rx_start
+    // TODO: rx_stop
+    // TODO: stack_reset
 }
 
 impl<T: Controller> HalCommands for T {
@@ -200,6 +218,13 @@ impl<T: Controller> HalCommands for T {
     async fn get_anchor_period(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD, &[])
             .await
+    }
+
+    async fn set_radio_activity_mask(&mut self, mask: RadioActivityMask) {
+        let mut payload = [0; 2];
+        LittleEndian::write_u16(&mut payload, mask.bits());
+        self.controller_write(crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK, &payload)
+            .await;
     }
 }
 
@@ -668,4 +693,45 @@ pub enum PowerLevel {
 
     /// 6 dBm.
     Plus6dBm = 0x1F,
+}
+
+#[cfg(not(feature = "defmt"))]
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    pub struct RadioActivityMask: u16 {
+        /// Idle
+        const IDLE = 0x0001;
+        /// Advertising
+        const ADVERTISING = 0x0002;
+        /// Peripheral connection
+        const PERIPHERAL_CONN = 0x0004;
+        /// Scanning
+        const SCANNING = 0x0008;
+        /// Central connection
+        const CENTRAL_CONN = 0x0020;
+        /// Tx test mode
+        const TX_TEST = 0x0040;
+        /// Rx test mode
+        const RX_TEST = 0x0080;
+    }
+}
+
+#[cfg(feature = "defmt")]
+defmt::bitflags! {
+    pub struct RadioActivityMask: u16 {
+        /// Idle
+        const IDLE = 0x0001;
+        /// Advertising
+        const ADVERTISING = 0x0002;
+        /// Peripheral connection
+        const PERIPHERAL_CONN = 0x0004;
+        /// Scanning
+        const SCANNING = 0x0008;
+        /// Central connection
+        const CENTRAL_CONN = 0x0020;
+        /// Tx test mode
+        const TX_TEST = 0x0040;
+        /// Rx test mode
+        const RX_TEST = 0x0080;
+    }
 }
