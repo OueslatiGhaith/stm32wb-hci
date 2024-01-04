@@ -822,7 +822,15 @@ pub trait GattCommands {
     /// by default, the GATT database is saved per active connection at the time of disconnecting.
     async fn store_database(&mut self);
 
-    // TODO: send_mult_notification
+    /// This commad sends a Multiple Handle Value Notification over the ATT bearer specified in
+    /// parameter. The handles provided as parameters must be the handles of the characteristic
+    /// declarations.
+    async fn send_multiple_notification(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    );
+
     // TODO: read_multiple_car_char_value
 }
 
@@ -1237,6 +1245,21 @@ impl<T: Controller> GattCommands for T {
 
     async fn store_database(&mut self) {
         self.controller_write(crate::vendor::opcode::GATT_STORE_DB, &[])
+            .await;
+    }
+
+    async fn send_multiple_notification(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    ) {
+        let mut payload = [0; 255];
+        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
+        payload[1] = handles.len() as u8;
+        for (idx, handle) in handles.iter().enumerate() {
+            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
+        }
+        self.controller_write(crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION, &payload)
             .await;
     }
 }

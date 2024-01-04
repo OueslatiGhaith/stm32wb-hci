@@ -143,6 +143,7 @@ vendor_opcodes! {
         pub const GATT_DENY_READ = 0x2D;
         pub const GATT_SET_ACCESS_PERMISSION = 0x2E;
         pub const GATT_STORE_DB = 0x30;
+        pub const GATT_SEND_MULT_NOTIFICATION = 0x31;
     }
     L2Cap = 0x3;
     {
