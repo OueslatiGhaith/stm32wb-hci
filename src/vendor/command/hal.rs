@@ -133,7 +133,7 @@ pub trait HalCommands {
     /// Only the radio activities enabled in the mask will be reported to the application by the
     /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
     // TODO: add EndOfRadioActivity event
-    async fn set_radio_activity_mask(&mut self, mask: RadioActivityMask);
+    async fn set_radio_activity_mask(&mut self, mask: RadioActivityFlags);
 
     /// This command is intended to retrieve information about the current Anchor Interval and
     /// allocable timing slots.
@@ -147,7 +147,12 @@ pub trait HalCommands {
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
     async fn get_anchor_period(&mut self);
 
-    // TODO: set_event_mask
+    /// This command is used to enable/disable the generation of HAL events.
+    ///
+    /// If the bit in the [HAL Event Mask](HalEventFlags) is set to one, then the event associated with
+    /// that will be enabled.
+    async fn set_event_mask(&mut self, mask: HalEventFlags);
+
     // TODO: get_pm_debug_info
     // TODO: set_peripheral_latency
     // TODO: read_rssi
@@ -220,10 +225,17 @@ impl<T: Controller> HalCommands for T {
             .await
     }
 
-    async fn set_radio_activity_mask(&mut self, mask: RadioActivityMask) {
+    async fn set_radio_activity_mask(&mut self, mask: RadioActivityFlags) {
         let mut payload = [0; 2];
         LittleEndian::write_u16(&mut payload, mask.bits());
         self.controller_write(crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK, &payload)
+            .await;
+    }
+
+    async fn set_event_mask(&mut self, mask: HalEventFlags) {
+        let mut payload = [0; 4];
+        LittleEndian::write_u32(&mut payload, mask.bits());
+        self.controller_write(crate::vendor::opcode::HAL_SET_EVENT_MASK, &payload)
             .await;
     }
 }
@@ -698,7 +710,7 @@ pub enum PowerLevel {
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy)]
-    pub struct RadioActivityMask: u16 {
+    pub struct RadioActivityFlags: u16 {
         /// Idle
         const IDLE = 0x0001;
         /// Advertising
@@ -718,7 +730,7 @@ bitflags::bitflags! {
 
 #[cfg(feature = "defmt")]
 defmt::bitflags! {
-    pub struct RadioActivityMask: u16 {
+    pub struct RadioActivityFlags: u16 {
         /// Idle
         const IDLE = 0x0001;
         /// Advertising
@@ -733,5 +745,24 @@ defmt::bitflags! {
         const TX_TEST = 0x0040;
         /// Rx test mode
         const RX_TEST = 0x0080;
+    }
+}
+
+#[cfg(not(feature = "defmt"))]
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    pub struct HalEventFlags: u32 {
+        /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
+        // TODO: add HalScanReqReport event
+        const SCAN_REQ_REPORT = 0x00000001;
+    }
+}
+
+#[cfg(feature = "defmt")]
+defmt::bitflags! {
+    pub struct HalEventFlags: u32 {
+        /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
+        // TODO: add HalScanReqReport event
+        const SCAN_REQ_REPORT = 0x00000001;
     }
 }
