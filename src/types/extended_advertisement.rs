@@ -147,6 +147,8 @@ pub enum ExtendedAdvertisingIntervalError {
 }
 
 /// Advertising PHY
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisingPhy {
     /// Advertisement PHY is LE 1M
     Le1M = 0x01,
@@ -180,4 +182,20 @@ impl AdvSet {
         LittleEndian::write_u16(&mut bytes[1..], self.duration);
         bytes[3] = self.max_extended_adv_events;
     }
+}
+
+/// Advertising Operation
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AdvertisingOperation {
+    /// Intermediate fragment of fragmented extended advertising data
+    IntermediateFragment = 0x00,
+    /// First fragment of fragmented extended advertising data
+    FirstFragment = 0x01,
+    /// Last fragment of fragmented extended advertising data
+    LastFragment = 0x02,
+    /// Complete extended advertising data
+    CompleteData = 0x03,
+    /// Unchanged data (just update the advertising DID)
+    UnchangedData = 0x04,
 }

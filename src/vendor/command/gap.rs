@@ -4,7 +4,7 @@ extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
 use crate::types::extended_advertisement::{
-    AdvSet, AdvertisingEvent, AdvertisingPhy, ExtendedAdvertisingInterval,
+    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
 };
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
 use crate::{
@@ -804,12 +804,15 @@ pub trait GapCommands {
     /// legacy advertising.
     // TODO: add adv_set_scan_response_data
     // TODO: add adv_set_advertising_data
-    // TODO: add adv_set_enable
     async fn adv_set_config(&mut self, params: &AdvSetConfig);
 
     /// This command is used to request the Controller to enable or disbale one
     /// or more extended advertising sets.
     async fn adv_set_enable<'a>(&mut self, params: &AdvSetEnable<'a>);
+
+    /// This command is used to set the data used in extended advertising PDUs
+    /// that have a data field
+    async fn adv_set_advertising_data(&mut self, params: &AdvSetAdvertisingData);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1234,6 +1237,12 @@ impl<T: Controller> GapCommands for T {
         adv_set_enable<'a>,
         AdvSetEnable<'a>,
         crate::vendor::opcode::GAP_ADV_SET_ENABLE
+    );
+
+    impl_variable_length_params!(
+        adv_set_advertising_data<'a>,
+        AdvSetAdvertisingData<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_ADV_DATA
     );
 }
 
@@ -2508,5 +2517,32 @@ impl<'a> AdvSetEnable<'a> {
         for (idx, set) in self.adv_set.iter().enumerate() {
             set.copy_into_slice(&mut bytes[2 + (idx * 4)..]);
         }
+    }
+}
+
+/// Params for the [adv_set_advertising_data](GapCommands::adv_set_advertising_data) command
+pub struct AdvSetAdvertisingData<'a> {
+    /// Used to identify an advertising set
+    pub adv_handle: AdvertisingHandle,
+    /// Advertising operation
+    pub operation: AdvertisingOperation,
+    /// Fragment preference. If set to `true`, the Controller may fragment all data, else
+    /// the Controller should not fragment or should minimize fragmentation of data
+    pub fragment: bool,
+    pub data: &'a [u8],
+}
+
+impl<'a> AdvSetAdvertisingData<'a> {
+    const MAX_LENGTH: usize = 255;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        bytes[0] = self.adv_handle.0;
+        bytes[1] = self.operation as u8;
+        bytes[2] = (!self.fragment) as u8;
+        let length = self.data.len();
+        bytes[3] = length as u8;
+        bytes[4..(4 + length)].copy_from_slice(self.data);
     }
 }
