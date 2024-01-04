@@ -822,6 +822,10 @@ pub trait GapCommands {
     /// This command is used to remove all exisiting advertising sets from
     /// the Controller.
     async fn adv_clear_sets(&mut self);
+
+    /// This command is used to set the random device address of an advertising
+    /// set configured to use specific random address.
+    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1267,6 +1271,14 @@ impl<T: Controller> GapCommands for T {
 
     async fn adv_clear_sets(&mut self) {
         self.controller_write(crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[])
+            .await;
+    }
+
+    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr) {
+        let mut payload = [0; 7];
+        payload[0] = handle.0;
+        payload[1..].copy_from_slice(&addr.0);
+        self.controller_write(crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS, &payload)
             .await;
     }
 }
