@@ -802,8 +802,6 @@ pub trait GapCommands {
     /// [set_undirected_connectable](GapCommands::set_undirected_connectable) and
     /// [set_broadcast_mode](GapCommands::set_broadcast_mode) that only support
     /// legacy advertising.
-    // TODO: add adv_set_scan_response_data
-    // TODO: add adv_set_advertising_data
     async fn adv_set_config(&mut self, params: &AdvSetConfig);
 
     /// This command is used to request the Controller to enable or disbale one
@@ -813,6 +811,10 @@ pub trait GapCommands {
     /// This command is used to set the data used in extended advertising PDUs
     /// that have a data field
     async fn adv_set_advertising_data(&mut self, params: &AdvSetAdvertisingData);
+
+    /// This command is used to provide scan response data used during extended
+    /// advertising
+    async fn adv_set_scan_response_data(&mut self, params: &AdvSetAdvertisingData);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1243,6 +1245,12 @@ impl<T: Controller> GapCommands for T {
         adv_set_advertising_data<'a>,
         AdvSetAdvertisingData<'a>,
         crate::vendor::opcode::GAP_ADV_SET_ADV_DATA
+    );
+
+    impl_variable_length_params!(
+        adv_set_scan_response_data<'a>,
+        AdvSetAdvertisingData<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA
     );
 }
 
@@ -2529,6 +2537,7 @@ pub struct AdvSetAdvertisingData<'a> {
     /// Fragment preference. If set to `true`, the Controller may fragment all data, else
     /// the Controller should not fragment or should minimize fragmentation of data
     pub fragment: bool,
+    /// Data formatted as defined in Bluetooth spec. v.5.4 [Vol 3, Part C, 11].
     pub data: &'a [u8],
 }
 
