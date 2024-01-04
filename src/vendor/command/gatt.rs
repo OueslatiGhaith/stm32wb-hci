@@ -790,6 +790,29 @@ pub trait GattCommands {
         &mut self,
         params: &UpdateCharacteristicValueExt<'_>,
     ) -> Result<(), Error>;
+
+    /// This command is used to deny the GATT server to send a response to a read request from a client.
+    ///
+    /// The application may send this command when it receives the
+    /// [ATT Read Permit Request](crate::vendor::event::VendorEvent::AttReadPermitRequest) or
+    /// [ATT Read Multiple Permit Request](crate::vendor::event::VendorEvent::AttReadMultiplePermitRequest).
+    ///
+    /// This command indicates to the stack that the client is not allowed to read the requested
+    /// characteristic due to e.g. application restrictions.
+    ///
+    /// The error code shall be either `0x08` (Insufficient Authorization) or a value in the range
+    /// `0x80 .. 0x9F` (Application Error).
+    ///
+    /// The application should issue the [GATT Allow Read](GattCommands::allow_read) or
+    /// [Gatt Deny Read](GattCommands::deny_read) command within 30 seconds from the receipt
+    /// of the [ATT Read Permit Request](crate::vendor::event::VendorEvent::AttReadPermitRequest) or the
+    /// [ATT Read Multiple Permit Request](crate::vendor::event::VendorEvent::AttReadMultiplePermitRequest)
+    /// events; otherwise the GATT procedure issues a timeout
+    async fn deny_read(&mut self, handle: ConnectionHandle, err: u8);
+    // TODO: set_access_permission
+    // TODO: store_db
+    // TODO: send_mult_notification
+    // TODO: read_multiple_car_char_value
 }
 
 impl<T: Controller> GattCommands for T {
@@ -1178,6 +1201,14 @@ impl<T: Controller> GattCommands for T {
         UpdateCharacteristicValueExt<'a>,
         crate::vendor::opcode::GATT_UPDATE_LONG_CHARACTERISTIC_VALUE
     );
+
+    async fn deny_read(&mut self, handle: ConnectionHandle, err: u8) {
+        let mut payload = [0; 3];
+        LittleEndian::write_u16(&mut payload[0..], handle.0);
+        payload[2] = err;
+        self.controller_write(crate::vendor::opcode::GATT_DENY_READ, &payload)
+            .await;
+    }
 }
 
 /// Potential errors from parameter validation.
