@@ -40,6 +40,7 @@ vendor_opcodes! {
         pub const HAL_SET_EVENT_MASK = 0x1A;
         pub const HAL_GET_PM_DEBUG_INFO = 0x1C;
         pub const HAL_SET_PERIPHERAL_LATENCY = 0x20;
+        pub const HAL_READ_RSSI = 0x22;
     }
     Gap = 0x1;
     {

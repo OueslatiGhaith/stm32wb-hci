@@ -60,6 +60,10 @@ pub enum VendorReturnParameters {
     /// command.
     HalGetPmDebugInfo(HalPmDebugInfo),
 
+    /// Parameters returned by the [HAL Read RSSI](crate::vendor::command::hal::HalCommands::read_rssi)
+    /// command.
+    HalReadRssi(u8),
+
     /// Status returned by the
     /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapCommands::gap_set_nondiscoverable)
     /// command.
@@ -289,6 +293,10 @@ impl VendorReturnParameters {
             crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO => Ok(
                 VendorReturnParameters::HalGetPmDebugInfo(to_hal_pm_debug_info(&bytes[3..])?),
             ),
+            crate::vendor::opcode::HAL_READ_RSSI => Ok(VendorReturnParameters::HalReadRssi({
+                require_len!(&bytes[3..], 1);
+                bytes[3]
+            })),
             crate::vendor::opcode::GAP_SET_NONDISCOVERABLE => Ok(
                 VendorReturnParameters::GapSetNonDiscoverable(to_status(&bytes[3..])?),
             ),

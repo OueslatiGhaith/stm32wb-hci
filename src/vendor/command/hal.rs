@@ -161,7 +161,8 @@ pub trait HalCommands {
     /// Note that, by default, the Peripheral latency is enabled at connection time.
     async fn set_peripheral_latency(&mut self, enabled: bool);
 
-    // TODO: read_rssi
+    /// This command returns the value of the RSSI.
+    async fn read_rssi(&mut self);
 
     // TODO: read_radio_reg
 
@@ -261,6 +262,11 @@ impl<T: Controller> HalCommands for T {
             &[enabled as u8],
         )
         .await;
+    }
+
+    async fn read_rssi(&mut self) {
+        self.controller_write(crate::vendor::opcode::HAL_READ_RSSI, &[])
+            .await;
     }
 }
 
