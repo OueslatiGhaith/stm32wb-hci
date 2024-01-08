@@ -170,7 +170,12 @@ pub trait HalCommands {
     /// This command returns the raw value of the RSSI
     async fn read_raw_rssi(&mut self);
 
-    // TODO: rx_start
+    /// This command does set up the RF to listen to a specific RF Channel.
+    ///
+    /// `rf_channel`: BLE Channel Id, from 0x00 to 0x27 meaning `(2.402 + 0.002 * 0xXX) GHz`.
+    /// The device will continously emit 0s, meaning that the tone will be at the channel center
+    /// frequency minus the maximum frequency deviation (250 KHz).
+    async fn rx_start(&mut self, rf_channel: u8);
 
     // TODO: rx_stop
 
@@ -278,6 +283,11 @@ impl<T: Controller> HalCommands for T {
 
     async fn read_raw_rssi(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_READ_RAW_RSSI, &[])
+            .await;
+    }
+
+    async fn rx_start(&mut self, rf_channel: u8) {
+        self.controller_write(crate::vendor::opcode::HAL_RX_START, &[rf_channel])
             .await;
     }
 }
