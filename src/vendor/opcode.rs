@@ -38,6 +38,7 @@ vendor_opcodes! {
         // length (7 bits). The C source code has 0x19, which is valid.
         pub const HAL_GET_ANCHOR_PERIOD = 0x19;
         pub const HAL_SET_EVENT_MASK = 0x1A;
+        pub const HAL_GET_PM_DEBUG_INFO = 0x1C;
     }
     Gap = 0x1;
     {

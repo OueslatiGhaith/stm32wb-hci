@@ -153,13 +153,22 @@ pub trait HalCommands {
     /// that will be enabled.
     async fn set_event_mask(&mut self, mask: HalEventFlags);
 
-    // TODO: get_pm_debug_info
+    /// This command is used to retreive Tx, Rx, and total buffer count allocated for ACL packets.
+    // TODO: this command returns an event, check if it exists
+    async fn get_pm_debug_info(&mut self);
+
     // TODO: set_peripheral_latency
+
     // TODO: read_rssi
+
     // TODO: read_radio_reg
+
     // TODO: read_raw_rssi
+
     // TODO: rx_start
+
     // TODO: rx_stop
+
     // TODO: stack_reset
 }
 
@@ -236,6 +245,11 @@ impl<T: Controller> HalCommands for T {
         let mut payload = [0; 4];
         LittleEndian::write_u32(&mut payload, mask.bits());
         self.controller_write(crate::vendor::opcode::HAL_SET_EVENT_MASK, &payload)
+            .await;
+    }
+
+    async fn get_pm_debug_info(&mut self) {
+        self.controller_write(crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO, &[])
             .await;
     }
 }
