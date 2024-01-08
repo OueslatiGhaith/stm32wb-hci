@@ -44,6 +44,7 @@ vendor_opcodes! {
         pub const HAL_READ_RADIO_REG = 0x30;
         pub const HAL_READ_RAW_RSSI = 0x32;
         pub const HAL_RX_START = 0x33;
+        pub const HAL_RX_STOP = 0x34;
     }
     Gap = 0x1;
     {

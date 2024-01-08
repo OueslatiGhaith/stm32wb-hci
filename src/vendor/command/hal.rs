@@ -177,7 +177,8 @@ pub trait HalCommands {
     /// frequency minus the maximum frequency deviation (250 KHz).
     async fn rx_start(&mut self, rf_channel: u8);
 
-    // TODO: rx_stop
+    /// This command stops a previous [HAL Rx Start](HalCommands::rx_start) command
+    async fn rx_stop(&mut self);
 
     // TODO: stack_reset
 }
@@ -288,6 +289,11 @@ impl<T: Controller> HalCommands for T {
 
     async fn rx_start(&mut self, rf_channel: u8) {
         self.controller_write(crate::vendor::opcode::HAL_RX_START, &[rf_channel])
+            .await;
+    }
+
+    async fn rx_stop(&mut self) {
+        self.controller_write(crate::vendor::opcode::HAL_RX_STOP, &[])
             .await;
     }
 }
