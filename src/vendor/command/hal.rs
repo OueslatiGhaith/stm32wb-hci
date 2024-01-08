@@ -154,7 +154,6 @@ pub trait HalCommands {
     async fn set_event_mask(&mut self, mask: HalEventFlags);
 
     /// This command is used to retreive Tx, Rx, and total buffer count allocated for ACL packets.
-    // TODO: this command returns an event, check if it exists
     async fn get_pm_debug_info(&mut self);
 
     /// This command is used to disable/enable the Peripheral latencyy feature during a connection.

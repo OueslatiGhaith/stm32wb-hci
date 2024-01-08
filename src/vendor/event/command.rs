@@ -56,6 +56,10 @@ pub enum VendorReturnParameters {
     /// command.
     HalGetAnchorPeriod(HalAnchorPeriod),
 
+    /// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
+    /// command.
+    HalGetPmDebugInfo(HalPmDebugInfo),
+
     /// Status returned by the
     /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapCommands::gap_set_nondiscoverable)
     /// command.
@@ -281,6 +285,9 @@ impl VendorReturnParameters {
             ),
             crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD => Ok(
                 VendorReturnParameters::HalGetAnchorPeriod(to_hal_anchor_period(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO => Ok(
+                VendorReturnParameters::HalGetPmDebugInfo(to_hal_pm_debug_info(&bytes[3..])?),
             ),
             crate::vendor::opcode::GAP_SET_NONDISCOVERABLE => Ok(
                 VendorReturnParameters::GapSetNonDiscoverable(to_status(&bytes[3..])?),
@@ -674,6 +681,29 @@ fn to_hal_anchor_period(bytes: &[u8]) -> Result<HalAnchorPeriod, crate::event::E
             625 * u64::from(LittleEndian::read_u32(&bytes[1..5])),
         ),
         max_slot: Duration::from_micros(625 * u64::from(LittleEndian::read_u32(&bytes[5..9]))),
+    })
+}
+
+/// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
+/// command.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HalPmDebugInfo {
+    /// MBlocks allocated for TXing
+    pub tx: u8,
+    /// MBlocks allocated for RXing
+    pub rx: u8,
+    /// Overall allocated MBlocks
+    pub mblocks: u8,
+}
+
+fn to_hal_pm_debug_info(bytes: &[u8]) -> Result<HalPmDebugInfo, crate::event::Error> {
+    require_len!(bytes, 3);
+
+    Ok(HalPmDebugInfo {
+        tx: bytes[0],
+        rx: bytes[1],
+        mblocks: bytes[2],
     })
 }
 
