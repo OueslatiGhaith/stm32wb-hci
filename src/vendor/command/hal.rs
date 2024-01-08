@@ -157,7 +157,10 @@ pub trait HalCommands {
     // TODO: this command returns an event, check if it exists
     async fn get_pm_debug_info(&mut self);
 
-    // TODO: set_peripheral_latency
+    /// This command is used to disable/enable the Peripheral latencyy feature during a connection.
+    ///
+    /// Note that, by default, the Peripheral latency is enabled at connection time.
+    async fn set_peripheral_latency(&mut self, enabled: bool);
 
     // TODO: read_rssi
 
@@ -251,6 +254,14 @@ impl<T: Controller> HalCommands for T {
     async fn get_pm_debug_info(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO, &[])
             .await;
+    }
+
+    async fn set_peripheral_latency(&mut self, enabled: bool) {
+        self.controller_write(
+            crate::vendor::opcode::HAL_SET_PERIPHERAL_LATENCY,
+            &[enabled as u8],
+        )
+        .await;
     }
 }
 
