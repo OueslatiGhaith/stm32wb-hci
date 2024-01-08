@@ -180,7 +180,9 @@ pub trait HalCommands {
     /// This command stops a previous [HAL Rx Start](HalCommands::rx_start) command
     async fn rx_stop(&mut self);
 
-    // TODO: stack_reset
+    /// This command is equivalent to [HCI Reset](crate::host::HostHci::reset) but ensures
+    /// the sleep mode is entered immediately after its completion.
+    async fn stack_reset(&mut self);
 }
 
 impl<T: Controller> HalCommands for T {
@@ -294,6 +296,11 @@ impl<T: Controller> HalCommands for T {
 
     async fn rx_stop(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_RX_STOP, &[])
+            .await;
+    }
+
+    async fn stack_reset(&mut self) {
+        self.controller_write(crate::vendor::opcode::HAL_STACK_RESET, &[])
             .await;
     }
 }

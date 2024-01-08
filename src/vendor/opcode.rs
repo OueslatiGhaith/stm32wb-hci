@@ -45,6 +45,7 @@ vendor_opcodes! {
         pub const HAL_READ_RAW_RSSI = 0x32;
         pub const HAL_RX_START = 0x33;
         pub const HAL_RX_STOP = 0x34;
+        pub const HAL_STACK_RESET = 0x3B;
     }
     Gap = 0x1;
     {
