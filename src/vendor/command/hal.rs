@@ -167,7 +167,8 @@ pub trait HalCommands {
     /// This command reads a register value from the RF module
     async fn read_radio_reg(&mut self, address: u8);
 
-    // TODO: read_raw_rssi
+    /// This command returns the raw value of the RSSI
+    async fn read_raw_rssi(&mut self);
 
     // TODO: rx_start
 
@@ -272,6 +273,11 @@ impl<T: Controller> HalCommands for T {
 
     async fn read_radio_reg(&mut self, address: u8) {
         self.controller_write(crate::vendor::opcode::HAL_READ_RADIO_REG, &[address])
+            .await;
+    }
+
+    async fn read_raw_rssi(&mut self) {
+        self.controller_write(crate::vendor::opcode::HAL_READ_RAW_RSSI, &[])
             .await;
     }
 }

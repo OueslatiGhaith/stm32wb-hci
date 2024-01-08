@@ -68,6 +68,10 @@ pub enum VendorReturnParameters {
     /// command.
     HalReadRadioReg(u8),
 
+    /// Parameters returned by the [HAL Read Raw RSSI](crate::vendor::command::hal::HalCommands::read_raw_rssi)
+    /// command.
+    HalReadRawRssi(u8),
+
     /// Status returned by the
     /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapCommands::gap_set_nondiscoverable)
     /// command.
@@ -303,6 +307,12 @@ impl VendorReturnParameters {
             })),
             crate::vendor::opcode::HAL_READ_RADIO_REG => {
                 Ok(VendorReturnParameters::HalReadRadioReg({
+                    require_len!(&bytes[3..], 1);
+                    bytes[3]
+                }))
+            }
+            crate::vendor::opcode::HAL_READ_RAW_RSSI => {
+                Ok(VendorReturnParameters::HalReadRawRssi({
                     require_len!(&bytes[3..], 1);
                     bytes[3]
                 }))
