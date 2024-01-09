@@ -98,9 +98,23 @@ pub enum Event {
     /// Vol 2, Part E, Section 7.7.65.7
     LeDataLengthChangeEvent(LeDataLengthChangeEvent),
 
+    /// This event is generated when local P-256 key generation is complete.
+    ///
+    /// Vol 4, Part E, 7.7.65.8
+    LeReadLocalP256PublicKeyComplete([u8; 64]),
+
     /// Vol 2, Part E, Section 7.7.65.12
     LePhyUpdateComplete(LePhyUpdateComplete),
 
+    // TODO: le_generate_dhkey_complete
+    // TODO: le_enhanced_connection_complete
+    // TODO: le_directed_advertising_report
+    // TODO: le_phy_update_complete
+    // TODO: le_extended_advertising_report
+    // TODO: le_scan_timeout
+    // TODO: le_advertising_set_terminated
+    // TODO: le_scan_reauest_received
+    // TODO: le_channel_selection_algorithm
     /// Vendor-specific events (opcode 0xFF)
     Vendor(VendorEvent),
 }
@@ -296,9 +310,13 @@ fn to_le_meta_event(payload: &[u8]) -> Result<Event, Error> {
         0x07 => Ok(Event::LeDataLengthChangeEvent(
             to_le_data_length_change_event(payload)?,
         )),
+        0x08 => Ok(Event::LeReadLocalP256PublicKeyComplete(
+            to_le_read_local_p256_public_key(payload)?,
+        )),
         0x0C => Ok(Event::LePhyUpdateComplete(to_le_phy_update_complete(
             payload,
         )?)),
+
         _ => Err(Error::UnknownEvent(payload[0])),
     }
 }
@@ -1275,4 +1293,12 @@ fn to_le_phy_update_complete(payload: &[u8]) -> Result<LePhyUpdateComplete, Erro
         tx_phy: Phy::try_from(payload[4])?,
         rx_phy: Phy::try_from(payload[5])?,
     })
+}
+
+fn to_le_read_local_p256_public_key(payload: &[u8]) -> Result<[u8; 64], Error> {
+    require_len!(payload, 64);
+
+    let mut key = [0; 64];
+    key.copy_from_slice(payload);
+    Ok(key)
 }

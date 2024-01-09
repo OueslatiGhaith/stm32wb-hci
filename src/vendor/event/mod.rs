@@ -91,13 +91,13 @@ pub enum VendorEvent {
     /// application has to respond with the
     /// [numeric_comparison_value_confirm_yes_no](super::command::gap::GapCommands::numeric_comparison_value_confirm_yes_no)
     /// command.
-    NumericComparisonValue(NumericComparisonValue),
+    GapNumericComparisonValue(GapNumericComparisonValue),
 
     /// This event is sent only during SC Pairing, when Keypress Notifications are
     /// supported, in order to show the input type signaled by the peer device,
     /// having Keyboard only I/O capabilities. When this event is received, no
     /// action is required to the User.
-    KeypressNotification(KeypressNotification),
+    GapKeypressNotification(GapKeypressNotification),
 
     /// This event is generated when the central device responds to the L2CAP connection update
     /// request packet. For more info see
@@ -339,6 +339,9 @@ pub enum VendorEvent {
     /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattNotificationExt(AttributeValueExt),
+    // TODO: hal_end_of_radio_activity
+    // TODO: hal_scan_req_report
+    // TODO: hal_fw_error
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -688,12 +691,12 @@ impl VendorEvent {
                 to_gap_procedure_complete(buffer)?,
             )),
             0x0408 => Ok(VendorEvent::GapAddressNotResolved(to_conn_handle(buffer)?)),
-            0x0409 => Ok(VendorEvent::NumericComparisonValue(
+            0x0409 => Ok(VendorEvent::GapNumericComparisonValue(
                 to_numeric_comparison_value(buffer)?,
             )),
-            0x040A => Ok(VendorEvent::KeypressNotification(to_keypress_notification(
-                buffer,
-            )?)),
+            0x040A => Ok(VendorEvent::GapKeypressNotification(
+                to_keypress_notification(buffer)?,
+            )),
             0x0800 => Ok(VendorEvent::L2CapConnectionUpdateResponse(
                 to_l2cap_connection_update_response(buffer)?,
             )),
@@ -2734,7 +2737,7 @@ fn to_att_prepare_write_permit_request(
 /// command.
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NumericComparisonValue {
+pub struct GapNumericComparisonValue {
     /// Handle of the connection where this event occured
     pub connection_handle: ConnectionHandle,
     /// Generated numeric value
@@ -2743,10 +2746,10 @@ pub struct NumericComparisonValue {
 
 fn to_numeric_comparison_value(
     buffer: &[u8],
-) -> Result<NumericComparisonValue, crate::event::Error> {
+) -> Result<GapNumericComparisonValue, crate::event::Error> {
     require_len!(buffer, 8);
 
-    Ok(NumericComparisonValue {
+    Ok(GapNumericComparisonValue {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
         numeric_value: LittleEndian::read_u32(&buffer[4..]),
     })
@@ -2758,7 +2761,7 @@ fn to_numeric_comparison_value(
 /// supported, in order to show the input type signaled by the peer device,
 /// having Keyboard only I/O capabilities. When this event is received, no
 /// action is required to the User.
-pub struct KeypressNotification {
+pub struct GapKeypressNotification {
     /// Handle of the connection where this event occured
     pub connection_handle: ConnectionHandle,
     /// Type of Keypress input notified/signaled by peer device
@@ -2792,10 +2795,10 @@ impl From<u8> for KeypressNotificationType {
     }
 }
 
-fn to_keypress_notification(buffer: &[u8]) -> Result<KeypressNotification, crate::event::Error> {
+fn to_keypress_notification(buffer: &[u8]) -> Result<GapKeypressNotification, crate::event::Error> {
     require_len!(buffer, 3);
 
-    Ok(KeypressNotification {
+    Ok(GapKeypressNotification {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         notification_type: KeypressNotificationType::from(buffer[2]),
     })
