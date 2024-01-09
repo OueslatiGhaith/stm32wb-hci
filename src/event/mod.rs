@@ -108,6 +108,9 @@ pub enum Event {
     /// Vol 4, Part E, Section 7.7.65.9
     LeGenerateDHKeyComplete([u8; 32]),
 
+    /// Vol 4, Part E, Section 7.7.65.10
+    LeEnhancedConnectionComplete(LeEnhancedConnectionComplete),
+
     /// Vol 2, Part E, Section 7.7.65.12
     LePhyUpdateComplete(LePhyUpdateComplete),
 
@@ -319,6 +322,9 @@ fn to_le_meta_event(payload: &[u8]) -> Result<Event, Error> {
         )),
         0x09 => Ok(Event::LeGenerateDHKeyComplete(
             to_le_generate_dhkey_complete(payload)?,
+        )),
+        0x0A => Ok(Event::LeEnhancedConnectionComplete(
+            to_le_enhanced_connection_complete(payload)?,
         )),
         0x0C => Ok(Event::LePhyUpdateComplete(to_le_phy_update_complete(
             payload,
@@ -1303,17 +1309,109 @@ fn to_le_phy_update_complete(payload: &[u8]) -> Result<LePhyUpdateComplete, Erro
 }
 
 fn to_le_read_local_p256_public_key(payload: &[u8]) -> Result<[u8; 64], Error> {
-    require_len!(payload, 64);
+    require_len!(payload, 65);
 
     let mut key = [0; 64];
-    key.copy_from_slice(payload);
+    key.copy_from_slice(&payload[1..]);
     Ok(key)
 }
 
 fn to_le_generate_dhkey_complete(payload: &[u8]) -> Result<[u8; 32], Error> {
-    require_len!(payload, 32);
+    require_len!(payload, 33);
 
     let mut key = [0; 32];
-    key.copy_from_slice(payload);
+    key.copy_from_slice(&payload[1..]);
     Ok(key)
+}
+
+/// This event indicates to both of the Hosts forming the connection that a new connection has been created.
+/// Upon the creation of the connection, a [Connection Handle](ConnectionHandle) shall be assigned to the
+/// Controller, and passed to the Host in this event.
+///
+/// If the connection establishment fails, this event shall be provided to the Host that had issued the
+/// [LE Create Connection](crate::host::HostHci::le_create_connection) command.
+///
+/// If this event is unmasked and [LE Connection Complete](Event::LeConnectionComplete) event is unmasked,
+/// only the [LE Enhanced Connection Complete](Event::LeEnhancedConnectionComplete) event is sent when a
+/// new connection has been completed.
+///
+/// This event indicates to the Host that issued a [LE Create Connection](crate::host::HostHci::le_create_connection)
+/// command and received a [Command Status](CommandStatus) event if the connection establishment failed or
+/// was successful.
+///
+/// The [Central Clock Accuracy](LeEnhancedConnectionComplete::central_clock_accuracy) parameter is only valid
+/// for a Peripheral. On a Central, this parameter is set to 0x00
+///
+/// Defined in Vol 4, Part E, Section 7.7.65.10
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LeEnhancedConnectionComplete {
+    /// Did the LE Connection fail, and if so, how?
+    pub status: Status,
+
+    /// Connection Handle for which the event applies
+    pub conn_handle: ConnectionHandle,
+
+    /// Role of the device receiving this event in the connection.
+    pub role: ConnectionRole,
+
+    /// Address of the peer device.
+    pub peer_bd_addr: crate::BdAddrType,
+
+    /// Resolvable Private Address being used by the local device for this connection.
+    ///
+    /// This is only valid when the [Own Address Type](crate::host::OwnAddressType) is set to
+    /// [Private Fallback Public](crate::host::OwnAddressType::PrivateFallbackPublic) or
+    /// [Private Fallback Random](crate::host::OwnAddressType::PrivateFallbackRandom).
+    /// For other [Own Address Type](crate::host::OwnAddressType) values, the Controller shall
+    /// return all zeros
+    pub local_resolvable_private_address: crate::BdAddr,
+
+    /// Resolvable Private Address being used by the peer device for this connection.
+    ///
+    /// This is only valid when the [Peer Address Type](crate::host::PeerAddrType) is set to
+    /// [Public Identity Address](crate::host::PeerAddrType::PublicIdentityAddress) or
+    /// [Random Identity Address](crate::host::PeerAddrType::RandomIdentityAddress).
+    /// For other [Peer Address Type](crate::host::PeerAddrType) values, the Controller shall
+    /// return all zeros
+    pub peer_resolvable_private_address: crate::BdAddr,
+
+    /// Connection interval used on this connection.
+    pub conn_interval: FixedConnectionInterval,
+
+    /// This is only valid for a peripheral. On a central device, this parameter shall be set to
+    /// Ppm500.
+    pub central_clock_accuracy: CentralClockAccuracy,
+}
+
+fn to_le_enhanced_connection_complete(
+    payload: &[u8],
+) -> Result<LeEnhancedConnectionComplete, Error> {
+    require_len!(payload, 31);
+
+    let mut bd_addr = crate::BdAddr([0; 6]);
+    bd_addr.0.copy_from_slice(&payload[6..12]);
+
+    let mut local_resolvable_private_address = crate::BdAddr([0; 6]);
+    local_resolvable_private_address
+        .0
+        .copy_from_slice(&payload[12..18]);
+
+    let mut peer_resolvable_private_address = crate::BdAddr([0; 6]);
+    peer_resolvable_private_address
+        .0
+        .copy_from_slice(&payload[18..24]);
+
+    Ok(LeEnhancedConnectionComplete {
+        status: payload[1].try_into().map_err(rewrap_bad_status)?,
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[2..])),
+        role: payload[4].try_into()?,
+        peer_bd_addr: crate::to_bd_addr_type(payload[5], bd_addr)
+            .map_err(rewrap_bd_addr_type_err)?,
+        local_resolvable_private_address,
+        peer_resolvable_private_address,
+        conn_interval: FixedConnectionInterval::from_bytes(&payload[24..30])
+            .map_err(Error::BadConnectionInterval)?,
+        central_clock_accuracy: payload[30].try_into()?,
+    })
 }
