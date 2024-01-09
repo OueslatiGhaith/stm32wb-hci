@@ -103,10 +103,14 @@ pub enum Event {
     /// Vol 4, Part E, 7.7.65.8
     LeReadLocalP256PublicKeyComplete([u8; 64]),
 
+    /// This event indicates that LE Diffie Hellman key generation has been completed by the Controller.
+    ///
+    /// Vol 4, Part E, Section 7.7.65.9
+    LeGenerateDHKeyComplete([u8; 32]),
+
     /// Vol 2, Part E, Section 7.7.65.12
     LePhyUpdateComplete(LePhyUpdateComplete),
 
-    // TODO: le_generate_dhkey_complete
     // TODO: le_enhanced_connection_complete
     // TODO: le_directed_advertising_report
     // TODO: le_phy_update_complete
@@ -312,6 +316,9 @@ fn to_le_meta_event(payload: &[u8]) -> Result<Event, Error> {
         )),
         0x08 => Ok(Event::LeReadLocalP256PublicKeyComplete(
             to_le_read_local_p256_public_key(payload)?,
+        )),
+        0x09 => Ok(Event::LeGenerateDHKeyComplete(
+            to_le_generate_dhkey_complete(payload)?,
         )),
         0x0C => Ok(Event::LePhyUpdateComplete(to_le_phy_update_complete(
             payload,
@@ -1299,6 +1306,14 @@ fn to_le_read_local_p256_public_key(payload: &[u8]) -> Result<[u8; 64], Error> {
     require_len!(payload, 64);
 
     let mut key = [0; 64];
+    key.copy_from_slice(payload);
+    Ok(key)
+}
+
+fn to_le_generate_dhkey_complete(payload: &[u8]) -> Result<[u8; 32], Error> {
+    require_len!(payload, 32);
+
+    let mut key = [0; 32];
     key.copy_from_slice(payload);
     Ok(key)
 }
