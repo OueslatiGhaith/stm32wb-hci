@@ -5,6 +5,7 @@ mod advertising_interval;
 mod common;
 mod connection_interval;
 mod expected_connection_length;
+pub mod extended_advertisement;
 mod scan_window;
 
 pub use self::advertisement::*;

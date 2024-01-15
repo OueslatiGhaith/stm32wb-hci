@@ -33,10 +33,19 @@ vendor_opcodes! {
         pub const HAL_START_TONE = 0x15;
         pub const HAL_STOP_TONE = 0x16;
         pub const HAL_GET_LINK_STATUS = 0x17;
-
+        pub const HAL_SET_RADIO_ACTIVITY_MASK = 0x18;
         // The documentation says the OCF is 0xF8 (0b1111_1000), but that does not fit the OCF
         // length (7 bits). The C source code has 0x19, which is valid.
         pub const HAL_GET_ANCHOR_PERIOD = 0x19;
+        pub const HAL_SET_EVENT_MASK = 0x1A;
+        pub const HAL_GET_PM_DEBUG_INFO = 0x1C;
+        pub const HAL_SET_PERIPHERAL_LATENCY = 0x20;
+        pub const HAL_READ_RSSI = 0x22;
+        pub const HAL_READ_RADIO_REG = 0x30;
+        pub const HAL_READ_RAW_RSSI = 0x32;
+        pub const HAL_RX_START = 0x33;
+        pub const HAL_RX_STOP = 0x34;
+        pub const HAL_STACK_RESET = 0x3B;
     }
     Gap = 0x1;
     {
@@ -140,6 +149,11 @@ vendor_opcodes! {
         pub const GATT_READ_HANDLE_VALUE = 0x2A;
         pub const GATT_READ_HANDLE_VALUE_OFFSET = 0x2B;
         pub const GATT_UPDATE_LONG_CHARACTERISTIC_VALUE = 0x2C;
+        pub const GATT_DENY_READ = 0x2D;
+        pub const GATT_SET_ACCESS_PERMISSION = 0x2E;
+        pub const GATT_STORE_DB = 0x30;
+        pub const GATT_SEND_MULT_NOTIFICATION = 0x31;
+        pub const GATT_READ_MULTIPLE_VAR_CHAR_VALUE = 0x32;
     }
     L2Cap = 0x3;
     {

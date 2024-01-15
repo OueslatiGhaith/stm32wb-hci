@@ -13,6 +13,7 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::mem;
 use core::time::Duration;
 
+use crate::host::PeerAddrType;
 pub use crate::types::{ConnectionInterval, ConnectionIntervalError};
 use crate::vendor::command::l2cap::L2CapCocReconfig;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
@@ -90,13 +91,13 @@ pub enum VendorEvent {
     /// application has to respond with the
     /// [numeric_comparison_value_confirm_yes_no](super::command::gap::GapCommands::numeric_comparison_value_confirm_yes_no)
     /// command.
-    NumericComparisonValue(NumericComparisonValue),
+    GapNumericComparisonValue(GapNumericComparisonValue),
 
     /// This event is sent only during SC Pairing, when Keypress Notifications are
     /// supported, in order to show the input type signaled by the peer device,
     /// having Keyboard only I/O capabilities. When this event is received, no
     /// action is required to the User.
-    KeypressNotification(KeypressNotification),
+    GapKeypressNotification(GapKeypressNotification),
 
     /// This event is generated when the central device responds to the L2CAP connection update
     /// request packet. For more info see
@@ -309,10 +310,6 @@ pub enum VendorEvent {
     /// and if the characteristic supports notifications).
     GattNotificationComplete(AttributeHandle),
 
-    // TODO: there is probably a better way to handle Read/Indication/Notification extended events, given
-    // TODO: that the offset param contains extra information
-    // TODO: also, the Read event has a different structure from Indication/Notification, unlike non-extended
-    // TODO: events
     /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
     /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
     /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
@@ -338,6 +335,31 @@ pub enum VendorEvent {
     /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattNotificationExt(AttributeValueExt),
+
+    /// This event is generated when teh device completes a radio activity and provide information when
+    /// a new radio activity will be performed.
+    ///
+    /// Information provided includes type of radio activity and absolute time in system ticks when a
+    /// radio acitivity is scheduled, if any. The application can use this information to schedule user
+    /// activities synchronous to selected radio activities. A command
+    /// [Set Radio Activity Mask](crate::vendor::command::hal::HalCommands::set_radio_activity_mask) is
+    /// provided to enable radio activity events of user interests, by default no events are enabled.
+    ///
+    /// The user should take into account that enabling radio events in an application with intense
+    /// radio activity could lead to a fairly high rate of events generated.
+    ///
+    /// Application use cases indlude synchronizing notifications with connection intervals, switching
+    /// antenna at the end of advertising or performing flash erase while radio is idle.
+    HalEndOfRadioActivity(HalEndOfRadioActivity),
+
+    /// This event is reported to the application after a scan request is received and a scan response is
+    /// scheduled to be transmitted.
+    ///
+    /// Note: RSSI in this event is valid only when privacy is not used
+    HalScanReqReport(HalScanReqReport),
+
+    /// This event is generated to report firmware error information
+    HalFirmwareError(HalFirmwareError),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -482,6 +504,10 @@ pub enum VendorError {
     /// For the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event: The status was not
     /// recognized. Includes the unrecognized byte.
     BadGapPairingStatus(u8),
+
+    /// For the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event: The error reason
+    /// was not recognized. Includes the unrecognized byte.
+    BadGapPairingErrorReason(u8),
 
     /// For the [GAP Device Found](VendorEvent::GapDeviceFound) event: the type of event was not
     /// recognized. Includes the unrecognized byte.
@@ -632,6 +658,12 @@ pub enum VendorError {
 
     /// For the [GATT EAT Bearer](crate::vendor::event::VendorEvent::GattEattBrearer) event: The EAB state was not recognized.
     BadEabState(u8),
+
+    /// For the [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event: The Radio Event code was not recognized.
+    BadRadioEvent(u8),
+
+    /// For the [HAL Firmware Error](VendorEvent::HalFirmareError) event: The Radio Event code was not recognized.
+    BadFirmwareError(u8),
 }
 
 macro_rules! require_len {
@@ -668,6 +700,15 @@ impl VendorEvent {
             // SHCI "C2 Ready" event
             0x9200 => Ok(VendorEvent::CoprocessorReady(to_coprocessor_ready(buffer)?)),
 
+            0x0004 => Ok(VendorEvent::HalEndOfRadioActivity(
+                to_hal_end_of_radio_activity(buffer)?,
+            )),
+            0x0005 => Ok(VendorEvent::HalScanReqReport(to_hal_scan_req_report(
+                buffer,
+            )?)),
+            0x0006 => Ok(VendorEvent::HalFirmwareError(to_hal_firmware_error(
+                buffer,
+            )?)),
             0x0400 => Ok(VendorEvent::GapLimitedDiscoverableTimeout),
             0x0401 => Ok(VendorEvent::GapPairingComplete(to_gap_pairing_complete(
                 buffer,
@@ -683,12 +724,12 @@ impl VendorEvent {
                 to_gap_procedure_complete(buffer)?,
             )),
             0x0408 => Ok(VendorEvent::GapAddressNotResolved(to_conn_handle(buffer)?)),
-            0x0409 => Ok(VendorEvent::NumericComparisonValue(
+            0x0409 => Ok(VendorEvent::GapNumericComparisonValue(
                 to_numeric_comparison_value(buffer)?,
             )),
-            0x040A => Ok(VendorEvent::KeypressNotification(to_keypress_notification(
-                buffer,
-            )?)),
+            0x040A => Ok(VendorEvent::GapKeypressNotification(
+                to_keypress_notification(buffer)?,
+            )),
             0x0800 => Ok(VendorEvent::L2CapConnectionUpdateResponse(
                 to_l2cap_connection_update_response(buffer)?,
             )),
@@ -1024,6 +1065,9 @@ pub struct GapPairingComplete {
 
     /// Reason the pairing is complete.
     pub status: GapPairingStatus,
+
+    /// Pairing failed reason code (valid in case of pairing failed status)
+    pub reason: GapPairingReason,
 }
 
 /// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event was generated.
@@ -1052,11 +1096,54 @@ impl TryFrom<u8> for GapPairingStatus {
     }
 }
 
+/// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event failed.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GapPairingReason {
+    PasskeyEntryFailed = 0x01,
+    OobNotAvailable = 0x02,
+    AuthRequirements = 0x03,
+    ConfirmValueFailed = 0x04,
+    PairingNotSupported = 0x05,
+    EncryptionKeySize = 0x06,
+    CommandNotSupported = 0x07,
+    Unspecified = 0x08,
+    RepeatedAttemptes = 0x09,
+    InvalidParams = 0x0A,
+    DHKeyCheckFailed = 0x0B,
+    NumericComparisonFailed = 0x0C,
+    KeyRejected = 0x0F,
+}
+
+impl TryFrom<u8> for GapPairingReason {
+    type Error = VendorError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(GapPairingReason::PasskeyEntryFailed),
+            0x02 => Ok(GapPairingReason::OobNotAvailable),
+            0x03 => Ok(GapPairingReason::AuthRequirements),
+            0x04 => Ok(GapPairingReason::ConfirmValueFailed),
+            0x05 => Ok(GapPairingReason::PairingNotSupported),
+            0x06 => Ok(GapPairingReason::EncryptionKeySize),
+            0x07 => Ok(GapPairingReason::CommandNotSupported),
+            0x08 => Ok(GapPairingReason::Unspecified),
+            0x09 => Ok(GapPairingReason::RepeatedAttemptes),
+            0x0A => Ok(GapPairingReason::InvalidParams),
+            0x0B => Ok(GapPairingReason::DHKeyCheckFailed),
+            0x0C => Ok(GapPairingReason::NumericComparisonFailed),
+            0x0F => Ok(GapPairingReason::KeyRejected),
+            _ => Err(VendorError::BadGapPairingErrorReason(value)),
+        }
+    }
+}
+
 fn to_gap_pairing_complete(buffer: &[u8]) -> Result<GapPairingComplete, crate::event::Error> {
     require_len!(buffer, 6);
     Ok(GapPairingComplete {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
         status: buffer[4].try_into().map_err(crate::event::Error::Vendor)?,
+        reason: buffer[5].try_into().map_err(crate::event::Error::Vendor)?,
     })
 }
 
@@ -2683,7 +2770,7 @@ fn to_att_prepare_write_permit_request(
 /// command.
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NumericComparisonValue {
+pub struct GapNumericComparisonValue {
     /// Handle of the connection where this event occured
     pub connection_handle: ConnectionHandle,
     /// Generated numeric value
@@ -2692,10 +2779,10 @@ pub struct NumericComparisonValue {
 
 fn to_numeric_comparison_value(
     buffer: &[u8],
-) -> Result<NumericComparisonValue, crate::event::Error> {
+) -> Result<GapNumericComparisonValue, crate::event::Error> {
     require_len!(buffer, 8);
 
-    Ok(NumericComparisonValue {
+    Ok(GapNumericComparisonValue {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
         numeric_value: LittleEndian::read_u32(&buffer[4..]),
     })
@@ -2707,7 +2794,7 @@ fn to_numeric_comparison_value(
 /// supported, in order to show the input type signaled by the peer device,
 /// having Keyboard only I/O capabilities. When this event is received, no
 /// action is required to the User.
-pub struct KeypressNotification {
+pub struct GapKeypressNotification {
     /// Handle of the connection where this event occured
     pub connection_handle: ConnectionHandle,
     /// Type of Keypress input notified/signaled by peer device
@@ -2741,10 +2828,10 @@ impl From<u8> for KeypressNotificationType {
     }
 }
 
-fn to_keypress_notification(buffer: &[u8]) -> Result<KeypressNotification, crate::event::Error> {
+fn to_keypress_notification(buffer: &[u8]) -> Result<GapKeypressNotification, crate::event::Error> {
     require_len!(buffer, 3);
 
-    Ok(KeypressNotification {
+    Ok(GapKeypressNotification {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
         notification_type: KeypressNotificationType::from(buffer[2]),
     })
@@ -2799,7 +2886,6 @@ fn to_l2cap_coc_connect_confirm(
 ) -> Result<L2CapCocConnectConfirm, crate::event::Error> {
     require_len!(buffer, 12);
 
-    // TODO: how does one determine the length of channel_index_list?
     let mut channel_index_list = [0; 246];
     let tmp = &buffer[7..];
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
@@ -2818,7 +2904,6 @@ fn to_l2cap_coc_connect_confirm(
 fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event::Error> {
     require_len_at_least!(buffer, 8);
 
-    // TODO: how does one determine the length of channel_index_list?
     let mut channel_index_list = [0; 246];
     let tmp = &buffer[7..];
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
@@ -3042,4 +3127,167 @@ impl AttributeValueExt {
     pub fn value(&self) -> &[u8] {
         &self.value_buf[..self.value_len]
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event
+pub struct HalEndOfRadioActivity {
+    /// Completed radio event
+    pub last_state: RadioEvent,
+    /// Incoming radio event
+    pub next_state: RadioEvent,
+    /// 32-bit absolute current time expressed in internal time units
+    pub next_state_sys_time: u32,
+    /// Slot number of completed radio events
+    ///
+    /// Values:
+    /// - 0xFF: Idle
+    /// - 0x00 .. 0x07
+    pub last_state_slot: u8,
+    /// Slot number of incoming radio events
+    ///
+    /// Values:
+    /// - 0xFF: Idle
+    /// - 0x00 .. 0x07
+    pub next_state_slot: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RadioEvent {
+    Idle = 0x00,
+    Advertising = 0x01,
+    PeripheralConnection = 0x02,
+    Scanning = 0x03,
+    CentralConnection = 0x05,
+    TxTestMode = 0x06,
+    RxTestMode = 0x07,
+}
+
+impl TryFrom<u8> for RadioEvent {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(RadioEvent::Idle),
+            0x01 => Ok(RadioEvent::Advertising),
+            0x02 => Ok(RadioEvent::PeripheralConnection),
+            0x03 => Ok(RadioEvent::Scanning),
+            0x05 => Ok(RadioEvent::CentralConnection),
+            0x06 => Ok(RadioEvent::TxTestMode),
+            0x07 => Ok(RadioEvent::RxTestMode),
+            x => Err(crate::event::Error::Vendor(VendorError::BadRadioEvent(x))),
+        }
+    }
+}
+
+fn to_hal_end_of_radio_activity(
+    buffer: &[u8],
+) -> Result<HalEndOfRadioActivity, crate::event::Error> {
+    require_len!(buffer, 7);
+
+    Ok(HalEndOfRadioActivity {
+        last_state: RadioEvent::try_from(buffer[0])?,
+        next_state: RadioEvent::try_from(buffer[1])?,
+        next_state_sys_time: LittleEndian::read_u32(&buffer[2..]),
+        last_state_slot: buffer[6],
+        next_state_slot: buffer[7],
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event
+pub struct HalScanReqReport {
+    /// RSSI (signed integer).
+    ///
+    /// Units: dBm
+    ///
+    /// Values:
+    /// - 127: RSSI not available
+    /// - -127 .. 20
+    pub rssi: u8,
+    /// Address of the peer device
+    pub peer_addr: PeerAddrType,
+}
+
+fn to_hal_scan_req_report(buffer: &[u8]) -> Result<HalScanReqReport, crate::event::Error> {
+    require_len!(buffer, 8);
+
+    let mut addr = crate::BdAddr([0; 6]);
+    addr.0.copy_from_slice(&buffer[2..]);
+
+    Ok(HalScanReqReport {
+        rssi: buffer[0],
+        peer_addr: match buffer[1] {
+            0x00 => PeerAddrType::PublicDeviceAddress(addr),
+            0x01 => PeerAddrType::RandomDeviceAddress(addr),
+            0x02 => PeerAddrType::PublicDeviceAddress(addr),
+            0x03 => PeerAddrType::RandomIdentityAddress(addr),
+            x => return Err(crate::event::Error::Vendor(VendorError::BadBdAddrType(x))),
+        },
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event
+pub struct HalFirmwareError {
+    /// Firmware error type
+    pub fw_error_type: FirmwareError,
+    /// Length of  data in octets
+    data_len: u8,
+    /// the error event info
+    data: [u8; 251],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines error types returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event
+pub enum FirmwareError {
+    /// L2CAP recombination failure
+    L2capRecombination = 0x01,
+    /// GATT unexpected peer message
+    GattUnexpectedPeerMsg = 0x02,
+    /// NVM level warning
+    NvmLevelWarning = 0x03,
+    /// COC Rx data length too large
+    CocRxDataTooLarge = 0x04,
+}
+
+impl TryFrom<u8> for FirmwareError {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(FirmwareError::L2capRecombination),
+            0x02 => Ok(FirmwareError::GattUnexpectedPeerMsg),
+            0x03 => Ok(FirmwareError::NvmLevelWarning),
+            0x04 => Ok(FirmwareError::CocRxDataTooLarge),
+            x => Err(crate::event::Error::Vendor(VendorError::BadFirmwareError(
+                x,
+            ))),
+        }
+    }
+}
+
+impl HalFirmwareError {
+    pub fn data(&self) -> &[u8] {
+        &self.data[..self.data_len as usize]
+    }
+}
+
+fn to_hal_firmware_error(buffer: &[u8]) -> Result<HalFirmwareError, crate::event::Error> {
+    require_len_at_least!(buffer, 2);
+
+    let data_len = buffer[1] as usize;
+    let mut data = [0; 251];
+    data[..data_len].copy_from_slice(&buffer[2..(2 + data_len)]);
+
+    Ok(HalFirmwareError {
+        fw_error_type: FirmwareError::try_from(buffer[0])?,
+        data_len: buffer[1],
+        data,
+    })
 }

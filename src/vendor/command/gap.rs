@@ -3,10 +3,16 @@
 extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
-use crate::host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType};
+use crate::types::extended_advertisement::{
+    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
+};
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
+use crate::{
+    host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
+    types::extended_advertisement::AdvertisingMode,
+};
+use crate::{AdvertisingHandle, ConnectionHandle, Controller};
 pub use crate::{BdAddr, BdAddrType};
-use crate::{ConnectionHandle, Controller};
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
@@ -421,7 +427,13 @@ pub trait GapCommands {
         reason: crate::Status,
     ) -> Result<(), Error>;
 
-    /// Clear the security database. All the devices in the security database will be removed.
+    /// Clear the bonding table. All the devices in the bonding table are removed.
+    ///
+    /// See also [remove_bonded_device](GapCommands::remove_bonded_device) to remove only one device.
+    ///
+    /// # Note
+    /// As a fallback mode, in case the bonding table is full, the BLE stack automatically clears the bonding
+    /// table just before putting into it information about a new bonded device.
     ///
     /// # Errors
     ///
@@ -772,6 +784,48 @@ pub trait GapCommands {
     /// with ACI_GAP_ADDITIONAL_BEACON_START. If the advertising beacon is already
     /// started, the new data is used in subsequent beacon advertising events.
     async fn additonal_beacon_set_data(&mut self, advertising_data: &[u8]);
+
+    /// This command is used to set the extended advertising configuration for one
+    /// advertising set.
+    ///
+    /// This command, in association with
+    /// [adv_set_scan_response_data](GapCommands::adv_set_scan_response_data),
+    /// [adv_set_advertising_data](GapCommands::adv_set_advertising_data) and
+    /// [adv_set_enable](GapCommands::adv_set_enable), enables to start extended
+    /// advertising.
+    ///
+    /// These commands must be used in replacement of
+    /// [set_discoverable](GapCommands::set_discoverable),
+    /// [set_limited_discoverable](GapCommands::set_limited_discoverable),
+    /// [set_direct_connectable](GapCommands::set_direct_connectable),
+    /// [set_nonconnectable](GapCommands::set_nonconnectable),
+    /// [set_undirected_connectable](GapCommands::set_undirected_connectable) and
+    /// [set_broadcast_mode](GapCommands::set_broadcast_mode) that only support
+    /// legacy advertising.
+    async fn adv_set_config(&mut self, params: &AdvSetConfig);
+
+    /// This command is used to request the Controller to enable or disbale one
+    /// or more extended advertising sets.
+    async fn adv_set_enable<'a>(&mut self, params: &AdvSetEnable<'a>);
+
+    /// This command is used to set the data used in extended advertising PDUs
+    /// that have a data field
+    async fn adv_set_advertising_data(&mut self, params: &AdvSetAdvertisingData);
+
+    /// This command is used to provide scan response data used during extended
+    /// advertising
+    async fn adv_set_scan_response_data(&mut self, params: &AdvSetAdvertisingData);
+
+    /// This command is used to remove an advertising set from the Controller.
+    async fn adv_remove_set(&mut self, handle: AdvertisingHandle);
+
+    /// This command is used to remove all exisiting advertising sets from
+    /// the Controller.
+    async fn adv_clear_sets(&mut self);
+
+    /// This command is used to set the random device address of an advertising
+    /// set configured to use specific random address.
+    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
 }
 
 impl<T: Controller> GapCommands for T {
@@ -1184,6 +1238,48 @@ impl<T: Controller> GapCommands for T {
             advertising_data,
         )
         .await;
+    }
+
+    impl_params!(
+        adv_set_config,
+        AdvSetConfig,
+        crate::vendor::opcode::GAP_ADV_SET_CONFIGURATION
+    );
+
+    impl_variable_length_params!(
+        adv_set_enable<'a>,
+        AdvSetEnable<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_ENABLE
+    );
+
+    impl_variable_length_params!(
+        adv_set_advertising_data<'a>,
+        AdvSetAdvertisingData<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_ADV_DATA
+    );
+
+    impl_variable_length_params!(
+        adv_set_scan_response_data<'a>,
+        AdvSetAdvertisingData<'a>,
+        crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA
+    );
+
+    async fn adv_remove_set(&mut self, handle: AdvertisingHandle) {
+        self.controller_write(crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0])
+            .await;
+    }
+
+    async fn adv_clear_sets(&mut self) {
+        self.controller_write(crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[])
+            .await;
+    }
+
+    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr) {
+        let mut payload = [0; 7];
+        payload[0] = handle.0;
+        payload[1..].copy_from_slice(&addr.0);
+        self.controller_write(crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS, &payload)
+            .await;
     }
 }
 
@@ -2364,5 +2460,127 @@ impl AdditonalBeaconStartParameters {
         bytes[4] = self.advertising_channel_map.bits();
         self.own_address_type.copy_into_slice(&mut bytes[5..12]);
         bytes[12] = self.pa_level;
+    }
+}
+
+/// Params for the [adv_set_config](GapCommands::adv_set_config) command
+pub struct AdvSetConfig {
+    /// Bitmap of extended advertising modes
+    pub adv_mode: AdvertisingMode,
+    /// Used to identify an advertising set
+    pub adv_handle: AdvertisingHandle,
+    /// Type of advertising event
+    pub adv_event_properties: AdvertisingEvent,
+    /// Advertising interval
+    pub adv_interval: ExtendedAdvertisingInterval,
+    /// Advertising channel map
+    pub primary_adv_channel_map: Channels,
+    /// Own address type.
+    ///
+    /// If privacy is disabled, the address can be public or static random, otherwise,
+    /// it can be a resolvable private address or a non-resolvabble private address.
+    pub own_addr_type: OwnAddressType,
+    /// Public device address, random device addressm public identity address, or random
+    /// (static) identity address of the device to be connected.
+    pub peer_addr: BdAddrType,
+    /// Advertising filter policy
+    pub adv_filter_policy: AdvertisingFilterPolicy,
+    /// Advertising TX power. Units; dBm.
+    ///
+    /// Values;
+    /// - -127 .. 20
+    pub adv_tx_power: u8,
+    /// Secondary advertising maximum skip.
+    ///
+    /// Values:
+    /// - 0x00: `AUX_QDV_IND` shall be sent prior to the next advertising event
+    /// - 0x01 .. 0xFF: Maximum advertising events to the Controller can skip
+    /// before sending the `AUX_QDV_IND` packets on the secondary physical channel.
+    pub secondary_adv_max_skip: u8,
+    /// Secondary advertising PHY
+    pub secondary_adv_phy: AdvertisingPhy,
+    /// Value of advertising SID subfield in the ADI field of the PDU.
+    ///
+    /// Values:
+    /// - 0x00 .. 0x0F
+    pub adv_sid: u8,
+    /// Scan request notifications
+    pub scan_req_notification_enable: bool,
+}
+
+impl AdvSetConfig {
+    const LENGTH: usize = 25;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert_eq!(bytes.len(), Self::LENGTH);
+
+        bytes[0] = self.adv_mode.bits();
+        bytes[1] = self.adv_handle.0;
+        LittleEndian::write_u16(&mut bytes[2..], self.adv_event_properties.bits());
+        self.adv_interval.copy_into_slice(&mut bytes[4..]);
+        bytes[12] = self.primary_adv_channel_map.bits();
+        bytes[13] = self.own_addr_type as u8;
+        self.peer_addr.copy_into_slice(&mut bytes[14..]);
+        bytes[21] = self.adv_filter_policy as u8;
+        bytes[22] = self.adv_tx_power;
+        bytes[23] = self.secondary_adv_max_skip;
+        bytes[24] = self.adv_sid;
+        bytes[25] = self.scan_req_notification_enable as u8;
+    }
+}
+
+/// Params for the [adv_set_enable](GapCommands::adv_set_enable) command
+pub struct AdvSetEnable<'a> {
+    /// Enable/Disable advertising
+    pub enable: bool,
+    /// Number of advertising sets.
+    ///
+    /// Values
+    /// - 0x00: disable all advertising sets
+    /// - 0x01 .. 0x3F: Number of advertising sets to enable or disable
+    pub num_sets: u8,
+    /// Advertising sets
+    pub adv_set: &'a [AdvSet],
+}
+
+impl<'a> AdvSetEnable<'a> {
+    const MAX_LENGTH: usize = 254;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        bytes[0] = self.enable as u8;
+        bytes[1] = self.num_sets;
+        for (idx, set) in self.adv_set.iter().enumerate() {
+            set.copy_into_slice(&mut bytes[2 + (idx * 4)..]);
+        }
+    }
+}
+
+/// Params for the [adv_set_advertising_data](GapCommands::adv_set_advertising_data) command
+pub struct AdvSetAdvertisingData<'a> {
+    /// Used to identify an advertising set
+    pub adv_handle: AdvertisingHandle,
+    /// Advertising operation
+    pub operation: AdvertisingOperation,
+    /// Fragment preference. If set to `true`, the Controller may fragment all data, else
+    /// the Controller should not fragment or should minimize fragmentation of data
+    pub fragment: bool,
+    /// Data formatted as defined in Bluetooth spec. v.5.4 [Vol 3, Part C, 11].
+    pub data: &'a [u8],
+}
+
+impl<'a> AdvSetAdvertisingData<'a> {
+    const MAX_LENGTH: usize = 255;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+
+        bytes[0] = self.adv_handle.0;
+        bytes[1] = self.operation as u8;
+        bytes[2] = (!self.fragment) as u8;
+        let length = self.data.len();
+        bytes[3] = length as u8;
+        bytes[4..(4 + length)].copy_from_slice(self.data);
     }
 }

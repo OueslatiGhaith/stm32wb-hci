@@ -790,6 +790,61 @@ pub trait GattCommands {
         &mut self,
         params: &UpdateCharacteristicValueExt<'_>,
     ) -> Result<(), Error>;
+
+    /// This command is used to deny the GATT server to send a response to a read request from a client.
+    ///
+    /// The application may send this command when it receives the
+    /// [ATT Read Permit Request](crate::vendor::event::VendorEvent::AttReadPermitRequest) or
+    /// [ATT Read Multiple Permit Request](crate::vendor::event::VendorEvent::AttReadMultiplePermitRequest).
+    ///
+    /// This command indicates to the stack that the client is not allowed to read the requested
+    /// characteristic due to e.g. application restrictions.
+    ///
+    /// The error code shall be either `0x08` (Insufficient Authorization) or a value in the range
+    /// `0x80 .. 0x9F` (Application Error).
+    ///
+    /// The application should issue the [GATT Allow Read](GattCommands::allow_read) or
+    /// [Gatt Deny Read](GattCommands::deny_read) command within 30 seconds from the receipt
+    /// of the [ATT Read Permit Request](crate::vendor::event::VendorEvent::AttReadPermitRequest) or the
+    /// [ATT Read Multiple Permit Request](crate::vendor::event::VendorEvent::AttReadMultiplePermitRequest)
+    /// events; otherwise the GATT procedure issues a timeout
+    async fn deny_read(&mut self, handle: ConnectionHandle, err: u8);
+
+    /// This command sets the access permission for the attribute handle specified.
+    async fn set_access_permission(
+        &mut self,
+        service: AttributeHandle,
+        attribute: AttributeHandle,
+        permissions: AccessPermission,
+    );
+
+    /// This command forces the saving of the GATT database for all active connections. Note that,
+    /// by default, the GATT database is saved per active connection at the time of disconnecting.
+    async fn store_database(&mut self);
+
+    /// This commad sends a Multiple Handle Value Notification over the ATT bearer specified in
+    /// parameter. The handles provided as parameters must be the handles of the characteristic
+    /// declarations.
+    async fn send_multiple_notification(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    );
+
+    /// Starts a procedure to read multiple variable length characteristic values from a server;
+    ///
+    /// This command must specify the handles of the characteristic values to be read.
+    ///
+    /// When the procedure is completed, a
+    /// [GATT ProcedureComplete](crate::vendor::event::VendorEvent::GattProcedureComplete) event
+    /// is generated, Before procedure completion, the response packets are given through
+    /// [ATT Read Multiple Response](crate::vendor::event::VendorEvent::AttReadMultipleResponse)
+    /// event.
+    async fn read_multiple_variable_characteristic_value(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    );
 }
 
 impl<T: Controller> GattCommands for T {
@@ -1178,6 +1233,70 @@ impl<T: Controller> GattCommands for T {
         UpdateCharacteristicValueExt<'a>,
         crate::vendor::opcode::GATT_UPDATE_LONG_CHARACTERISTIC_VALUE
     );
+
+    async fn deny_read(&mut self, handle: ConnectionHandle, err: u8) {
+        let mut payload = [0; 3];
+        LittleEndian::write_u16(&mut payload[0..], handle.0);
+        payload[2] = err;
+        self.controller_write(crate::vendor::opcode::GATT_DENY_READ, &payload)
+            .await;
+    }
+
+    async fn set_access_permission(
+        &mut self,
+        service: AttributeHandle,
+        attribute: AttributeHandle,
+        permissions: AccessPermission,
+    ) {
+        let mut payload = [0; 5];
+        LittleEndian::write_u16(&mut payload[0..], service.0);
+        LittleEndian::write_u16(&mut payload[2..], attribute.0);
+        payload[4] = permissions.bits();
+        self.controller_write(crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION, &payload)
+            .await;
+    }
+
+    async fn store_database(&mut self) {
+        self.controller_write(crate::vendor::opcode::GATT_STORE_DB, &[])
+            .await;
+    }
+
+    async fn send_multiple_notification(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    ) {
+        let mut payload = [0; 255];
+        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
+        payload[1] = handles.len() as u8;
+        for (idx, handle) in handles.iter().enumerate() {
+            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
+        }
+        self.controller_write(
+            crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION,
+            &payload[..2 + (handles.len() * 2)],
+        )
+        .await;
+    }
+
+    async fn read_multiple_variable_characteristic_value(
+        &mut self,
+        conn_handle: ConnectionHandle,
+        handles: &[AttributeHandle],
+    ) {
+        let mut payload = [0; 255];
+        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
+        payload[1] = handles.len() as u8;
+        for (idx, handle) in handles.iter().enumerate() {
+            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
+        }
+
+        self.controller_write(
+            crate::vendor::opcode::GATT_READ_MULTIPLE_VAR_CHAR_VALUE,
+            &payload[..2 + (handles.len() * 2)],
+        )
+        .await;
+    }
 }
 
 /// Potential errors from parameter validation.
@@ -1719,12 +1838,14 @@ bitflags::bitflags! {
     pub struct AccessPermission: u8 {
         /// Readable
         const READ = 0x01;
-
         /// Writable
         const WRITE = 0x02;
-
         /// Readable and writeable
         const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
+        /// Writeable without response
+        const WRITE_NO_RESP = 0x04;
+        /// Signed writeable
+        const SIGNED_WRITE = 0x08;
     }
 }
 
@@ -1734,12 +1855,14 @@ defmt::bitflags! {
     pub struct AccessPermission: u8 {
         /// Readable
         const READ = 0x01;
-
         /// Writable
         const WRITE = 0x02;
-
         /// Readable and writeable
         const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
+        /// Writeable without responseconst
+        WRITE_NO_RESP = 0x04;
+        /// Signed writeable
+        const SIGNED_WRITE = 0x08;
     }
 }
 
