@@ -339,7 +339,22 @@ pub enum VendorEvent {
     /// > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattNotificationExt(AttributeValueExt),
-    // TODO: hal_end_of_radio_activity
+
+    /// This event is generated when teh device completes a radio activity and provide information when
+    /// a new radio activity will be performed.
+    ///
+    /// Information provided includes type of radio activity and absolute time in system ticks when a
+    /// radio acitivity is scheduled, if any. The application can use this information to schedule user
+    /// activities synchronous to selected radio activities. A command
+    /// [Set Radio Activity Mask](crate::vendor::command::hal::HalCommands::set_radio_activity_mask) is
+    /// provided to enable radio activity events of user interests, by default no events are enabled.
+    ///
+    /// The user should take into account that enabling radio events in an application with intense
+    /// radio activity could lead to a fairly high rate of events generated.
+    ///
+    /// Application use cases indlude synchronizing notifications with connection intervals, switching
+    /// antenna at the end of advertising or performing flash erase while radio is idle.
+    HalEndOfRadioActivity(HalEndOfRadioActivity),
     // TODO: hal_scan_req_report
     // TODO: hal_fw_error
 }
@@ -640,6 +655,9 @@ pub enum VendorError {
 
     /// For the [GATT EAT Bearer](crate::vendor::event::VendorEvent::GattEattBrearer) event: The EAB state was not recognized.
     BadEabState(u8),
+
+    /// For the [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event: The Radio Event code was not recognized.
+    BadRadioEvent(u8),
 }
 
 macro_rules! require_len {
@@ -676,6 +694,9 @@ impl VendorEvent {
             // SHCI "C2 Ready" event
             0x9200 => Ok(VendorEvent::CoprocessorReady(to_coprocessor_ready(buffer)?)),
 
+            0x0004 => Ok(VendorEvent::HalEndOfRadioActivity(
+                to_hal_end_of_radio_activity(buffer)?,
+            )),
             0x0400 => Ok(VendorEvent::GapLimitedDiscoverableTimeout),
             0x0401 => Ok(VendorEvent::GapPairingComplete(to_gap_pairing_complete(
                 buffer,
@@ -3096,4 +3117,71 @@ impl AttributeValueExt {
     pub fn value(&self) -> &[u8] {
         &self.value_buf[..self.value_len]
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event
+pub struct HalEndOfRadioActivity {
+    /// Completed radio event
+    pub last_state: RadioEvent,
+    /// Incoming radio event
+    pub next_state: RadioEvent,
+    /// 32-bit absolute current time expressed in internal time units
+    pub next_state_sys_time: u32,
+    /// Slot number of completed radio events
+    ///
+    /// Values:
+    /// - 0xFF: Idle
+    /// - 0x00 .. 0x07
+    pub last_state_slot: u8,
+    /// Slot number of incoming radio events
+    ///
+    /// Values:
+    /// - 0xFF: Idle
+    /// - 0x00 .. 0x07
+    pub next_state_slot: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RadioEvent {
+    Idle = 0x00,
+    Advertising = 0x01,
+    PeripheralConnection = 0x02,
+    Scanning = 0x03,
+    CentralConnection = 0x05,
+    TxTestMode = 0x06,
+    RxTestMode = 0x07,
+}
+
+impl TryFrom<u8> for RadioEvent {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(RadioEvent::Idle),
+            0x01 => Ok(RadioEvent::Advertising),
+            0x02 => Ok(RadioEvent::PeripheralConnection),
+            0x03 => Ok(RadioEvent::Scanning),
+            0x05 => Ok(RadioEvent::CentralConnection),
+            0x06 => Ok(RadioEvent::TxTestMode),
+            0x07 => Ok(RadioEvent::RxTestMode),
+            x => Err(crate::event::Error::Vendor(VendorError::BadRadioEvent(x))),
+        }
+    }
+}
+
+fn to_hal_end_of_radio_activity(
+    buffer: &[u8],
+) -> Result<HalEndOfRadioActivity, crate::event::Error> {
+    require_len!(buffer, 7);
+
+    Ok(HalEndOfRadioActivity {
+        last_state: RadioEvent::try_from(buffer[0])?,
+        next_state: RadioEvent::try_from(buffer[1])?,
+        next_state_sys_time: LittleEndian::read_u32(&buffer[2..]),
+        last_state_slot: buffer[6],
+        next_state_slot: buffer[7],
+    })
 }
