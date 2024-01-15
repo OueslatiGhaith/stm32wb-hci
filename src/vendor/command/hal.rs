@@ -132,7 +132,6 @@ pub trait HalCommands {
     ///
     /// Only the radio activities enabled in the mask will be reported to the application by the
     /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
-    // TODO: add EndOfRadioActivity event
     async fn set_radio_activity_mask(&mut self, mask: RadioActivityFlags);
 
     /// This command is intended to retrieve information about the current Anchor Interval and

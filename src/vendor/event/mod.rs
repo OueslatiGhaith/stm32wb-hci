@@ -22,7 +22,6 @@ pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-// TODO: add missing events
 pub enum VendorEvent {
     /// When the radio coprocessor firmware is started normally, it gives this event to the user to
     /// indicate the system has started.
@@ -311,10 +310,6 @@ pub enum VendorEvent {
     /// and if the characteristic supports notifications).
     GattNotificationComplete(AttributeHandle),
 
-    // TODO: there is probably a better way to handle Read/Indication/Notification extended events, given
-    // TODO: that the offset param contains extra information
-    // TODO: also, the Read event has a different structure from Indication/Notification, unlike non-extended
-    // TODO: events
     /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
     /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
     /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
@@ -362,7 +357,9 @@ pub enum VendorEvent {
     ///
     /// Note: RSSI in this event is valid only when privacy is not used
     HalScanReqReport(HalScanReqReport),
-    // TODO: hal_fw_error
+
+    /// This event is generated to report firmware error information
+    HalFirmwareError(HalFirmwareError),
 }
 
 /// Enumeration of vendor-specific status codes.
@@ -664,6 +661,9 @@ pub enum VendorError {
 
     /// For the [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event: The Radio Event code was not recognized.
     BadRadioEvent(u8),
+
+    /// For the [HAL Firmware Error](VendorEvent::HalFirmareError) event: The Radio Event code was not recognized.
+    BadFirmwareError(u8),
 }
 
 macro_rules! require_len {
@@ -704,6 +704,9 @@ impl VendorEvent {
                 to_hal_end_of_radio_activity(buffer)?,
             )),
             0x0005 => Ok(VendorEvent::HalScanReqReport(to_hal_scan_req_report(
+                buffer,
+            )?)),
+            0x0006 => Ok(VendorEvent::HalFirmwareError(to_hal_firmware_error(
                 buffer,
             )?)),
             0x0400 => Ok(VendorEvent::GapLimitedDiscoverableTimeout),
@@ -2883,7 +2886,6 @@ fn to_l2cap_coc_connect_confirm(
 ) -> Result<L2CapCocConnectConfirm, crate::event::Error> {
     require_len!(buffer, 12);
 
-    // TODO: how does one determine the length of channel_index_list?
     let mut channel_index_list = [0; 246];
     let tmp = &buffer[7..];
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
@@ -2902,7 +2904,6 @@ fn to_l2cap_coc_connect_confirm(
 fn to_l2cap_coc_reconfig(buffer: &[u8]) -> Result<L2CapCocReconfig, crate::event::Error> {
     require_len_at_least!(buffer, 8);
 
-    // TODO: how does one determine the length of channel_index_list?
     let mut channel_index_list = [0; 246];
     let tmp = &buffer[7..];
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
@@ -3226,5 +3227,67 @@ fn to_hal_scan_req_report(buffer: &[u8]) -> Result<HalScanReqReport, crate::even
             0x03 => PeerAddrType::RandomIdentityAddress(addr),
             x => return Err(crate::event::Error::Vendor(VendorError::BadBdAddrType(x))),
         },
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event
+pub struct HalFirmwareError {
+    /// Firmware error type
+    pub fw_error_type: FirmwareError,
+    /// Length of  data in octets
+    data_len: u8,
+    /// the error event info
+    data: [u8; 251],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines error types returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event
+pub enum FirmwareError {
+    /// L2CAP recombination failure
+    L2capRecombination = 0x01,
+    /// GATT unexpected peer message
+    GattUnexpectedPeerMsg = 0x02,
+    /// NVM level warning
+    NvmLevelWarning = 0x03,
+    /// COC Rx data length too large
+    CocRxDataTooLarge = 0x04,
+}
+
+impl TryFrom<u8> for FirmwareError {
+    type Error = crate::event::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(FirmwareError::L2capRecombination),
+            0x02 => Ok(FirmwareError::GattUnexpectedPeerMsg),
+            0x03 => Ok(FirmwareError::NvmLevelWarning),
+            0x04 => Ok(FirmwareError::CocRxDataTooLarge),
+            x => Err(crate::event::Error::Vendor(VendorError::BadFirmwareError(
+                x,
+            ))),
+        }
+    }
+}
+
+impl HalFirmwareError {
+    pub fn data(&self) -> &[u8] {
+        &self.data[..self.data_len as usize]
+    }
+}
+
+fn to_hal_firmware_error(buffer: &[u8]) -> Result<HalFirmwareError, crate::event::Error> {
+    require_len_at_least!(buffer, 2);
+
+    let data_len = buffer[1] as usize;
+    let mut data = [0; 251];
+    data[..data_len].copy_from_slice(&buffer[2..(2 + data_len)]);
+
+    Ok(HalFirmwareError {
+        fw_error_type: FirmwareError::try_from(buffer[0])?,
+        data_len: buffer[1],
+        data,
     })
 }
