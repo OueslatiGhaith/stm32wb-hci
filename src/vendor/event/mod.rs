@@ -3254,6 +3254,8 @@ pub enum FirmwareError {
     NvmLevelWarning = 0x03,
     /// COC Rx data length too large
     CocRxDataTooLarge = 0x04,
+    /// ECOC already assigned DCID
+    EcocAssigned = 0x05,
 }
 
 impl TryFrom<u8> for FirmwareError {
@@ -3265,6 +3267,7 @@ impl TryFrom<u8> for FirmwareError {
             0x02 => Ok(FirmwareError::GattUnexpectedPeerMsg),
             0x03 => Ok(FirmwareError::NvmLevelWarning),
             0x04 => Ok(FirmwareError::CocRxDataTooLarge),
+            0x05 => Ok(FirmwareError::EcocAssigned),
             x => Err(crate::event::Error::Vendor(VendorError::BadFirmwareError(
                 x,
             ))),
