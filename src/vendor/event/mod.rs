@@ -13,6 +13,7 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::mem;
 use core::time::Duration;
 
+use crate::host::PeerAddrType;
 pub use crate::types::{ConnectionInterval, ConnectionIntervalError};
 use crate::vendor::command::l2cap::L2CapCocReconfig;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
@@ -355,7 +356,12 @@ pub enum VendorEvent {
     /// Application use cases indlude synchronizing notifications with connection intervals, switching
     /// antenna at the end of advertising or performing flash erase while radio is idle.
     HalEndOfRadioActivity(HalEndOfRadioActivity),
-    // TODO: hal_scan_req_report
+
+    /// This event is reported to the application after a scan request is received and a scan response is
+    /// scheduled to be transmitted.
+    ///
+    /// Note: RSSI in this event is valid only when privacy is not used
+    HalScanReqReport(HalScanReqReport),
     // TODO: hal_fw_error
 }
 
@@ -697,6 +703,9 @@ impl VendorEvent {
             0x0004 => Ok(VendorEvent::HalEndOfRadioActivity(
                 to_hal_end_of_radio_activity(buffer)?,
             )),
+            0x0005 => Ok(VendorEvent::HalScanReqReport(to_hal_scan_req_report(
+                buffer,
+            )?)),
             0x0400 => Ok(VendorEvent::GapLimitedDiscoverableTimeout),
             0x0401 => Ok(VendorEvent::GapPairingComplete(to_gap_pairing_complete(
                 buffer,
@@ -3183,5 +3192,39 @@ fn to_hal_end_of_radio_activity(
         next_state_sys_time: LittleEndian::read_u32(&buffer[2..]),
         last_state_slot: buffer[6],
         next_state_slot: buffer[7],
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Defines data returned by [HAL End Of Radio Activity](VendorEvent::HalEndOfRadioActivity) event
+pub struct HalScanReqReport {
+    /// RSSI (signed integer).
+    ///
+    /// Units: dBm
+    ///
+    /// Values:
+    /// - 127: RSSI not available
+    /// - -127 .. 20
+    pub rssi: u8,
+    /// Address of the peer device
+    pub peer_addr: PeerAddrType,
+}
+
+fn to_hal_scan_req_report(buffer: &[u8]) -> Result<HalScanReqReport, crate::event::Error> {
+    require_len!(buffer, 8);
+
+    let mut addr = crate::BdAddr([0; 6]);
+    addr.0.copy_from_slice(&buffer[2..]);
+
+    Ok(HalScanReqReport {
+        rssi: buffer[0],
+        peer_addr: match buffer[1] {
+            0x00 => PeerAddrType::PublicDeviceAddress(addr),
+            0x01 => PeerAddrType::RandomDeviceAddress(addr),
+            0x02 => PeerAddrType::PublicDeviceAddress(addr),
+            0x03 => PeerAddrType::RandomIdentityAddress(addr),
+            x => return Err(crate::event::Error::Vendor(VendorError::BadBdAddrType(x))),
+        },
     })
 }

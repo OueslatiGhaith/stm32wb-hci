@@ -818,7 +818,6 @@ bitflags::bitflags! {
     #[derive(Debug, Clone, Copy)]
     pub struct HalEventFlags: u32 {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
-        // TODO: add HalScanReqReport event
         const SCAN_REQ_REPORT = 0x00000001;
     }
 }
@@ -827,7 +826,6 @@ bitflags::bitflags! {
 defmt::bitflags! {
     pub struct HalEventFlags: u32 {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
-        // TODO: add HalScanReqReport event
         const SCAN_REQ_REPORT = 0x00000001;
     }
 }
