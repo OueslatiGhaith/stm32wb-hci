@@ -13,9 +13,10 @@ This crate aims to match the [latest firmware binaries](https://github.com/STMic
 
 | crate version | firmware version |
 | ------------- | ---------------- |
-| 0.17.0 | 1.17.0 |
-| 0.16.0 | 1.16.0 |
-| older | 1.15.0 |
+| 0.17.1        | 1.17.1           |
+| 0.17.0        | 1.17.0           |
+| 0.16.0        | 1.16.0           |
+| older         | 1.15.0           |
 
 ## Usage
 
