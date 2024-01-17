@@ -11,7 +11,8 @@ jobs:
         with:
           toolchain: stable
           target: thumbv7em-none-eabihf
-      - run: cargo build --release --all --verbose --target=thumbv7em-none-eabihf
+      - run: cargo build --release --target=thumbv7em-none-eabihf
+      - run: cargo build --features=defmt --release --target=thumbv7em-none-eabihf
 
   test:
     runs-on: ubuntu-latest

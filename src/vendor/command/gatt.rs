@@ -1860,7 +1860,7 @@ defmt::bitflags! {
         /// Readable and writeable
         const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
         /// Writeable without responseconst
-        WRITE_NO_RESP = 0x04;
+        const WRITE_NO_RESP = 0x04;
         /// Signed writeable
         const SIGNED_WRITE = 0x08;
     }
