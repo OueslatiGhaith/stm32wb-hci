@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.2] - 2024-01-17
+
+### Bug Fixes
+
+- Fixed syntax error in `crate::vendor::command::gatt::AccessPermission` using the `defmt` feature
+
 ## [0.17.1] - 2024-01-15
 
 ### Documentation
