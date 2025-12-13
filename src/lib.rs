@@ -149,7 +149,7 @@ pub trait Controller {
     /// // +------+------+------+------+
     /// # }
     /// ```
-    async fn controller_read_into(&self, buf: &mut [u8]);
+    async fn controller_read_into(&mut self, buf: &mut [u8]);
 }
 
 /// List of possible error codes, Bluetooth Spec, Vol 2, Part D, Section 2.

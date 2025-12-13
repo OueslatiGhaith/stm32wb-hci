@@ -10,7 +10,6 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::cmp::PartialEq;
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
-use core::mem;
 use core::time::Duration;
 
 use crate::host::PeerAddrType;
@@ -1195,7 +1194,7 @@ fn to_gap_device_found(buffer: &[u8]) -> Result<GapDeviceFound, crate::event::Er
     let data_len = buffer[10] as usize;
     require_len!(buffer, 12 + data_len);
 
-    let rssi = unsafe { mem::transmute::<u8, i8>(buffer[buffer.len() - 1]) };
+    let rssi = u8::cast_signed(buffer[buffer.len() - 1]);
 
     let mut addr = BdAddr([0; 6]);
     addr.0.copy_from_slice(&buffer[4..10]);
@@ -1456,7 +1455,7 @@ impl AttFindInformationResponse {
     /// split across response packets; this also implies that a handleUUID pair shall fit into a
     /// single response packet. The handle-UUID pairs shall be returned in ascending order of
     /// attribute handles.
-    pub fn handle_uuid_pair_iter(&self) -> HandleUuidPairIterator {
+    pub fn handle_uuid_pair_iter(&self) -> HandleUuidPairIterator<'_> {
         match self.handle_uuid_pairs {
             HandleUuidPairs::Format16(count, ref data) => {
                 HandleUuidPairIterator::Format16(HandleUuid16PairIterator {
@@ -1685,7 +1684,7 @@ pub struct AttFindByTypeValueResponse {
 impl AttFindByTypeValueResponse {
     /// Returns an iterator over the Handles Information List as defined in Bluetooth Core v4.1
     /// spec.
-    pub fn handle_pairs_iter(&self) -> HandleInfoPairIterator {
+    pub fn handle_pairs_iter(&self) -> HandleInfoPairIterator<'_> {
         HandleInfoPairIterator {
             event: self,
             next_index: 0,
@@ -1819,7 +1818,7 @@ impl Debug for AttReadByTypeResponse {
 
 impl AttReadByTypeResponse {
     /// Return an iterator over all valid handle-value pairs returned with the response.
-    pub fn handle_value_pair_iter(&self) -> HandleValuePairIterator {
+    pub fn handle_value_pair_iter(&self) -> HandleValuePairIterator<'_> {
         HandleValuePairIterator {
             event: self,
             index: 0,
@@ -1979,7 +1978,7 @@ const MAX_ATTRIBUTE_DATA_BUF_LEN: usize = 249;
 
 impl AttReadByGroupTypeResponse {
     /// Create and return an iterator for the attribute data returned with the response.
-    pub fn attribute_data_iter(&self) -> AttributeDataIterator {
+    pub fn attribute_data_iter(&self) -> AttributeDataIterator<'_> {
         AttributeDataIterator {
             event: self,
             next_index: 0,
