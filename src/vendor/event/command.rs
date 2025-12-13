@@ -4,7 +4,6 @@
 //! commands.  These commands are defined for the BlueNRG controller, but are not standard HCI
 //! commands.
 
-use crate::{require_len, require_len_at_least};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
