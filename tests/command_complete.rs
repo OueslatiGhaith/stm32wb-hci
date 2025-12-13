@@ -7,7 +7,9 @@ use std::convert::TryFrom;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(dead_code)]
 struct VendorEvent;
+#[allow(dead_code)]
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct VendorError;

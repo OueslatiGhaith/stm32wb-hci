@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "stm32wb-hci"
 version = "0.17.2"
 authors = [
@@ -16,7 +16,7 @@ exclude = ["tests"]
 
 [dependencies]
 bitflags = "2.4.1"
-byteorder = { version = "1.5.0", default_features = false }
+byteorder = { version = "1.5.0", default-features = false }
 defmt = { version = "0.3", optional = true }
 
 [dev-dependencies]

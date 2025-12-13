@@ -14,7 +14,6 @@ use crate::{ConnectionHandle, Status};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
-use core::mem;
 
 /// The [Command Complete](super::Event::CommandComplete) event is used by the Controller for most
 /// commands to transmit return status of a command and the other event parameters that are
@@ -337,7 +336,7 @@ fn to_tx_power_level(bytes: &[u8]) -> Result<TxPowerLevel, crate::event::Error> 
     Ok(TxPowerLevel {
         status: to_status(bytes)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&bytes[1..])),
-        tx_power_level_dbm: unsafe { mem::transmute::<u8, i8>(bytes[3]) },
+        tx_power_level_dbm: u8::cast_signed(bytes[3]),
     })
 }
 
@@ -1315,7 +1314,7 @@ fn to_read_rssi(bytes: &[u8]) -> Result<ReadRssi, crate::event::Error> {
     Ok(ReadRssi {
         status: to_status(bytes)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&bytes[1..])),
-        rssi: unsafe { mem::transmute::<u8, i8>(bytes[3]) },
+        rssi: u8::cast_signed(bytes[3]),
     })
 }
 
@@ -1488,7 +1487,7 @@ fn to_le_advertising_channel_tx_power(
     require_len!(bytes, 2);
     Ok(LeAdvertisingChannelTxPower {
         status: to_status(bytes)?,
-        power: unsafe { mem::transmute::<u8, i8>(bytes[1]) },
+        power: u8::cast_signed(bytes[1]),
     })
 }
 
