@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "stm32wb-hci"
-version = "0.17.2"
+version = "0.17.3"
 dependencies = [
  "bitflags 2.10.0",
  "byteorder",

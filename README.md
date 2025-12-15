@@ -11,12 +11,12 @@ and events from the specification, and vendor-specific commands and events.
 
 This crate aims to match the [latest firmware binaries](https://github.com/STMicroelectronics/STM32CubeWB/tree/master/Projects/STM32WB_Copro_Wireless_Binaries/STM32WB5x) released by ST. The minor version number of this crate should indicate the appropriate firmware version to use, refer to this table in unclear:
 
-| crate version | firmware version |
-| ------------- | ---------------- |
-| 0.17.2        | 1.17.1           |
-| 0.17.0        | 1.17.0           |
-| 0.16.0        | 1.16.0           |
-| older         | 1.15.0           |
+| crate version   | firmware version |
+| --------------- | ---------------- |
+| 0.17.2 / 0.17.3 | 1.17.1           |
+| 0.17.0          | 1.17.0           |
+| 0.16.0          | 1.16.0           |
+| older           | 1.15.0           |
 
 ## Usage
 
