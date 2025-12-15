@@ -6,7 +6,7 @@ authors = [
     "Daniel Gallagher <pdanielgallagher@gmail.com>",
     "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
 ]
-categories = ["embedded", "hardware-support", "no-std", "async"]
+categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
 description = "Implementation of the Bluetooth HCI for the STM32WB family"
 keywords = ["ble", "bluetooth", "stm32"]
 license = "MIT/Apache-2.0"
