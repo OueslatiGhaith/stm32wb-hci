@@ -69,7 +69,13 @@ pub enum VendorEvent {
     /// is called to reestablish a bond with a peripheral but the peripheral has lost the bond. In
     /// order to create a new bond the central device has to launch `gap_send_pairing_request` with
     /// `force_rebond` set to `true`.
-    GapBondLost,
+    GapBondLost(ConnectionHandle),
+
+    // This event is sent only when SMP mode bit 3 is configured to 1. With this configuration, it is generated in two cases:
+    //  - in Peripheral case, when a Pairing Request is received;
+    //  - in Central case, when a Security Request is received that leads to the sending of a Pairing Request.
+    // The application shall respond to this event with ACI_GAP_PAIRING_REQUEST_REPLY command.
+    GapPairingRequest(GapPairingRequest),
 
     /// The event is given by the GAP layer to the upper layers when a device is discovered during
     /// scanning as a consequence of one of the GAP procedures started by the upper layers.
@@ -717,7 +723,10 @@ impl VendorEvent {
                 buffer,
             )?)),
             0x0404 => Ok(VendorEvent::GapPeripheralSecurityInitiated),
-            0x0405 => Ok(VendorEvent::GapBondLost),
+            0x0405 => Ok(VendorEvent::GapBondLost({
+                require_len!(buffer[2..], 2);
+                ConnectionHandle(LittleEndian::read_u16(&buffer[2..]))
+            })),
             0x0406 => Ok(VendorEvent::GapDeviceFound(to_gap_device_found(buffer)?)),
             0x0407 => Ok(VendorEvent::GapProcedureComplete(
                 to_gap_procedure_complete(buffer)?,
@@ -729,6 +738,9 @@ impl VendorEvent {
             0x040A => Ok(VendorEvent::GapKeypressNotification(
                 to_keypress_notification(buffer)?,
             )),
+            0x040B => Ok(VendorEvent::GapPairingRequest({
+                to_gap_pairing_request(buffer)?
+            })),
             0x0800 => Ok(VendorEvent::L2CapConnectionUpdateResponse(
                 to_l2cap_connection_update_response(buffer)?,
             )),
@@ -1624,7 +1636,6 @@ fn to_att_find_information_response(
 }
 
 // [0x4, 0xc, 0x1, 0x8, 0x1, 0x8, 0x12, 0x0, 0x3, 0x5, 0x13, 0x0, 0x2, 0x29]
-
 fn to_handle_uuid16_pairs(buffer: &[u8]) -> Result<HandleUuidPairs, VendorError> {
     const PAIR_LEN: usize = 4;
     if !buffer.len().is_multiple_of(PAIR_LEN) {
@@ -3041,6 +3052,22 @@ fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, cr
         offset: LittleEndian::read_u16(&buffer[2..]),
         data_len,
         data,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// GATT Notification Complete event
+pub struct GapPairingRequest {
+    /// Specifies the ATT bearer for which the event
+    pub conn_handle: ConnectionHandle,
+}
+
+fn to_gap_pairing_request(buffer: &[u8]) -> Result<GapPairingRequest, crate::event::Error> {
+    require_len_at_least!(buffer, 2);
+
+    Ok(GapPairingRequest {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
     })
 }
 

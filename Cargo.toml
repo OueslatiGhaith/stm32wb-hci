@@ -23,4 +23,7 @@ defmt = { version = "1", optional = true }
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros"] }
 
 [features]
+default = ["wb"]
 defmt = ["dep:defmt"]
+wba = []
+wb = []
