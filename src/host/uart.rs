@@ -2,6 +2,8 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use crate::ReadableController;
+
 const PACKET_TYPE_HCI_COMMAND: u8 = 0x01;
 // const PACKET_TYPE_ACL_DATA: u8 = 0x02;
 // const PACKET_TYPE_SYNC_DATA: u8 = 0x03;
@@ -39,13 +41,9 @@ pub struct CommandHeader {
 
 /// Trait for reading packets from the controller.
 ///
-/// Implementors must also implement [`crate::host::HostHci`], which provides all of the functions to
-/// write commands to the controller. This trait adds the ability to read packets back from the
-/// controller.
-///
 /// Must be specialized for communication errors (`E`), vendor-specific events (`Vendor`), and
 /// vendor-specific errors (`VE`).
-pub trait UartHci: super::HostHci {
+pub trait UartHci: ReadableController {
     /// Reads and returns a packet from the controller. Consumes exactly enough bytes to read the
     /// next packet including its header.
     ///
@@ -80,7 +78,7 @@ impl super::HciHeader for CommandHeader {
 
 impl<T> UartHci for T
 where
-    T: crate::Controller,
+    T: crate::ReadableController,
 {
     async fn read(&mut self) -> Result<Packet, Error> {
         const MAX_EVENT_LENGTH: usize = 256;

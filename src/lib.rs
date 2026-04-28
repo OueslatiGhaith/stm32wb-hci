@@ -152,6 +152,28 @@ pub trait Controller {
     async fn controller_read_into(&mut self, buf: &mut [u8]);
 }
 
+pub trait ReadableController {
+    /// Reads data from the controller into the provided `buffer`. See `Controller::controller_read_into.`
+    async fn controller_read_into(&mut self, buf: &mut [u8]);
+}
+
+impl<T: Controller> ReadableController for T {
+    async fn controller_read_into(&mut self, buf: &mut [u8]) {
+        <T as Controller>::controller_read_into(self, buf).await
+    }
+}
+
+pub trait WritableController {
+    /// Writes data to the controller into the provided `buffer`. See `Controller::contoller_write.`
+    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]);
+}
+
+impl<T: Controller> WritableController for T {
+    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]) {
+        <T as Controller>::controller_write(self, opcode, payload).await
+    }
+}
+
 /// List of possible error codes, Bluetooth Spec, Vol 2, Part D, Section 2.
 ///
 /// Includes an extension point for vendor-specific status codes.
