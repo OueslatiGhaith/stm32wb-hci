@@ -3,15 +3,18 @@
 extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
-use crate::types::extended_advertisement::{
-    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
-};
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
-use crate::{AdvertisingHandle, ConnectionHandle, Controller};
+use crate::{AdvertisingHandle, ConnectionHandle, WritableController};
 pub use crate::{BdAddr, BdAddrType};
 use crate::{
     host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
     types::extended_advertisement::AdvertisingMode,
+};
+use crate::{
+    types::extended_advertisement::{
+        AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
+    },
+    write_slice_with_opcode,
 };
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
@@ -828,10 +831,9 @@ pub trait GapCommands {
     async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
 }
 
-impl<T: Controller> GapCommands for T {
+impl<T: WritableController> GapCommands for T {
     async fn gap_set_nondiscoverable(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_SET_NONDISCOVERABLE, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_SET_NONDISCOVERABLE, &[]).await
     }
 
     impl_validate_variable_length_params!(
@@ -853,7 +855,8 @@ impl<T: Controller> GapCommands for T {
     );
 
     async fn set_io_capability(&mut self, capability: IoCapability) {
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_SET_IO_CAPABILITY,
             &[capability as u8],
         )
@@ -875,7 +878,8 @@ impl<T: Controller> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization_required as u8;
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_SET_AUTHORIZATION_REQUIREMENT,
             &bytes,
         )
@@ -895,8 +899,7 @@ impl<T: Controller> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u32(&mut bytes[2..6], pin);
 
-        self.controller_write(crate::vendor::opcode::GAP_PASS_KEY_RESPONSE, &bytes)
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_PASS_KEY_RESPONSE, &bytes).await;
 
         Ok(())
     }
@@ -910,8 +913,12 @@ impl<T: Controller> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization as u8;
 
-        self.controller_write(crate::vendor::opcode::GAP_AUTHORIZATION_RESPONSE, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_AUTHORIZATION_RESPONSE,
+            &bytes,
+        )
+        .await
     }
 
     async fn init(&mut self, role: Role, privacy_enabled: bool, dev_name_characteristic_len: u8) {
@@ -920,8 +927,7 @@ impl<T: Controller> GapCommands for T {
         bytes[1] = privacy_enabled as u8;
         bytes[2] = dev_name_characteristic_len;
 
-        self.controller_write(crate::vendor::opcode::GAP_INIT, &bytes)
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_INIT, &bytes).await;
     }
 
     async fn set_nonconnectable(
@@ -936,7 +942,8 @@ impl<T: Controller> GapCommands for T {
             }
         }
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_SET_NONCONNECTABLE,
             &[advertising_type as u8, address_type as u8],
         )
@@ -956,7 +963,8 @@ impl<T: Controller> GapCommands for T {
 
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_PERIPHERAL_SECURITY_REQUEST,
             &bytes,
         )
@@ -973,7 +981,8 @@ impl<T: Controller> GapCommands for T {
         bytes[0] = data.len() as u8;
         bytes[1..=data.len()].copy_from_slice(data);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_UPDATE_ADVERTISING_DATA,
             &bytes[0..=data.len()],
         )
@@ -983,8 +992,12 @@ impl<T: Controller> GapCommands for T {
     }
 
     async fn delete_ad_type(&mut self, ad_type: AdvertisingDataType) {
-        self.controller_write(crate::vendor::opcode::GAP_DELETE_AD_TYPE, &[ad_type as u8])
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_DELETE_AD_TYPE,
+            &[ad_type as u8],
+        )
+        .await
     }
 
     async fn get_security_level(&mut self, conn_handle: &ConnectionHandle) {
@@ -992,21 +1005,18 @@ impl<T: Controller> GapCommands for T {
 
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(crate::vendor::opcode::GAP_GET_SECURITY_LEVEL, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_GET_SECURITY_LEVEL, &bytes).await
     }
 
     async fn set_event_mask(&mut self, flags: EventFlags) {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, flags.bits());
 
-        self.controller_write(crate::vendor::opcode::GAP_SET_EVENT_MASK, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_SET_EVENT_MASK, &bytes).await
     }
 
     async fn configure_white_list(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_CONFIGURE_WHITE_LIST, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_CONFIGURE_WHITE_LIST, &[]).await
     }
 
     async fn terminate(
@@ -1029,21 +1039,23 @@ impl<T: Controller> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = reason.into();
 
-        self.controller_write(crate::vendor::opcode::GAP_TERMINATE, &bytes)
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_TERMINATE, &bytes).await;
         Ok(())
     }
 
     async fn clear_security_database(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_CLEAR_SECURITY_DATABASE, &[])
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_CLEAR_SECURITY_DATABASE,
+            &[],
+        )
+        .await
     }
 
     async fn allow_rebond(&mut self, conn_handle: crate::ConnectionHandle) {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
-        self.controller_write(crate::vendor::opcode::GAP_ALLOW_REBOND, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_ALLOW_REBOND, &bytes).await
     }
 
     impl_params!(
@@ -1086,7 +1098,8 @@ impl<T: Controller> GapCommands for T {
             return Err(Error::NoProcedure);
         }
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_TERMINATE_PROCEDURE,
             &[procedure.bits()],
         )
@@ -1108,8 +1121,12 @@ impl<T: Controller> GapCommands for T {
     );
 
     async fn resolve_private_address(&mut self, addr: crate::BdAddr) {
-        self.controller_write(crate::vendor::opcode::GAP_RESOLVE_PRIVATE_ADDRESS, &addr.0)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_RESOLVE_PRIVATE_ADDRESS,
+            &addr.0,
+        )
+        .await
     }
 
     impl_validate_variable_length_params!(
@@ -1125,16 +1142,14 @@ impl<T: Controller> GapCommands for T {
     );
 
     async fn get_bonded_devices(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_GET_BONDED_DEVICES, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_GET_BONDED_DEVICES, &[]).await
     }
 
     async fn is_device_bonded(&mut self, addr: crate::host::PeerAddrType) {
         let mut bytes = [0; 7];
         addr.copy_into_slice(&mut bytes);
 
-        self.controller_write(crate::vendor::opcode::GAP_IS_DEVICE_BONDED, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_IS_DEVICE_BONDED, &bytes).await
     }
 
     impl_params!(
@@ -1149,12 +1164,12 @@ impl<T: Controller> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[..2], conn_handle.0);
         bytes[2] = input_type as u8;
 
-        self.controller_write(crate::vendor::opcode::GAP_PASSKEY_INPUT, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_PASSKEY_INPUT, &bytes).await
     }
 
     async fn get_oob_data(&mut self, oob_data_type: OobDataType) {
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_GET_OOB_DATA,
             &[oob_data_type as u8],
         )
@@ -1183,7 +1198,8 @@ impl<T: Controller> GapCommands for T {
         }
         bytes[index] = clear_resolving_list as u8;
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_ADD_DEVICES_TO_RESOLVING_LIST,
             &bytes[..(index + 1)],
         )
@@ -1194,8 +1210,12 @@ impl<T: Controller> GapCommands for T {
         let mut bytes = [0; 7];
 
         address.copy_into_slice(&mut bytes);
-        self.controller_write(crate::vendor::opcode::GAP_REMOVE_BONDED_DEVICE, &bytes)
-            .await;
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_REMOVE_BONDED_DEVICE,
+            &bytes,
+        )
+        .await;
     }
 
     async fn add_devices_to_list(
@@ -1214,7 +1234,8 @@ impl<T: Controller> GapCommands for T {
         }
         bytes[index] = mode as u8;
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_ADD_DEVICES_TO_LIST,
             &bytes[..(index + 1)],
         )
@@ -1228,12 +1249,12 @@ impl<T: Controller> GapCommands for T {
     );
 
     async fn additional_beacon_stop(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_ADDITIONAL_BEACON_STOP, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_ADDITIONAL_BEACON_STOP, &[]).await;
     }
 
     async fn additonal_beacon_set_data(&mut self, advertising_data: &[u8]) {
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GAP_ADDITIONAL_BEACON_SET_DATA,
             advertising_data,
         )
@@ -1265,21 +1286,23 @@ impl<T: Controller> GapCommands for T {
     );
 
     async fn adv_remove_set(&mut self, handle: AdvertisingHandle) {
-        self.controller_write(crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0]).await;
     }
 
     async fn adv_clear_sets(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[]).await;
     }
 
     async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr) {
         let mut payload = [0; 7];
         payload[0] = handle.0;
         payload[1..].copy_from_slice(&addr.0);
-        self.controller_write(crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS, &payload)
-            .await;
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS,
+            &payload,
+        )
+        .await;
     }
 }
 

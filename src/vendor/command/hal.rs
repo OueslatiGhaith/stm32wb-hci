@@ -4,7 +4,7 @@ extern crate byteorder;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::Controller;
+use crate::{WritableController, write_slice_with_opcode};
 
 /// Vendor-specific HCI commands.
 pub trait HalCommands {
@@ -184,10 +184,9 @@ pub trait HalCommands {
     async fn stack_reset(&mut self);
 }
 
-impl<T: Controller> HalCommands for T {
+impl<T: WritableController> HalCommands for T {
     async fn get_firmware_revision(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_GET_FIRMWARE_REVISION, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_GET_FIRMWARE_REVISION, &[]).await
     }
 
     impl_variable_length_params!(
@@ -197,8 +196,12 @@ impl<T: Controller> HalCommands for T {
     );
 
     async fn read_config_data(&mut self, param: ConfigParameter) {
-        self.controller_write(crate::vendor::opcode::HAL_READ_CONFIG_DATA, &[param as u8])
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::HAL_READ_CONFIG_DATA,
+            &[param as u8],
+        )
+        .await
     }
 
     async fn set_tx_power_level(&mut self, level: PowerLevel) {
@@ -207,13 +210,11 @@ impl<T: Controller> HalCommands for T {
         let mut bytes = [0; 2];
         bytes[1] = level as u8;
 
-        self.controller_write(crate::vendor::opcode::HAL_SET_TX_POWER_LEVEL, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_SET_TX_POWER_LEVEL, &bytes).await
     }
 
     async fn get_tx_test_packet_count(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_TX_TEST_PACKET_COUNT, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_TX_TEST_PACKET_COUNT, &[]).await
     }
 
     async fn start_tone(&mut self, channel: u8, freq_offset: u8) -> Result<(), Error> {
@@ -222,7 +223,8 @@ impl<T: Controller> HalCommands for T {
             return Err(Error::InvalidChannel(channel));
         }
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::HAL_START_TONE,
             &[channel, freq_offset],
         )
@@ -232,41 +234,41 @@ impl<T: Controller> HalCommands for T {
     }
 
     async fn stop_tone(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_STOP_TONE, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_STOP_TONE, &[]).await
     }
 
     async fn get_link_status(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_GET_LINK_STATUS, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_GET_LINK_STATUS, &[]).await
     }
 
     async fn get_anchor_period(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD, &[]).await
     }
 
     async fn set_radio_activity_mask(&mut self, mask: RadioActivityFlags) {
         let mut payload = [0; 2];
         LittleEndian::write_u16(&mut payload, mask.bits());
-        self.controller_write(crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK, &payload)
-            .await;
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK,
+            &payload,
+        )
+        .await;
     }
 
     async fn set_event_mask(&mut self, mask: HalEventFlags) {
         let mut payload = [0; 4];
         LittleEndian::write_u32(&mut payload, mask.bits());
-        self.controller_write(crate::vendor::opcode::HAL_SET_EVENT_MASK, &payload)
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_SET_EVENT_MASK, &payload).await;
     }
 
     async fn get_pm_debug_info(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO, &[]).await;
     }
 
     async fn set_peripheral_latency(&mut self, enabled: bool) {
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::HAL_SET_PERIPHERAL_LATENCY,
             &[enabled as u8],
         )
@@ -274,33 +276,27 @@ impl<T: Controller> HalCommands for T {
     }
 
     async fn read_rssi(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_READ_RSSI, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_READ_RSSI, &[]).await;
     }
 
     async fn read_radio_reg(&mut self, address: u8) {
-        self.controller_write(crate::vendor::opcode::HAL_READ_RADIO_REG, &[address])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_READ_RADIO_REG, &[address]).await;
     }
 
     async fn read_raw_rssi(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_READ_RAW_RSSI, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_READ_RAW_RSSI, &[]).await;
     }
 
     async fn rx_start(&mut self, rf_channel: u8) {
-        self.controller_write(crate::vendor::opcode::HAL_RX_START, &[rf_channel])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_RX_START, &[rf_channel]).await;
     }
 
     async fn rx_stop(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_RX_STOP, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_RX_STOP, &[]).await;
     }
 
     async fn stack_reset(&mut self) {
-        self.controller_write(crate::vendor::opcode::HAL_STACK_RESET, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::HAL_STACK_RESET, &[]).await;
     }
 }
 

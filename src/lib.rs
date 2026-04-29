@@ -96,6 +96,8 @@ pub use opcode::Opcode;
 
 use core::fmt::Debug;
 
+use crate::{host::HciHeader, vendor::CommandHeader};
+
 /// Interface to the Bluetooth controller from the host's perspective.
 ///
 /// The Bluetooth application host must communicate with a controller (which, in turn, communicates
@@ -105,7 +107,7 @@ use core::fmt::Debug;
 pub trait Controller {
     /// Writes the bytes to the controller, in a single transaction if possible. All of `header`
     /// shall be written, followed by all of `payload`.
-    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]);
+    async fn controller_write(&mut self, f: impl FnOnce(&mut [u8; 256]));
 
     /// Reads data from the controller into the provided `buffer`. The length of the buffer
     /// indicates the number of bytes to read. The implementor must not return bytes in an order
@@ -127,7 +129,7 @@ pub trait Controller {
     /// # use hci::Controller as HciController;
     /// # struct Controller;
     /// # impl HciController for Controller {
-    /// #     async fn controller_write(&mut self, opcode: hci::Opcode, _payload: &[u8]) {}
+    /// #     async fn controller_write(&mut self, _f: impl FnOnce(&mut [u8; 256])) {}
     /// #     async fn controller_read_into(&mut self, _buf: &mut [u8]) {}
     /// # }
     /// # fn main() {
@@ -165,13 +167,54 @@ impl<T: Controller> ReadableController for T {
 
 pub trait WritableController {
     /// Writes data to the controller into the provided `buffer`. See `Controller::contoller_write.`
-    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]);
+    async fn controller_write(&mut self, f: impl FnOnce(&mut [u8; 256]));
 }
 
 impl<T: Controller> WritableController for T {
-    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]) {
-        <T as Controller>::controller_write(self, opcode, payload).await
+    async fn controller_write(&mut self, f: impl FnOnce(&mut [u8; 256])) {
+        <T as Controller>::controller_write(self, f).await
     }
+}
+
+#[inline]
+async fn write_slice_with_opcode(
+    controller: &mut impl WritableController,
+    opcode: Opcode,
+    data: &[u8],
+) {
+    write_fixed_with_opcode(controller, opcode, data.len(), |buf| {
+        buf.copy_from_slice(data)
+    })
+    .await
+}
+
+#[inline]
+async fn write_fixed_with_opcode(
+    controller: &mut impl WritableController,
+    opcode: Opcode,
+    len: usize,
+    f: impl FnOnce(&mut [u8]),
+) {
+    write_with_opcode(controller, opcode, |buf| {
+        f(&mut buf[..len]);
+        len
+    })
+    .await
+}
+
+#[inline]
+async fn write_with_opcode(
+    controller: &mut impl WritableController,
+    opcode: Opcode,
+    f: impl FnOnce(&mut [u8]) -> usize,
+) {
+    controller
+        .controller_write(|buf| {
+            let (header, pkt) = buf.split_at_mut(CommandHeader::HEADER_LENGTH);
+
+            CommandHeader::new(opcode, f(pkt)).copy_into_slice(header);
+        })
+        .await
 }
 
 /// List of possible error codes, Bluetooth Spec, Vol 2, Part D, Section 2.

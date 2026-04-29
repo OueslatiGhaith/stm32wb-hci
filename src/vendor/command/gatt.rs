@@ -6,7 +6,9 @@ use core::ops::Range;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::{vendor::event::AttributeHandle, ConnectionHandle, Controller};
+use crate::{
+    ConnectionHandle, WritableController, vendor::event::AttributeHandle, write_slice_with_opcode,
+};
 
 /// GATT-specific.
 pub trait GattCommands {
@@ -847,10 +849,9 @@ pub trait GattCommands {
     );
 }
 
-impl<T: Controller> GattCommands for T {
+impl<T: WritableController> GattCommands for T {
     async fn init(&mut self) {
-        self.controller_write(crate::vendor::opcode::GATT_INIT, &[])
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_INIT, &[]).await
     }
 
     impl_variable_length_params!(
@@ -892,16 +893,19 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], service.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_DELETE_CHARACTERISTIC, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_DELETE_CHARACTERISTIC,
+            &bytes,
+        )
+        .await
     }
 
     async fn delete_service(&mut self, service: AttributeHandle) {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes[0..2], service.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_DELETE_SERVICE, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_DELETE_SERVICE, &bytes).await
     }
 
     impl_params!(
@@ -920,8 +924,12 @@ impl<T: Controller> GattCommands for T {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_EXCHANGE_CONFIGURATION, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_EXCHANGE_CONFIGURATION,
+            &bytes,
+        )
+        .await
     }
 
     async fn find_information_request(
@@ -934,8 +942,12 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[2..4], attribute_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], attribute_range.end.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_FIND_INFORMATION_REQUEST, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_FIND_INFORMATION_REQUEST,
+            &bytes,
+        )
+        .await
     }
 
     impl_validate_variable_length_params!(
@@ -967,8 +979,12 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         bytes[2] = true as u8;
 
-        self.controller_write(crate::vendor::opcode::GATT_EXECUTE_WRITE_REQUEST, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_EXECUTE_WRITE_REQUEST,
+            &bytes,
+        )
+        .await
     }
 
     async fn cancel_write_request(&mut self, conn_handle: crate::ConnectionHandle) {
@@ -976,15 +992,20 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         bytes[2] = false as u8;
 
-        self.controller_write(crate::vendor::opcode::GATT_EXECUTE_WRITE_REQUEST, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_EXECUTE_WRITE_REQUEST,
+            &bytes,
+        )
+        .await
     }
 
     async fn discover_all_primary_services(&mut self, conn_handle: crate::ConnectionHandle) {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_DISCOVER_ALL_PRIMARY_SERVICES,
             &bytes,
         )
@@ -1000,7 +1021,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         let end = 2 + uuid.copy_into_slice(&mut bytes[2..]);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_DISCOVER_PRIMARY_SERVICES_BY_UUID,
             &bytes[..end],
         )
@@ -1017,8 +1039,12 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[2..4], service_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], service_handle_range.end.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_FIND_INCLUDED_SERVICES, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_FIND_INCLUDED_SERVICES,
+            &bytes,
+        )
+        .await
     }
 
     async fn discover_all_characteristics_of_service(
@@ -1031,7 +1057,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[2..4], attribute_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_DISCOVER_ALL_CHARACTERISTICS_OF_SERVICE,
             &bytes,
         )
@@ -1050,7 +1077,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
         let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_DISCOVER_CHARACTERISTICS_BY_UUID,
             &bytes[..6 + uuid_len],
         )
@@ -1067,7 +1095,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS,
             &bytes,
         )
@@ -1083,7 +1112,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_READ_CHARACTERISTIC_VALUE,
             &bytes,
         )
@@ -1102,7 +1132,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
         let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_READ_CHARACTERISTIC_BY_UUID,
             &bytes[..6 + uuid_len],
         )
@@ -1166,7 +1197,8 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_READ_CHARACTERISTIC_DESCRIPTOR,
             &bytes,
         )
@@ -1189,8 +1221,7 @@ impl<T: Controller> GattCommands for T {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_CONFIRM_INDICATION, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_CONFIRM_INDICATION, &bytes).await
     }
 
     impl_validate_variable_length_params!(
@@ -1203,8 +1234,7 @@ impl<T: Controller> GattCommands for T {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(crate::vendor::opcode::GATT_ALLOW_READ, &bytes)
-            .await
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_ALLOW_READ, &bytes).await
     }
 
     impl_params!(
@@ -1224,8 +1254,12 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut bytes, handle.0);
         bytes[2] = offset as u8;
 
-        self.controller_write(crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET, &bytes)
-            .await
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET,
+            &bytes,
+        )
+        .await
     }
 
     impl_validate_variable_length_params!(
@@ -1238,8 +1272,7 @@ impl<T: Controller> GattCommands for T {
         let mut payload = [0; 3];
         LittleEndian::write_u16(&mut payload[0..], handle.0);
         payload[2] = err;
-        self.controller_write(crate::vendor::opcode::GATT_DENY_READ, &payload)
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_DENY_READ, &payload).await;
     }
 
     async fn set_access_permission(
@@ -1252,13 +1285,16 @@ impl<T: Controller> GattCommands for T {
         LittleEndian::write_u16(&mut payload[0..], service.0);
         LittleEndian::write_u16(&mut payload[2..], attribute.0);
         payload[4] = permissions.bits();
-        self.controller_write(crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION, &payload)
-            .await;
+        write_slice_with_opcode(
+            self,
+            crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION,
+            &payload,
+        )
+        .await;
     }
 
     async fn store_database(&mut self) {
-        self.controller_write(crate::vendor::opcode::GATT_STORE_DB, &[])
-            .await;
+        write_slice_with_opcode(self, crate::vendor::opcode::GATT_STORE_DB, &[]).await;
     }
 
     async fn send_multiple_notification(
@@ -1272,7 +1308,8 @@ impl<T: Controller> GattCommands for T {
         for (idx, handle) in handles.iter().enumerate() {
             LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
         }
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION,
             &payload[..2 + (handles.len() * 2)],
         )
@@ -1291,7 +1328,8 @@ impl<T: Controller> GattCommands for T {
             LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
         }
 
-        self.controller_write(
+        write_slice_with_opcode(
+            self,
             crate::vendor::opcode::GATT_READ_MULTIPLE_VAR_CHAR_VALUE,
             &payload[..2 + (handles.len() * 2)],
         )

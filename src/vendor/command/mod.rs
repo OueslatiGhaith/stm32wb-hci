@@ -1,10 +1,10 @@
 macro_rules! impl_params {
     ($method:ident, $param_type:ident, $opcode:path) => {
         async fn $method(&mut self, params: &$param_type) {
-            let mut bytes = [0; $param_type::LENGTH];
-            params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes).await
+            crate::write_fixed_with_opcode(self, $opcode, $param_type::LENGTH, |buf| {
+                params.copy_into_slice(buf);
+            })
+            .await
         }
     };
 }
@@ -12,10 +12,10 @@ macro_rules! impl_params {
 macro_rules! impl_value_params {
     ($method:ident, $param_type:ident, $opcode:path) => {
         async fn $method(&mut self, params: $param_type) {
-            let mut bytes = [0; $param_type::LENGTH];
-            params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes).await
+            crate::write_fixed_with_opcode(self, $opcode, $param_type::LENGTH, |buf| {
+                params.copy_into_slice(buf);
+            })
+            .await
         }
     };
 }
@@ -25,10 +25,10 @@ macro_rules! impl_validate_params {
         async fn $method(&mut self, params: &$param_type) -> Result<(), Error> {
             params.validate()?;
 
-            let mut bytes = [0; $param_type::LENGTH];
-            params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes).await;
+            crate::write_fixed_with_opcode(self, $opcode, $param_type::LENGTH, |buf| {
+                params.copy_into_slice(buf);
+            })
+            .await;
 
             Ok(())
         }
@@ -38,10 +38,10 @@ macro_rules! impl_validate_params {
 macro_rules! impl_variable_length_params {
     ($method:ident, $param_type:ident, $opcode:path) => {
         async fn $method(&mut self, params: &$param_type) {
-            let mut bytes = [0; $param_type::MAX_LENGTH];
-            params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes).await
+            crate::write_fixed_with_opcode(self, $opcode, $param_type::MAX_LENGTH, |buf| {
+                params.copy_into_slice(buf);
+            })
+            .await;
         }
     };
     ($method:ident<$($genlife:lifetime),*>, $param_type:ident<$($lifetime:lifetime),*>, $opcode:path) => {
@@ -49,10 +49,10 @@ macro_rules! impl_variable_length_params {
             &mut self,
             params: &$param_type<$($lifetime),*>
         ) {
-            let mut bytes = [0; $param_type::MAX_LENGTH];
-            params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes).await;
+            crate::write_fixed_with_opcode(self, $opcode, $param_type::MAX_LENGTH, |buf| {
+                params.copy_into_slice(buf);
+            })
+            .await;
         }
     };
 }
@@ -62,10 +62,10 @@ macro_rules! impl_validate_variable_length_params {
         async fn $method(&mut self, params: &$param_type) -> Result<(), Error> {
             params.validate()?;
 
-            let mut bytes = [0; $param_type::MAX_LENGTH];
-            let len = params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes[..len]).await;
+            crate::write_with_opcode(self, $opcode, |buf| {
+                params.copy_into_slice(&mut buf[..$param_type::MAX_LENGTH])
+            })
+            .await;
 
             Ok(())
         }
@@ -77,10 +77,10 @@ macro_rules! impl_validate_variable_length_params {
         ) -> Result<(), Error> {
             params.validate()?;
 
-            let mut bytes = [0; $param_type::MAX_LENGTH];
-            let len = params.copy_into_slice(&mut bytes);
-
-            self.controller_write($opcode, &bytes[..len]).await;
+            crate::write_with_opcode(self, $opcode, |buf| {
+                params.copy_into_slice(&mut buf[..$param_type::MAX_LENGTH])
+            })
+            .await;
 
             Ok(())
         }
