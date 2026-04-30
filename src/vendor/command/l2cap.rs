@@ -3,8 +3,8 @@
 extern crate byteorder;
 
 use crate::{
+    ConnectionHandle, WritableController,
     types::{ConnectionInterval, ExpectedConnectionLength},
-    ConnectionHandle, Controller,
 };
 use byteorder::{ByteOrder, LittleEndian};
 
@@ -98,7 +98,7 @@ pub trait L2capCommands {
     async fn coc_tx_data(&mut self, params: &L2CapCocTxData);
 }
 
-impl<T: Controller> L2capCommands for T {
+impl<T: WritableController> L2capCommands for T {
     impl_params!(
         connection_parameter_update_request,
         ConnectionParameterUpdateRequest,

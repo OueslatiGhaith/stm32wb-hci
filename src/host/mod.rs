@@ -8,8 +8,8 @@
 //!   support sending the packet ID, as `uart` does. In that case, it would make sense to also remove
 //!   `uart` and move its contents up one level.
 
+use crate::ConnectionHandle;
 use crate::event::{NUMBER_OF_COMPLETED_PACKETS_MAX_LEN, NumberOfCompletedPackets};
-use crate::{ConnectionHandle, WritableController};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::Into;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
@@ -57,7 +57,7 @@ pub trait HciHeader {
 /// Specializations must define the error type `E`, used for communication errors.
 ///
 /// An implementation is defined or all types that implement [`Controller`](super::Controller).
-pub trait HostHci: WritableController {
+pub trait HostHci {
     /// Terminates an existing connection.  All synchronous connections on a physical link should be
     /// disconnected before the ACL connection on the same physical connection is disconnected.
     ///
