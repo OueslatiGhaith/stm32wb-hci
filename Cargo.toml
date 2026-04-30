@@ -1,6 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["examples/*"]
+
 [package]
-edition = "2024"
 name = "stm32wb-hci"
+edition = "2024"
 version = "0.17.4"
 authors = [
     "Daniel Gallagher <pdanielgallagher@gmail.com>",
@@ -15,12 +19,12 @@ readme = "README.md"
 exclude = ["tests"]
 
 [dependencies]
-bitflags = "2.10.0"
-byteorder = { version = "1.5.0", default-features = false }
+bitflags = "2"
+byteorder = { version = "1", default-features = false }
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [features]
 defmt = ["dep:defmt"]
