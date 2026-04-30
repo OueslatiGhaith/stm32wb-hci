@@ -2,8 +2,6 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::ReadableController;
-
 const PACKET_TYPE_HCI_COMMAND: u8 = 0x01;
 // const PACKET_TYPE_ACL_DATA: u8 = 0x02;
 // const PACKET_TYPE_SYNC_DATA: u8 = 0x03;
@@ -43,7 +41,7 @@ pub struct CommandHeader {
 ///
 /// Must be specialized for communication errors (`E`), vendor-specific events (`Vendor`), and
 /// vendor-specific errors (`VE`).
-pub trait UartHci: ReadableController {
+pub trait UartHci {
     /// Reads and returns a packet from the controller. Consumes exactly enough bytes to read the
     /// next packet including its header.
     ///

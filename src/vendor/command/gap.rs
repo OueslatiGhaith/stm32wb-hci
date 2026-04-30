@@ -3,12 +3,15 @@
 extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
-use crate::types::extended_advertisement::{
-    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
-};
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
-use crate::{AdvertisingHandle, ConnectionHandle, Controller};
+use crate::{AdvertisingHandle, ConnectionHandle};
 pub use crate::{BdAddr, BdAddrType};
+use crate::{
+    WritableController,
+    types::extended_advertisement::{
+        AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
+    },
+};
 use crate::{
     host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
     types::extended_advertisement::AdvertisingMode,
@@ -828,7 +831,7 @@ pub trait GapCommands {
     async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
 }
 
-impl<T: Controller> GapCommands for T {
+impl<T: WritableController> GapCommands for T {
     async fn gap_set_nondiscoverable(&mut self) {
         self.controller_write(crate::vendor::opcode::GAP_SET_NONDISCOVERABLE, &[])
             .await

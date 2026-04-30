@@ -6,7 +6,7 @@ use core::ops::Range;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::{vendor::event::AttributeHandle, ConnectionHandle, Controller};
+use crate::{ConnectionHandle, WritableController, vendor::event::AttributeHandle};
 
 /// GATT-specific.
 pub trait GattCommands {
@@ -847,7 +847,7 @@ pub trait GattCommands {
     );
 }
 
-impl<T: Controller> GattCommands for T {
+impl<T: WritableController> GattCommands for T {
     async fn init(&mut self) {
         self.controller_write(crate::vendor::opcode::GATT_INIT, &[])
             .await

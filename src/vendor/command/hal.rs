@@ -4,7 +4,7 @@ extern crate byteorder;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::Controller;
+use crate::WritableController;
 
 /// Vendor-specific HCI commands.
 pub trait HalCommands {
@@ -184,7 +184,7 @@ pub trait HalCommands {
     async fn stack_reset(&mut self);
 }
 
-impl<T: Controller> HalCommands for T {
+impl<T: WritableController> HalCommands for T {
     async fn get_firmware_revision(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_GET_FIRMWARE_REVISION, &[])
             .await
