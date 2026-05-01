@@ -69,11 +69,14 @@ pub fn parse_packed_structs(source: &str) -> Result<Vec<PackedStructSpec>> {
 
         structs.push(PackedStructSpec {
             name,
+            byte_size: None,
             fields: parse_struct_fields(&source[open_brace + 1..close_brace])?,
         });
 
         cursor = close_brace + 1 + consumed;
     }
+
+    resolve_struct_layouts(&mut structs);
 
     Ok(structs)
 }
@@ -193,12 +196,78 @@ fn parse_struct_fields(body: &str) -> Result<Vec<StructFieldSpec>> {
                 c_type,
                 name,
                 array_len,
+                byte_offset: None,
+                byte_size: None,
                 doc: pending_doc.take(),
             });
         }
     }
 
     Ok(fields)
+}
+
+fn resolve_struct_layouts(structs: &mut [PackedStructSpec]) {
+    let mut sizes = HashMap::new();
+
+    loop {
+        let mut changed = false;
+
+        for spec in structs.iter_mut() {
+            if spec.byte_size.is_some() {
+                continue;
+            }
+
+            let mut offset = 0usize;
+            let mut resolved = true;
+
+            for field in &mut spec.fields {
+                let Some(byte_size) = resolve_field_size(field, &sizes) else {
+                    field.byte_offset = None;
+                    field.byte_size = None;
+                    resolved = false;
+                    break;
+                };
+
+                field.byte_offset = Some(offset);
+                field.byte_size = Some(byte_size);
+                offset += byte_size;
+            }
+
+            if resolved {
+                spec.byte_size = Some(offset);
+                sizes.insert(spec.name.clone(), offset);
+                changed = true;
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn resolve_field_size(
+    field: &StructFieldSpec,
+    struct_sizes: &HashMap<String, usize>,
+) -> Option<usize> {
+    let element_size = match &field.wire {
+        WireType::U8 => 1,
+        WireType::U16Le => 2,
+        WireType::U32Le => 4,
+        WireType::Struct { name } => *struct_sizes.get(name)?,
+        WireType::Bytes | WireType::Unknown { .. } => return None,
+    };
+
+    let array_len = match field.array_len.as_deref() {
+        Some(len) => parse_static_array_len(len)?,
+        None => 1,
+    };
+
+    Some(element_size * array_len)
+}
+
+fn parse_static_array_len(len: &str) -> Option<usize> {
+    len.trim().parse().ok()
 }
 
 fn parse_field_doc(lines: &[String]) -> ParamDoc {

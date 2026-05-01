@@ -60,6 +60,7 @@ pub struct PayloadField {
 #[derive(Debug, Serialize)]
 pub struct PackedStructSpec {
     pub name: String,
+    pub byte_size: Option<usize>,
     pub fields: Vec<StructFieldSpec>,
 }
 
@@ -69,6 +70,8 @@ pub struct StructFieldSpec {
     pub c_type: String,
     pub wire: WireType,
     pub array_len: Option<String>,
+    pub byte_offset: Option<usize>,
+    pub byte_size: Option<usize>,
     pub doc: Option<ParamDoc>,
 }
 
@@ -84,6 +87,12 @@ pub enum WireType {
 }
 
 pub fn wire_type_for(c_type: Option<&str>) -> WireType {
+    if c_type.is_some_and(|c_type| c_type.contains('*')) {
+        return WireType::Unknown {
+            c_type: c_type.map(str::to_owned),
+        };
+    }
+
     match c_type.map(normalize_c_type).as_deref() {
         Some("uint8_t") => WireType::U8,
         Some("uint16_t") => WireType::U16Le,
