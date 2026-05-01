@@ -1,6 +1,6 @@
 use crate::spec::{
-    CommandDoc, CommandSpec, PackedStructSpec, ParamDoc, ParamSpec, PayloadField, StructFieldSpec,
-    ValueDoc, WireType, wire_type_for,
+    CommandDoc, CommandSpec, Constraints, PackedStructSpec, ParamDoc, ParamSpec, PayloadField,
+    RangeDoc, StructFieldSpec, UnitDoc, ValueDoc, WireType, wire_type_for,
 };
 use anyhow::{Context, Result, anyhow};
 use chumsky::prelude::*;
@@ -620,6 +620,14 @@ fn parse_param_doc(lines: &[String]) -> ParamDoc {
     ParamDoc {
         description: lines.join(" "),
         values: parse_values(lines),
+        constraints: parse_constraints(lines),
+    }
+}
+
+fn parse_constraints(lines: &[String]) -> Constraints {
+    Constraints {
+        ranges: parse_ranges(lines),
+        unit: lines.iter().find_map(|line| parse_unit_line(line.trim())),
     }
 }
 
@@ -657,6 +665,50 @@ fn parse_value_line(input: &str) -> Option<(u64, Option<String>)> {
                 text.map(|text| text.trim().to_owned())
                     .filter(|text| !text.is_empty()),
             )
+        })
+        .parse(input)
+        .ok()
+}
+
+fn parse_ranges(lines: &[String]) -> Vec<RangeDoc> {
+    lines
+        .iter()
+        .filter_map(|line| parse_range_line(line.trim()))
+        .collect()
+}
+
+fn parse_range_line(input: &str) -> Option<RangeDoc> {
+    let range = input.strip_prefix('-')?.trim();
+    let (left, right) = range.split_once("...")?;
+    let (right, description) = match right.split_once(':') {
+        Some((right, description)) => (right, Some(description.trim().to_owned())),
+        None => (right, None),
+    };
+
+    Some(RangeDoc {
+        min: parse_number_prefix(left.trim())?,
+        max: parse_number_prefix(right.trim())?,
+        raw: input.to_owned(),
+        description: description.filter(|description| !description.is_empty()),
+    })
+}
+
+fn parse_unit_line(input: &str) -> Option<UnitDoc> {
+    just("Time")
+        .padded()
+        .ignore_then(just('=').padded())
+        .ignore_then(identifier())
+        .then_ignore(just('*').padded())
+        .then(decimal_number())
+        .then_ignore(whitespace1())
+        .then(identifier())
+        .then_ignore(any().repeated())
+        .then_ignore(end())
+        .map(|((variable, scale), unit)| UnitDoc {
+            variable,
+            scale,
+            unit,
+            raw: input.to_owned(),
         })
         .parse(input)
         .ok()
@@ -716,6 +768,31 @@ fn hex_literal() -> impl Parser<char, u64, Error = Simple<char>> {
         .ignore_then(hex_digits())
         .try_map(|digits, span| {
             u64::from_str_radix(&digits, 16).map_err(|err| Simple::custom(span, err.to_string()))
+        })
+}
+
+fn number_literal() -> impl Parser<char, u64, Error = Simple<char>> {
+    hex_literal().or(decimal_digits().try_map(|digits, span| {
+        digits
+            .parse::<u64>()
+            .map_err(|err| Simple::custom(span, err.to_string()))
+    }))
+}
+
+fn parse_number_prefix(input: &str) -> Option<u64> {
+    number_literal()
+        .then_ignore(any().repeated())
+        .then_ignore(end())
+        .parse(input)
+        .ok()
+}
+
+fn decimal_number() -> impl Parser<char, String, Error = Simple<char>> {
+    decimal_digits()
+        .then(just('.').ignore_then(decimal_digits()).or_not())
+        .map(|(whole, fraction)| match fraction {
+            Some(fraction) => format!("{whole}.{fraction}"),
+            None => whole,
         })
 }
 

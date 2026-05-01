@@ -38,6 +38,7 @@ pub struct ParamSpec {
 pub struct ParamDoc {
     pub description: String,
     pub values: Vec<ValueDoc>,
+    pub constraints: Constraints,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -46,6 +47,28 @@ pub struct ValueDoc {
     pub raw: String,
     pub label: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Default, Debug, Serialize, Clone)]
+pub struct Constraints {
+    pub ranges: Vec<RangeDoc>,
+    pub unit: Option<UnitDoc>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RangeDoc {
+    pub min: u64,
+    pub max: u64,
+    pub raw: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct UnitDoc {
+    pub variable: String,
+    pub scale: String,
+    pub unit: String,
+    pub raw: String,
 }
 
 #[derive(Debug, Serialize)]
