@@ -54,7 +54,30 @@ pub struct PayloadField {
     pub c_type: Option<String>,
     pub wire: WireType,
     pub len: Option<String>,
+    pub resolved: Option<ResolvedPayload>,
     pub doc: Option<ParamDoc>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResolvedPayload {
+    Scalar {
+        byte_size: usize,
+    },
+    Bytes {
+        count_expr: String,
+        element_size: usize,
+    },
+    Struct {
+        name: String,
+        byte_size: usize,
+    },
+    StructArray {
+        name: String,
+        element_size: usize,
+        count_expr: String,
+        byte_len_expr: String,
+    },
 }
 
 #[derive(Debug, Serialize)]

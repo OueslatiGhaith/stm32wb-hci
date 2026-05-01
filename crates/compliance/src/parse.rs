@@ -377,6 +377,7 @@ fn parse_payload(
                 name: field,
                 c_type,
                 len: None,
+                resolved: None,
             });
             continue;
         }
@@ -387,6 +388,7 @@ fn parse_payload(
                 c_type: param_types.get(&src).cloned(),
                 wire: WireType::Bytes,
                 len: Some(len),
+                resolved: None,
                 doc: doc
                     .and_then(|d| d.params.get(&field).or_else(|| d.params.get(&src)))
                     .cloned(),
@@ -423,18 +425,22 @@ fn parse_memcpy(input: &str) -> Option<(String, String, String)> {
         .then_ignore(just("(const void*)").padded())
         .then(identifier())
         .then_ignore(just(',').padded())
-        .then(
-            none_of(')')
-                .repeated()
-                .collect::<String>()
-                .map(|s| s.trim().to_owned()),
-        )
-        .then_ignore(just(')'))
-        .then_ignore(any().repeated())
+        .then(any().repeated().collect::<String>().map(clean_memcpy_len))
         .then_ignore(end())
         .map(|((field, src), len)| (field, src, len))
         .parse(input)
         .ok()
+}
+
+fn clean_memcpy_len(len: String) -> String {
+    len.trim()
+        .strip_suffix(';')
+        .unwrap_or(len.trim())
+        .trim()
+        .strip_suffix(')')
+        .unwrap_or_else(|| len.trim().strip_suffix(';').unwrap_or(len.trim()).trim())
+        .trim()
+        .to_owned()
 }
 
 fn parse_hex_assignment(body: &str, field: &str) -> Result<Option<u16>> {

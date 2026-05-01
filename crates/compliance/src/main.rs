@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 mod parse;
+mod resolve;
 mod source;
 mod spec;
 
@@ -33,6 +34,8 @@ fn main() -> Result<()> {
 
     let types = source.load_auto_file("ble_types.h")?;
     let mut packed_structs = parse::parse_packed_structs(&types)?;
+    resolve::resolve_command_payloads(&mut commands, &packed_structs);
+
     if let Some(struct_name) = args.struct_name {
         packed_structs.retain(|s| s.name == struct_name);
     }
