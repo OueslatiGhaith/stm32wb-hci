@@ -28,3 +28,9 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [features]
 defmt = ["dep:defmt"]
+
+[profile.dev]
+debug = 2
+
+[profile.release]
+debug = 2
