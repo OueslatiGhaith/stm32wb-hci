@@ -1,0 +1,26 @@
+[package]
+name = "stm32wb-hci"
+edition = "2024"
+version = "0.17.4"
+license.workspace = true
+authors = [
+    "Daniel Gallagher <pdanielgallagher@gmail.com>",
+    "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
+]
+categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
+description = "Implementation of the Bluetooth HCI for the STM32WB family"
+keywords = ["ble", "bluetooth", "stm32"]
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+exclude = ["tests"]
+
+[dependencies]
+bitflags = "2"
+byteorder = { version = "1", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[features]
+defmt = ["dep:defmt"]
+

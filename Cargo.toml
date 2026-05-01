@@ -1,33 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["examples/*"]
+members = ["crates/*", "examples/*"]
 
-[package]
-name = "stm32wb-hci"
-edition = "2024"
-version = "0.17.4"
-authors = [
-    "Daniel Gallagher <pdanielgallagher@gmail.com>",
-    "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
-]
-categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
-description = "Implementation of the Bluetooth HCI for the STM32WB family"
-keywords = ["ble", "bluetooth", "stm32"]
-license = "MIT/Apache-2.0"
-repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
-readme = "README.md"
-exclude = ["tests"]
-
-[dependencies]
-bitflags = "2"
-byteorder = { version = "1", default-features = false }
-defmt = { version = "1", optional = true }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-
-[features]
-defmt = ["dep:defmt"]
+[workspace.package]
+license = "MIT OR Apache-2.0"
 
 [profile.dev]
 debug = 2
