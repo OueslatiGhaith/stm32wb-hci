@@ -1,5 +1,6 @@
 use crate::spec::{
-    CommandDoc, CommandSpec, ParamDoc, ParamSpec, PayloadField, ValueDoc, WireType, wire_type_for,
+    CommandDoc, CommandSpec, PackedStructSpec, ParamDoc, ParamSpec, PayloadField, StructFieldSpec,
+    ValueDoc, WireType, wire_type_for,
 };
 use anyhow::{Context, Result, anyhow};
 use chumsky::prelude::*;
@@ -47,6 +48,34 @@ pub fn parse_group(source_name: &str, source: &str, header: &str) -> Result<Vec<
     }
 
     Ok(commands)
+}
+
+pub fn parse_packed_structs(source: &str) -> Result<Vec<PackedStructSpec>> {
+    let mut structs = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = source[cursor..].find("typedef __PACKED_STRUCT") {
+        let start = cursor + relative_start;
+        let Some(open_brace) = source[start..].find('{').map(|idx| start + idx) else {
+            break;
+        };
+        let close_brace = find_matching_brace(source, open_brace)
+            .with_context(|| format!("failed to find packed struct end at byte {start}"))?;
+        let after_brace = &source[close_brace + 1..];
+        let Some((name, consumed)) = parse_struct_name(after_brace) else {
+            cursor = close_brace + 1;
+            continue;
+        };
+
+        structs.push(PackedStructSpec {
+            name,
+            fields: parse_struct_fields(&source[open_brace + 1..close_brace])?,
+        });
+
+        cursor = close_brace + 1 + consumed;
+    }
+
+    Ok(structs)
 }
 
 struct Function {
@@ -116,6 +145,108 @@ fn find_matching_brace(source: &str, open_brace: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn parse_struct_name(input: &str) -> Option<(String, usize)> {
+    let trimmed = input.trim_start();
+    let skipped = input.len() - trimmed.len();
+    let name = identifier().parse(trimmed).ok()?;
+    let suffix = &trimmed[name.len()..];
+    let rest = suffix.trim_start();
+    let after_semicolon = rest.strip_prefix(';')?;
+    let consumed = skipped + name.len() + (suffix.len() - after_semicolon.len());
+    Some((name, consumed))
+}
+
+fn parse_struct_fields(body: &str) -> Result<Vec<StructFieldSpec>> {
+    let mut fields = Vec::new();
+    let mut pending_doc = None;
+    let mut lines = body.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.starts_with("/**") {
+            let mut doc_lines = Vec::new();
+            if trimmed.ends_with("*/") {
+                doc_lines.push(trimmed.to_owned());
+            } else {
+                doc_lines.push(trimmed.to_owned());
+                for doc_line in lines.by_ref() {
+                    let doc_trimmed = doc_line.trim();
+                    doc_lines.push(doc_trimmed.to_owned());
+                    if doc_trimmed.ends_with("*/") {
+                        break;
+                    }
+                }
+            }
+            pending_doc = Some(parse_field_doc(&doc_lines));
+            continue;
+        }
+
+        if let Some((c_type, name, array_len)) = parse_struct_field_line(trimmed) {
+            fields.push(StructFieldSpec {
+                wire: wire_type_for(Some(&c_type)),
+                c_type,
+                name,
+                array_len,
+                doc: pending_doc.take(),
+            });
+        }
+    }
+
+    Ok(fields)
+}
+
+fn parse_field_doc(lines: &[String]) -> ParamDoc {
+    let cleaned = lines
+        .iter()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches("/**")
+                .trim_end_matches("*/")
+                .to_owned()
+        })
+        .map(|line| clean_doc_line(&line))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    parse_param_doc(&cleaned)
+}
+
+fn parse_struct_field_line(input: &str) -> Option<(String, String, Option<String>)> {
+    just("const")
+        .padded()
+        .or_not()
+        .then(identifier().padded())
+        .then(just('*').padded().or_not())
+        .then(identifier().padded())
+        .then(
+            none_of(']')
+                .repeated()
+                .collect::<String>()
+                .map(|s| s.trim().to_owned())
+                .delimited_by(just('['), just(']'))
+                .or_not(),
+        )
+        .then_ignore(just(';').padded())
+        .then_ignore(end())
+        .map(|((((is_const, base), pointer), name), array_len)| {
+            let mut c_type = String::new();
+            if is_const.is_some() {
+                c_type.push_str("const ");
+            }
+            c_type.push_str(&base);
+            if pointer.is_some() {
+                c_type.push('*');
+            }
+            (c_type, name, array_len)
+        })
+        .parse(input)
+        .ok()
 }
 
 fn parse_signature_params(signature: &str, doc: Option<&CommandDocs>) -> Result<Vec<ParamSpec>> {

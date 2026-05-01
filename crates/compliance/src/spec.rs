@@ -3,6 +3,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct FirmwareSpec {
     pub firmware: String,
+    pub packed_structs: Vec<PackedStructSpec>,
     pub commands: Vec<CommandSpec>,
 }
 
@@ -53,6 +54,21 @@ pub struct PayloadField {
     pub c_type: Option<String>,
     pub wire: WireType,
     pub len: Option<String>,
+    pub doc: Option<ParamDoc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PackedStructSpec {
+    pub name: String,
+    pub fields: Vec<StructFieldSpec>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StructFieldSpec {
+    pub name: String,
+    pub c_type: String,
+    pub wire: WireType,
+    pub array_len: Option<String>,
     pub doc: Option<ParamDoc>,
 }
 

@@ -31,8 +31,15 @@ fn main() -> Result<()> {
         commands.retain(|c| c.name == command);
     }
 
+    let types = source.load_auto_file("ble_types.h")?;
+    let mut packed_structs = parse::parse_packed_structs(&types)?;
+    if let Some(struct_name) = args.struct_name {
+        packed_structs.retain(|s| s.name == struct_name);
+    }
+
     let spec = FirmwareSpec {
         firmware: source.firmware_label(),
+        packed_structs,
         commands,
     };
 
@@ -44,6 +51,7 @@ struct Args {
     cube: PathBuf,
     tag: Option<String>,
     command: Option<String>,
+    struct_name: Option<String>,
 }
 
 impl Args {
@@ -51,6 +59,7 @@ impl Args {
         let mut cube = PathBuf::from("STM32CubeWB");
         let mut tag = Some("v1.15.0".to_owned());
         let mut command = None;
+        let mut struct_name = None;
 
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -65,10 +74,16 @@ impl Args {
                 }
                 "--worktree" => tag = None,
                 "--command" => command = args.next(),
+                "--struct" => struct_name = args.next(),
                 _ => {}
             }
         }
 
-        Self { cube, tag, command }
+        Self {
+            cube,
+            tag,
+            command,
+            struct_name,
+        }
     }
 }
