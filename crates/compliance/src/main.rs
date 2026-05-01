@@ -1,12 +1,14 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod check;
 mod diff;
 mod parse;
 mod resolve;
 mod source;
 mod spec;
 
+use crate::check::check_coverage;
 use crate::diff::diff_firmware;
 use crate::source::CubeSource;
 use crate::spec::FirmwareSpec;
@@ -21,6 +23,14 @@ fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&diff_firmware(&from, &to))?
+            );
+        }
+        Some(Command::Check { rust_crate }) => {
+            let tag = (!cli.worktree).then(|| cli.tag.clone());
+            let spec = build_spec(&cli.cube, tag, None, None)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&check_coverage(&spec, rust_crate)?)?
             );
         }
         None | Some(Command::Extract) => {
@@ -103,5 +113,9 @@ enum Command {
         from: String,
         #[arg(long)]
         to: String,
+    },
+    Check {
+        #[arg(long, default_value = "crates/stm32wb-hci")]
+        rust_crate: PathBuf,
     },
 }

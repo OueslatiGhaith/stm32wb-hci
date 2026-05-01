@@ -1,0 +1,227 @@
+{
+  "firmware": "v1.15.0",
+  "rust_crate": "crates/stm32wb-hci",
+  "commands_total": 129,
+  "rust_opcode_constants_total": 131,
+  "covered_by_opcode": 128,
+  "obvious_command_impl_matches": 112,
+  "missing_opcode_constants": [
+    {
+      "st_command": "aci_hal_write_radio_reg",
+      "opcode": 64561,
+      "expected_rust_const": "HAL_WRITE_RADIO_REG",
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    }
+  ],
+  "opcode_value_mismatches": [],
+  "missing_command_impls": [
+    {
+      "st_command": "aci_gap_slave_security_req",
+      "opcode": 64653,
+      "expected_rust_method_fragments": [
+        "slave_security_req",
+        "slave_security_request"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gap.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_disc_primary_service_by_uuid",
+      "opcode": 64787,
+      "expected_rust_method_fragments": [
+        "disc_primary_service_by_uuid",
+        "discover_primary_service_by_uuid"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_disc_all_char_of_service",
+      "opcode": 64789,
+      "expected_rust_method_fragments": [
+        "disc_all_char_of_service",
+        "disc_all_characteristic_of_service",
+        "discover_all_char_of_service",
+        "discover_all_characteristic_of_service"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_disc_char_by_uuid",
+      "opcode": 64790,
+      "expected_rust_method_fragments": [
+        "disc_char_by_uuid",
+        "disc_characteristic_by_uuid",
+        "discover_char_by_uuid",
+        "discover_characteristic_by_uuid"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_disc_all_char_desc",
+      "opcode": 64791,
+      "expected_rust_method_fragments": [
+        "disc_all_char_desc",
+        "disc_all_char_descriptor",
+        "disc_all_characteristic_desc",
+        "disc_all_characteristic_descriptor",
+        "discover_all_char_desc",
+        "discover_all_char_descriptor",
+        "discover_all_characteristic_desc",
+        "discover_all_characteristic_descriptor"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_read_using_char_uuid",
+      "opcode": 64793,
+      "expected_rust_method_fragments": [
+        "read_using_char_uuid",
+        "read_using_characteristic_uuid"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_read_multiple_char_value",
+      "opcode": 64795,
+      "expected_rust_method_fragments": [
+        "read_multiple_char_value",
+        "read_multiple_characteristic_value"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_write_char_reliable",
+      "opcode": 64798,
+      "expected_rust_method_fragments": [
+        "write_char_reliable",
+        "write_characteristic_reliable"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_gatt_read_handle_value",
+      "opcode": 64810,
+      "expected_rust_method_fragments": [
+        "read_handle_value"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/gatt.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_get_fw_build_number",
+      "opcode": 64512,
+      "expected_rust_method_fragments": [
+        "get_fw_build_number"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_le_tx_test_packet_number",
+      "opcode": 64532,
+      "expected_rust_method_fragments": [
+        "le_tx_test_packet_number"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_tone_start",
+      "opcode": 64533,
+      "expected_rust_method_fragments": [
+        "tone_start"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_tone_stop",
+      "opcode": 64534,
+      "expected_rust_method_fragments": [
+        "tone_stop"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_set_slave_latency",
+      "opcode": 64544,
+      "expected_rust_method_fragments": [
+        "set_slave_latency"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_hal_write_radio_reg",
+      "opcode": 64561,
+      "expected_rust_method_fragments": [
+        "write_radio_reg"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/hal.rs"
+      ]
+    },
+    {
+      "st_command": "aci_l2cap_coc_reconf",
+      "opcode": 64906,
+      "expected_rust_method_fragments": [
+        "coc_reconf"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/l2cap.rs"
+      ]
+    },
+    {
+      "st_command": "aci_l2cap_coc_reconf_confirm",
+      "opcode": 64907,
+      "expected_rust_method_fragments": [
+        "coc_reconf_confirm"
+      ],
+      "expected_rust_places": [
+        "crates/stm32wb-hci/src/vendor/opcode.rs",
+        "crates/stm32wb-hci/src/vendor/command/l2cap.rs"
+      ]
+    }
+  ]
+}
