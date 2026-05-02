@@ -22,7 +22,7 @@ pub trait L2capCommands {
     /// A [command status](crate::event::Event::CommandStatus) event on the receipt of the command and
     /// an [L2CAP Connection Update Response](crate::vendor::event::L2CapConnectionUpdateResponse) event when the master
     /// responds to the request (accepts or rejects).
-    // compliance: st=ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_REQ opcode=L2CAP_CONN_PARAM_UPDATE_REQ
+    // compliance: st=ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_REQ
     async fn connection_parameter_update_request(
         &mut self,
         params: &ConnectionParameterUpdateRequest,
@@ -40,7 +40,7 @@ pub trait L2capCommands {
     /// # Generated events
     ///
     /// A [Command Complete](crate::event::command::CommandComplete) event is generated.
-    // compliance: st=ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_RESP opcode=L2CAP_CONN_PARAM_UPDATE_RESP
+    // compliance: st=ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_RESP
     async fn connection_parameter_update_response(
         &mut self,
         params: &ConnectionParameterUpdateResponse,
@@ -49,7 +49,7 @@ pub trait L2capCommands {
     /// This command sends a Credit-Based Connection Request packet to the specified connection.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    // compliance: st=ACI_L2CAP_COC_CONNECT opcode=L2CAP_COC_CONNECT
+    // compliance: st=ACI_L2CAP_COC_CONNECT
     async fn coc_connect(&mut self, params: &L2CapCocConnect);
 
     /// This command sends a Credit-Based Connection Response packet. It must be used upon receipt
@@ -57,13 +57,13 @@ pub trait L2capCommands {
     /// event.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    // compliance: st=ACI_L2CAP_COC_CONNECT_CONFIRM opcode=L2CAP_COC_CONNECT_CONFIRM
+    // compliance: st=ACI_L2CAP_COC_CONNECT_CONFIRM
     async fn coc_connect_confirm(&mut self, params: &L2CapCocConnectConfirm);
 
     /// This command sends a Credit-Based Reconfigure Request packet on the specified connection.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    // compliance: st=ACI_L2CAP_COC_RECONF opcode=L2CAP_COC_RECONFIG
+    // compliance: st=ACI_L2CAP_COC_RECONF
     async fn coc_reconfig(&mut self, params: &L2CapCocReconfig);
 
     /// This command sends a Credit-Based Reconfigure Response packet. It must be use upon receipt
@@ -71,7 +71,7 @@ pub trait L2capCommands {
     /// [L2CAP COC Reconfigure](crate::vendor::event::VendorEvent::L2CapCocReconfig) event.
     ///
     ///  See Bluetooth Core specification Vol.3 Part A.
-    // compliance: st=ACI_L2CAP_COC_RECONF_CONFIRM opcode=L2CAP_COC_RECONFIG_CONFIRM
+    // compliance: st=ACI_L2CAP_COC_RECONF_CONFIRM
     async fn coc_reconfig_confirm(&mut self, params: &L2CapCocReconfigConfirm);
 
     /// This command sends a Disconnection Request signaling packet on the specified connection-oriented
@@ -82,14 +82,14 @@ pub trait L2capCommands {
     /// # Generated events
     /// A [L2CAP COC Disconnection](crate::vendor::event::VendorEvent::L2CapCocDisconnect) event is
     /// received when the disconnection of the channel is effective.
-    // compliance: st=ACI_L2CAP_COC_DISCONNECT opcode=L2CAP_COC_DISCONNECT
+    // compliance: st=ACI_L2CAP_COC_DISCONNECT
     async fn coc_disconnect(&mut self, channel_index: u8);
 
     /// This command sends a Flow Control Credit signaling packet on the specified connection-oriented
     /// channel.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    // compliance: st=ACI_L2CAP_COC_FLOW_CONTROL opcode=L2CAP_COC_FLOW_CONTROL
+    // compliance: st=ACI_L2CAP_COC_FLOW_CONTROL
     async fn coc_flow_control(&mut self, params: &L2CapCocFlowControl);
 
     /// This command sends a K-frame packet on the specified connection-oriented channel.
@@ -103,7 +103,7 @@ pub trait L2capCommands {
     /// contain the K-frame information payload.
     /// The Length value must not exceed (BLE_CMD_MAX_PARAM_LEN - 3) i.e. 252 for
     /// BLE_CMD_MAX_PARAM_LEN default value.
-    // compliance: st=ACI_L2CAP_COC_TX_DATA opcode=L2CAP_COC_TX_DATA
+    // compliance: st=ACI_L2CAP_COC_TX_DATA
     async fn coc_tx_data(&mut self, params: &L2CapCocTxData);
 }
 
