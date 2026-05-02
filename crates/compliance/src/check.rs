@@ -1,8 +1,10 @@
 use crate::spec::{CommandSpec, FirmwareSpec};
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+const MARKER_PREFIX: &str = "compliance:";
 
 #[derive(Debug, Serialize)]
 pub struct CoverageReport {
@@ -10,35 +12,66 @@ pub struct CoverageReport {
     pub rust_crate: String,
     pub commands_total: usize,
     pub rust_opcode_constants_total: usize,
-    pub covered_by_opcode: usize,
-    pub obvious_command_impl_matches: usize,
-    pub missing_opcode_constants: Vec<MissingOpcodeConstant>,
-    pub opcode_value_mismatches: Vec<OpcodeValueMismatch>,
-    pub missing_command_impls: Vec<MissingCommandImpl>,
+    pub markers_total: usize,
+    pub covered_by_marker: usize,
+    pub missing_markers: Vec<MissingMarker>,
+    pub duplicate_markers: Vec<DuplicateMarker>,
+    pub unknown_markers: Vec<UnknownMarker>,
+    pub marker_opcode_constants_missing: Vec<MarkerOpcodeConstantMissing>,
+    pub marker_opcode_mismatches: Vec<MarkerOpcodeMismatch>,
+    pub marker_method_missing: Vec<MarkerMethodMissing>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct MissingOpcodeConstant {
+pub struct MissingMarker {
     pub st_command: String,
     pub opcode: Option<u16>,
-    pub expected_rust_const: String,
     pub expected_rust_places: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct OpcodeValueMismatch {
+pub struct DuplicateMarker {
     pub st_command: String,
-    pub expected_rust_const: String,
+    pub locations: Vec<MarkerLocation>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnknownMarker {
+    pub st_command: String,
+    pub opcode_const: String,
+    pub method: Option<String>,
+    pub location: MarkerLocation,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkerOpcodeConstantMissing {
+    pub st_command: String,
+    pub opcode_const: String,
+    pub method: Option<String>,
+    pub location: MarkerLocation,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkerOpcodeMismatch {
+    pub st_command: String,
+    pub opcode_const: String,
     pub st_opcode: u16,
     pub rust_opcode: u16,
+    pub method: Option<String>,
+    pub location: MarkerLocation,
 }
 
 #[derive(Debug, Serialize)]
-pub struct MissingCommandImpl {
+pub struct MarkerMethodMissing {
     pub st_command: String,
-    pub opcode: Option<u16>,
-    pub expected_rust_method_fragments: Vec<String>,
-    pub expected_rust_places: Vec<String>,
+    pub opcode_const: String,
+    pub location: MarkerLocation,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MarkerLocation {
+    pub file: String,
+    pub line: usize,
 }
 
 #[derive(Debug)]
@@ -47,60 +80,100 @@ struct RustOpcode {
     opcode: u16,
 }
 
+#[derive(Clone, Debug)]
+struct CommandMarker {
+    st_command: String,
+    opcode_const: String,
+    method: Option<String>,
+    location: MarkerLocation,
+}
+
 pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<CoverageReport> {
     let opcode_path = rust_crate.join("src/vendor/opcode.rs");
     let opcodes = parse_rust_opcodes(&opcode_path)?;
-    let opcode_by_value = opcodes
-        .iter()
-        .map(|opcode| (opcode.opcode, opcode.name.as_str()))
-        .collect::<HashMap<_, _>>();
     let opcode_by_name = opcodes
         .iter()
         .map(|opcode| (opcode.name.as_str(), opcode.opcode))
         .collect::<HashMap<_, _>>();
-    let command_identifiers = load_command_identifiers(rust_crate)?;
+    let markers = load_command_markers(rust_crate)?;
+    let markers_by_st = group_markers_by_st(&markers);
+    let st_by_formal_name = spec
+        .commands
+        .iter()
+        .map(|command| (formal_st_name(command), command))
+        .collect::<HashMap<_, _>>();
 
-    let mut covered_by_opcode = 0;
-    let mut obvious_command_impl_matches = 0;
-    let mut missing_opcode_constants = Vec::new();
-    let mut opcode_value_mismatches = Vec::new();
-    let mut missing_command_impls = Vec::new();
+    let mut covered_by_marker = 0;
+    let mut missing_markers = Vec::new();
+    let mut duplicate_markers = Vec::new();
+    let mut unknown_markers = Vec::new();
+    let mut marker_opcode_constants_missing = Vec::new();
+    let mut marker_opcode_mismatches = Vec::new();
+    let mut marker_method_missing = Vec::new();
 
     for command in &spec.commands {
-        let expected_const = expected_rust_const(command);
-        if let Some(st_opcode) = command.opcode {
-            if opcode_by_value.contains_key(&st_opcode) {
-                covered_by_opcode += 1;
-            } else {
-                missing_opcode_constants.push(MissingOpcodeConstant {
-                    st_command: command.name.clone(),
-                    opcode: command.opcode,
-                    expected_rust_const: expected_const.clone(),
-                    expected_rust_places: expected_places(rust_crate, command),
+        let st_command = formal_st_name(command);
+        let Some(command_markers) = markers_by_st.get(st_command.as_str()) else {
+            missing_markers.push(MissingMarker {
+                st_command,
+                opcode: command.opcode,
+                expected_rust_places: expected_places(rust_crate, command),
+            });
+            continue;
+        };
+
+        covered_by_marker += 1;
+        if command_markers.len() > 1 {
+            duplicate_markers.push(DuplicateMarker {
+                st_command: st_command.clone(),
+                locations: command_markers
+                    .iter()
+                    .map(|marker| marker.location.clone())
+                    .collect(),
+            });
+        }
+
+        for marker in command_markers {
+            if marker.method.is_none() {
+                marker_method_missing.push(MarkerMethodMissing {
+                    st_command: marker.st_command.clone(),
+                    opcode_const: marker.opcode_const.clone(),
+                    location: marker.location.clone(),
                 });
             }
 
-            if let Some(rust_opcode) = opcode_by_name.get(expected_const.as_str())
+            let Some(rust_opcode) = opcode_by_name.get(marker.opcode_const.as_str()) else {
+                marker_opcode_constants_missing.push(MarkerOpcodeConstantMissing {
+                    st_command: marker.st_command.clone(),
+                    opcode_const: marker.opcode_const.clone(),
+                    method: marker.method.clone(),
+                    location: marker.location.clone(),
+                });
+                continue;
+            };
+
+            if let Some(st_opcode) = command.opcode
                 && *rust_opcode != st_opcode
             {
-                opcode_value_mismatches.push(OpcodeValueMismatch {
-                    st_command: command.name.clone(),
-                    expected_rust_const: expected_const.clone(),
+                marker_opcode_mismatches.push(MarkerOpcodeMismatch {
+                    st_command: marker.st_command.clone(),
+                    opcode_const: marker.opcode_const.clone(),
                     st_opcode,
                     rust_opcode: *rust_opcode,
+                    method: marker.method.clone(),
+                    location: marker.location.clone(),
                 });
             }
         }
+    }
 
-        let expected_fragments = expected_method_fragments(command);
-        if has_obvious_impl_match(command, &expected_fragments, &command_identifiers) {
-            obvious_command_impl_matches += 1;
-        } else {
-            missing_command_impls.push(MissingCommandImpl {
-                st_command: command.name.clone(),
-                opcode: command.opcode,
-                expected_rust_method_fragments: expected_fragments,
-                expected_rust_places: expected_places(rust_crate, command),
+    for marker in &markers {
+        if !st_by_formal_name.contains_key(marker.st_command.as_str()) {
+            unknown_markers.push(UnknownMarker {
+                st_command: marker.st_command.clone(),
+                opcode_const: marker.opcode_const.clone(),
+                method: marker.method.clone(),
+                location: marker.location.clone(),
             });
         }
     }
@@ -110,11 +183,14 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
         rust_crate: rust_crate.display().to_string(),
         commands_total: spec.commands.len(),
         rust_opcode_constants_total: opcodes.len(),
-        covered_by_opcode,
-        obvious_command_impl_matches,
-        missing_opcode_constants,
-        opcode_value_mismatches,
-        missing_command_impls,
+        markers_total: markers.len(),
+        covered_by_marker,
+        missing_markers,
+        duplicate_markers,
+        unknown_markers,
+        marker_opcode_constants_missing,
+        marker_opcode_mismatches,
+        marker_method_missing,
     })
 }
 
@@ -130,8 +206,7 @@ fn parse_rust_opcodes(path: &Path) -> Result<Vec<RustOpcode>> {
             continue;
         }
 
-        if let Some((group, cgid)) = parse_group_cgid(line) {
-            let _ = group;
+        if let Some((_, cgid)) = parse_group_cgid(line) {
             current_cgid = Some(cgid);
             continue;
         }
@@ -172,115 +247,102 @@ fn parse_int(value: &str) -> Option<u16> {
     }
 }
 
-fn load_command_identifiers(rust_crate: &Path) -> Result<HashMap<String, HashSet<String>>> {
+fn load_command_markers(rust_crate: &Path) -> Result<Vec<CommandMarker>> {
     let command_dir = rust_crate.join("src/vendor/command");
-    let mut by_group = HashMap::new();
+    let mut markers = Vec::new();
 
     for group in ["gap", "gatt", "hal", "l2cap"] {
         let path = command_dir.join(format!("{group}.rs"));
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        by_group.insert(group.to_owned(), rust_identifiers(&source));
+        markers.extend(parse_markers_in_file(&path, &source));
     }
 
-    Ok(by_group)
+    Ok(markers)
 }
 
-fn rust_identifiers(source: &str) -> HashSet<String> {
-    source
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|token| !token.is_empty())
-        .map(normalize)
-        .collect()
-}
+fn parse_markers_in_file(path: &Path, source: &str) -> Vec<CommandMarker> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut markers = Vec::new();
 
-fn has_obvious_impl_match(
-    command: &CommandSpec,
-    expected_fragments: &[String],
-    identifiers: &HashMap<String, HashSet<String>>,
-) -> bool {
-    let full = normalize(command.name.trim_start_matches("aci_"));
-    identifiers.get(command.group.as_str()).is_some_and(|ids| {
-        ids.contains(&full)
-            || expected_fragments
-                .iter()
-                .map(|f| normalize(f))
-                .any(|fragment| {
-                    ids.contains(&fragment) || ids.iter().any(|id| id.ends_with(&fragment))
-                })
-    })
-}
+    for (idx, line) in lines.iter().enumerate() {
+        let Some(marker) = parse_marker_line(line) else {
+            continue;
+        };
 
-fn expected_rust_const(command: &CommandSpec) -> String {
-    command.name.trim_start_matches("aci_").to_ascii_uppercase()
-}
-
-fn expected_method_fragments(command: &CommandSpec) -> Vec<String> {
-    let without_aci = command.name.trim_start_matches("aci_");
-    let mut base = without_aci
-        .strip_prefix(&format!("{}_", command.group))
-        .unwrap_or(without_aci);
-
-    if command.group == "gatt" {
-        base = base.strip_prefix("att_").unwrap_or(base);
+        markers.push(CommandMarker {
+            st_command: marker.0,
+            opcode_const: marker.1,
+            method: next_method_name(&lines, idx + 1),
+            location: MarkerLocation {
+                file: path.display().to_string(),
+                line: idx + 1,
+            },
+        });
     }
 
-    alias_fragments(base)
+    markers
 }
 
-fn alias_fragments(value: &str) -> Vec<String> {
-    let aliases = value.split('_').map(part_aliases).collect::<Vec<_>>();
-    let mut out = HashSet::new();
-    build_alias_fragments(&aliases, 0, &mut Vec::new(), &mut out);
-    let mut out = out.into_iter().collect::<Vec<_>>();
-    out.sort();
+fn parse_marker_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim().strip_prefix("//")?.trim();
+    let marker = line.strip_prefix(MARKER_PREFIX)?.trim();
+    let mut st = None;
+    let mut opcode = None;
+
+    for part in marker.split_whitespace() {
+        if let Some(value) = part.strip_prefix("st=") {
+            st = Some(value.to_owned());
+        } else if let Some(value) = part.strip_prefix("opcode=") {
+            opcode = Some(value.to_owned());
+        }
+    }
+
+    Some((st?, opcode?))
+}
+
+fn next_method_name(lines: &[&str], start: usize) -> Option<String> {
+    for line in lines.iter().skip(start) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") && trimmed.contains(MARKER_PREFIX) {
+            return None;
+        }
+        if let Some(method) = parse_fn_name(trimmed) {
+            return Some(method);
+        }
+    }
+
+    None
+}
+
+fn parse_fn_name(line: &str) -> Option<String> {
+    let fn_pos = line.find("fn ")?;
+    let rest = &line[fn_pos + 3..];
+    let name = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect::<String>();
+    (!name.is_empty()).then_some(name)
+}
+
+fn group_markers_by_st(markers: &[CommandMarker]) -> HashMap<String, Vec<&CommandMarker>> {
+    let mut out = HashMap::<String, Vec<&CommandMarker>>::new();
+    for marker in markers {
+        out.entry(marker.st_command.clone())
+            .or_default()
+            .push(marker);
+    }
     out
 }
 
-fn build_alias_fragments(
-    aliases: &[Vec<String>],
-    idx: usize,
-    current: &mut Vec<String>,
-    out: &mut HashSet<String>,
-) {
-    if idx == aliases.len() {
-        out.insert(current.join("_"));
-        return;
-    }
-
-    for alias in &aliases[idx] {
-        current.push(alias.clone());
-        build_alias_fragments(aliases, idx + 1, current, out);
-        current.pop();
-    }
-}
-
-fn part_aliases(part: &str) -> Vec<String> {
-    match part {
-        "addr" => strings(["addr", "address"]),
-        "adv" => strings(["adv", "advertising"]),
-        "auth" => strings(["auth", "authorization"]),
-        "cfg" | "config" => vec![part.to_owned(), "configuration".to_owned()],
-        "char" => strings(["char", "characteristic"]),
-        "conn" => strings(["conn", "connection"]),
-        "db" => strings(["db", "database"]),
-        "desc" => strings(["desc", "descriptor"]),
-        "del" => strings(["del", "delete"]),
-        "disc" => strings(["disc", "discover"]),
-        "establish" => strings(["establish", "establishment"]),
-        "include" => strings(["include", "included"]),
-        "info" => strings(["info", "information"]),
-        "param" => strings(["param", "parameter"]),
-        "proc" => strings(["proc", "procedure"]),
-        "req" => strings(["req", "request"]),
-        "resp" => strings(["resp", "response"]),
-        "sec" => strings(["sec", "security"]),
-        _ => vec![part.to_owned()],
-    }
-}
-
-fn strings<const N: usize>(values: [&str; N]) -> Vec<String> {
-    values.into_iter().map(str::to_owned).collect()
+fn formal_st_name(command: &CommandSpec) -> String {
+    command
+        .doc
+        .as_ref()
+        .and_then(|doc| doc.brief.as_deref())
+        .filter(|brief| brief.starts_with("ACI_"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| command.name.to_ascii_uppercase())
 }
 
 fn expected_places(rust_crate: &Path, command: &CommandSpec) -> Vec<String> {
@@ -303,12 +365,4 @@ fn command_file(rust_crate: &Path, group: &str) -> Option<PathBuf> {
         }
         _ => None,
     }
-}
-
-fn normalize(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
 }

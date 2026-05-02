@@ -32,6 +32,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetNonDiscoverable) event
     /// is generated.
+    // compliance: st=ACI_GAP_SET_NON_DISCOVERABLE opcode=GAP_SET_NONDISCOVERABLE
     async fn gap_set_nondiscoverable(&mut self);
 
     /// Set the device in limited discoverable mode.
@@ -62,6 +63,7 @@ pub trait GapCommands {
     /// event. The controller starts the advertising after this and when advertising timeout happens
     /// (i.e. limited discovery period has elapsed), the controller generates an
     /// [GAP Limited Discoverable Complete](crate::vendor::event::VendorEvent::GapLimitedDiscoverableTimeout) event.
+    // compliance: st=ACI_GAP_SET_LIMITED_DISCOVERABLE opcode=GAP_SET_LIMITED_DISCOVERABLE
     async fn set_limited_discoverable(
         &mut self,
         params: &DiscoverableParameters<'_, '_>,
@@ -93,6 +95,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetDiscoverable) event is
     /// generated.
+    // compliance: st=ACI_GAP_SET_DISCOVERABLE opcode=GAP_SET_DISCOVERABLE
     async fn set_discoverable(
         &mut self,
         params: &DiscoverableParameters<'_, '_>,
@@ -805,21 +808,26 @@ pub trait GapCommands {
     /// [set_undirected_connectable](GapCommands::set_undirected_connectable) and
     /// [set_broadcast_mode](GapCommands::set_broadcast_mode) that only support
     /// legacy advertising.
+    // compliance: st=ACI_GAP_ADV_SET_CONFIGURATION opcode=GAP_ADV_SET_CONFIGURATION
     async fn adv_set_config(&mut self, params: &AdvSetConfig);
 
     /// This command is used to request the Controller to enable or disbale one
     /// or more extended advertising sets.
+    // compliance: st=ACI_GAP_ADV_SET_ENABLE opcode=GAP_ADV_SET_ENABLE
     async fn adv_set_enable<'a>(&mut self, params: &AdvSetEnable<'a>);
 
     /// This command is used to set the data used in extended advertising PDUs
     /// that have a data field
+    // compliance: st=ACI_GAP_ADV_SET_ADV_DATA opcode=GAP_ADV_SET_ADV_DATA
     async fn adv_set_advertising_data(&mut self, params: &AdvSetAdvertisingData);
 
     /// This command is used to provide scan response data used during extended
     /// advertising
+    // compliance: st=ACI_GAP_ADV_SET_SCAN_RESP_DATA opcode=GAP_ADV_SET_SCAN_RESPONSE_DATA
     async fn adv_set_scan_response_data(&mut self, params: &AdvSetAdvertisingData);
 
     /// This command is used to remove an advertising set from the Controller.
+    // compliance: st=ACI_GAP_ADV_REMOVE_SET opcode=GAP_ADV_REMOVE_SET
     async fn adv_remove_set(&mut self, handle: AdvertisingHandle);
 
     /// This command is used to remove all exisiting advertising sets from
