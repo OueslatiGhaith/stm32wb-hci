@@ -793,6 +793,27 @@ pub trait GattCommands {
         params: &DescriptorValueParameters<'_>,
     ) -> Result<(), Error>;
 
+    /// Reads the value of the attribute handle specified from the local GATT database.
+    ///
+    /// `offset` is the offset from which the value needs to be read. `value_length_requested` is
+    /// the maximum number of value octets to return.
+    ///
+    /// # Errors
+    ///
+    /// Only underlying communication errors are reported.
+    ///
+    /// # Generated events
+    ///
+    /// A [command complete](crate::event::command::CommandComplete)
+    /// event is generated when this command is processed.
+    // compliance: st=ACI_GATT_READ_HANDLE_VALUE opcode=GATT_READ_HANDLE_VALUE
+    async fn read_handle_value(
+        &mut self,
+        handle: AttributeHandle,
+        offset: usize,
+        value_length_requested: usize,
+    );
+
     /// The command returns the value of the attribute handle from the specified offset.
     ///
     /// If the length to be returned is greater than 128, then only 128 bytes are
@@ -1265,6 +1286,21 @@ impl<T: WritableController> GattCommands for T {
         DescriptorValueParameters<'a>,
         crate::vendor::opcode::GATT_SET_DESCRIPTOR_VALUE
     );
+
+    async fn read_handle_value(
+        &mut self,
+        handle: AttributeHandle,
+        offset: usize,
+        value_length_requested: usize,
+    ) {
+        let mut bytes = [0; 6];
+        LittleEndian::write_u16(&mut bytes[0..2], handle.0);
+        LittleEndian::write_u16(&mut bytes[2..4], offset as u16);
+        LittleEndian::write_u16(&mut bytes[4..6], value_length_requested as u16);
+
+        self.controller_write(crate::vendor::opcode::GATT_READ_HANDLE_VALUE, &bytes)
+            .await
+    }
 
     async fn read_handle_value_offset(&mut self, handle: AttributeHandle, offset: usize) {
         let mut bytes = [0; 3];

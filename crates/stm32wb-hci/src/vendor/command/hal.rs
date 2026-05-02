@@ -181,6 +181,10 @@ pub trait HalCommands {
     // compliance: st=ACI_HAL_READ_RADIO_REG opcode=HAL_READ_RADIO_REG
     async fn read_radio_reg(&mut self, address: u8);
 
+    /// This command writes a register value to the RF module.
+    // compliance: st=ACI_HAL_WRITE_RADIO_REG opcode=HAL_WRITE_RADIO_REG
+    async fn write_radio_reg(&mut self, address: u8, value: u8);
+
     /// This command returns the raw value of the RSSI
     // compliance: st=ACI_HAL_READ_RAW_RSSI opcode=HAL_READ_RAW_RSSI
     async fn read_raw_rssi(&mut self);
@@ -299,6 +303,11 @@ impl<T: WritableController> HalCommands for T {
 
     async fn read_radio_reg(&mut self, address: u8) {
         self.controller_write(crate::vendor::opcode::HAL_READ_RADIO_REG, &[address])
+            .await;
+    }
+
+    async fn write_radio_reg(&mut self, address: u8, value: u8) {
+        self.controller_write(crate::vendor::opcode::HAL_WRITE_RADIO_REG, &[address, value])
             .await;
     }
 
