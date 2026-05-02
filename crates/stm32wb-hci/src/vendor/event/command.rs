@@ -246,10 +246,6 @@ pub enum VendorReturnParameters {
     GattReadHandleValue(GattHandleValue),
 
     /// Parameters returned by the
-    /// [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value_offset) command.
-    GattReadHandleValueOffset(GattHandleValue),
-
-    /// Parameters returned by the
     /// [GATT Update Long Characteristic Value](crate::vendor::command::gatt::GattCommands::update_characteristic_value_ext) command.
     GattUpdateLongCharacteristicValue(crate::Status),
 
@@ -446,11 +442,6 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GATT_READ_HANDLE_VALUE => Ok(
                 VendorReturnParameters::GattReadHandleValue(to_gatt_handle_value(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET => {
-                Ok(VendorReturnParameters::GattReadHandleValueOffset(
-                    to_gatt_handle_value(&bytes[3..])?,
-                ))
-            }
             crate::vendor::opcode::GATT_UPDATE_LONG_CHARACTERISTIC_VALUE => Ok(
                 VendorReturnParameters::GattUpdateLongCharacteristicValue(to_status(&bytes[3..])?),
             ),

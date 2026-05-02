@@ -817,23 +817,6 @@ pub trait GattCommands {
         value_length_requested: usize,
     );
 
-    /// The command returns the value of the attribute handle from the specified offset.
-    ///
-    /// If the length to be returned is greater than 128, then only 128 bytes are
-    /// [returned](crate::event::command::ReturnParameters::GattReadHandleValueOffset). The
-    /// application should send this command with incremented offsets until it gets an error with
-    /// the offset it specified or the number of byes of attribute value returned is less than 128.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// A [command complete](crate::event::command::CommandComplete)
-    /// event is generated when this command is processed.
-    async fn read_handle_value_offset(&mut self, handle: AttributeHandle, offset: usize);
-
     /// This is a more flexible version of ACI_GATT_UPDATE_CHAR_VALUE tp support update of Long
     /// attribute up to 512 bytes and indicate selectively the generation of Indication/Notification
     ///
@@ -1302,15 +1285,6 @@ impl<T: WritableController> GattCommands for T {
         LittleEndian::write_u16(&mut bytes[4..6], value_length_requested as u16);
 
         self.controller_write(crate::vendor::opcode::GATT_READ_HANDLE_VALUE, &bytes)
-            .await
-    }
-
-    async fn read_handle_value_offset(&mut self, handle: AttributeHandle, offset: usize) {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes, handle.0);
-        bytes[2] = offset as u8;
-
-        self.controller_write(crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET, &bytes)
             .await
     }
 
