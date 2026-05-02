@@ -28,6 +28,7 @@ pub trait GattCommands {
     /// Initialize the GATT server on a slave device.
     ///
     /// This function exists to prevent name conflicts with other Commands traits' init methods.
+    // compliance: alias_of=ACI_GATT_INIT
     async fn init_gatt(&mut self) {
         self.init().await
     }
@@ -186,6 +187,7 @@ pub trait GattCommands {
     ///
     /// This function exists to prevent name conflicts with other Commands traits' set_event_mask
     /// methods.
+    // compliance: alias_of=ACI_GATT_SET_EVENT_MASK
     async fn set_gatt_event_mask(&mut self, mask: Event) {
         self.set_event_mask(mask).await
     }
@@ -325,6 +327,7 @@ pub trait GattCommands {
     /// the command. The result of the procedure is given through the
     /// [Execute Write Response](crate::vendor::event::VendorEvent::AttExecuteWriteResponse) event. The end of the
     /// procedure is indicated by a [GATT Procedure Complete](crate::vendor::event::VendorEvent::GattProcedureComplete) event.
+    // compliance: alias_of=ACI_ATT_EXECUTE_WRITE_REQ
     async fn cancel_write_request(&mut self, conn_handle: crate::ConnectionHandle);
 
     /// This command will start the GATT client procedure to discover all primary services on the

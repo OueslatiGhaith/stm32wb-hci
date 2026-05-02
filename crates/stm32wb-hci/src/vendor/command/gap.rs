@@ -262,6 +262,7 @@ pub trait GapCommands {
     /// Register the GAP service with the GATT.
     ///
     /// This function exists to prevent name conflicts with other Commands traits' init methods.
+    // compliance: alias_of=ACI_GAP_INIT
     async fn init_gap(
         &mut self,
         role: Role,
@@ -403,6 +404,7 @@ pub trait GapCommands {
     ///
     /// This function exists to prevent name conflicts with other Commands traits' set_event_mask
     /// methods.
+    // compliance: alias_of=ACI_GAP_SET_EVENT_MASK
     async fn set_gap_event_mask(&mut self, flags: EventFlags) {
         self.set_event_mask(flags).await
     }

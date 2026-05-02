@@ -13,10 +13,12 @@ pub struct CoverageReport {
     pub commands_total: usize,
     pub rust_opcode_constants_total: usize,
     pub markers_total: usize,
+    pub alias_markers_total: usize,
     pub covered_by_marker: usize,
     pub missing_markers: Vec<MissingMarker>,
     pub duplicate_markers: Vec<DuplicateMarker>,
     pub unknown_markers: Vec<UnknownMarker>,
+    pub unknown_alias_markers: Vec<UnknownAliasMarker>,
     pub marker_opcode_constants_missing: Vec<MarkerOpcodeConstantMissing>,
     pub marker_opcode_mismatches: Vec<MarkerOpcodeMismatch>,
     pub marker_method_missing: Vec<MarkerMethodMissing>,
@@ -40,6 +42,13 @@ pub struct DuplicateMarker {
 pub struct UnknownMarker {
     pub st_command: String,
     pub opcode_const: String,
+    pub method: Option<String>,
+    pub location: MarkerLocation,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnknownAliasMarker {
+    pub alias_of: String,
     pub method: Option<String>,
     pub location: MarkerLocation,
 }
@@ -95,6 +104,13 @@ struct CommandMarker {
     location: MarkerLocation,
 }
 
+#[derive(Clone, Debug)]
+struct AliasMarker {
+    alias_of: String,
+    method: Option<String>,
+    location: MarkerLocation,
+}
+
 #[derive(Debug)]
 struct RustCommandMethod {
     name: String,
@@ -108,7 +124,9 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
         .iter()
         .map(|opcode| (opcode.name.as_str(), opcode.opcode))
         .collect::<HashMap<_, _>>();
-    let markers = load_command_markers(rust_crate)?;
+    let loaded_markers = load_command_markers(rust_crate)?;
+    let markers = loaded_markers.primary;
+    let alias_markers = loaded_markers.aliases;
     let rust_methods = load_rust_command_methods(rust_crate)?;
     let marked_methods = markers
         .iter()
@@ -118,6 +136,12 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
                 .as_ref()
                 .map(|method| (marker.location.file.as_str(), method.as_str()))
         })
+        .chain(alias_markers.iter().filter_map(|marker| {
+            marker
+                .method
+                .as_ref()
+                .map(|method| (marker.location.file.as_str(), method.as_str()))
+        }))
         .collect::<HashSet<_>>();
     let markers_by_st = group_markers_by_st(&markers);
     let st_by_formal_name = spec
@@ -130,6 +154,7 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
     let mut missing_markers = Vec::new();
     let mut duplicate_markers = Vec::new();
     let mut unknown_markers = Vec::new();
+    let mut unknown_alias_markers = Vec::new();
     let mut marker_opcode_constants_missing = Vec::new();
     let mut marker_opcode_mismatches = Vec::new();
     let mut marker_method_missing = Vec::new();
@@ -211,16 +236,28 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
         }
     }
 
+    for marker in &alias_markers {
+        if !st_by_formal_name.contains_key(marker.alias_of.as_str()) {
+            unknown_alias_markers.push(UnknownAliasMarker {
+                alias_of: marker.alias_of.clone(),
+                method: marker.method.clone(),
+                location: marker.location.clone(),
+            });
+        }
+    }
+
     Ok(CoverageReport {
         firmware: spec.firmware.clone(),
         rust_crate: rust_crate.display().to_string(),
         commands_total: spec.commands.len(),
         rust_opcode_constants_total: opcodes.len(),
         markers_total: markers.len(),
+        alias_markers_total: alias_markers.len(),
         covered_by_marker,
         missing_markers,
         duplicate_markers,
         unknown_markers,
+        unknown_alias_markers,
         marker_opcode_constants_missing,
         marker_opcode_mismatches,
         marker_method_missing,
@@ -281,15 +318,23 @@ fn parse_int(value: &str) -> Option<u16> {
     }
 }
 
-fn load_command_markers(rust_crate: &Path) -> Result<Vec<CommandMarker>> {
+#[derive(Default)]
+struct LoadedCommandMarkers {
+    primary: Vec<CommandMarker>,
+    aliases: Vec<AliasMarker>,
+}
+
+fn load_command_markers(rust_crate: &Path) -> Result<LoadedCommandMarkers> {
     let command_dir = rust_crate.join("src/vendor/command");
-    let mut markers = Vec::new();
+    let mut markers = LoadedCommandMarkers::default();
 
     for group in ["gap", "gatt", "hal", "l2cap"] {
         let path = command_dir.join(format!("{group}.rs"));
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        markers.extend(parse_markers_in_file(&path, &source));
+        let file_markers = parse_markers_in_file(&path, &source);
+        markers.primary.extend(file_markers.primary);
+        markers.aliases.extend(file_markers.aliases);
     }
 
     Ok(markers)
@@ -309,24 +354,36 @@ fn load_rust_command_methods(rust_crate: &Path) -> Result<Vec<RustCommandMethod>
     Ok(methods)
 }
 
-fn parse_markers_in_file(path: &Path, source: &str) -> Vec<CommandMarker> {
+fn parse_markers_in_file(path: &Path, source: &str) -> LoadedCommandMarkers {
     let lines = source.lines().collect::<Vec<_>>();
-    let mut markers = Vec::new();
+    let mut markers = LoadedCommandMarkers::default();
 
     for (idx, line) in lines.iter().enumerate() {
         let Some(marker) = parse_marker_line(line) else {
             continue;
         };
 
-        markers.push(CommandMarker {
-            st_command: marker.0,
-            opcode_const: marker.1,
-            method: next_method_name(&lines, idx + 1),
-            location: MarkerLocation {
-                file: path.display().to_string(),
-                line: idx + 1,
-            },
-        });
+        let location = MarkerLocation {
+            file: path.display().to_string(),
+            line: idx + 1,
+        };
+        match marker {
+            MarkerKind::Primary { st, opcode } => {
+                markers.primary.push(CommandMarker {
+                    st_command: st,
+                    opcode_const: opcode,
+                    method: next_method_name(&lines, idx + 1),
+                    location,
+                });
+            }
+            MarkerKind::Alias { alias_of } => {
+                markers.aliases.push(AliasMarker {
+                    alias_of,
+                    method: next_method_name(&lines, idx + 1),
+                    location,
+                });
+            }
+        }
     }
 
     markers
@@ -372,21 +429,36 @@ fn parse_trait_methods_in_file(path: &Path, source: &str) -> Vec<RustCommandMeth
     methods
 }
 
-fn parse_marker_line(line: &str) -> Option<(String, String)> {
+enum MarkerKind {
+    Primary { st: String, opcode: String },
+    Alias { alias_of: String },
+}
+
+fn parse_marker_line(line: &str) -> Option<MarkerKind> {
     let line = line.trim().strip_prefix("//")?.trim();
     let marker = line.strip_prefix(MARKER_PREFIX)?.trim();
     let mut st = None;
     let mut opcode = None;
+    let mut alias_of = None;
 
     for part in marker.split_whitespace() {
         if let Some(value) = part.strip_prefix("st=") {
             st = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("opcode=") {
             opcode = Some(value.to_owned());
+        } else if let Some(value) = part.strip_prefix("alias_of=") {
+            alias_of = Some(value.to_owned());
         }
     }
 
-    Some((st?, opcode?))
+    if let Some(alias_of) = alias_of {
+        Some(MarkerKind::Alias { alias_of })
+    } else {
+        Some(MarkerKind::Primary {
+            st: st?,
+            opcode: opcode?,
+        })
+    }
 }
 
 fn count_char(source: &str, needle: char) -> usize {
