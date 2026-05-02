@@ -132,6 +132,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetDirectConnectable) event
     /// is generated.
+    // compliance: st=ACI_GAP_SET_DIRECT_CONNECTABLE opcode=GAP_SET_DIRECT_CONNECTABLE
     async fn set_direct_connectable(
         &mut self,
         params: &DirectConnectableParameters,
@@ -149,6 +150,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetIoCapability) event is
     /// generated.
+    // compliance: st=ACI_GAP_SET_IO_CAPABILITY opcode=GAP_SET_IO_CAPABILITY
     async fn set_io_capability(&mut self, capability: IoCapability);
 
     /// Set the authentication requirements for the device.
@@ -171,6 +173,7 @@ pub trait GapCommands {
     ///   is generated.
     /// - If [`fixed_pin`](AuthenticationRequirements::fixed_pin) is [Request](Pin::Requested), then
     ///   a [GAP Pass Key](crate::vendor::event::VendorEvent::GapPassKeyRequest) event is generated.
+    // compliance: st=ACI_GAP_SET_AUTHENTICATION_REQUIREMENT opcode=GAP_SET_AUTHENTICATION_REQUIREMENT
     async fn set_authentication_requirement(
         &mut self,
         requirements: &AuthenticationRequirements,
@@ -192,6 +195,7 @@ pub trait GapCommands {
     /// - If authorization is required, then a
     ///   [GAP Authorization Request](crate::vendor::event::VendorEvent::GapAuthorizationRequest)
     ///   event is generated.
+    // compliance: st=ACI_GAP_SET_AUTHORIZATION_REQUIREMENT opcode=GAP_SET_AUTHORIZATION_REQUIREMENT
     async fn set_authorization_requirement(
         &mut self,
         conn_handle: crate::ConnectionHandle,
@@ -214,6 +218,7 @@ pub trait GapCommands {
     ///   generated.
     /// - When the pairing process completes, it will generate a
     ///   [PairingComplete](crate::vendor::event::VendorEvent::GapPairingComplete) event.
+    // compliance: st=ACI_GAP_PASS_KEY_RESP opcode=GAP_PASS_KEY_RESPONSE
     async fn pass_key_response(
         &mut self,
         conn_handle: crate::ConnectionHandle,
@@ -231,6 +236,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapAuthorizationResponse)
     /// event is generated.
+    // compliance: st=ACI_GAP_AUTHORIZATION_RESP opcode=GAP_AUTHORIZATION_RESPONSE
     async fn authorization_response(
         &mut self,
         conn_handle: crate::ConnectionHandle,
@@ -250,6 +256,7 @@ pub trait GapCommands {
     /// # Generated events
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapInit) event is generated.
+    // compliance: st=ACI_GAP_INIT opcode=GAP_INIT
     async fn init(&mut self, role: Role, privacy_enabled: bool, dev_name_characteristic_len: u8);
 
     /// Register the GAP service with the GATT.
@@ -285,6 +292,7 @@ pub trait GapCommands {
     /// # Generated events
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapInit) event is generated.
+    // compliance: st=ACI_GAP_SET_NON_CONNECTABLE opcode=GAP_SET_NONCONNECTABLE
     async fn set_nonconnectable(
         &mut self,
         advertising_type: AdvertisingType,
@@ -308,6 +316,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetUndirectedConnectable)
     /// event is generated.
+    // compliance: st=ACI_GAP_SET_UNDIRECTED_CONNECTABLE opcode=GAP_SET_UNDIRECTED_CONNECTABLE
     async fn set_undirected_connectable(
         &mut self,
         params: &UndirectedConnectableParameters,
@@ -327,6 +336,7 @@ pub trait GapCommands {
     /// successfully transmitted to the master, a
     /// [GAP Peripheral Security Initiated](crate::vendor::event::VendorEvent::GapPeripheralSecurityInitiated)
     /// vendor-specific event will be generated.
+    // compliance: st=ACI_GAP_SLAVE_SECURITY_REQ opcode=GAP_PERIPHERAL_SECURITY_REQUEST
     async fn peripheral_security_request(&mut self, conn_handle: &ConnectionHandle);
 
     /// This command can be used to update the advertising data for a particular AD type. If the AD
@@ -344,6 +354,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapUpdateAdvertisingData)
     /// event is generated.
+    // compliance: st=ACI_GAP_UPDATE_ADV_DATA opcode=GAP_UPDATE_ADVERTISING_DATA
     async fn update_advertising_data(&mut self, data: &[u8]) -> Result<(), Error>;
 
     /// This command can be used to delete the specified AD type from the advertisement data if
@@ -357,6 +368,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapDeleteAdType) event is
     /// generated.
+    // compliance: st=ACI_GAP_DELETE_AD_TYPE opcode=GAP_DELETE_AD_TYPE
     async fn delete_ad_type(&mut self, ad_type: AdvertisingDataType);
 
     /// This command can be used to get the current security settings of the device.
@@ -369,6 +381,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapGetSecurityLevel) event is
     /// generated.
+    // compliance: st=ACI_GAP_GET_SECURITY_LEVEL opcode=GAP_GET_SECURITY_LEVEL
     async fn get_security_level(&mut self, conn_handle: &ConnectionHandle);
 
     /// Allows masking events from the GAP.
@@ -383,6 +396,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetEventMask) event is
     /// generated.
+    // compliance: st=ACI_GAP_SET_EVENT_MASK opcode=GAP_SET_EVENT_MASK
     async fn set_event_mask(&mut self, flags: EventFlags);
 
     /// Allows masking events from the GAP.
@@ -404,6 +418,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapConfigureWhiteList) event
     /// is generated.
+    // compliance: st=ACI_GAP_CONFIGURE_WHITELIST opcode=GAP_CONFIGURE_WHITE_LIST
     async fn configure_white_list(&mut self);
 
     /// Command the controller to terminate the connection.
@@ -427,6 +442,7 @@ pub trait GapCommands {
     /// the command is received and a [Disconnection Complete](crate::event::Event::DisconnectionComplete)
     /// event will be generated when the link is
     /// disconnected.
+    // compliance: st=ACI_GAP_TERMINATE opcode=GAP_TERMINATE
     async fn terminate(
         &mut self,
         conn_handle: crate::ConnectionHandle,
@@ -449,6 +465,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapClearSecurityDatabase)
     /// event is generated.
+    // compliance: st=ACI_GAP_CLEAR_SECURITY_DB opcode=GAP_CLEAR_SECURITY_DATABASE
     async fn clear_security_database(&mut self);
 
     /// This command should be given by the application when it receives the
@@ -465,6 +482,7 @@ pub trait GapCommands {
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapAllowRebond) event is
     /// generated. Even if the command is given when it is not valid, success will be returned but
     /// internally it will have no effect.
+    // compliance: st=ACI_GAP_ALLOW_REBOND opcode=GAP_ALLOW_REBOND
     async fn allow_rebond(&mut self, conn_handle: crate::ConnectionHandle);
 
     /// Start the limited discovery procedure.
@@ -492,6 +510,7 @@ pub trait GapCommands {
     ///
     /// The device found when the procedure is ongoing is returned to the upper layers through the
     /// [LeAdvertisingReport](crate::event::Event::LeAdvertisingReport) event.
+    // compliance: st=ACI_GAP_START_LIMITED_DISCOVERY_PROC opcode=GAP_START_LIMITED_DISCOVERY_PROCEDURE
     async fn start_limited_discovery_procedure(&mut self, params: &DiscoveryProcedureParameters);
 
     /// Start the general discovery procedure. The controller is commanded to start active scanning.
@@ -515,6 +534,7 @@ pub trait GapCommands {
     ///
     /// The device found when the procedure is ongoing is returned to the upper layers through the
     /// [LeAdvertisingReport](crate::event::Event::LeAdvertisingReport) event.
+    // compliance: st=ACI_GAP_START_GENERAL_DISCOVERY_PROC opcode=GAP_START_GENERAL_DISCOVERY_PROCEDURE
     async fn start_general_discovery_procedure(&mut self, params: &DiscoveryProcedureParameters);
 
     /// Start the auto connection establishment procedure.
@@ -533,6 +553,7 @@ pub trait GapCommands {
     ///   (such that the serialized command would not fit in 255 bytes), a
     ///   [WhiteListTooLong](Error::WhiteListTooLong) is returned. The list cannot have more than 33
     ///   elements.
+    // compliance: st=ACI_GAP_START_AUTO_CONNECTION_ESTABLISH_PROC opcode=GAP_START_AUTO_CONNECTION_ESTABLISHMENT
     async fn start_auto_connection_establishment_procedure(
         &mut self,
         params: &AutoConnectionEstablishmentParameters<'_>,
@@ -555,6 +576,7 @@ pub trait GapCommands {
     /// # Errors
     ///
     /// Only underlying communication errors are reported.
+    // compliance: st=ACI_GAP_START_GENERAL_CONNECTION_ESTABLISH_PROC opcode=GAP_START_GENERAL_CONNECTION_ESTABLISHMENT
     async fn start_general_connection_establishment_procedure(
         &mut self,
         params: &GeneralConnectionEstablishmentParameters,
@@ -577,6 +599,7 @@ pub trait GapCommands {
     ///   long (such that the serialized command would not fit in 255 bytes), a
     ///   [WhiteListTooLong](Error::WhiteListTooLong) is returned. The list cannot have more than 35
     ///   elements.
+    // compliance: st=ACI_GAP_START_SELECTIVE_CONNECTION_ESTABLISH_PROC opcode=GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT
     async fn start_selective_connection_establishment_procedure(
         &mut self,
         params: &SelectiveConnectionEstablishmentParameters<'_>,
@@ -607,6 +630,7 @@ pub trait GapCommands {
     /// command [`terminate_procedure`](GapCommands::terminate_gap_procedure) with the procedure_code set
     /// to
     /// [DirectConnectionEstablishment](crate::vendor::event::GapProcedure::DirectConnectionEstablishment).
+    // compliance: st=ACI_GAP_CREATE_CONNECTION opcode=GAP_CREATE_CONNECTION
     async fn create_connection(&mut self, params: &ConnectionParameters);
 
     /// The GAP procedure(s) specified is terminated.
@@ -623,6 +647,7 @@ pub trait GapCommands {
     /// will be [Success](crate::Status::Success) and a
     /// [ProcedureCompleted](crate::vendor::event::VendorEvent::GapProcedureComplete) event is returned
     /// with the procedure code set to the corresponding procedure.
+    // compliance: st=ACI_GAP_TERMINATE_GAP_PROC opcode=GAP_TERMINATE_PROCEDURE
     async fn terminate_gap_procedure(&mut self, procedure: Procedure) -> Result<(), Error>;
 
     /// Start the connection update procedure.
@@ -641,6 +666,7 @@ pub trait GapCommands {
     /// connection update, a
     /// [LeConnectionUpdateComplete](crate::event::Event::LeConnectionUpdateComplete) event is
     /// returned to the upper layer.
+    // compliance: st=ACI_GAP_START_CONNECTION_UPDATE opcode=GAP_START_CONNECTION_UPDATE
     async fn start_connection_update(&mut self, params: &ConnectionUpdateParameters);
 
     /// Send the SM pairing request to start a pairing process. The authentication requirements and
@@ -659,6 +685,7 @@ pub trait GapCommands {
     /// received. If [Success](crate::Status::Success) is returned in the command status event, a
     /// [Pairing Complete](crate::vendor::event::VendorEvent::GapPairingComplete) event is returned after
     /// the pairing process is completed.
+    // compliance: st=ACI_GAP_SEND_PAIRING_REQ opcode=GAP_SEND_PAIRING_REQUEST
     async fn send_pairing_request(&mut self, params: &PairingRequest);
 
     /// This command tries to resolve the address provided with the IRKs present in its database.
@@ -676,6 +703,7 @@ pub trait GapCommands {
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapResolvePrivateAddress)
     /// event is generated. If [Success](crate::Status::Success) is returned as the status, then the
     /// address is also returned in the event.
+    // compliance: st=ACI_GAP_RESOLVE_PRIVATE_ADDR opcode=GAP_RESOLVE_PRIVATE_ADDRESS
     async fn resolve_private_address(&mut self, addr: crate::BdAddr);
 
     /// This command puts the device into broadcast mode.
@@ -696,6 +724,7 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapSetBroadcastMode) event is
     /// returned where the status indicates whether the command was successful.
+    // compliance: st=ACI_GAP_SET_BROADCAST_MODE opcode=GAP_SET_BROADCAST_MODE
     async fn set_broadcast_mode(&mut self, params: &BroadcastModeParameters) -> Result<(), Error>;
 
     /// Starts an Observation procedure, when the device is in Observer Role.
@@ -712,6 +741,7 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapStartObservationProcedure)
     /// event is generated.
+    // compliance: st=ACI_GAP_START_OBSERVATION_PROC opcode=GAP_START_OBSERVATION_PROCEDURE
     async fn start_observation_procedure(&mut self, params: &ObservationProcedureParameters);
 
     /// This command gets the list of the devices which are bonded. It returns the number of
@@ -725,6 +755,7 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices) event is
     /// generated.
+    // compliance: st=ACI_GAP_GET_BONDED_DEVICES opcode=GAP_GET_BONDED_DEVICES
     async fn get_bonded_devices(&mut self);
 
     /// The command finds whether the device, whose address is specified in the command, is
@@ -739,28 +770,34 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapIsDeviceBonded) event is
     /// generated.
+    // compliance: st=ACI_GAP_IS_DEVICE_BONDED opcode=GAP_IS_DEVICE_BONDED
     async fn is_device_bonded(&mut self, addr: crate::host::PeerAddrType);
 
     /// This command allows the user to validate/confirm or not the numeric comparison value showed through
     /// the [`NumericComparisonValueEvent`]
+    // compliance: st=ACI_GAP_NUMERIC_COMPARISON_VALUE_CONFIRM_YESNO opcode=GAP_NUMERIC_COMPARISON_VALUE_YES_NO
     async fn numeric_comparison_value_confirm_yes_no(
         &mut self,
         params: &NumericComparisonValueConfirmYesNoParameters,
     );
 
     /// This command permits to signal to the Stack the input type detected during Passkey input.
+    // compliance: st=ACI_GAP_PASSKEY_INPUT opcode=GAP_PASSKEY_INPUT
     async fn passkey_input(&mut self, conn_handle: ConnectionHandle, input_type: InputType);
 
     /// This command is sent by the user to get (i.e. to extract from the Stack) the OOB
     /// data generated by the Stack itself.
+    // compliance: st=ACI_GAP_GET_OOB_DATA opcode=GAP_GET_OOB_DATA
     async fn get_oob_data(&mut self, oob_data_type: OobDataType);
 
     /// This command is sent (by the User) to input the OOB data arrived via OOB
     /// communication.
+    // compliance: st=ACI_GAP_SET_OOB_DATA opcode=GAP_SET_OOB_DATA
     async fn set_oob_data(&mut self, params: &SetOobDataParameters);
 
     /// This  command is used to add devices to the list of address translations
     /// used to resolve Resolvable Private Addresses in the Controller.
+    // compliance: st=ACI_GAP_ADD_DEVICES_TO_RESOLVING_LIST opcode=GAP_ADD_DEVICES_TO_RESOLVING_LIST
     async fn add_devices_to_resolving_list(
         &mut self,
         whitelist_identities: &[PeerAddrType],
@@ -768,15 +805,18 @@ pub trait GapCommands {
     );
 
     /// This command is used to remove a specified device from bonding table
+    // compliance: st=ACI_GAP_REMOVE_BONDED_DEVICE opcode=GAP_REMOVE_BONDED_DEVICE
     async fn remove_bonded_device(&mut self, address: BdAddrType);
 
     /// This  command is used to add specific device addresses to the white and/or resolving list.
+    // compliance: st=ACI_GAP_ADD_DEVICES_TO_LIST opcode=GAP_ADD_DEVICES_TO_LIST
     async fn add_devices_to_list(&mut self, list_entries: &[BdAddrType], mode: AddDeviceToListMode);
 
     /// This command starts an advertising beacon. It allows additional advertising
     /// packets to be transmitted independently of the packets transmitted with GAP
     /// advertising commands such as ACI_GAP_SET_DISCOVERABLE or
     /// ACI_GAP_SET_LIMITED_DISCOVERABLE.
+    // compliance: st=ACI_GAP_ADDITIONAL_BEACON_START opcode=GAP_ADDITIONAL_BEACON_START
     async fn additional_beacon_start(
         &mut self,
         params: &AdditonalBeaconStartParameters,
@@ -784,11 +824,13 @@ pub trait GapCommands {
 
     /// This command stops the advertising beacon started with
     /// ACI_GAP_ADDITIONAL_BEACON_START.
+    // compliance: st=ACI_GAP_ADDITIONAL_BEACON_STOP opcode=GAP_ADDITIONAL_BEACON_STOP
     async fn additional_beacon_stop(&mut self);
 
     /// This command sets the data transmitted by the advertising beacon started
     /// with ACI_GAP_ADDITIONAL_BEACON_START. If the advertising beacon is already
     /// started, the new data is used in subsequent beacon advertising events.
+    // compliance: st=ACI_GAP_ADDITIONAL_BEACON_SET_DATA opcode=GAP_ADDITIONAL_BEACON_SET_DATA
     async fn additonal_beacon_set_data(&mut self, advertising_data: &[u8]);
 
     /// This command is used to set the extended advertising configuration for one
@@ -832,10 +874,12 @@ pub trait GapCommands {
 
     /// This command is used to remove all exisiting advertising sets from
     /// the Controller.
+    // compliance: st=ACI_GAP_ADV_CLEAR_SETS opcode=GAP_ADV_CLEAR_SETS
     async fn adv_clear_sets(&mut self);
 
     /// This command is used to set the random device address of an advertising
     /// set configured to use specific random address.
+    // compliance: st=ACI_GAP_ADV_SET_RANDOM_ADDRESS opcode=GAP_ADV_SET_RANDOM_ADDRESS
     async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
 }
 

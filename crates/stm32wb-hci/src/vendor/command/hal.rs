@@ -18,6 +18,7 @@ pub trait HalCommands {
     ///
     /// The controller will generate a
     /// [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_GET_FW_BUILD_NUMBER opcode=HAL_GET_FIRMWARE_REVISION
     async fn get_firmware_revision(&mut self);
 
     /// This command writes a value to a low level configure data structure. It is useful to setup
@@ -30,6 +31,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_WRITE_CONFIG_DATA opcode=HAL_WRITE_CONFIG_DATA
     async fn write_config_data(&mut self, config: &ConfigData);
 
     /// This command requests the value in the low level configure data structure.
@@ -41,6 +43,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_READ_CONFIG_DATA opcode=HAL_READ_CONFIG_DATA
     async fn read_config_data(&mut self, param: ConfigParameter);
 
     /// This command sets the TX power level of the BlueNRG-MS.
@@ -62,6 +65,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_SET_TX_POWER_LEVEL opcode=HAL_SET_TX_POWER_LEVEL
     async fn set_tx_power_level(&mut self, level: PowerLevel);
 
     /// Retrieve the number of packets sent in the last TX direct test.
@@ -84,6 +88,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_LE_TX_TEST_PACKET_NUMBER opcode=HAL_TX_TEST_PACKET_COUNT
     async fn get_tx_test_packet_count(&mut self);
 
     /// This command starts a carrier frequency, i.e. a tone, on a specific channel.
@@ -103,6 +108,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_TONE_START opcode=HAL_START_TONE
     async fn start_tone(&mut self, channel: u8, freq_offset: u8) -> Result<(), Error>;
 
     /// Stops the previously started by the [`start_tone`](HalCommands::start_tone) command.
@@ -114,6 +120,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_TONE_STOP opcode=HAL_STOP_TONE
     async fn stop_tone(&mut self);
 
     /// This command is intended to return the Link Layer Status and Connection Handles.
@@ -125,6 +132,7 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_GET_LINK_STATUS opcode=HAL_GET_LINK_STATUS
     async fn get_link_status(&mut self);
 
     /// This command sets the bitmask associated to
@@ -132,6 +140,7 @@ pub trait HalCommands {
     ///
     /// Only the radio activities enabled in the mask will be reported to the application by the
     /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    // compliance: st=ACI_HAL_SET_RADIO_ACTIVITY_MASK opcode=HAL_SET_RADIO_ACTIVITY_MASK
     async fn set_radio_activity_mask(&mut self, mask: RadioActivityFlags);
 
     /// This command is intended to retrieve information about the current Anchor Interval and
@@ -144,29 +153,36 @@ pub trait HalCommands {
     /// # Generated events
     ///
     /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
+    // compliance: st=ACI_HAL_GET_ANCHOR_PERIOD opcode=HAL_GET_ANCHOR_PERIOD
     async fn get_anchor_period(&mut self);
 
     /// This command is used to enable/disable the generation of HAL events.
     ///
     /// If the bit in the [HAL Event Mask](HalEventFlags) is set to one, then the event associated with
     /// that will be enabled.
+    // compliance: st=ACI_HAL_SET_EVENT_MASK opcode=HAL_SET_EVENT_MASK
     async fn set_event_mask(&mut self, mask: HalEventFlags);
 
     /// This command is used to retreive Tx, Rx, and total buffer count allocated for ACL packets.
+    // compliance: st=ACI_HAL_GET_PM_DEBUG_INFO opcode=HAL_GET_PM_DEBUG_INFO
     async fn get_pm_debug_info(&mut self);
 
     /// This command is used to disable/enable the Peripheral latencyy feature during a connection.
     ///
     /// Note that, by default, the Peripheral latency is enabled at connection time.
+    // compliance: st=ACI_HAL_SET_SLAVE_LATENCY opcode=HAL_SET_PERIPHERAL_LATENCY
     async fn set_peripheral_latency(&mut self, enabled: bool);
 
     /// This command returns the value of the RSSI.
+    // compliance: st=ACI_HAL_READ_RSSI opcode=HAL_READ_RSSI
     async fn read_rssi(&mut self);
 
     /// This command reads a register value from the RF module
+    // compliance: st=ACI_HAL_READ_RADIO_REG opcode=HAL_READ_RADIO_REG
     async fn read_radio_reg(&mut self, address: u8);
 
     /// This command returns the raw value of the RSSI
+    // compliance: st=ACI_HAL_READ_RAW_RSSI opcode=HAL_READ_RAW_RSSI
     async fn read_raw_rssi(&mut self);
 
     /// This command does set up the RF to listen to a specific RF Channel.
@@ -174,13 +190,16 @@ pub trait HalCommands {
     /// `rf_channel`: BLE Channel Id, from 0x00 to 0x27 meaning `(2.402 + 0.002 * 0xXX) GHz`.
     /// The device will continously emit 0s, meaning that the tone will be at the channel center
     /// frequency minus the maximum frequency deviation (250 KHz).
+    // compliance: st=ACI_HAL_RX_START opcode=HAL_RX_START
     async fn rx_start(&mut self, rf_channel: u8);
 
     /// This command stops a previous [HAL Rx Start](HalCommands::rx_start) command
+    // compliance: st=ACI_HAL_RX_STOP opcode=HAL_RX_STOP
     async fn rx_stop(&mut self);
 
     /// This command is equivalent to [HCI Reset](crate::host::HostHci::reset) but ensures
     /// the sleep mode is entered immediately after its completion.
+    // compliance: st=ACI_HAL_STACK_RESET opcode=HAL_STACK_RESET
     async fn stack_reset(&mut self);
 }
 
