@@ -1,7 +1,7 @@
 use crate::spec::{CommandSpec, FirmwareSpec};
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const MARKER_PREFIX: &str = "compliance:";
@@ -20,6 +20,7 @@ pub struct CoverageReport {
     pub marker_opcode_constants_missing: Vec<MarkerOpcodeConstantMissing>,
     pub marker_opcode_mismatches: Vec<MarkerOpcodeMismatch>,
     pub marker_method_missing: Vec<MarkerMethodMissing>,
+    pub rust_methods_without_marker: Vec<RustMethodWithoutMarker>,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,6 +69,12 @@ pub struct MarkerMethodMissing {
     pub location: MarkerLocation,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RustMethodWithoutMarker {
+    pub method: String,
+    pub location: MarkerLocation,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct MarkerLocation {
     pub file: String,
@@ -88,6 +95,12 @@ struct CommandMarker {
     location: MarkerLocation,
 }
 
+#[derive(Debug)]
+struct RustCommandMethod {
+    name: String,
+    location: MarkerLocation,
+}
+
 pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<CoverageReport> {
     let opcode_path = rust_crate.join("src/vendor/opcode.rs");
     let opcodes = parse_rust_opcodes(&opcode_path)?;
@@ -96,6 +109,16 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
         .map(|opcode| (opcode.name.as_str(), opcode.opcode))
         .collect::<HashMap<_, _>>();
     let markers = load_command_markers(rust_crate)?;
+    let rust_methods = load_rust_command_methods(rust_crate)?;
+    let marked_methods = markers
+        .iter()
+        .filter_map(|marker| {
+            marker
+                .method
+                .as_ref()
+                .map(|method| (marker.location.file.as_str(), method.as_str()))
+        })
+        .collect::<HashSet<_>>();
     let markers_by_st = group_markers_by_st(&markers);
     let st_by_formal_name = spec
         .commands
@@ -110,6 +133,16 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
     let mut marker_opcode_constants_missing = Vec::new();
     let mut marker_opcode_mismatches = Vec::new();
     let mut marker_method_missing = Vec::new();
+    let rust_methods_without_marker = rust_methods
+        .iter()
+        .filter(|method| {
+            !marked_methods.contains(&(method.location.file.as_str(), method.name.as_str()))
+        })
+        .map(|method| RustMethodWithoutMarker {
+            method: method.name.clone(),
+            location: method.location.clone(),
+        })
+        .collect::<Vec<_>>();
 
     for command in &spec.commands {
         let st_command = formal_st_name(command);
@@ -191,6 +224,7 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
         marker_opcode_constants_missing,
         marker_opcode_mismatches,
         marker_method_missing,
+        rust_methods_without_marker,
     })
 }
 
@@ -261,6 +295,20 @@ fn load_command_markers(rust_crate: &Path) -> Result<Vec<CommandMarker>> {
     Ok(markers)
 }
 
+fn load_rust_command_methods(rust_crate: &Path) -> Result<Vec<RustCommandMethod>> {
+    let command_dir = rust_crate.join("src/vendor/command");
+    let mut methods = Vec::new();
+
+    for group in ["gap", "gatt", "hal", "l2cap"] {
+        let path = command_dir.join(format!("{group}.rs"));
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        methods.extend(parse_trait_methods_in_file(&path, &source));
+    }
+
+    Ok(methods)
+}
+
 fn parse_markers_in_file(path: &Path, source: &str) -> Vec<CommandMarker> {
     let lines = source.lines().collect::<Vec<_>>();
     let mut markers = Vec::new();
@@ -284,6 +332,46 @@ fn parse_markers_in_file(path: &Path, source: &str) -> Vec<CommandMarker> {
     markers
 }
 
+fn parse_trait_methods_in_file(path: &Path, source: &str) -> Vec<RustCommandMethod> {
+    let mut methods = Vec::new();
+    let mut in_command_trait = false;
+    let mut trait_depth = 0isize;
+
+    for (idx, line) in source.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or_default();
+        let trimmed = code.trim();
+
+        if !in_command_trait
+            && trimmed.starts_with("pub trait ")
+            && trimmed.contains("Commands")
+            && trimmed.contains('{')
+        {
+            in_command_trait = true;
+        }
+
+        if in_command_trait && let Some(method) = parse_fn_name(trimmed) {
+            methods.push(RustCommandMethod {
+                name: method,
+                location: MarkerLocation {
+                    file: path.display().to_string(),
+                    line: idx + 1,
+                },
+            });
+        }
+
+        if in_command_trait {
+            trait_depth += count_char(code, '{') as isize;
+            trait_depth -= count_char(code, '}') as isize;
+            if trait_depth <= 0 {
+                in_command_trait = false;
+                trait_depth = 0;
+            }
+        }
+    }
+
+    methods
+}
+
 fn parse_marker_line(line: &str) -> Option<(String, String)> {
     let line = line.trim().strip_prefix("//")?.trim();
     let marker = line.strip_prefix(MARKER_PREFIX)?.trim();
@@ -299,6 +387,10 @@ fn parse_marker_line(line: &str) -> Option<(String, String)> {
     }
 
     Some((st?, opcode?))
+}
+
+fn count_char(source: &str, needle: char) -> usize {
+    source.chars().filter(|c| *c == needle).count()
 }
 
 fn next_method_name(lines: &[&str], start: usize) -> Option<String> {
