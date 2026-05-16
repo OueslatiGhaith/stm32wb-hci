@@ -1,5 +1,6 @@
 //! Implementation of the HCI that includes the packet ID byte in the header.
 
+use bt_hci::{ControllerToHostPacket, PacketKind, controller::Controller};
 use byteorder::{ByteOrder, LittleEndian};
 
 const PACKET_TYPE_HCI_COMMAND: u8 = 0x01;
@@ -18,6 +19,9 @@ pub enum Error {
     BadPacketType(u8),
     /// There was an error deserializing an event. Contains the underlying error.
     BLE(crate::event::Error),
+
+    /// An error occurred during operation of the controller
+    IoError,
 }
 
 /// Packet types that may be read from the controller.
@@ -54,7 +58,7 @@ pub trait UartHci {
     ///   event). See [`crate::event::Error`] for possible values of `e`.
     /// - Returns [`Error::Comm`] if there is an error reading from the
     ///   controller.
-    async fn read(&mut self) -> Result<Packet, Error>;
+    async fn read_packet(&mut self) -> Result<Packet, Error>;
 }
 
 impl super::HciHeader for CommandHeader {
@@ -76,34 +80,21 @@ impl super::HciHeader for CommandHeader {
 
 impl<T> UartHci for T
 where
-    T: crate::ReadableController,
+    T: Controller,
 {
-    async fn read(&mut self) -> Result<Packet, Error> {
+    async fn read_packet(&mut self) -> Result<Packet, Error> {
         const MAX_EVENT_LENGTH: usize = 256;
-        const PACKET_HEADER_LENGTH: usize = 1;
-        const EVENT_PACKET_HEADER_LENGTH: usize = 3;
-        const PARAM_LEN_BYTE: usize = 2;
 
         let mut packet = [0u8; MAX_EVENT_LENGTH];
-        self.controller_read_into(&mut packet).await;
+        let pkt = <Self as Controller>::read(&self, &mut packet)
+            .await
+            .map_err(|_| Error::IoError)?;
 
-        let packet_type = packet[0];
-        match packet_type {
-            PACKET_TYPE_HCI_EVENT => {
-                let param_len = packet[PARAM_LEN_BYTE] as usize;
-
-                let mut buf = [0; MAX_EVENT_LENGTH + EVENT_PACKET_HEADER_LENGTH];
-                buf[..EVENT_PACKET_HEADER_LENGTH + param_len]
-                    .copy_from_slice(&packet[..EVENT_PACKET_HEADER_LENGTH + param_len]);
-
-                Ok(Packet::Event(
-                    crate::event::Event::new(crate::event::Packet(
-                        &buf[PACKET_HEADER_LENGTH..EVENT_PACKET_HEADER_LENGTH + param_len],
-                    ))
-                    .map_err(Error::BLE)?,
-                ))
-            }
-            x => Err(Error::BadPacketType(x)),
+        match pkt {
+            ControllerToHostPacket::Event(pkt) => Ok(Packet::Event(
+                crate::event::Event::new(crate::event::Packet(&pkt.data)).map_err(Error::BLE)?,
+            )),
+            _ => Err(Error::BadPacketType(pkt.kind() as u8)),
         }
     }
 }

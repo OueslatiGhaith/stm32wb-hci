@@ -11,9 +11,11 @@
 
 use crate::vendor::opcode::VENDOR_OGF;
 use crate::{ConnectionHandle, Status};
+use bt_hci::param::{CmdMask, LeFeatureMask, LmpFeatureMask};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
+use core::mem;
 
 /// The [Command Complete](super::Event::CommandComplete) event is used by the Controller for most
 /// commands to transmit return status of a command and the other event parameters that are
@@ -345,9 +347,6 @@ fn to_tx_power_level(bytes: &[u8]) -> Result<TxPowerLevel, crate::event::Error> 
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LocalVersionInfo {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// The version information of the HCI layer.
     ///
     /// See the Bluetooth
@@ -380,7 +379,6 @@ fn to_local_version_info(bytes: &[u8]) -> Result<LocalVersionInfo, crate::event:
     require_len!(bytes, 9);
 
     Ok(LocalVersionInfo {
-        status: bytes[0].try_into().map_err(super::rewrap_bad_status)?,
         hci_version: bytes[1],
         hci_revision: LittleEndian::read_u16(&bytes[2..]),
         lmp_version: bytes[4],
@@ -394,9 +392,6 @@ fn to_local_version_info(bytes: &[u8]) -> Result<LocalVersionInfo, crate::event:
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LocalSupportedCommands {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Flags for supported commands.
     pub supported_commands: CommandFlags,
 }
@@ -973,6 +968,16 @@ bitflag_array! {
     const LE_SET_PRIVACY_MODE = 39, 1 << 2;
 }
 
+impl From<CmdMask> for CommandFlags {
+    fn from(mask: CmdMask) -> Self {
+        // Assert precondition
+        assert_eq!(size_of::<CmdMask>(), size_of::<CommandFlags>());
+        assert_eq!(align_of::<CmdMask>(), align_of::<CommandFlags>());
+
+        unsafe { mem::transmute(mask) }
+    }
+}
+
 impl Debug for CommandFlags {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         writeln!(f, "{:?}", &self.0[..16])?;
@@ -993,7 +998,6 @@ impl TryFrom<&[u8]> for CommandFlags {
 fn to_supported_commands(bytes: &[u8]) -> Result<LocalSupportedCommands, crate::event::Error> {
     require_len!(bytes, 1 + COMMAND_FLAGS_SIZE);
     Ok(LocalSupportedCommands {
-        status: bytes[0].try_into().map_err(super::rewrap_bad_status)?,
         supported_commands: bytes[1..=COMMAND_FLAGS_SIZE]
             .try_into()
             .map_err(|e| match e {
@@ -1011,9 +1015,6 @@ fn to_supported_commands(bytes: &[u8]) -> Result<LocalSupportedCommands, crate::
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LocalSupportedFeatures {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Flags for supported features.
     pub supported_features: LmpFeatures,
 }
@@ -1254,10 +1255,28 @@ defmt::bitflags! {
     }
 }
 
+impl From<LmpFeatureMask> for LmpFeatures {
+    fn from(mask: LmpFeatureMask) -> Self {
+        // Assert precondition
+        assert_eq!(size_of::<[u8; 8]>(), size_of::<LmpFeatureMask>());
+        assert_eq!(align_of::<[u8; 8]>(), align_of::<LmpFeatureMask>());
+
+        // Fix alignment
+        let mask: [u8; 8] = unsafe { mem::transmute(mask) };
+
+        // Assert precondition
+        assert_eq!(size_of::<LmpFeatures>(), size_of::<u64>());
+        assert_eq!(align_of::<LmpFeatures>(), align_of::<u64>());
+
+        // Fix alignment, again
+
+        unsafe { mem::transmute(u64::from_le_bytes(mask)) }
+    }
+}
+
 fn to_supported_features(bytes: &[u8]) -> Result<LocalSupportedFeatures, crate::event::Error> {
     require_len!(bytes, 9);
     Ok(LocalSupportedFeatures {
-        status: to_status(bytes)?,
         supported_features: LmpFeatures::from_bits_truncate(LittleEndian::read_u64(&bytes[1..])),
     })
 }
@@ -1266,9 +1285,6 @@ fn to_supported_features(bytes: &[u8]) -> Result<LocalSupportedFeatures, crate::
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadBdAddr {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Address of the device.
     pub bd_addr: crate::BdAddr,
 }
@@ -1277,19 +1293,13 @@ fn to_bd_addr(bytes: &[u8]) -> Result<ReadBdAddr, crate::event::Error> {
     require_len!(bytes, 7);
     let mut bd_addr = crate::BdAddr([0; 6]);
     bd_addr.0.copy_from_slice(&bytes[1..]);
-    Ok(ReadBdAddr {
-        status: to_status(bytes)?,
-        bd_addr,
-    })
+    Ok(ReadBdAddr { bd_addr })
 }
 
 /// Values returned by the [Read RSSI](crate::host::HostHci::read_rssi) command.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadRssi {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// The Handle for the connection for which the RSSI has been read.
     ///
     /// The Handle is a connection handle for a BR/EDR Controller and a physical link handle for an
@@ -1312,7 +1322,6 @@ pub struct ReadRssi {
 fn to_read_rssi(bytes: &[u8]) -> Result<ReadRssi, crate::event::Error> {
     require_len!(bytes, 4);
     Ok(ReadRssi {
-        status: to_status(bytes)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&bytes[1..])),
         rssi: u8::cast_signed(bytes[3]),
     })
@@ -1322,9 +1331,6 @@ fn to_read_rssi(bytes: &[u8]) -> Result<ReadRssi, crate::event::Error> {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeReadBufferSize {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// The size of the L2CAP PDU segments contained in ACL Data Packets, which are transferred from
     /// the Host to the Controller to be broken up into packets by the Link Layer. Both the Host and
     /// the Controller shall support command and event packets, where the data portion (excluding
@@ -1348,7 +1354,6 @@ pub struct LeReadBufferSize {
 fn to_le_read_buffer_status(bytes: &[u8]) -> Result<LeReadBufferSize, crate::event::Error> {
     require_len!(bytes, 4);
     Ok(LeReadBufferSize {
-        status: to_status(bytes)?,
         data_packet_length: LittleEndian::read_u16(&bytes[1..]),
         data_packet_count: bytes[3],
     })
@@ -1359,9 +1364,6 @@ fn to_le_read_buffer_status(bytes: &[u8]) -> Result<LeReadBufferSize, crate::eve
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeSupportedFeatures {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Supported LE features.
     pub supported_features: LeFeatures,
 }
@@ -1456,12 +1458,24 @@ defmt::bitflags! {
     }
 }
 
+impl From<LeFeatureMask> for LeFeatures {
+    fn from(mask: LeFeatureMask) -> Self {
+        // Assert precondition
+        assert_eq!(size_of::<LeFeatureMask>(), size_of::<[u8; 8]>());
+        assert_eq!(align_of::<LeFeatureMask>(), align_of::<[u8; 8]>());
+
+        // Fix alignment
+        let mask: [u8; 8] = unsafe { mem::transmute(mask) };
+
+        unsafe { mem::transmute(u64::from_le_bytes(mask)) }
+    }
+}
+
 fn to_le_local_supported_features(
     bytes: &[u8],
 ) -> Result<LeSupportedFeatures, crate::event::Error> {
     require_len!(bytes, 9);
     Ok(LeSupportedFeatures {
-        status: to_status(bytes)?,
         supported_features: LeFeatures::from_bits_truncate(LittleEndian::read_u64(&bytes[1..])),
     })
 }
@@ -1499,9 +1513,6 @@ fn to_le_set_advertise_enable(status: Status) -> ReturnParameters {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChannelMapParameters {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Connection handle whose channel map is returned.
     pub conn_handle: ConnectionHandle,
 
@@ -1516,7 +1527,6 @@ fn to_le_channel_map_parameters(bytes: &[u8]) -> Result<ChannelMapParameters, cr
     channel_bits.copy_from_slice(&bytes[3..8]);
     let channel_bits = channel_bits;
     Ok(ChannelMapParameters {
-        status: to_status(&bytes[0..])?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&bytes[1..])),
         channel_map: crate::ChannelClassification::from_bits(&bytes[3..])
             .ok_or(crate::event::Error::InvalidChannelMap(channel_bits))?,
@@ -1527,9 +1537,6 @@ fn to_le_channel_map_parameters(bytes: &[u8]) -> Result<ChannelMapParameters, cr
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EncryptedReturnParameters {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Encrypted data block.
     ///
     /// The most significant octet (last) of the block corresponds to `out[0]` using the notation
@@ -1556,7 +1563,6 @@ fn to_le_encrypted_data(bytes: &[u8]) -> Result<EncryptedReturnParameters, crate
     let mut block = [0; 16];
     block.copy_from_slice(&bytes[1..]);
     Ok(EncryptedReturnParameters {
-        status: to_status(bytes)?,
         encrypted_data: EncryptedBlock(block),
     })
 }
@@ -1565,9 +1571,6 @@ fn to_le_encrypted_data(bytes: &[u8]) -> Result<EncryptedReturnParameters, crate
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeRandom {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Controller-generated random number.
     pub random_number: u64,
 }
@@ -1576,7 +1579,6 @@ fn to_random_number(bytes: &[u8]) -> Result<LeRandom, crate::event::Error> {
     require_len!(bytes, 9);
 
     Ok(LeRandom {
-        status: to_status(bytes)?,
         random_number: LittleEndian::read_u64(&bytes[1..]),
     })
 }
@@ -1586,9 +1588,6 @@ fn to_random_number(bytes: &[u8]) -> Result<LeRandom, crate::event::Error> {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeLongTermRequestReply {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// Connection handle that the request came from
     pub conn_handle: ConnectionHandle,
 }
@@ -1597,7 +1596,6 @@ fn to_le_ltk_request_reply(bytes: &[u8]) -> Result<LeLongTermRequestReply, crate
     require_len!(bytes, 3);
 
     Ok(LeLongTermRequestReply {
-        status: to_status(bytes)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&bytes[1..])),
     })
 }
@@ -1607,9 +1605,6 @@ fn to_le_ltk_request_reply(bytes: &[u8]) -> Result<LeLongTermRequestReply, crate
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeReadSupportedStates {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// States or state combinations supported by the Controller. Multiple state and state
     /// combinations may be supported.
     pub supported_states: LeStates,
@@ -1806,7 +1801,6 @@ fn to_le_read_states(bytes: &[u8]) -> Result<LeReadSupportedStates, crate::event
 
     let bitfield = LittleEndian::read_u64(&bytes[1..]);
     Ok(LeReadSupportedStates {
-        status: to_status(bytes)?,
         supported_states: LeStates::from_bits(bitfield)
             .ok_or(crate::event::Error::InvalidLeStates(bitfield))?,
     })
@@ -1816,9 +1810,6 @@ fn to_le_read_states(bytes: &[u8]) -> Result<LeReadSupportedStates, crate::event
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LeTestEnd {
-    /// Did the command fail, and if so, how?
-    pub status: Status,
-
     /// The number of packets received during the test.  For transmitter tests, this value shall be
     /// 0.
     pub number_of_packets: usize,
@@ -1828,7 +1819,6 @@ fn to_le_test_end(bytes: &[u8]) -> Result<LeTestEnd, crate::event::Error> {
     require_len!(bytes, 3);
 
     Ok(LeTestEnd {
-        status: to_status(bytes)?,
         number_of_packets: LittleEndian::read_u16(&bytes[1..]) as usize,
     })
 }
