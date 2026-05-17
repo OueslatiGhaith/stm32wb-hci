@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.8.1"
-source = "git+https://github.com/embassy-rs/bt-hci/?rev=6613764#661376438a751e14cbd94d65971e3dd2be497cbc"
+source = "git+https://github.com/embassy-rs/bt-hci.git?rev=3cf2d0c#3cf2d0c8078e3cd1feb97b3a59b1a3be14904c5e"
 dependencies = [
  "btuuid",
  "defmt 1.0.1",

@@ -1,11 +1,13 @@
 //! Implementation of the HCI that includes the packet ID byte in the header.
 
-use bt_hci::{ControllerToHostPacket, PacketKind, controller::Controller};
+use crate::event::{Error as EventError, Event};
+use bt_hci::{ControllerToHostPacket, controller::Controller};
 use byteorder::{ByteOrder, LittleEndian};
 
 const PACKET_TYPE_HCI_COMMAND: u8 = 0x01;
 // const PACKET_TYPE_ACL_DATA: u8 = 0x02;
 // const PACKET_TYPE_SYNC_DATA: u8 = 0x03;
+#[allow(dead_code)]
 const PACKET_TYPE_HCI_EVENT: u8 = 0x04;
 
 /// Potential errors from reading or writing packets to the controller.
@@ -18,7 +20,7 @@ pub enum Error {
     /// type byte. Contains the value of the byte.
     BadPacketType(u8),
     /// There was an error deserializing an event. Contains the underlying error.
-    BLE(crate::event::Error),
+    BLE(EventError),
 
     /// An error occurred during operation of the controller
     IoError,
@@ -58,7 +60,7 @@ pub trait UartHci {
     ///   event). See [`crate::event::Error`] for possible values of `e`.
     /// - Returns [`Error::Comm`] if there is an error reading from the
     ///   controller.
-    async fn read_packet(&mut self) -> Result<Packet, Error>;
+    async fn read_packet(&self) -> Result<Packet, Error>;
 }
 
 impl super::HciHeader for CommandHeader {
@@ -82,7 +84,7 @@ impl<T> UartHci for T
 where
     T: Controller,
 {
-    async fn read_packet(&mut self) -> Result<Packet, Error> {
+    async fn read_packet(&self) -> Result<Packet, Error> {
         const MAX_EVENT_LENGTH: usize = 256;
 
         let mut packet = [0u8; MAX_EVENT_LENGTH];
@@ -92,7 +94,19 @@ where
 
         match pkt {
             ControllerToHostPacket::Event(pkt) => Ok(Packet::Event(
-                crate::event::Event::new(crate::event::Packet(&pkt.data)).map_err(Error::BLE)?,
+                match Event::from_kind_and_payload(pkt.kind.0, &pkt.data).map_err(Error::BLE) {
+                    Ok(pkt) => Ok(pkt),
+                    Err(err) => {
+                        warn!(
+                            "failed to parse pkt({}): {:x} {:x}",
+                            pkt.data.len(),
+                            pkt.kind.0,
+                            pkt.data[..pkt.data.len().min(10)]
+                        );
+
+                        Err(err)
+                    }
+                }?,
             )),
             _ => Err(Error::BadPacketType(pkt.kind() as u8)),
         }

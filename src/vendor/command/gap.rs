@@ -1255,8 +1255,6 @@ where
         + for<'t> ControllerCmdAsync<GapStartSelectiveConnectionEstablishmentProcedure<'t>>
         + for<'t> ControllerCmdAsync<GapCreateConnection<'t>>
         + for<'t> ControllerCmdSync<GapTerminateProcedure<'t>>
-        + for<'t> ControllerCmdSync<GapStartConnectionUpdate<'t>>
-        + for<'t> ControllerCmdSync<GapSendPairingRequest<'t>>
         + for<'t> ControllerCmdSync<CmdGapResolvePrivateAddress<'t>>
         + for<'t> ControllerCmdSync<GapSetBroadcastMode<'t>>
         + for<'t> ControllerCmdSync<GapStartObservationProcedure<'t>>
