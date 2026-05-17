@@ -8,12 +8,13 @@ pub mod opcode;
 pub use crate::host::uart::CommandHeader;
 pub use event::VendorError;
 
-/// master trait that encompasses all commands, and communicats over UART
+/// master trait that encompasses all commands
 pub trait UartController:
     command::gap::GapCommands
     + command::gatt::GattCommands
     + command::hal::HalCommands
     + command::l2cap::L2capCommands
+    + crate::host::HostHci
     + crate::host::uart::UartHci
 {
 }
@@ -23,6 +24,7 @@ impl<T> UartController for T where
         + command::gatt::GattCommands
         + command::hal::HalCommands
         + command::l2cap::L2capCommands
+        + crate::host::HostHci
         + crate::host::uart::UartHci
 {
 }
