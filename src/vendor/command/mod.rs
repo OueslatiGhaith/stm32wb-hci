@@ -213,7 +213,7 @@ impl<'de, const MAX_LEN: usize> FromHciBytes<'de> for ReturnBuffer<MAX_LEN> {
         if data.len() < MAX_LEN {
             let mut buf = [0u8; MAX_LEN];
 
-            buf[1..data.len()].copy_from_slice(data);
+            buf[1..][..data.len()].copy_from_slice(data);
 
             Ok((Self(buf, data.len()), &[]))
         } else {
