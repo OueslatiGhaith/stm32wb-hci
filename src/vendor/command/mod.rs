@@ -68,6 +68,25 @@ macro_rules! hci_impl_variable_length_params {
                 .map_err(|e| Error::from(e))
         }
     };
+    ($method:ident, $param_type:ident, $cmd:ident, $ret:ident) => {
+        async fn $method(&self, params: &$param_type) -> Result<$ret, Error> {
+            #[allow(unused_imports)]
+            use ::bt_hci::cmd::{AsyncCmd, SyncCmd};
+
+            let mut bytes = [0; $param_type::MAX_LENGTH];
+            params.copy_into_slice(&mut bytes);
+
+            Ok(
+                $cmd::new(&bytes)
+                    .exec(self)
+                    .await
+                    .map_err(|e| Error::from(e))?
+                    .buf()
+                    .try_into()
+                    .map_err(|e| Error::from(e))?
+            )
+        }
+    };
     ($method:ident<$($genlife:lifetime),*>, $param_type:ident<$($lifetime:lifetime),*>, $cmd:ident) => {
         async fn $method<$($genlife),*>(
             &self,
@@ -120,6 +139,30 @@ macro_rules! hci_impl_validate_variable_length_params {
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
+        }
+    };
+    ($method:ident<$($genlife:lifetime),*>, $param_type:ident<$($lifetime:lifetime),*>, $cmd:ident, $ret:ident) => {
+        async fn $method<$($genlife),*>(
+            &self,
+            params: &$param_type<$($lifetime),*>
+        ) -> Result<$ret, Error> {
+            #[allow(unused_imports)]
+            use ::bt_hci::cmd::{AsyncCmd, SyncCmd};
+
+            params.validate().map_err(|e| Error::from(e))?;
+
+            let mut bytes = [0; $param_type::MAX_LENGTH];
+            let len = params.copy_into_slice(&mut bytes);
+
+            Ok(
+                $cmd::new(&bytes[..len])
+                    .exec(self)
+                    .await
+                    .map_err(|e| Error::from(e))?
+                    .buf()
+                    .try_into()
+                    .map_err(|e| Error::from(e))?
+            )
         }
     };
 }

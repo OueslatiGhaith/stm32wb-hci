@@ -981,9 +981,6 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattService {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the Service
     ///
     /// When this service is added to the server, a handle is allocated by the server to this
@@ -993,11 +990,18 @@ pub struct GattService {
     pub service_handle: AttributeHandle,
 }
 
+impl TryFrom<&[u8]> for GattService {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_service(bytes)
+    }
+}
+
 fn to_gatt_service(bytes: &[u8]) -> Result<GattService, crate::event::Error> {
     require_len!(bytes, 3);
 
     Ok(GattService {
-        status: to_status(bytes)?,
         service_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
 }
@@ -1007,9 +1011,6 @@ fn to_gatt_service(bytes: &[u8]) -> Result<GattService, crate::event::Error> {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattCharacteristic {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the characteristic.
     pub characteristic_handle: AttributeHandle,
 }
@@ -1018,9 +1019,16 @@ fn to_gatt_characteristic(bytes: &[u8]) -> Result<GattCharacteristic, crate::eve
     require_len!(bytes, 3);
 
     Ok(GattCharacteristic {
-        status: to_status(bytes)?,
         characteristic_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
+}
+
+impl TryFrom<&[u8]> for GattCharacteristic {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_characteristic(bytes)
+    }
 }
 
 /// Parameters returned by the
@@ -1028,9 +1036,6 @@ fn to_gatt_characteristic(bytes: &[u8]) -> Result<GattCharacteristic, crate::eve
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattCharacteristicDescriptor {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the characteristic.
     pub descriptor_handle: AttributeHandle,
 }
@@ -1041,9 +1046,16 @@ fn to_gatt_characteristic_descriptor(
     require_len!(bytes, 3);
 
     Ok(GattCharacteristicDescriptor {
-        status: to_status(bytes)?,
         descriptor_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
+}
+
+impl TryFrom<&[u8]> for GattCharacteristicDescriptor {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_characteristic_descriptor(bytes)
+    }
 }
 
 /// Parameters returned by the [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value)
@@ -1051,9 +1063,6 @@ fn to_gatt_characteristic_descriptor(
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattHandleValue {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     value_buf: [u8; GattHandleValue::MAX_VALUE_BUF],
     value_len: usize,
 }
@@ -1061,7 +1070,6 @@ pub struct GattHandleValue {
 impl Debug for GattHandleValue {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "{{")?;
-        write!(f, "status: {:?}; value: {{", self.status)?;
         for addr in self.value().iter() {
             write!(f, "{:?}, ", addr)?;
         }
@@ -1084,16 +1092,22 @@ impl GattHandleValue {
 fn to_gatt_handle_value(bytes: &[u8]) -> Result<GattHandleValue, crate::event::Error> {
     require_len_at_least!(bytes, 3);
 
-    let status = to_status(bytes)?;
     let value_len = LittleEndian::read_u16(&bytes[1..3]) as usize;
     require_len!(bytes, 3 + value_len);
 
     let mut handle_value = GattHandleValue {
-        status,
         value_buf: [0; GattHandleValue::MAX_VALUE_BUF],
         value_len,
     };
     handle_value.value_buf[..value_len].copy_from_slice(&bytes[3..]);
 
     Ok(handle_value)
+}
+
+impl TryFrom<&[u8]> for GattHandleValue {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_handle_value(bytes)
+    }
 }
