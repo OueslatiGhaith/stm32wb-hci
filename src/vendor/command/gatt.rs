@@ -13,7 +13,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use crate::{
     BadStatusError, ConnectionHandle, Status,
     vendor::{
-        command::ReturnBuffer,
+        command::{ParamBuffer, ReturnBuffer},
         event::{
             AttributeHandle,
             command::{
@@ -897,284 +897,284 @@ vendor_cmd! {
 
 vendor_cmd! {
     GattAddService(GATT_ADD_SERVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<3>;
     }
 }
 
 vendor_cmd! {
     GattIncludeService(GATT_INCLUDE_SERVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<3>;
     }
 }
 
 vendor_cmd! {
     GattAddCharacteristic(GATT_ADD_CHARACTERISTIC) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<3>;
     }
 }
 
 vendor_cmd! {
     GattAddCharacteristicDescriptor(GATT_ADD_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<3>;
     }
 }
 
 vendor_cmd! {
     GattUpdateCharacteristicValue(GATT_UPDATE_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteCharacterisitic(GATT_DELETE_CHARACTERISTIC) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteService(GATT_DELETE_SERVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteIncludedService(GATT_DELETE_INCLUDED_SERVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetEventMask(GATT_SET_EVENT_MASK) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattExchageConfiguration(GATT_EXCHANGE_CONFIGURATION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattFindInformationRequest(GATT_FIND_INFORMATION_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattFindByTypeValueRequest(GATT_FIND_BY_TYPE_VALUE_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadByTypeRequest(GATT_READ_BY_TYPE_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadByGroupTypeRequest(GATT_READ_BY_GROUP_TYPE_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattPrepareWriteRequest(GATT_PREPARE_WRITE_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattExecuteWriteRequest(GATT_EXECUTE_WRITE_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllPrimaryServices(GATT_DISCOVER_ALL_PRIMARY_SERVICES) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattDiscoverPrimaryServicesByUUID(GATT_DISCOVER_PRIMARY_SERVICES_BY_UUID) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattFindIncludedServices(GATT_FIND_INCLUDED_SERVICES) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllCharacteristicsOfService(GATT_DISCOVER_ALL_CHARACTERISTICS_OF_SERVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattDiscoverCharacteristicsByUUID(GATT_DISCOVER_CHARACTERISTICS_BY_UUID) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllCharacteristicDescriptors(GATT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicValue(GATT_READ_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicUsingUUID(GATT_READ_CHARACTERISTIC_BY_UUID) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadLongCharacteristicValue(GATT_READ_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadMultipleCharacteristicValues(GATT_READ_MULTIPLE_CHARACTERISTIC_VALUES) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicValue(GATT_WRITE_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteLongCharacteristicValue(GATT_WRITE_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicValueReliably(GATT_WRITE_CHARACTERISTIC_VALUE_RELIABLY) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(GATT_WRITE_LONG_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadLongCharacteristicDescriptor(GATT_READ_LONG_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicDescriptor(GATT_WRITE_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicDescriptor(GATT_READ_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GattWriteWithoutResponse(GATT_WRITE_WITHOUT_RESPONSE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSignedWriteWithoutResponse(GATT_SIGNED_WRITE_WITHOUT_RESPONSE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattConfirmIndication(GATT_CONFIRM_INDICATION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattWriteResponse(GATT_WRITE_RESPONSE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattAllowRead(GATT_ALLOW_READ) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetSecurityPermission(GATT_SET_SECURITY_PERMISSION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetDescriptorValue(GATT_SET_DESCRIPTOR_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattReadHandleValueOffset(GATT_READ_HANDLE_VALUE_OFFSET) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<3>;
     }
 }
 
 vendor_cmd! {
     GattUpdateLongCharacteristicValue(GATT_UPDATE_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDenyRead(GATT_DENY_READ) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetAccessPermission(GATT_SET_ACCESS_PERMISSION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1188,14 +1188,14 @@ vendor_cmd! {
 
 vendor_cmd! {
     GattSendMultipleNotification(GATT_SEND_MULT_NOTIFICATION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattReadMultipleVarCharValue(GATT_READ_MULTIPLE_VAR_CHAR_VALUE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1298,7 +1298,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], service.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic.0);
 
-        GattDeleteCharacterisitic::new(&bytes)
+        GattDeleteCharacterisitic::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1308,7 +1308,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes[0..2], service.0);
 
-        GattDeleteService::new(&bytes)
+        GattDeleteService::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1329,7 +1329,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        GattExchageConfiguration::new(&bytes)
+        GattExchageConfiguration::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1345,7 +1345,7 @@ where
         LittleEndian::write_u16(&mut bytes[2..4], attribute_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], attribute_range.end.0);
 
-        GattFindInformationRequest::new(&bytes)
+        GattFindInformationRequest::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1383,7 +1383,7 @@ where
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         bytes[2] = true as u8;
 
-        GattExecuteWriteRequest::new(&bytes)
+        GattExecuteWriteRequest::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1397,7 +1397,7 @@ where
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         bytes[2] = false as u8;
 
-        GattExecuteWriteRequest::new(&bytes)
+        GattExecuteWriteRequest::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1410,7 +1410,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        GattDiscoverAllPrimaryServices::new(&bytes)
+        GattDiscoverAllPrimaryServices::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1425,7 +1425,7 @@ where
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
         let end = 2 + uuid.copy_into_slice(&mut bytes[2..]);
 
-        GattDiscoverPrimaryServicesByUUID::new(&bytes[..end])
+        GattDiscoverPrimaryServicesByUUID::new((&bytes[..end]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1441,7 +1441,7 @@ where
         LittleEndian::write_u16(&mut bytes[2..4], service_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], service_handle_range.end.0);
 
-        GattFindIncludedServices::new(&bytes)
+        GattFindIncludedServices::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1457,7 +1457,7 @@ where
         LittleEndian::write_u16(&mut bytes[2..4], attribute_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
 
-        GattDiscoverAllCharacteristicsOfService::new(&bytes)
+        GattDiscoverAllCharacteristicsOfService::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1475,7 +1475,7 @@ where
         LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
         let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
 
-        GattDiscoverCharacteristicsByUUID::new(&bytes[..6 + uuid_len])
+        GattDiscoverCharacteristicsByUUID::new((&bytes[..6 + uuid_len]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1491,7 +1491,7 @@ where
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle_range.start.0);
         LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
 
-        GattDiscoverAllCharacteristicDescriptors::new(&bytes)
+        GattDiscoverAllCharacteristicDescriptors::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1506,7 +1506,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
 
-        GattReadCharacteristicValue::new(&bytes)
+        GattReadCharacteristicValue::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1524,7 +1524,7 @@ where
         LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
         let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
 
-        GattReadCharacteristicUsingUUID::new(&bytes[..6 + uuid_len])
+        GattReadCharacteristicUsingUUID::new((&bytes[..6 + uuid_len]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1587,7 +1587,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
 
-        GattReadCharacteristicDescriptor::new(&bytes)
+        GattReadCharacteristicDescriptor::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1609,7 +1609,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        GattConfirmIndication::new(&bytes)
+        GattConfirmIndication::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1625,7 +1625,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        GattAllowRead::new(&bytes)
+        GattAllowRead::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1652,7 +1652,7 @@ where
         LittleEndian::write_u16(&mut bytes, handle.0);
         bytes[2] = offset as u8;
 
-        Ok(GattReadHandleValueOffset::new(&bytes)
+        Ok(GattReadHandleValueOffset::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -1672,7 +1672,7 @@ where
         LittleEndian::write_u16(&mut payload[0..], handle.0);
         payload[2] = err;
 
-        GattDenyRead::new(&payload)
+        GattDenyRead::new((&payload[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1689,7 +1689,7 @@ where
         LittleEndian::write_u16(&mut payload[2..], attribute.0);
         payload[4] = permissions.bits();
 
-        GattSetAccessPermission::new(&payload)
+        GattSetAccessPermission::new((&payload[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1714,7 +1714,7 @@ where
             LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
         }
 
-        GattSendMultipleNotification::new(&payload[..2 + (handles.len() * 2)])
+        GattSendMultipleNotification::new((&payload[..2 + (handles.len() * 2)]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1732,7 +1732,7 @@ where
             LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
         }
 
-        GattReadMultipleVarCharValue::new(&payload[..2 + (handles.len() * 2)])
+        GattReadMultipleVarCharValue::new((&payload[..2 + (handles.len() * 2)]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())

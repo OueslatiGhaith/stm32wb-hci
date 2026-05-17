@@ -5,6 +5,7 @@ extern crate byteorder;
 use crate::{
     BadStatusError, ConnectionHandle, Status,
     types::{ConnectionInterval, ExpectedConnectionLength},
+    vendor::command::ParamBuffer,
 };
 use bt_hci::{
     cmd::SyncCmd,
@@ -104,62 +105,62 @@ pub trait L2capCommands {
 
 vendor_cmd! {
     L2ConnectionParameterUpdateRequest(L2CAP_CONN_PARAM_UPDATE_REQ) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     L2ConnectionParameterUpdateResponse(L2CAP_CONN_PARAM_UPDATE_RESP) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocConnect(L2CAP_COC_CONNECT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocConnectConfirm(L2CAP_COC_CONNECT_CONFIRM) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocReconfig(L2CAP_COC_RECONFIG) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocReconfigConfirm(L2CAP_COC_RECONFIG_CONFIRM) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocDisconnect(L2CAP_COC_DISCONNECT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocFlowControl(L2CAP_COC_DISCONNECT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocTxData(L2CAP_COC_TX_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -206,7 +207,7 @@ where
     );
 
     async fn coc_disconnect(&self, channel_index: u8) -> Result<(), Error> {
-        L2CocDisconnect::new(&[channel_index])
+        L2CocDisconnect::new((&[channel_index][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())

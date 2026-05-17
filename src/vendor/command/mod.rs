@@ -1,4 +1,4 @@
-use bt_hci::{FromHciBytes, ReadHci};
+use bt_hci::{FromHciBytes, ReadHci, WriteHci};
 
 macro_rules! hci_impl_params {
     ($method:ident, $param_type:ident, $cmd:ident) => {
@@ -9,7 +9,7 @@ macro_rules! hci_impl_params {
             let mut bytes = [0; $param_type::LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes[..])
+            $cmd::new((&bytes[..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -26,7 +26,7 @@ macro_rules! hci_impl_value_params {
             let mut bytes = [0; $param_type::LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes[..])
+            $cmd::new((&bytes[..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -45,7 +45,7 @@ macro_rules! hci_impl_validate_params {
             let mut bytes = [0; $param_type::LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes[..])
+            $cmd::new((&bytes[..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -62,7 +62,7 @@ macro_rules! hci_impl_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes)
+            $cmd::new((&bytes[..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -77,7 +77,7 @@ macro_rules! hci_impl_variable_length_params {
             params.copy_into_slice(&mut bytes);
 
             Ok(
-                $cmd::new(&bytes)
+                $cmd::new((&bytes[..]).into())
                     .exec(self)
                     .await
                     .map_err(|e| Error::from(e))?
@@ -98,7 +98,7 @@ macro_rules! hci_impl_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes)
+            $cmd::new((&bytes[..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -116,7 +116,7 @@ macro_rules! hci_impl_validate_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             let len = params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes[..len])
+            $cmd::new((&bytes[..len]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -135,7 +135,7 @@ macro_rules! hci_impl_validate_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             let len = params.copy_into_slice(&mut bytes);
 
-            $cmd::new(&bytes[..len])
+            $cmd::new((&bytes[..len]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))
@@ -155,7 +155,7 @@ macro_rules! hci_impl_validate_variable_length_params {
             let len = params.copy_into_slice(&mut bytes);
 
             Ok(
-                $cmd::new(&bytes[..len])
+                $cmd::new((&bytes[..len]).into())
                     .exec(self)
                     .await
                     .map_err(|e| Error::from(e))?
@@ -177,10 +177,41 @@ macro_rules! vendor_cmd {
     };
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Ord, Hash, Eq)]
+pub struct ParamBuffer<'a>(&'a [u8]);
+
+impl<'a> From<&'a [u8]> for ParamBuffer<'a> {
+    #[inline]
+    fn from(buf: &'a [u8]) -> Self {
+        Self(buf)
+    }
+}
+
+impl<'a> WriteHci for ParamBuffer<'a> {
+    #[inline]
+    fn size(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    fn write_hci<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(self.0)
+    }
+
+    #[inline]
+    async fn write_hci_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(self.0).await
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct ReturnBuffer<const MAX_LEN: usize>([u8; MAX_LEN], usize);
 
 impl<const MAX_LEN: usize> ReturnBuffer<MAX_LEN> {
+    #[inline]
     pub fn buf(&self) -> &[u8] {
         &self.0[..self.1]
     }
@@ -189,6 +220,7 @@ impl<const MAX_LEN: usize> ReturnBuffer<MAX_LEN> {
 impl<'de, const MAX_LEN: usize> ReadHci<'de> for ReturnBuffer<MAX_LEN> {
     const MAX_LEN: usize = MAX_LEN - 1;
 
+    #[inline]
     fn read_hci<R: embedded_io::Read>(
         mut reader: R,
         buf: &'de mut [u8],
@@ -198,6 +230,7 @@ impl<'de, const MAX_LEN: usize> ReadHci<'de> for ReturnBuffer<MAX_LEN> {
         Self::from_hci_bytes_complete(buf).map_err(|_| bt_hci::ReadHciError::InvalidValue)
     }
 
+    #[inline]
     async fn read_hci_async<R: embedded_io_async::Read>(
         mut reader: R,
         buf: &'de mut [u8],
@@ -209,6 +242,7 @@ impl<'de, const MAX_LEN: usize> ReadHci<'de> for ReturnBuffer<MAX_LEN> {
 }
 
 impl<'de, const MAX_LEN: usize> FromHciBytes<'de> for ReturnBuffer<MAX_LEN> {
+    #[inline]
     fn from_hci_bytes(data: &'de [u8]) -> Result<(Self, &'de [u8]), bt_hci::FromHciBytesError> {
         if data.len() < MAX_LEN {
             let mut buf = [0u8; MAX_LEN];

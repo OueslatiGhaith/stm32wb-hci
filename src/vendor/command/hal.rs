@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use crate::{
     BadStatusError, Status,
     vendor::{
-        command::ReturnBuffer,
+        command::{ParamBuffer, ReturnBuffer},
         event::command::{
             HalAnchorPeriod, HalConfigData, HalLinkStatus, HalPmDebugInfo, HalTxTestPacketCount,
         },
@@ -202,21 +202,21 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalWriteConfigData(HAL_WRITE_CONFIG_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     HalReadConfigData(HAL_READ_CONFIG_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<17>;
     }
 }
 
 vendor_cmd! {
     HalSetTxPowerLevel(HAL_SET_TX_POWER_LEVEL) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -230,7 +230,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalStartTone(HAL_START_TONE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -251,7 +251,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalSetRadioActivityMask(HAL_SET_RADIO_ACTIVITY_MASK) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -265,7 +265,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalSetEventMask(HAL_SET_EVENT_MASK) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -279,7 +279,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalSetPeripheralLatency(HAL_SET_PERIPHERAL_LATENCY) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -293,7 +293,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalReadRadioReg(HAL_READ_RADIO_REG) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<2>;
     }
 }
@@ -307,7 +307,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     HalRxStart(HAL_RX_START) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -363,7 +363,7 @@ where
     hci_impl_variable_length_params!(write_config_data, ConfigData, HalWriteConfigData);
 
     async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error> {
-        Ok(HalReadConfigData::new(&[param as u8])
+        Ok(HalReadConfigData::new((&[param as u8][..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -378,7 +378,7 @@ where
         let mut bytes = [0; 2];
         bytes[1] = level as u8;
 
-        HalSetTxPowerLevel::new(&bytes)
+        HalSetTxPowerLevel::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -400,7 +400,7 @@ where
             return Err(Error::from(Error::InvalidChannel(channel)));
         }
 
-        HalStartTone::new(&[channel, freq_offset])
+        HalStartTone::new((&[channel, freq_offset][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -434,7 +434,7 @@ where
         let mut payload = [0; 2];
         LittleEndian::write_u16(&mut payload, mask.bits());
 
-        HalSetRadioActivityMask::new(&payload)
+        HalSetRadioActivityMask::new((&payload[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -444,7 +444,7 @@ where
         let mut payload = [0; 4];
         LittleEndian::write_u32(&mut payload, mask.bits());
 
-        HalSetEventMask::new(&payload)
+        HalSetEventMask::new((&payload[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -461,7 +461,7 @@ where
     }
 
     async fn set_peripheral_latency(&self, enabled: bool) -> Result<(), Error> {
-        HalSetEventMask::new(&[enabled as u8])
+        HalSetEventMask::new((&[enabled as u8][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -476,7 +476,7 @@ where
     }
 
     async fn read_radio_reg(&self, address: u8) -> Result<u8, Error> {
-        Ok(HalReadRadioReg::new(&[address])
+        Ok(HalReadRadioReg::new((&[address][..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -492,7 +492,7 @@ where
     }
 
     async fn rx_start(&self, rf_channel: u8) -> Result<(), Error> {
-        HalRxStart::new(&[rf_channel])
+        HalRxStart::new((&[rf_channel][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())

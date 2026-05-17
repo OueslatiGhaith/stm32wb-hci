@@ -7,7 +7,7 @@ use crate::types::extended_advertisement::{
     AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
 };
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
-use crate::vendor::command::ReturnBuffer;
+use crate::vendor::command::{ParamBuffer, ReturnBuffer};
 use crate::vendor::event::command::{
     GapBondedDevices, GapInit, GapResolvePrivateAddress, GapSecurityLevel,
 };
@@ -879,55 +879,55 @@ vendor_cmd! {
 
 vendor_cmd! {
     GapSetLimitedDiscoverable(GAP_SET_LIMITED_DISCOVERABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapSetDiscoverable(GAP_SET_DISCOVERABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetDirectConnectable(GAP_SET_DIRECT_CONNECTABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetIoCapability(GAP_SET_IO_CAPABILITY) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetAuthenticationRequirement(GAP_SET_AUTHENTICATION_REQUIREMENT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetAuthorizationRequirement(GAP_SET_AUTHORIZATION_REQUIREMENT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPassKeyResponse(GAP_PASS_KEY_RESPONSE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAuthorizationResponse(GAP_AUTHORIZATION_RESPONSE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -936,70 +936,70 @@ vendor_cmd! {
 
 vendor_cmd! {
     CmdGapInit(GAP_INIT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<7>;
     }
 }
 
 vendor_cmd! {
     GapSetNonConnectable(GAP_SET_NONCONNECTABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<6>;
     }
 }
 
 vendor_cmd! {
     GapSetUnidirectedConnectable(GAP_SET_UNDIRECTED_CONNECTABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapUpdateAdvertisingData(GAP_UPDATE_ADVERTISING_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapDeleteAdType(GAP_DELETE_AD_TYPE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapGetSecurityLevel(GAP_GET_SECURITY_LEVEL) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<5>;
     }
 }
 
 vendor_cmd! {
     GapSetEventMask(GAP_SET_EVENT_MASK) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapConfigureWhitelist(GAP_CONFIGURE_WHITE_LIST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapTerminate(GAP_TERMINATE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1013,83 +1013,83 @@ vendor_cmd! {
 
 vendor_cmd! {
     GapAllowRebond(GAP_ALLOW_REBOND) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(GAP_START_LIMITED_DISCOVERY_PROCEDURE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(GAP_START_GENERAL_DISCOVERY_PROCEDURE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(GAP_START_AUTO_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(GAP_START_GENERAL_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapCreateConnection(GAP_CREATE_CONNECTION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapTerminateProcedure(GAP_TERMINATE_PROCEDURE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartConnectionUpdate(GAP_START_CONNECTION_UPDATE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     GapSendPairingRequest(GAP_SEND_PAIRING_REQUEST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
     }
 }
 
 vendor_cmd! {
     CmdGapResolvePrivateAddress(GAP_RESOLVE_PRIVATE_ADDRESS) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<7>;
     }
 }
 
 vendor_cmd! {
     GapSetBroadcastMode(GAP_SET_BROADCAST_MODE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartObservationProcedure(GAP_START_OBSERVATION_PROCEDURE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1103,62 +1103,62 @@ vendor_cmd! {
 
 vendor_cmd! {
     GapIsDeviceBonded(GAP_IS_DEVICE_BONDED) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapConfirmNumericComparisonValue(GAP_NUMERIC_COMPARISON_VALUE_YES_NO) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPasskeyInput(GAP_PASSKEY_INPUT) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 vendor_cmd! {
     GapGetOobData(GAP_GET_OOB_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<26>;
     }
 }
 
 vendor_cmd! {
     GapSetOobData(GAP_SET_OOB_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAddDevicesToResolvingList(GAP_ADD_DEVICES_TO_RESOLVING_LIST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapRemoveBondedDevice(GAP_REMOVE_BONDED_DEVICE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAddDevicesToList(GAP_ADD_DEVICES_TO_LIST) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdditionalBeaconStart(GAP_ADDITIONAL_BEACON_START) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1172,42 +1172,42 @@ vendor_cmd! {
 
 vendor_cmd! {
     GapAdditionalBeaconSetData(GAP_ADDITIONAL_BEACON_SET_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetConfig(GAP_ADV_SET_CONFIGURATION) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetEnable(GAP_ADV_SET_ENABLE) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetAdvertisingData(GAP_ADV_SET_ADV_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetScanResponseData(GAP_ADV_SET_SCAN_RESPONSE_DATA) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvRemoveSet(GAP_ADV_REMOVE_SET) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1221,7 +1221,7 @@ vendor_cmd! {
 
 vendor_cmd! {
     GapAdvSetRandomAddress(GAP_ADV_SET_RANDOM_ADDRESS) {
-        Params<'a> = &'a [u8];
+        Params<'a> = ParamBuffer<'a>;
         Return = ();
     }
 }
@@ -1307,7 +1307,7 @@ where
     );
 
     async fn set_io_capability(&self, capability: IoCapability) -> Result<(), Error> {
-        GapSetIoCapability::new(&[capability as u8])
+        GapSetIoCapability::new((&[capability as u8][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1328,7 +1328,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization_required as u8;
 
-        GapSetAuthorizationRequirement::new(&bytes)
+        GapSetAuthorizationRequirement::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1347,7 +1347,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u32(&mut bytes[2..6], pin);
 
-        GapPassKeyResponse::new(&bytes)
+        GapPassKeyResponse::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1362,7 +1362,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization as u8;
 
-        GapAuthorizationResponse::new(&bytes)
+        GapAuthorizationResponse::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1379,7 +1379,7 @@ where
         bytes[1] = privacy_enabled as u8;
         bytes[2] = dev_name_characteristic_len;
 
-        Ok(CmdGapInit::new(&bytes)
+        Ok(CmdGapInit::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -1401,7 +1401,7 @@ where
         }
 
         Ok(
-            GapSetNonConnectable::new(&[advertising_type as u8, address_type as u8])
+            GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
                 .exec(self)
                 .await
                 .map_err(|e| Error::from(e))?
@@ -1425,7 +1425,7 @@ where
 
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
 
-        GapPeripheralSecurityRequest::new(&bytes)
+        GapPeripheralSecurityRequest::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1441,14 +1441,14 @@ where
         bytes[0] = data.len() as u8;
         bytes[1..=data.len()].copy_from_slice(data);
 
-        GapUpdateAdvertisingData::new(&bytes[0..=data.len()])
+        GapUpdateAdvertisingData::new((&bytes[0..=data.len()]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn delete_ad_type(&self, ad_type: AdvertisingDataType) -> Result<(), Error> {
-        GapDeleteAdType::new(&[ad_type as u8])
+        GapDeleteAdType::new((&[ad_type as u8][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1462,7 +1462,7 @@ where
 
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        Ok(GapGetSecurityLevel::new(&bytes)
+        Ok(GapGetSecurityLevel::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -1475,14 +1475,14 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, flags.bits());
 
-        GapSetEventMask::new(&bytes)
+        GapSetEventMask::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn configure_white_list(&self) -> Result<(), Error> {
-        GapConfigureWhitelist::new(&[])
+        GapConfigureWhitelist::new((&[][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1510,7 +1510,7 @@ where
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = reason.into();
 
-        GapTerminate::new(&bytes)
+        GapTerminate::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1527,7 +1527,7 @@ where
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        GapAllowRebond::new(&bytes)
+        GapAllowRebond::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1570,7 +1570,7 @@ where
             return Err(Error::NoProcedure);
         }
 
-        GapTerminateProcedure::new(&[procedure.bits()])
+        GapTerminateProcedure::new((&[procedure.bits()][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1588,7 +1588,7 @@ where
         &self,
         addr: crate::BdAddr,
     ) -> Result<GapResolvePrivateAddress, Error> {
-        Ok(CmdGapResolvePrivateAddress::new(&addr.0)
+        Ok(CmdGapResolvePrivateAddress::new((&addr.0[..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -1623,7 +1623,7 @@ where
         let mut bytes = [0; 7];
         addr.copy_into_slice(&mut bytes);
 
-        GapIsDeviceBonded::new(&bytes)
+        GapIsDeviceBonded::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1645,14 +1645,14 @@ where
         LittleEndian::write_u16(&mut bytes[..2], conn_handle.0);
         bytes[2] = input_type as u8;
 
-        GapPasskeyInput::new(&bytes)
+        GapPasskeyInput::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn get_oob_data(&self, oob_data_type: OobDataType) -> Result<[u8; 26], Error> {
-        Ok(GapGetOobData::new(&[oob_data_type as u8])
+        Ok(GapGetOobData::new((&[oob_data_type as u8][..]).into())
             .exec(self)
             .await
             .map_err(|e| Error::from(e))?
@@ -1679,7 +1679,7 @@ where
         }
         bytes[index] = clear_resolving_list as u8;
 
-        GapAddDevicesToResolvingList::new(&bytes[..(index + 1)])
+        GapAddDevicesToResolvingList::new((&bytes[..(index + 1)]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1689,7 +1689,7 @@ where
         let mut bytes = [0; 7];
 
         address.copy_into_slice(&mut bytes);
-        GapRemoveBondedDevice::new(&bytes)
+        GapRemoveBondedDevice::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1711,7 +1711,7 @@ where
         }
         bytes[index] = mode as u8;
 
-        GapAddDevicesToList::new(&bytes[..(index + 1)])
+        GapAddDevicesToList::new((&bytes[..(index + 1)]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1731,7 +1731,7 @@ where
     }
 
     async fn additonal_beacon_set_data(&self, advertising_data: &[u8]) -> Result<(), Error> {
-        GapAdditionalBeaconSetData::new(advertising_data)
+        GapAdditionalBeaconSetData::new((advertising_data[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1754,7 +1754,7 @@ where
     );
 
     async fn adv_remove_set(&self, handle: AdvertisingHandle) -> Result<(), Error> {
-        GapAdvRemoveSet::new(&[handle.0])
+        GapAdvRemoveSet::new((&[handle.0][..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1776,7 +1776,7 @@ where
         payload[0] = handle.0;
         payload[1..].copy_from_slice(&addr.0);
 
-        GapAdvSetRandomAddress::new(&payload)
+        GapAdvSetRandomAddress::new((&payload[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
