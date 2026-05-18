@@ -17,7 +17,7 @@ use crate::{
     host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
     types::extended_advertisement::AdvertisingMode,
 };
-use bt_hci::cmd::SyncCmd;
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
@@ -286,12 +286,12 @@ pub trait GapCommands {
     ///
     /// # Generated events
     ///
-    /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapInit) event is generated.
+    /// A [Command Complete](crate::Status) event is generated.
     async fn set_nonconnectable(
         &self,
         advertising_type: AdvertisingType,
         address_type: AddressType,
-    ) -> Result<GapInit, Error>;
+    ) -> Result<(), Error>;
 
     /// Put the device into undirected connectable mode.
     ///
@@ -944,7 +944,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetNonConnectable(GAP_SET_NONCONNECTABLE) {
         Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<6>;
+        Return = ();
     }
 }
 
@@ -958,7 +958,6 @@ vendor_cmd! {
 vendor_cmd! {
     GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
         Params<'a> = ParamBuffer<'a>;
-        Return = ();
     }
 }
 
@@ -1000,7 +999,6 @@ vendor_cmd! {
 vendor_cmd! {
     GapTerminate(GAP_TERMINATE) {
         Params<'a> = ParamBuffer<'a>;
-        Return = ();
     }
 }
 
@@ -1090,7 +1088,6 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartObservationProcedure(GAP_START_OBSERVATION_PROCEDURE) {
         Params<'a> = ParamBuffer<'a>;
-        Return = ();
     }
 }
 
@@ -1240,12 +1237,12 @@ where
         + for<'t> ControllerCmdSync<CmdGapInit<'t>>
         + for<'t> ControllerCmdSync<GapSetNonConnectable<'t>>
         + for<'t> ControllerCmdSync<GapSetUnidirectedConnectable<'t>>
-        + for<'t> ControllerCmdSync<GapPeripheralSecurityRequest<'t>>
+        + for<'t> ControllerCmdAsync<GapPeripheralSecurityRequest<'t>>
         + for<'t> ControllerCmdSync<GapUpdateAdvertisingData<'t>>
         + for<'t> ControllerCmdSync<GapGetSecurityLevel<'t>>
         + for<'t> ControllerCmdSync<GapSetEventMask<'t>>
         + for<'t> ControllerCmdSync<GapConfigureWhitelist<'t>>
-        + for<'t> ControllerCmdSync<GapTerminate<'t>>
+        + for<'t> ControllerCmdAsync<GapTerminate<'t>>
         + ControllerCmdSync<GapClearSecurityDatabase>
         + for<'t> ControllerCmdSync<GapAllowRebond<'t>>
         + for<'t> ControllerCmdAsync<GapStartLimitedDiscoveryProcedure<'t>>
@@ -1257,7 +1254,7 @@ where
         + for<'t> ControllerCmdSync<GapTerminateProcedure<'t>>
         + for<'t> ControllerCmdSync<CmdGapResolvePrivateAddress<'t>>
         + for<'t> ControllerCmdSync<GapSetBroadcastMode<'t>>
-        + for<'t> ControllerCmdSync<GapStartObservationProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapStartObservationProcedure<'t>>
         + ControllerCmdSync<GapGetBondedDevices>
         + for<'t> ControllerCmdSync<GapIsDeviceBonded<'t>>
         + for<'t> ControllerCmdSync<GapConfirmNumericComparisonValue<'t>>
@@ -1392,7 +1389,7 @@ where
         &self,
         advertising_type: AdvertisingType,
         address_type: AddressType,
-    ) -> Result<GapInit, Error> {
+    ) -> Result<(), Error> {
         match advertising_type {
             AdvertisingType::ScannableUndirected | AdvertisingType::NonConnectableUndirected => (),
             _ => {
@@ -1400,15 +1397,10 @@ where
             }
         }
 
-        Ok(
-            GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
-                .exec(self)
-                .await
-                .map_err(|e| Error::from(e))?
-                .buf()
-                .try_into()
-                .map_err(|e| Error::from(e))?,
-        )
+        GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))
     }
 
     hci_impl_validate_params!(
