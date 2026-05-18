@@ -20,18 +20,53 @@ This crate aims to match the [latest firmware binaries](https://github.com/STMic
 
 ## Usage
 
-This crate defines a trait (`Controller`) that should be implemented
-for a specific BLE chip. Any implementor can then be used as a
-`host::uart::UartHci` to read and write to the chip.
+This crate works with any controller that implements `bt_hci::Controller` and the proprietary ST
+HCI specification. Currently, this includes stm32wb and stm32wb microcontroller families. 
 
-    impl stm32wb_hci::Controller for MyController {
-        async fn controller_write(&mut self, header: &[u8], payload: &[u8]) -> Result<(), Self::Error> {
-            // implementation...
-        }
-        async fn controller_read_into(&mut self, buffer: &mut [u8]) -> Result<(), Self::Error> {
-            // implementation...
-        }
-    }
+The `read_packet` function may have to be polled for commands to complete. A channel or other
+methods may be used to accomplish this so that `read_packet` is never in a state where it is not
+polled.
 
-The entire Bluetooth HCI is implemented in terms of these functions
-that handle the low-level I/O.
+```rust
+    let ble = ControllerAdapter::new(ble);
+
+    join(
+        async {
+            loop {
+                let pkt = ble.read_packet().await;
+
+                defmt::info!("pkt: {}", pkt);
+            }
+        },
+        async {
+            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
+            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
+            let response = ble.reset().await;
+            defmt::info!("{}", response);
+
+            let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
+            let response = ble
+                .write_config_data(
+                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
+                        .build(),
+                )
+                .await;
+            defmt::info!("{}", response);
+
+            let response = ble.init_gatt().await;
+            defmt::info!("{}", response);
+
+            let response = ble
+                .init_gap(
+                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
+                    false,
+                    8,
+                )
+                .await;
+            defmt::info!("{}", response);
+
+            info!("BLE HCI ready");
+        },
+    )
+    .await;
+```
