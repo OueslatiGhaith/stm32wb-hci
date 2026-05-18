@@ -1,4 +1,5 @@
 use aligned::{A4, Aligned};
+use bt_hci::{WriteHci, transport::WithIndicator};
 use core::{
     cell::RefCell,
     future::poll_fn,
@@ -354,15 +355,33 @@ impl<'d> ControllerAdapter<'d> {
         ))
     }
 
-    async fn read_status(
+    async fn exec_cmd<C: bt_hci::WriteHci + bt_hci::cmd::Cmd>(
         &self,
-        _guard: &SlotGuard<'d, '_>,
+        cmd: &C,
     ) -> Result<
-        bt_hci::event::CommandCompleteWithStatus<'_>,
+        (
+            bt_hci::event::CommandCompleteWithStatus<'_>,
+            SlotGuard<'d, '_>,
+        ),
         bt_hci::cmd::Error<embedded_io::ErrorKind>,
     > {
         use bt_hci::cmd::Error as CmdError;
         use bt_hci::param::Error as ParamError;
+
+        let guard = self.grab_slot(C::OPCODE).await;
+
+        let mut ret = Ok(());
+        self.hw_ipcc_ble_cmd_channel
+            .lock()
+            .await
+            .send(|| unsafe {
+                ret = WithIndicator::new(cmd)
+                    .write_hci(CmdPacket::writer(BLE_CMD_BUFFER.as_mut_ptr()))
+                    .map_err(CmdError::Io);
+            })
+            .await;
+
+        ret?;
 
         let evt = self
             .signal
@@ -371,12 +390,11 @@ impl<'d> ControllerAdapter<'d> {
             .ok_or(CmdError::Hci(ParamError::OPERATION_CANCELLED_BY_HOST))?;
 
         // Packets with CC or CS opcode are not managed by the memory manager
-        let evt_serial = evt.serial();
         let evt_serial = unsafe {
-            core::slice::from_raw_parts(evt_serial as *const _ as *const u8, evt_serial.len())
+            slice::from_raw_parts(evt.serial() as *const _ as *const u8, evt.serial().len())
         };
 
-        make_cc_with_cs(evt_serial)
+        Ok((make_cc_with_cs(evt_serial)?, guard))
     }
 }
 
@@ -463,34 +481,11 @@ where
     C: bt_hci::cmd::SyncCmd,
 {
     async fn exec(&self, cmd: &C) -> Result<C::Return, bt_hci::cmd::Error<Self::Error>> {
-        use bt_hci::cmd::Error as CmdError;
-        use bt_hci::transport::WithIndicator;
-        use bt_hci::{WriteHci, cmd};
+        use bt_hci::cmd;
 
         debug!("Executing sync command with opcode {:x}", C::OPCODE.0);
 
-        let guard = self.grab_slot(C::OPCODE).await;
-
-        let mut buf = [0u8; 256];
-
-        WithIndicator::new(cmd).write_hci(&mut buf[..]).unwrap();
-
-        debug!("send: {:x}", buf[..20]);
-
-        let mut ret = Ok(());
-        self.hw_ipcc_ble_cmd_channel
-            .lock()
-            .await
-            .send(|| unsafe {
-                ret = WithIndicator::new(cmd)
-                    .write_hci(CmdPacket::writer(BLE_CMD_BUFFER.as_mut_ptr()))
-                    .map_err(CmdError::Io);
-            })
-            .await;
-
-        ret?;
-
-        let e = self.read_status(&guard).await?;
+        let (e, _guard) = self.exec_cmd(cmd).await?;
 
         trace!("returned ccws: {:?}", e.status);
 
@@ -505,34 +500,9 @@ where
     C: bt_hci::cmd::AsyncCmd,
 {
     async fn exec(&self, cmd: &C) -> Result<(), bt_hci::cmd::Error<Self::Error>> {
-        use bt_hci::WriteHci;
-        use bt_hci::cmd::Error as CmdError;
-        use bt_hci::transport::WithIndicator;
-
         debug!("Executing async command with opcode {:x}", C::OPCODE.0);
 
-        let guard = self.grab_slot(C::OPCODE).await;
-
-        let mut buf = [0u8; 256];
-
-        WithIndicator::new(cmd).write_hci(&mut buf[..]).unwrap();
-
-        debug!("send: {:x}", buf[..20]);
-
-        let mut ret = Ok(());
-        self.hw_ipcc_ble_cmd_channel
-            .lock()
-            .await
-            .send(|| unsafe {
-                ret = WithIndicator::new(cmd)
-                    .write_hci(CmdPacket::writer(BLE_CMD_BUFFER.as_mut_ptr()))
-                    .map_err(CmdError::Io)
-            })
-            .await;
-
-        ret?;
-
-        let e = self.read_status(&guard).await?;
+        let (e, _guard) = self.exec_cmd(cmd).await?;
 
         trace!("returned ccws: {:?}", e.status);
 
