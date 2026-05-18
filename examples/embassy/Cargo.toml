@@ -15,3 +15,6 @@ embassy-stm32 = { version = "0.6.0", features = ["defmt", "stm32wb55rg", "time-d
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 stm32wb-hci = { path = "../../", features = ["defmt"] }
+bt-hci = { version = "0.8.1", git = "https://github.com/embassy-rs/bt-hci.git", rev = "3cf2d0c" }
+embedded-io = "0.7.1"
+embassy-futures = "0.1.2"

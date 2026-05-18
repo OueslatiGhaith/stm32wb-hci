@@ -3,18 +3,21 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(static_mut_refs)]
 
+use crate::transport::ControllerAdapter;
 use defmt::{error, info};
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_stm32::{
     bind_interrupts,
     ipcc::{Config as IpccConfig, ReceiveInterruptHandler, TransmitInterruptHandler},
     rcc::WPAN_DEFAULT,
 };
 use stm32wb_hci::{
-    BdAddr, Controller, Opcode,
+    BdAddr,
     host::{HostHci, uart::UartHci},
     vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
 };
+
 use {defmt_rtt as _, panic_probe as _};
 
 mod transport;
@@ -41,7 +44,7 @@ async fn main(spawner: Spawner) {
     // This transport module is a stripped-down version of embassy-stm32-wpan.
     // It keeps only what this example needs: CPU2 startup, memory-buffer release,
     // SHCI BLE init, and raw BLE HCI command/event transport.
-    let (mut sys, mut ble, mm) = transport::init(p.IPCC, Irqs, IpccConfig::default());
+    let (mut sys, ble, mm) = transport::init(p.IPCC, Irqs, IpccConfig::default());
 
     // CPU2 must announce that wireless firmware is running before SHCI commands are valid.
     info!("wait CPU2 ready event");
@@ -75,49 +78,45 @@ async fn main(spawner: Spawner) {
         return;
     }
 
-    // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-    // after this line are normal stm32wb-hci host/vendor commands, not transport code.
-    ble.reset().await;
-    log_next_event(&mut ble).await;
+    let ble = ControllerAdapter::new(ble);
 
-    let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-    ble.write_config_data(
-        &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address).build(),
+    join(
+        async {
+            loop {
+                let pkt = ble.read_packet().await;
+
+                defmt::info!("pkt: {}", pkt);
+            }
+        },
+        async {
+            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
+            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
+            let response = ble.reset().await;
+            defmt::info!("{}", response);
+
+            let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
+            let response = ble
+                .write_config_data(
+                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
+                        .build(),
+                )
+                .await;
+            defmt::info!("{}", response);
+
+            let response = ble.init_gatt().await;
+            defmt::info!("{}", response);
+
+            let response = ble
+                .init_gap(
+                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
+                    false,
+                    8,
+                )
+                .await;
+            defmt::info!("{}", response);
+
+            info!("BLE HCI ready");
+        },
     )
     .await;
-    log_next_event(&mut ble).await;
-
-    ble.init_gatt().await;
-    log_next_event(&mut ble).await;
-
-    ble.init_gap(
-        stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-        false,
-        8,
-    )
-    .await;
-    log_next_event(&mut ble).await;
-
-    info!("BLE HCI ready");
-
-    loop {
-        log_next_event(&mut ble).await;
-    }
-}
-
-async fn log_next_event(ble: &mut transport::Ble<'_>) {
-    match ble.read().await {
-        Ok(packet) => info!("HCI packet: {:?}", packet),
-        Err(e) => error!("HCI read error: {:?}", e),
-    }
-}
-
-impl<'a> Controller for transport::Ble<'a> {
-    async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]) {
-        self.write_hci_command(opcode.0, payload).await;
-    }
-
-    async fn controller_read_into(&mut self, buf: &mut [u8]) {
-        self.read_hci_event_into(buf).await;
-    }
 }

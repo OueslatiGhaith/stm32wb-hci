@@ -990,14 +990,17 @@ name = "stm32wb55-embassy"
 version = "0.1.0"
 dependencies = [
  "aligned",
+ "bt-hci",
  "cortex-m",
  "cortex-m-rt",
  "critical-section",
  "defmt 1.0.1",
  "defmt-rtt",
  "embassy-executor",
+ "embassy-futures",
  "embassy-stm32",
  "embassy-sync",
+ "embedded-io 0.7.1",
  "panic-probe",
  "stm32wb-hci",
 ]
