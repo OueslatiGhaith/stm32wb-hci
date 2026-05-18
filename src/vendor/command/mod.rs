@@ -167,6 +167,37 @@ macro_rules! hci_impl_validate_variable_length_params {
     };
 }
 
+/// If the command requires no params and returns a command status:
+///
+/// ```
+///     vendor_cmd! {
+///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
+///             Params = ();
+///         }
+///     }
+/// ```
+///
+/// If the command requires no params and returns a command complete with just a status:
+/// ```
+///     vendor_cmd! {
+///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
+///             Params = ();
+///             Return = ();
+///         }
+///     }
+/// ```
+///
+/// If the command requires params and returns a command complete with more than a status:
+/// ```
+///     vendor_cmd! {
+///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
+///             Params<'a> = ParamBuffer<'a>;
+///             Return = ReturnBuffer<25>;
+///         }
+///     }
+/// ```
+///
+/// Note that the `ReturnBuffer` `MAX_LEN` should be two or more, to accomodate the command status.
 macro_rules! vendor_cmd {
     (
         $cmd:ident($opcode:ident) $params:tt
