@@ -169,7 +169,7 @@ macro_rules! hci_impl_validate_variable_length_params {
 
 /// If the command requires no params and returns a command status:
 ///
-/// ```
+/// ```rust,ignore
 ///     vendor_cmd! {
 ///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
 ///             Params = ();
@@ -178,7 +178,7 @@ macro_rules! hci_impl_validate_variable_length_params {
 /// ```
 ///
 /// If the command requires no params and returns a command complete with just a status:
-/// ```
+/// ```rust,ignore
 ///     vendor_cmd! {
 ///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
 ///             Params = ();
@@ -188,7 +188,7 @@ macro_rules! hci_impl_validate_variable_length_params {
 /// ```
 ///
 /// If the command requires params and returns a command complete with more than a status:
-/// ```
+/// ```rust,ignore
 ///     vendor_cmd! {
 ///         GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
 ///             Params<'a> = ParamBuffer<'a>;
