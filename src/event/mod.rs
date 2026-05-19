@@ -113,14 +113,19 @@ pub enum Event {
     /// Vol 2, Part E, Section 7.7.65.12
     LePhyUpdateComplete(LePhyUpdateComplete),
 
-    // TODO: le_enhanced_connection_complete
     // TODO: le_directed_advertising_report
-    // TODO: le_phy_update_complete
     // TODO: le_extended_advertising_report
     // TODO: le_scan_timeout
     // TODO: le_advertising_set_terminated
-    // TODO: le_scan_reauest_received
+    // TODO: le_scan_request_received
     // TODO: le_channel_selection_algorithm
+
+    /// Vol 4, Part E, Section 7.7.65.21 — IQ samples from a CTE-bearing packet.
+    LeConnectionIqReport(LeConnectionIqReport),
+
+    /// Vol 4, Part E, Section 7.7.65.22 — peripheral could not respond with CTE.
+    LeCteRequestFailed(LeCteRequestFailed),
+
     /// Vendor-specific events (opcode 0xFF)
     Vendor(VendorEvent),
 }
@@ -330,6 +335,12 @@ fn to_le_meta_event(payload: &[u8]) -> Result<Event, Error> {
             to_le_enhanced_connection_complete(payload)?,
         )),
         0x0C => Ok(Event::LePhyUpdateComplete(to_le_phy_update_complete(
+            payload,
+        )?)),
+        0x15 => Ok(Event::LeConnectionIqReport(to_le_connection_iq_report(
+            payload,
+        )?)),
+        0x16 => Ok(Event::LeCteRequestFailed(to_le_cte_request_failed(
             payload,
         )?)),
 
@@ -1415,5 +1426,110 @@ fn to_le_enhanced_connection_complete(
         conn_interval: FixedConnectionInterval::from_bytes(&payload[24..30])
             .map_err(Error::BadConnectionInterval)?,
         central_clock_accuracy: payload[30].try_into()?,
+    })
+}
+
+// ── CTE — Constant Tone Extension events (BT 5.1+, Direction Finding) ────────
+
+/// One IQ sample pair from an LE Connection IQ Report.
+///
+/// The I and Q values are signed 8-bit integers in the range -128..127.
+/// A value of 0x80 (-128) means the sample is not available.
+#[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct IqSample {
+    /// In-phase component.
+    pub i: i8,
+    /// Quadrature component.
+    pub q: i8,
+}
+
+/// LE Connection IQ Report event — subevent 0x15.
+///
+/// Delivered to the central (locator) when it receives a CTE-bearing packet
+/// from the peripheral (tag). Contains up to 82 IQ samples.
+///
+/// Defined in Vol 4, Part E, Section 7.7.65.21.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LeConnectionIqReport {
+    /// Handle of the connection on which CTE was received.
+    pub conn_handle: ConnectionHandle,
+    /// RX PHY: 0x01=LE 1M, 0x02=LE 2M.
+    pub rx_phy: u8,
+    /// Index of the data channel (0–36).
+    pub data_channel_index: u8,
+    /// RSSI in units of 0.1 dBm (signed).
+    pub rssi: i16,
+    /// Antenna ID used for RSSI measurement.
+    pub rssi_antenna_id: u8,
+    /// CTE type: 0x00=AoA, 0x01=AoD 1μs slots, 0x02=AoD 2μs slots.
+    pub cte_type: u8,
+    /// Slot durations: 0x01=1μs, 0x02=2μs.
+    pub slot_durations: u8,
+    /// 0x00=CRC OK, 0x01=CRC no match, 0xFF=insufficient resources.
+    pub packet_status: u8,
+    /// Value of the connection event counter when the PDU was received.
+    pub connection_event_counter: u16,
+    /// Number of valid IQ samples in `samples`.
+    pub sample_count: u8,
+    /// IQ samples collected during the CTE (up to 82).
+    pub samples: [IqSample; 82],
+}
+
+/// LE CTE Request Failed event — subevent 0x16.
+///
+/// Delivered to the central when the peripheral could not respond to a
+/// CTE request (e.g., CTE response not enabled on the peripheral).
+///
+/// Defined in Vol 4, Part E, Section 7.7.65.22.
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LeCteRequestFailed {
+    /// Reason the CTE request failed.
+    pub status: Status,
+    /// Connection handle for which the CTE request failed.
+    pub conn_handle: ConnectionHandle,
+}
+
+fn to_le_connection_iq_report(payload: &[u8]) -> Result<LeConnectionIqReport, Error> {
+    // payload[0] = subevent (0x15), then:
+    // conn_handle(2) rx_phy(1) channel(1) rssi(2) rssi_ant(1) cte_type(1)
+    // slot_dur(1) pkt_status(1) event_ctr(2) sample_count(1) = 13 bytes after subevent
+    require_len_at_least!(payload, 14);
+
+    let sample_count = payload[13] as usize;
+    require_len_at_least!(payload, 14 + sample_count * 2);
+
+    let count = sample_count.min(82);
+    let mut samples = [IqSample::default(); 82];
+    for i in 0..count {
+        samples[i] = IqSample {
+            i: payload[14 + i * 2] as i8,
+            q: payload[15 + i * 2] as i8,
+        };
+    }
+
+    Ok(LeConnectionIqReport {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[1..])),
+        rx_phy: payload[3],
+        data_channel_index: payload[4],
+        rssi: LittleEndian::read_i16(&payload[5..]),
+        rssi_antenna_id: payload[7],
+        cte_type: payload[8],
+        slot_durations: payload[9],
+        packet_status: payload[10],
+        connection_event_counter: LittleEndian::read_u16(&payload[11..]),
+        sample_count: count as u8,
+        samples,
+    })
+}
+
+fn to_le_cte_request_failed(payload: &[u8]) -> Result<LeCteRequestFailed, Error> {
+    // payload[0] = subevent (0x16), status(1), conn_handle(2)
+    require_len!(payload, 4);
+    Ok(LeCteRequestFailed {
+        status: payload[1].try_into().map_err(rewrap_bad_status)?,
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[2..])),
     })
 }
