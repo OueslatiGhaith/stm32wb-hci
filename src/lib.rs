@@ -627,6 +627,12 @@ pub struct BdAddrTypeError(pub u8);
 
 /// Wraps a [`BdAddr`] in a [`BdAddrType`].
 ///
+/// Accepts only the two basic address types defined for events such as
+/// [`HCI_LE_Connection_Complete`](LeConnectionComplete) where the resolved
+/// identity-address variants do not apply. Use
+/// [`to_bd_addr_type_with_identity`] for parsers of events that can also
+/// carry resolved-RPA address types.
+///
 /// # Errors
 ///
 /// - `bd_addr_type` does not denote an appropriate type. Returns the byte. The address is
@@ -635,6 +641,32 @@ pub fn to_bd_addr_type(bd_addr_type: u8, addr: BdAddr) -> Result<BdAddrType, BdA
     match bd_addr_type {
         0 => Ok(BdAddrType::Public(addr)),
         1 => Ok(BdAddrType::Random(addr)),
+        _ => Err(BdAddrTypeError(bd_addr_type)),
+    }
+}
+
+/// Wraps a [`BdAddr`] in a [`BdAddrType`], also accepting the resolved-identity
+/// address types `0x02` / `0x03` used by
+/// [`HCI_LE_Enhanced_Connection_Complete`](LeEnhancedConnectionComplete).
+///
+/// `0x02` ("Public Identity Address — corresponds to resolved private address")
+/// and `0x03` ("Random Identity Address — corresponds to resolved private
+/// address") are emitted when the controller has resolved a peer RPA via the
+/// resolving list. The accompanying address bytes are the peer's identity
+/// address, so the types map cleanly onto [`BdAddrType::Public`] /
+/// [`BdAddrType::Random`].
+///
+/// # Errors
+///
+/// - `bd_addr_type` does not denote an appropriate type. Returns the byte. The
+///   address is discarded.
+pub fn to_bd_addr_type_with_identity(
+    bd_addr_type: u8,
+    addr: BdAddr,
+) -> Result<BdAddrType, BdAddrTypeError> {
+    match bd_addr_type {
+        0 | 2 => Ok(BdAddrType::Public(addr)),
+        1 | 3 => Ok(BdAddrType::Random(addr)),
         _ => Err(BdAddrTypeError(bd_addr_type)),
     }
 }

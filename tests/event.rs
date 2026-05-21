@@ -312,6 +312,71 @@ fn le_connection_complete_failed_bad_central_clock_accuracy() {
 }
 
 #[test]
+fn le_enhanced_connection_complete_resolved_public_identity() {
+    // Subevent 0x0A. Address type 0x02 = "Public Identity Address (Resolved)".
+    // The 6-byte address is the peer's identity; the two 6-byte fields after it
+    // are the local and peer RPAs.
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Ok(Event::LeEnhancedConnectionComplete(event)) => {
+            assert_eq!(event.status, hci::Status::Success);
+            assert_eq!(event.conn_handle, hci::ConnectionHandle(0x0201));
+            assert_eq!(event.role, ConnectionRole::Central);
+            assert_eq!(
+                event.peer_bd_addr,
+                hci::BdAddrType::Public(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
+            );
+            assert_eq!(
+                event.local_resolvable_private_address,
+                hci::BdAddr([0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
+            );
+            assert_eq!(
+                event.peer_resolvable_private_address,
+                hci::BdAddr([0x21, 0x22, 0x23, 0x24, 0x25, 0x26])
+            );
+        }
+        other => panic!("Did not get LE enhanced connection complete: {:?}", other),
+    }
+}
+
+#[test]
+fn le_enhanced_connection_complete_resolved_random_identity() {
+    // Address type 0x03 = "Random Identity Address (Resolved)".
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x03, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Ok(Event::LeEnhancedConnectionComplete(event)) => {
+            assert_eq!(
+                event.peer_bd_addr,
+                hci::BdAddrType::Random(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
+            );
+        }
+        other => panic!("Did not get LE enhanced connection complete: {:?}", other),
+    }
+}
+
+#[test]
+fn le_enhanced_connection_complete_failed_bad_address_type() {
+    // 0x04 is not a defined peer-address-type value.
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x04, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Err(Error::BadLeAddressType(code)) => assert_eq!(code, 0x04),
+        other => panic!("Did not get bad address type: {:?}", other),
+    }
+}
+
+#[test]
 fn le_advertising_report() {
     let buffer = [
         0x3E, 27, 0x02, 2, 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 2, 0x07, 0x08, 0x09, 1, 1,

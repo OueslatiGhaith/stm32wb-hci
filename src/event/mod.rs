@@ -1419,7 +1419,7 @@ fn to_le_enhanced_connection_complete(
         status: payload[1].try_into().map_err(rewrap_bad_status)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[2..])),
         role: payload[4].try_into()?,
-        peer_bd_addr: crate::to_bd_addr_type(payload[5], bd_addr)
+        peer_bd_addr: crate::to_bd_addr_type_with_identity(payload[5], bd_addr)
             .map_err(rewrap_bd_addr_type_err)?,
         local_resolvable_private_address,
         peer_resolvable_private_address,
