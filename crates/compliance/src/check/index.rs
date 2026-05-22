@@ -3,6 +3,7 @@
 //! The rule layer compares these indexes instead of rebuilding ad hoc maps from
 //! raw parser outputs.
 
+use super::cfg::FirmwareCfg;
 use super::naming::{formal_event_name, formal_st_name};
 use super::rust_event::{EventMarker, RustEventCoverage, load_rust_event_coverage};
 use super::rust_marker::{AliasMarker, CommandMarker, load_command_markers};
@@ -107,19 +108,20 @@ pub(super) struct RustCommandIndex {
 }
 
 impl RustCommandIndex {
-    pub(super) fn load(rust_crate: &Path) -> Result<Self> {
+    pub(super) fn load(rust_crate: &Path, firmware_cfg: Option<&FirmwareCfg>) -> Result<Self> {
         let opcode_path = rust_crate.join("src/vendor/opcode.rs");
-        let opcodes = parse_rust_opcodes(&opcode_path)?;
+        let opcodes = parse_rust_opcodes(&opcode_path, firmware_cfg)?;
         let opcode_const_by_value = opcodes
             .iter()
             .map(|opcode| (opcode.opcode, opcode.name.clone()))
             .collect();
         let command_files = load_rust_command_files(rust_crate)?;
-        let loaded_markers = load_command_markers(&command_files);
+        let loaded_markers = load_command_markers(&command_files, firmware_cfg);
         let markers = loaded_markers.primary;
         let alias_markers = loaded_markers.aliases;
-        let methods = load_rust_command_methods(&command_files);
-        let method_impls = super::rust_method::load_rust_method_implementations(&command_files);
+        let methods = load_rust_command_methods(&command_files, firmware_cfg);
+        let method_impls =
+            super::rust_method::load_rust_method_implementations(&command_files, firmware_cfg);
         let marked_methods = command_marked_methods(&markers, &alias_markers);
         let markers_by_st = command_markers_by_st(&markers);
 
@@ -156,8 +158,8 @@ pub(super) struct RustEventIndex {
 }
 
 impl RustEventIndex {
-    pub(super) fn load(rust_crate: &Path) -> Result<Self> {
-        let coverage = load_rust_event_coverage(rust_crate)?;
+    pub(super) fn load(rust_crate: &Path, firmware_cfg: Option<&FirmwareCfg>) -> Result<Self> {
+        let coverage = load_rust_event_coverage(rust_crate, firmware_cfg)?;
         let markers_by_st = event_markers_by_st(&coverage.vendor_event_markers);
         Ok(Self {
             coverage,

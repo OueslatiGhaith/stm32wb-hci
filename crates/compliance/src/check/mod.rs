@@ -4,6 +4,7 @@
 //! ST command metadata extracted from STM32CubeWB, Rust opcode constants, and
 //! `// compliance:` markers attached to Rust command methods.
 
+mod cfg;
 mod coverage;
 mod diagnostics;
 mod index;

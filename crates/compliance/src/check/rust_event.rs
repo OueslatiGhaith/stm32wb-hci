@@ -11,6 +11,7 @@ use syn::visit::Visit;
 use syn::{Expr, ExprMatch, File, Item, Pat};
 
 use super::MarkerLocation;
+use super::cfg::FirmwareCfg;
 use super::marker::{MarkerTarget, attach_markers, marker_value};
 
 /// Rust event coverage surfaces discovered in `src/vendor/event`.
@@ -35,7 +36,10 @@ pub(super) struct EventMarker {
 }
 
 /// Loads vendor event enum variants and dispatch handlers from the Rust crate.
-pub(super) fn load_rust_event_coverage(rust_crate: &Path) -> Result<RustEventCoverage> {
+pub(super) fn load_rust_event_coverage(
+    rust_crate: &Path,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Result<RustEventCoverage> {
     let event_path = rust_crate.join("src/vendor/event/mod.rs");
     let command_event_path = rust_crate.join("src/vendor/event/command.rs");
     let event_source = std::fs::read_to_string(&event_path)
@@ -48,18 +52,35 @@ pub(super) fn load_rust_event_coverage(rust_crate: &Path) -> Result<RustEventCov
         .with_context(|| format!("failed to parse {}", command_event_path.display()))?;
 
     Ok(RustEventCoverage {
-        vendor_event_markers: parse_event_markers_in_file(&event_path, &event_source, &event_file),
-        vendor_event_variants: parse_enum_variants(&event_file, "VendorEvent"),
-        vendor_event_handlers: parse_vendor_event_handlers(&event_file),
-        vendor_return_handlers: parse_vendor_return_handlers(&command_event_file),
+        vendor_event_markers: parse_event_markers_in_file(
+            &event_path,
+            &event_source,
+            &event_file,
+            firmware_cfg,
+        ),
+        vendor_event_variants: parse_enum_variants(&event_file, "VendorEvent", firmware_cfg),
+        vendor_event_handlers: parse_vendor_event_handlers(&event_file, firmware_cfg),
+        vendor_return_handlers: parse_vendor_return_handlers(&command_event_file, firmware_cfg),
     })
 }
 
 /// Parses `// compliance: event=...` markers attached to `VendorEvent` variants.
-fn parse_event_markers_in_file(path: &Path, source: &str, file: &File) -> Vec<EventMarker> {
-    let targets = parse_enum_variant_targets(path, file, "VendorEvent");
+fn parse_event_markers_in_file(
+    path: &Path,
+    source: &str,
+    file: &File,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<EventMarker> {
+    let active_variants = parse_enum_variants(file, "VendorEvent", firmware_cfg);
+    let targets = parse_enum_variant_targets(path, file, "VendorEvent", None);
     attach_markers(path, source, &targets, |body| marker_value(body, "event"))
         .into_iter()
+        .filter(|marker| {
+            marker
+                .target
+                .as_ref()
+                .is_none_or(|variant| active_variants.contains(variant))
+        })
         .map(|marker| EventMarker {
             st_event: marker.value,
             variant: marker.target,
@@ -69,7 +90,11 @@ fn parse_event_markers_in_file(path: &Path, source: &str, file: &File) -> Vec<Ev
 }
 
 /// Parses simple enum variant names from a named Rust enum.
-fn parse_enum_variants(file: &File, enum_name: &str) -> HashSet<String> {
+fn parse_enum_variants(
+    file: &File,
+    enum_name: &str,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> HashSet<String> {
     file.items
         .iter()
         .filter_map(|item| match item {
@@ -77,12 +102,18 @@ fn parse_enum_variants(file: &File, enum_name: &str) -> HashSet<String> {
             _ => None,
         })
         .flat_map(|item_enum| item_enum.variants.iter())
+        .filter(|variant| firmware_cfg.is_none_or(|cfg| cfg.allows_attrs(&variant.attrs)))
         .map(|variant| variant.ident.to_string())
         .collect()
 }
 
 /// Parses enum variant names and source locations from a named Rust enum.
-fn parse_enum_variant_targets(path: &Path, file: &File, enum_name: &str) -> Vec<MarkerTarget> {
+fn parse_enum_variant_targets(
+    path: &Path,
+    file: &File,
+    enum_name: &str,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<MarkerTarget> {
     file.items
         .iter()
         .filter_map(|item| match item {
@@ -90,6 +121,7 @@ fn parse_enum_variant_targets(path: &Path, file: &File, enum_name: &str) -> Vec<
             _ => None,
         })
         .flat_map(|item_enum| item_enum.variants.iter())
+        .filter(|variant| firmware_cfg.is_none_or(|cfg| cfg.allows_attrs(&variant.attrs)))
         .map(|variant| MarkerTarget {
             name: variant.ident.to_string(),
             location: MarkerLocation {
@@ -101,15 +133,18 @@ fn parse_enum_variant_targets(path: &Path, file: &File, enum_name: &str) -> Vec<
 }
 
 /// Parses event variants constructed in `VendorEvent::new` match arms.
-fn parse_vendor_event_handlers(file: &File) -> HashSet<String> {
-    let mut visitor = MatchArmPathVisitor::new(PathKind::VendorEventVariant);
+fn parse_vendor_event_handlers(file: &File, firmware_cfg: Option<&FirmwareCfg>) -> HashSet<String> {
+    let mut visitor = MatchArmPathVisitor::new(PathKind::VendorEventVariant, firmware_cfg);
     visitor.visit_file(file);
     visitor.items
 }
 
 /// Parses vendor opcode constants handled in command-complete return decoding.
-fn parse_vendor_return_handlers(file: &File) -> HashSet<String> {
-    let mut visitor = MatchArmPathVisitor::new(PathKind::VendorOpcodeConst);
+fn parse_vendor_return_handlers(
+    file: &File,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> HashSet<String> {
+    let mut visitor = MatchArmPathVisitor::new(PathKind::VendorOpcodeConst, firmware_cfg);
     visitor.visit_file(file);
     visitor.items
 }
@@ -124,13 +159,15 @@ enum PathKind {
 /// Collects selected path names from match arm patterns and bodies.
 struct MatchArmPathVisitor {
     kind: PathKind,
+    firmware_cfg: Option<FirmwareCfg>,
     items: HashSet<String>,
 }
 
 impl MatchArmPathVisitor {
-    fn new(kind: PathKind) -> Self {
+    fn new(kind: PathKind, firmware_cfg: Option<&FirmwareCfg>) -> Self {
         Self {
             kind,
+            firmware_cfg: firmware_cfg.copied(),
             items: HashSet::new(),
         }
     }
@@ -155,6 +192,13 @@ impl MatchArmPathVisitor {
 impl<'ast> Visit<'ast> for MatchArmPathVisitor {
     fn visit_expr_match(&mut self, expr_match: &'ast ExprMatch) {
         for arm in &expr_match.arms {
+            if self
+                .firmware_cfg
+                .as_ref()
+                .is_some_and(|cfg| !cfg.allows_attrs(&arm.attrs))
+            {
+                continue;
+            }
             self.collect_from_pat(&arm.pat);
             if let Some((_, guard)) = &arm.guard {
                 self.collect_from_expr(guard);

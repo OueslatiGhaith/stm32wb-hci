@@ -5,6 +5,7 @@
 //! implementation opcode references without depending on source formatting.
 
 use super::MarkerLocation;
+use super::cfg::FirmwareCfg;
 use super::rust_source::RustCommandFile;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::collections::HashMap;
@@ -26,22 +27,28 @@ pub(super) struct RustMethodImplementation {
 }
 
 /// Loads command trait methods from parsed vendor command modules.
-pub(super) fn load_rust_command_methods(files: &[RustCommandFile]) -> Vec<RustCommandMethod> {
+pub(super) fn load_rust_command_methods(
+    files: &[RustCommandFile],
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<RustCommandMethod> {
     files
         .iter()
-        .flat_map(|file| parse_trait_methods_in_file(&file.path, &file.syntax))
+        .flat_map(|file| parse_trait_methods_in_file(&file.path, &file.syntax, firmware_cfg))
         .collect()
 }
 
 /// Loads method implementations keyed by `(file, method_name)`.
 pub(super) fn load_rust_method_implementations(
     files: &[RustCommandFile],
+    firmware_cfg: Option<&FirmwareCfg>,
 ) -> HashMap<(String, String), RustMethodImplementation> {
     let mut implementations = HashMap::new();
 
     for file in files {
         let file_name = file.path.display().to_string();
-        for (method, implementation) in parse_method_implementations_in_file(&file.syntax) {
+        for (method, implementation) in
+            parse_method_implementations_in_file(&file.syntax, firmware_cfg)
+        {
             implementations.insert((file_name.clone(), method), implementation);
         }
     }
@@ -50,7 +57,11 @@ pub(super) fn load_rust_method_implementations(
 }
 
 /// Parses command trait method declarations in one syntax tree.
-pub(super) fn parse_trait_methods_in_file(path: &Path, file: &File) -> Vec<RustCommandMethod> {
+pub(super) fn parse_trait_methods_in_file(
+    path: &Path,
+    file: &File,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<RustCommandMethod> {
     file.items
         .iter()
         .filter_map(|item| match item {
@@ -61,20 +72,27 @@ pub(super) fn parse_trait_methods_in_file(path: &Path, file: &File) -> Vec<RustC
         })
         .flat_map(|item_trait| item_trait.items.iter())
         .filter_map(|trait_item| match trait_item {
-            TraitItem::Fn(method) => Some(RustCommandMethod {
-                name: method.sig.ident.to_string(),
-                location: MarkerLocation {
-                    file: path.display().to_string(),
-                    line: method.sig.ident.span().start().line,
-                },
-            }),
+            TraitItem::Fn(method)
+                if firmware_cfg.is_none_or(|cfg| cfg.allows_attrs(&method.attrs)) =>
+            {
+                Some(RustCommandMethod {
+                    name: method.sig.ident.to_string(),
+                    location: MarkerLocation {
+                        file: path.display().to_string(),
+                        line: method.sig.ident.span().start().line,
+                    },
+                })
+            }
             _ => None,
         })
         .collect()
 }
 
 /// Parses impl methods and local impl macro invocations for opcode references.
-fn parse_method_implementations_in_file(file: &File) -> Vec<(String, RustMethodImplementation)> {
+fn parse_method_implementations_in_file(
+    file: &File,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<(String, RustMethodImplementation)> {
     let mut implementations = Vec::new();
 
     for item in &file.items {
@@ -84,13 +102,19 @@ fn parse_method_implementations_in_file(file: &File) -> Vec<(String, RustMethodI
 
         for impl_item in &item_impl.items {
             match impl_item {
-                ImplItem::Fn(method) => implementations.push((
-                    method.sig.ident.to_string(),
-                    RustMethodImplementation {
-                        opcodes: opcode_consts_in_block(&method.block),
-                    },
-                )),
-                ImplItem::Macro(item_macro) => {
+                ImplItem::Fn(method)
+                    if firmware_cfg.is_none_or(|cfg| cfg.allows_attrs(&method.attrs)) =>
+                {
+                    implementations.push((
+                        method.sig.ident.to_string(),
+                        RustMethodImplementation {
+                            opcodes: opcode_consts_in_block(&method.block),
+                        },
+                    ));
+                }
+                ImplItem::Macro(item_macro)
+                    if firmware_cfg.is_none_or(|cfg| cfg.allows_attrs(&item_macro.attrs)) =>
+                {
                     let tokens = item_macro.mac.tokens.clone();
                     if let Some(method) = method_name_from_macro_tokens(&tokens) {
                         implementations.push((

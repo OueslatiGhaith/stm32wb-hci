@@ -4,6 +4,7 @@
 //! macro. This module parses the Rust file with `syn`, then walks the macro
 //! token tree to reconstruct each final Bluetooth vendor opcode value.
 
+use super::cfg::FirmwareCfg;
 use anyhow::{Context, Result};
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::path::Path;
@@ -17,7 +18,10 @@ pub(super) struct RustOpcode {
 }
 
 /// Parses `src/vendor/opcode.rs` and returns all vendor opcode constants.
-pub(super) fn parse_rust_opcodes(path: &Path) -> Result<Vec<RustOpcode>> {
+pub(super) fn parse_rust_opcodes(
+    path: &Path,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Result<Vec<RustOpcode>> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let file =
@@ -35,7 +39,10 @@ pub(super) fn parse_rust_opcodes(path: &Path) -> Result<Vec<RustOpcode>> {
             .last()
             .is_some_and(|segment| segment.ident == "vendor_opcodes")
         {
-            opcodes.extend(parse_vendor_opcode_macro(item_macro.mac.tokens.clone()));
+            opcodes.extend(parse_vendor_opcode_macro(
+                item_macro.mac.tokens.clone(),
+                firmware_cfg,
+            ));
         }
     }
 
@@ -43,7 +50,10 @@ pub(super) fn parse_rust_opcodes(path: &Path) -> Result<Vec<RustOpcode>> {
 }
 
 /// Parses the body of the `vendor_opcodes!` invocation.
-fn parse_vendor_opcode_macro(tokens: TokenStream) -> Vec<RustOpcode> {
+fn parse_vendor_opcode_macro(
+    tokens: TokenStream,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<RustOpcode> {
     let tokens = tokens.into_iter().collect::<Vec<_>>();
     let mut opcodes = Vec::new();
     let mut idx = 0;
@@ -57,7 +67,7 @@ fn parse_vendor_opcode_macro(tokens: TokenStream) -> Vec<RustOpcode> {
         if let TokenTree::Group(group) = &tokens[idx + 4]
             && group.delimiter() == Delimiter::Brace
         {
-            opcodes.extend(parse_group_opcodes(cgid, group.stream()));
+            opcodes.extend(parse_group_opcodes(cgid, group.stream(), firmware_cfg));
             idx += 5;
             continue;
         }
@@ -83,12 +93,22 @@ fn parse_group_header(tokens: &[TokenTree]) -> Option<u16> {
 }
 
 /// Parses command ID constants inside one opcode group.
-fn parse_group_opcodes(cgid: u16, tokens: TokenStream) -> Vec<RustOpcode> {
+fn parse_group_opcodes(
+    cgid: u16,
+    tokens: TokenStream,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Vec<RustOpcode> {
     let tokens = tokens.into_iter().collect::<Vec<_>>();
     let mut opcodes = Vec::new();
     let mut idx = 0;
 
     while idx + 5 < tokens.len() {
+        let mut attrs_allowed = true;
+        while let Some((allowed, next_idx)) = parse_attribute(&tokens, idx, firmware_cfg) {
+            attrs_allowed &= allowed;
+            idx = next_idx;
+        }
+
         let [
             TokenTree::Ident(pub_ident),
             TokenTree::Ident(const_ident),
@@ -108,12 +128,14 @@ fn parse_group_opcodes(cgid: u16, tokens: TokenStream) -> Vec<RustOpcode> {
             && is_punct(semicolon, ';')
             && let Some(cid) = parse_int_literal(cid)
         {
-            let ocf = ((cgid & 0b111) << 7) | (cid & 0b111_1111);
-            let opcode = (0x3f << 10) | ocf;
-            opcodes.push(RustOpcode {
-                name: name.to_string(),
-                opcode,
-            });
+            if attrs_allowed {
+                let ocf = ((cgid & 0b111) << 7) | (cid & 0b111_1111);
+                let opcode = (0x3f << 10) | ocf;
+                opcodes.push(RustOpcode {
+                    name: name.to_string(),
+                    opcode,
+                });
+            }
             idx += 6;
             continue;
         }
@@ -122,6 +144,33 @@ fn parse_group_opcodes(cgid: u16, tokens: TokenStream) -> Vec<RustOpcode> {
     }
 
     opcodes
+}
+
+/// Parses and evaluates one attribute token sequence like `#[cfg(...)]`.
+fn parse_attribute(
+    tokens: &[TokenTree],
+    idx: usize,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> Option<(bool, usize)> {
+    let [TokenTree::Punct(hash), TokenTree::Group(group), ..] = &tokens[idx..] else {
+        return None;
+    };
+    if hash.as_char() != '#' || group.delimiter() != Delimiter::Bracket {
+        return None;
+    }
+
+    let attr_tokens = group.stream().into_iter().collect::<Vec<_>>();
+    let allowed = match attr_tokens.as_slice() {
+        [TokenTree::Ident(cfg_ident), TokenTree::Group(cfg_group)]
+            if cfg_ident == "cfg" && cfg_group.delimiter() == Delimiter::Parenthesis =>
+        {
+            firmware_cfg
+                .is_none_or(|firmware_cfg| firmware_cfg.allows_cfg_stream(cfg_group.stream()))
+        }
+        _ => true,
+    };
+
+    Some((allowed, idx + 2))
 }
 
 /// Checks a single punctuation token.

@@ -7,8 +7,10 @@
 //! is based on the parsed Rust trait syntax.
 
 use super::MarkerLocation;
+use super::cfg::FirmwareCfg;
 use super::marker::{MarkerTarget, attach_markers, marker_value};
 use super::rust_source::RustCommandFile;
+use std::collections::HashSet;
 use std::path::Path;
 
 /// All marker comments discovered in the Rust vendor command modules.
@@ -37,11 +39,15 @@ pub(super) struct AliasMarker {
 }
 
 /// Loads compliance markers from parsed Rust vendor command modules.
-pub(super) fn load_command_markers(files: &[RustCommandFile]) -> LoadedCommandMarkers {
+pub(super) fn load_command_markers(
+    files: &[RustCommandFile],
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> LoadedCommandMarkers {
     let mut markers = LoadedCommandMarkers::default();
 
     for file in files {
-        let file_markers = parse_markers_in_file(&file.path, &file.source, &file.syntax);
+        let file_markers =
+            parse_markers_in_file(&file.path, &file.source, &file.syntax, firmware_cfg);
         markers.primary.extend(file_markers.primary);
         markers.aliases.extend(file_markers.aliases);
     }
@@ -50,8 +56,17 @@ pub(super) fn load_command_markers(files: &[RustCommandFile]) -> LoadedCommandMa
 }
 
 /// Parses marker comments in a single Rust command file.
-fn parse_markers_in_file(path: &Path, source: &str, file: &syn::File) -> LoadedCommandMarkers {
-    let targets = super::rust_method::parse_trait_methods_in_file(path, file)
+fn parse_markers_in_file(
+    path: &Path,
+    source: &str,
+    file: &syn::File,
+    firmware_cfg: Option<&FirmwareCfg>,
+) -> LoadedCommandMarkers {
+    let active_methods = super::rust_method::parse_trait_methods_in_file(path, file, firmware_cfg)
+        .into_iter()
+        .map(|method| method.name)
+        .collect::<HashSet<_>>();
+    let targets = super::rust_method::parse_trait_methods_in_file(path, file, None)
         .into_iter()
         .map(|method| MarkerTarget {
             name: method.name,
@@ -61,6 +76,14 @@ fn parse_markers_in_file(path: &Path, source: &str, file: &syn::File) -> LoadedC
     let mut markers = LoadedCommandMarkers::default();
 
     for marker in attach_markers(path, source, &targets, parse_marker_body) {
+        if marker
+            .target
+            .as_ref()
+            .is_some_and(|target| !active_methods.contains(target))
+        {
+            continue;
+        }
+
         match marker.value {
             MarkerKind::Primary { st } => {
                 markers.primary.push(CommandMarker {
