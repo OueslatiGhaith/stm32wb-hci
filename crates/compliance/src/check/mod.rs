@@ -5,6 +5,7 @@
 //! `// compliance:` markers attached to Rust command methods.
 
 mod coverage;
+mod diagnostics;
 mod index;
 mod marker;
 mod naming;

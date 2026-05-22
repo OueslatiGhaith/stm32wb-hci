@@ -16,6 +16,8 @@ pub fn check_coverage(spec: &FirmwareSpec, rust_crate: &Path) -> Result<Coverage
     let firmware = FirmwareIndex::new(spec);
     let rust_commands = RustCommandIndex::load(rust_crate)?;
     let rust_events = RustEventIndex::load(rust_crate)?;
+    let diagnostics =
+        CoverageRules::new(rust_crate, &firmware, &rust_commands, &rust_events).check();
 
-    Ok(CoverageRules::new(rust_crate, &firmware, &rust_commands, &rust_events).check())
+    Ok(CoverageReport::from_diagnostics(diagnostics))
 }

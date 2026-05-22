@@ -1,9 +1,16 @@
 //! Serializable coverage report types.
 //!
-//! These types define the CLI/CI JSON surface. The checker rules construct
-//! these values, but parsing and lookup concerns live in sibling modules.
+//! These types define the CLI/CI JSON surface. Coverage rules produce grouped
+//! diagnostics internally; this module flattens those groups into the existing
+//! report schema at the serialization edge.
 
-use super::MarkerLocation;
+use super::diagnostics::{
+    CoverageDiagnostics, DuplicateMarker, DuplicateVendorEventMarker, MarkerMethodMissing,
+    MarkerOpcodeConstantMissing, MethodOpcodeMismatch, MethodOpcodeMissing, MissingMarker,
+    MissingVendorEventHandler, MissingVendorEventMarker, MissingVendorEventVariant,
+    MissingVendorReturnHandler, RustMethodWithoutMarker, UnknownAliasMarker, UnknownMarker,
+    UnknownVendorEventMarker,
+};
 use serde::Serialize;
 
 /// Full JSON report produced by the `check` subcommand.
@@ -48,77 +55,32 @@ pub struct CoverageReport {
     pub events: EventCoverageReport,
 }
 
-/// Firmware command that is not represented by a Rust compliance marker.
-#[derive(Debug, Serialize)]
-pub struct MissingMarker {
-    pub st_command: String,
-    pub opcode: Option<u16>,
-    pub expected_rust_places: Vec<String>,
-}
-
-/// Firmware command that is represented by multiple primary Rust markers.
-#[derive(Debug, Serialize)]
-pub struct DuplicateMarker {
-    pub st_command: String,
-    pub locations: Vec<MarkerLocation>,
-}
-
-/// Rust primary marker that does not match any extracted ST command.
-#[derive(Debug, Serialize)]
-pub struct UnknownMarker {
-    pub st_command: String,
-    pub method: Option<String>,
-    pub location: MarkerLocation,
-}
-
-/// Rust alias marker whose target does not match any extracted ST command.
-#[derive(Debug, Serialize)]
-pub struct UnknownAliasMarker {
-    pub alias_of: String,
-    pub method: Option<String>,
-    pub location: MarkerLocation,
-}
-
-/// Marked command whose firmware opcode cannot be resolved to a Rust constant.
-#[derive(Debug, Serialize)]
-pub struct MarkerOpcodeConstantMissing {
-    pub st_command: String,
-    pub opcode: Option<u16>,
-    pub method: Option<String>,
-    pub location: MarkerLocation,
-}
-
-/// Marked method whose implementation does not reference any opcode constant.
-#[derive(Debug, Serialize)]
-pub struct MethodOpcodeMissing {
-    pub st_command: String,
-    pub expected_opcode_const: String,
-    pub method: Option<String>,
-    pub location: MarkerLocation,
-}
-
-/// Marker that could not be associated with a following Rust method.
-#[derive(Debug, Serialize)]
-pub struct MarkerMethodMissing {
-    pub st_command: String,
-    pub location: MarkerLocation,
-}
-
-/// Marked method whose implementation references the wrong opcode constant.
-#[derive(Debug, Serialize)]
-pub struct MethodOpcodeMismatch {
-    pub st_command: String,
-    pub expected_opcode_const: String,
-    pub actual_opcode_const: String,
-    pub method: String,
-    pub location: MarkerLocation,
-}
-
-/// Rust command trait method that has no compliance marker.
-#[derive(Debug, Serialize)]
-pub struct RustMethodWithoutMarker {
-    pub method: String,
-    pub location: MarkerLocation,
+impl CoverageReport {
+    /// Flattens grouped rule diagnostics into the stable JSON report schema.
+    pub(super) fn from_diagnostics(diagnostics: CoverageDiagnostics) -> Self {
+        let commands = diagnostics.commands;
+        Self {
+            firmware: diagnostics.firmware,
+            rust_crate: diagnostics.rust_crate,
+            commands_total: diagnostics.totals.commands_total,
+            rust_opcode_constants_total: diagnostics.totals.rust_opcode_constants_total,
+            markers_total: diagnostics.totals.markers_total,
+            alias_markers_total: diagnostics.totals.alias_markers_total,
+            covered_by_marker: diagnostics.totals.covered_by_marker,
+            missing_markers: commands.marker_coverage.missing_markers,
+            duplicate_markers: commands.marker_coverage.duplicate_markers,
+            unknown_markers: commands.marker_validity.unknown_markers,
+            unknown_alias_markers: commands.marker_validity.unknown_alias_markers,
+            marker_opcode_constants_missing: commands
+                .opcode_consistency
+                .marker_opcode_constants_missing,
+            marker_method_missing: commands.method_coverage.marker_method_missing,
+            method_opcode_missing: commands.opcode_consistency.method_opcode_missing,
+            method_opcode_mismatches: commands.opcode_consistency.method_opcode_mismatches,
+            rust_methods_without_marker: commands.method_coverage.rust_methods_without_marker,
+            events: EventCoverageReport::from_diagnostics(diagnostics.events),
+        }
+    }
 }
 
 /// Event coverage diagnostics for Rust vendor event decoding.
@@ -150,43 +112,30 @@ pub struct EventCoverageReport {
     pub missing_vendor_return_handlers: Vec<MissingVendorReturnHandler>,
 }
 
-/// ST vendor event that is not represented by a Rust event marker.
-#[derive(Debug, Serialize)]
-pub struct MissingVendorEventMarker {
-    pub st_event: String,
-}
-
-/// ST vendor event that is represented by multiple Rust event markers.
-#[derive(Debug, Serialize)]
-pub struct DuplicateVendorEventMarker {
-    pub st_event: String,
-    pub locations: Vec<MarkerLocation>,
-}
-
-/// Rust event marker that does not match any extracted ST event.
-#[derive(Debug, Serialize)]
-pub struct UnknownVendorEventMarker {
-    pub st_event: String,
-    pub variant: Option<String>,
-    pub location: MarkerLocation,
-}
-
-/// ST vendor event whose expected Rust variant is missing.
-#[derive(Debug, Serialize)]
-pub struct MissingVendorEventVariant {
-    pub st_event: String,
-}
-
-/// ST vendor event whose Rust variant is not constructed by the decoder.
-#[derive(Debug, Serialize)]
-pub struct MissingVendorEventHandler {
-    pub st_event: String,
-    pub expected_variant: String,
-}
-
-/// ST command-complete command whose opcode is not decoded as vendor returns.
-#[derive(Debug, Serialize)]
-pub struct MissingVendorReturnHandler {
-    pub st_command: String,
-    pub expected_opcode_const: String,
+impl EventCoverageReport {
+    /// Flattens grouped event diagnostics into the stable JSON event schema.
+    fn from_diagnostics(diagnostics: super::diagnostics::EventDiagnostics) -> Self {
+        Self {
+            vendor_events_total: diagnostics.totals.vendor_events_total,
+            rust_vendor_event_variants_total: diagnostics.totals.rust_vendor_event_variants_total,
+            rust_vendor_event_handlers_total: diagnostics.totals.rust_vendor_event_handlers_total,
+            vendor_event_markers_total: diagnostics.totals.vendor_event_markers_total,
+            command_complete_events_total: diagnostics.totals.command_complete_events_total,
+            rust_vendor_return_handlers_total: diagnostics.totals.rust_vendor_return_handlers_total,
+            missing_vendor_event_markers: diagnostics.marker_coverage.missing_vendor_event_markers,
+            duplicate_vendor_event_markers: diagnostics
+                .marker_coverage
+                .duplicate_vendor_event_markers,
+            unknown_vendor_event_markers: diagnostics.marker_validity.unknown_vendor_event_markers,
+            missing_vendor_event_variants: diagnostics
+                .variant_coverage
+                .missing_vendor_event_variants,
+            missing_vendor_event_handlers: diagnostics
+                .variant_coverage
+                .missing_vendor_event_handlers,
+            missing_vendor_return_handlers: diagnostics
+                .return_coverage
+                .missing_vendor_return_handlers,
+        }
+    }
 }
