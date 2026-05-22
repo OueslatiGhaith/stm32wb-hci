@@ -1,11 +1,13 @@
 //! Parser for Rust vendor opcode constants.
 //!
-//! The checked crate defines vendor opcodes as command IDs grouped by command
-//! group ID. This module reconstructs the final Bluetooth vendor opcode value
-//! so it can be matched against the opcode extracted from ST C sources.
+//! The checked crate defines vendor opcodes through the local `vendor_opcodes!`
+//! macro. This module parses the Rust file with `syn`, then walks the macro
+//! token tree to reconstruct each final Bluetooth vendor opcode value.
 
 use anyhow::{Context, Result};
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::path::Path;
+use syn::Item;
 
 /// Rust opcode constant with its fully reconstructed numeric opcode.
 #[derive(Debug)]
@@ -18,55 +20,129 @@ pub(super) struct RustOpcode {
 pub(super) fn parse_rust_opcodes(path: &Path) -> Result<Vec<RustOpcode>> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let mut current_cgid = None;
+    let file =
+        syn::parse_file(&source).with_context(|| format!("failed to parse {}", path.display()))?;
     let mut opcodes = Vec::new();
 
-    for line in source.lines() {
-        let line = line.split("//").next().unwrap_or_default().trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Some((_, cgid)) = parse_group_cgid(line) {
-            current_cgid = Some(cgid);
-            continue;
-        }
-
-        let Some(cgid) = current_cgid else {
+    for item in &file.items {
+        let Item::Macro(item_macro) = item else {
             continue;
         };
-        if let Some((name, cid)) = parse_opcode_const(line) {
-            let ocf = ((cgid & 0b111) << 7) | (cid & 0b111_1111);
-            let opcode = (0x3f << 10) | ocf;
-            opcodes.push(RustOpcode { name, opcode });
+        if item_macro
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "vendor_opcodes")
+        {
+            opcodes.extend(parse_vendor_opcode_macro(item_macro.mac.tokens.clone()));
         }
     }
 
     Ok(opcodes)
 }
 
-/// Parses a command group ID line such as `Gap = 0x1;`.
-fn parse_group_cgid(line: &str) -> Option<(String, u16)> {
-    if line.starts_with("pub const") {
-        return None;
+/// Parses the body of the `vendor_opcodes!` invocation.
+fn parse_vendor_opcode_macro(tokens: TokenStream) -> Vec<RustOpcode> {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut opcodes = Vec::new();
+    let mut idx = 0;
+
+    while idx + 4 < tokens.len() {
+        let Some(cgid) = parse_group_header(&tokens[idx..idx + 4]) else {
+            idx += 1;
+            continue;
+        };
+
+        if let TokenTree::Group(group) = &tokens[idx + 4]
+            && group.delimiter() == Delimiter::Brace
+        {
+            opcodes.extend(parse_group_opcodes(cgid, group.stream()));
+            idx += 5;
+            continue;
+        }
+
+        idx += 1;
     }
-    let (name, value) = line.strip_suffix(';')?.split_once('=')?;
-    Some((name.trim().to_owned(), parse_int(value.trim())?))
+
+    opcodes
 }
 
-/// Parses a command ID constant line inside the current group.
-fn parse_opcode_const(line: &str) -> Option<(String, u16)> {
-    let rest = line.strip_prefix("pub const ")?;
-    let (name, value) = rest.strip_suffix(';')?.split_once('=')?;
-    Some((name.trim().to_owned(), parse_int(value.trim())?))
+/// Parses a group header token sequence like `Gap = 0x1;`.
+fn parse_group_header(tokens: &[TokenTree]) -> Option<u16> {
+    let [
+        TokenTree::Ident(_),
+        equals,
+        TokenTree::Literal(value),
+        semicolon,
+    ] = tokens
+    else {
+        return None;
+    };
+    (is_punct(equals, '=') && is_punct(semicolon, ';')).then(|| parse_int_literal(value))?
 }
 
-/// Parses a decimal or lowercase-hex integer literal.
-fn parse_int(value: &str) -> Option<u16> {
-    let value = value.trim();
+/// Parses command ID constants inside one opcode group.
+fn parse_group_opcodes(cgid: u16, tokens: TokenStream) -> Vec<RustOpcode> {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut opcodes = Vec::new();
+    let mut idx = 0;
+
+    while idx + 5 < tokens.len() {
+        let [
+            TokenTree::Ident(pub_ident),
+            TokenTree::Ident(const_ident),
+            TokenTree::Ident(name),
+            equals,
+            TokenTree::Literal(cid),
+            semicolon,
+        ] = &tokens[idx..idx + 6]
+        else {
+            idx += 1;
+            continue;
+        };
+
+        if pub_ident == "pub"
+            && const_ident == "const"
+            && is_punct(equals, '=')
+            && is_punct(semicolon, ';')
+            && let Some(cid) = parse_int_literal(cid)
+        {
+            let ocf = ((cgid & 0b111) << 7) | (cid & 0b111_1111);
+            let opcode = (0x3f << 10) | ocf;
+            opcodes.push(RustOpcode {
+                name: name.to_string(),
+                opcode,
+            });
+            idx += 6;
+            continue;
+        }
+
+        idx += 1;
+    }
+
+    opcodes
+}
+
+/// Checks a single punctuation token.
+fn is_punct(token: &TokenTree, value: char) -> bool {
+    matches!(token, TokenTree::Punct(punct) if punct.as_char() == value)
+}
+
+/// Parses a decimal or hex literal token.
+fn parse_int_literal(literal: &proc_macro2::Literal) -> Option<u16> {
+    let value = literal.to_string().replace('_', "");
     if let Some(hex) = value.strip_prefix("0x") {
-        u16::from_str_radix(hex, 16).ok()
+        let digits = hex
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect::<String>();
+        u16::from_str_radix(&digits, 16).ok()
     } else {
-        value.parse().ok()
+        let digits = value
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>();
+        digits.parse().ok()
     }
 }
