@@ -1,4 +1,6 @@
-use crate::spec::{CommandSpec, FirmwareSpec, PackedStructSpec, PayloadField, StructFieldSpec};
+use crate::spec::{
+    CommandSpec, EventSpec, FirmwareSpec, PackedStructSpec, PayloadField, StructFieldSpec,
+};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 
@@ -7,6 +9,7 @@ pub struct FirmwareDiff {
     pub from: String,
     pub to: String,
     pub commands: CommandDiff,
+    pub events: EventDiff,
     pub packed_structs: StructDiff,
 }
 
@@ -22,6 +25,12 @@ pub struct StructDiff {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<ChangedItem>,
+}
+
+#[derive(Default, Debug, Serialize)]
+pub struct EventDiff {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +51,7 @@ pub fn diff_firmware(from: &FirmwareSpec, to: &FirmwareSpec) -> FirmwareDiff {
         from: from.firmware.clone(),
         to: to.firmware.clone(),
         commands: diff_commands(&from.commands, &to.commands),
+        events: diff_events(&from.events, &to.events),
         packed_structs: diff_structs(&from.packed_structs, &to.packed_structs),
     }
 }
@@ -93,6 +103,29 @@ fn command_changes(from: &CommandSpec, to: &CommandSpec) -> Vec<Change> {
         &payload_signature(&to.payload),
     );
     changes
+}
+
+fn diff_events(from: &[EventSpec], to: &[EventSpec]) -> EventDiff {
+    let from_by_name = from
+        .iter()
+        .map(|event| (event.name.as_str(), event))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .iter()
+        .map(|event| (event.name.as_str(), event))
+        .collect::<HashMap<_, _>>();
+    let names = sorted_keys(&from_by_name, &to_by_name);
+    let mut diff = EventDiff::default();
+
+    for name in names {
+        match (from_by_name.get(name), to_by_name.get(name)) {
+            (None, Some(_)) => diff.added.push(name.to_owned()),
+            (Some(_), None) => diff.removed.push(name.to_owned()),
+            (Some(_), Some(_)) | (None, None) => {}
+        }
+    }
+
+    diff
 }
 
 fn diff_structs(from: &[PackedStructSpec], to: &[PackedStructSpec]) -> StructDiff {
