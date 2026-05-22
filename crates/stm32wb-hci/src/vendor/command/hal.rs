@@ -297,6 +297,7 @@ impl<T: WritableController> HalCommands for T {
         .await;
     }
 
+    #[cfg(since_fw_v1_15_0)]
     async fn read_rssi(&mut self) {
         self.controller_write(crate::vendor::opcode::HAL_READ_RSSI, &[])
             .await;

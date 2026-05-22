@@ -1323,6 +1323,7 @@ impl<T: WritableController> GattCommands for T {
             .await;
     }
 
+    #[cfg(since_fw_v1_15_0)]
     async fn send_multiple_notification(
         &mut self,
         conn_handle: ConnectionHandle,
@@ -1341,6 +1342,7 @@ impl<T: WritableController> GattCommands for T {
         .await;
     }
 
+    #[cfg(since_fw_v1_15_0)]
     async fn read_multiple_variable_characteristic_value(
         &mut self,
         conn_handle: ConnectionHandle,

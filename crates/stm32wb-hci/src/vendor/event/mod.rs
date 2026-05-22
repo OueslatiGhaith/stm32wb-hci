@@ -344,10 +344,12 @@ pub enum VendorEvent {
     /// This event informs the application of a change in status of the enhanced ATT bearer handled
     /// by the special L2CAP channel.
     // compliance: event=ACI_GATT_EATT_BEARER_EVENT
+    #[cfg(since_fw_v1_15_0)]
     GattEattBrearer(GattEattBrearer),
 
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
     // compliance: event=ACI_GATT_MULT_NOTIFICATION_EVENT
+    #[cfg(since_fw_v1_15_0)]
     GattMultiNotification(GattMultiNotification),
 
     /// This event is generated on server side after the transmission of all notifications linked with
@@ -872,7 +874,9 @@ impl VendorEvent {
             0x0C18 => Ok(VendorEvent::AttPrepareWritePermitRequest(
                 to_att_prepare_write_permit_request(buffer)?,
             )),
+            #[cfg(since_fw_v1_15_0)]
             0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(buffer)?)),
+            #[cfg(since_fw_v1_15_0)]
             0x0C1A => Ok(VendorEvent::GattMultiNotification(
                 to_gatt_multi_notification(buffer)?,
             )),
@@ -3056,6 +3060,7 @@ impl TryFrom<u8> for EabState {
     }
 }
 
+#[cfg(since_fw_v1_15_0)]
 fn to_gatt_eatt_bearer(buffer: &[u8]) -> Result<GattEattBrearer, crate::event::Error> {
     require_len!(buffer, 3);
 
@@ -3082,6 +3087,7 @@ pub struct GattMultiNotification {
     pub data: [u8; 247],
 }
 
+#[cfg(since_fw_v1_15_0)]
 fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, crate::event::Error> {
     require_len_at_least!(buffer, 6);
 
