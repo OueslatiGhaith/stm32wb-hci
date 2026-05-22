@@ -13,6 +13,11 @@ keywords = ["ble", "bluetooth", "stm32"]
 repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
 exclude = ["tests"]
 
+[features]
+default = ["fw_v1_15_0"]
+defmt = ["dep:defmt"]
+fw_v1_15_0 = []
+
 [dependencies]
 bitflags = "2"
 byteorder = { version = "1", default-features = false }
@@ -21,6 +26,4 @@ defmt = { version = "1", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
-[features]
-defmt = ["dep:defmt"]
 
