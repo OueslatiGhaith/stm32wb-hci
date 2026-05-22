@@ -26,7 +26,6 @@ fn main() -> Result<()> {
             );
         }
         Some(Command::Check { rust_crate }) => {
-            // TODO: add support for cfgs
             let tag = (!cli.worktree).then(|| cli.tag.clone());
             let spec = build_spec(&cli.cube, tag, None, None)?;
             println!(
@@ -72,6 +71,7 @@ fn build_spec(
     let types = source.load_auto_file("ble_types.h")?;
     let mut packed_structs = parse::parse_packed_structs(&types)?;
     resolve::resolve_command_payloads(&mut commands, &packed_structs);
+    resolve::resolve_command_return_payloads(&mut commands, &packed_structs);
     let events = parse::parse_events(&source.load_auto_file("ble_events.h")?);
 
     if let Some(struct_name) = struct_filter {

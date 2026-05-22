@@ -56,6 +56,7 @@ pub fn parse_group(source_name: &str, source: &str, header: &str) -> Result<Vec<
             opcode,
             event: function::parse_hex_assignment(&function.body, "event")?.map(|v| v as u8),
             return_len: function::parse_decimal_assignment(&function.body, "rlen")?,
+            return_payload: None,
             doc: doc.map(|d| d.command.clone()),
             payload: payload::parse_payload(&function.body, &param_types, doc)?,
             params,

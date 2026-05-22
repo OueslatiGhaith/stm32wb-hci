@@ -17,9 +17,17 @@ pub struct CommandSpec {
     pub opcode: Option<u16>,
     pub event: Option<u8>,
     pub return_len: Option<usize>,
+    pub return_payload: Option<ReturnPayloadSpec>,
     pub doc: Option<CommandDoc>,
     pub params: Vec<ParamSpec>,
     pub payload: Vec<PayloadField>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReturnPayloadSpec {
+    pub struct_name: String,
+    pub byte_size: Option<usize>,
+    pub fields: Vec<StructFieldSpec>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,14 +117,14 @@ pub enum ResolvedPayload {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PackedStructSpec {
     pub name: String,
     pub byte_size: Option<usize>,
     pub fields: Vec<StructFieldSpec>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StructFieldSpec {
     pub name: String,
     pub c_type: String,
@@ -127,7 +135,7 @@ pub struct StructFieldSpec {
     pub doc: Option<ParamDoc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireType {
     U8,

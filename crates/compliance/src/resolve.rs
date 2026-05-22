@@ -1,4 +1,4 @@
-use crate::spec::{CommandSpec, PackedStructSpec, ResolvedPayload, WireType};
+use crate::spec::{CommandSpec, PackedStructSpec, ResolvedPayload, ReturnPayloadSpec, WireType};
 use std::collections::HashMap;
 
 pub fn resolve_command_payloads(commands: &mut [CommandSpec], structs: &[PackedStructSpec]) {
@@ -25,6 +25,24 @@ pub fn resolve_command_payloads(commands: &mut [CommandSpec], structs: &[PackedS
                 _ => None,
             };
         }
+    }
+}
+
+pub fn resolve_command_return_payloads(commands: &mut [CommandSpec], structs: &[PackedStructSpec]) {
+    let structs_by_name = structs
+        .iter()
+        .map(|s| (s.name.as_str(), s))
+        .collect::<HashMap<_, _>>();
+
+    for command in commands {
+        let struct_name = format!("{}_rp0", command.name);
+        command.return_payload = structs_by_name
+            .get(struct_name.as_str())
+            .map(|return_struct| ReturnPayloadSpec {
+                struct_name,
+                byte_size: return_struct.byte_size,
+                fields: return_struct.fields.clone(),
+            });
     }
 }
 

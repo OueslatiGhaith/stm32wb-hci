@@ -5,3 +5,4 @@ justfile
 /STM32CubeWB
 compliance.json
 diff.json
+extract.json

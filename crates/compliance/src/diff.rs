@@ -98,11 +98,29 @@ fn command_changes(from: &CommandSpec, to: &CommandSpec) -> Vec<Change> {
     push_change(&mut changes, "return_len", &from.return_len, &to.return_len);
     push_change(
         &mut changes,
+        "return_payload",
+        &return_payload_signature(&from.return_payload),
+        &return_payload_signature(&to.return_payload),
+    );
+    push_change(
+        &mut changes,
         "payload",
         &payload_signature(&from.payload),
         &payload_signature(&to.payload),
     );
     changes
+}
+
+fn return_payload_signature(
+    payload: &Option<crate::spec::ReturnPayloadSpec>,
+) -> Option<serde_json::Value> {
+    payload.as_ref().map(|payload| {
+        serde_json::json!({
+            "struct_name": payload.struct_name,
+            "byte_size": payload.byte_size,
+            "fields": field_signature(&payload.fields),
+        })
+    })
 }
 
 fn diff_events(from: &[EventSpec], to: &[EventSpec]) -> EventDiff {
