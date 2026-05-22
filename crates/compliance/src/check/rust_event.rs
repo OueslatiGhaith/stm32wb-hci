@@ -10,15 +10,29 @@ use std::path::Path;
 use syn::visit::Visit;
 use syn::{Expr, ExprMatch, File, Item, Pat};
 
+use super::MarkerLocation;
+
+const EVENT_MARKER_PREFIX: &str = "compliance:";
+
 /// Rust event coverage surfaces discovered in `src/vendor/event`.
 #[derive(Debug)]
 pub(super) struct RustEventCoverage {
+    /// `event=ACI_*_EVENT` markers attached to `VendorEvent` variants.
+    pub(super) vendor_event_markers: Vec<EventMarker>,
     /// Variants declared in `VendorEvent`.
     pub(super) vendor_event_variants: HashSet<String>,
     /// Variants constructed by `VendorEvent::new`.
     pub(super) vendor_event_handlers: HashSet<String>,
     /// Opcode constants handled by `VendorReturnParameters::new`.
     pub(super) vendor_return_handlers: HashSet<String>,
+}
+
+/// Explicit marker tying one Rust event variant to one generated ST event.
+#[derive(Clone, Debug)]
+pub(super) struct EventMarker {
+    pub(super) st_event: String,
+    pub(super) variant: Option<String>,
+    pub(super) location: MarkerLocation,
 }
 
 /// Loads vendor event enum variants and dispatch handlers from the Rust crate.
@@ -35,10 +49,37 @@ pub(super) fn load_rust_event_coverage(rust_crate: &Path) -> Result<RustEventCov
         .with_context(|| format!("failed to parse {}", command_event_path.display()))?;
 
     Ok(RustEventCoverage {
+        vendor_event_markers: parse_event_markers_in_file(&event_path, &event_source, &event_file),
         vendor_event_variants: parse_enum_variants(&event_file, "VendorEvent"),
         vendor_event_handlers: parse_vendor_event_handlers(&event_file),
         vendor_return_handlers: parse_vendor_return_handlers(&command_event_file),
     })
+}
+
+/// Parses `// compliance: event=...` markers attached to `VendorEvent` variants.
+fn parse_event_markers_in_file(path: &Path, source: &str, file: &File) -> Vec<EventMarker> {
+    let variants = parse_enum_variant_locations(path, file, "VendorEvent");
+    let marker_lines = source
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| parse_event_marker_line(line).map(|event| (idx + 1, event)))
+        .collect::<Vec<_>>();
+
+    marker_lines
+        .iter()
+        .enumerate()
+        .map(|(idx, (line, st_event))| {
+            let next_marker_line = marker_lines.get(idx + 1).map(|(line, _)| *line);
+            EventMarker {
+                st_event: st_event.clone(),
+                variant: next_variant_name(&variants, *line, next_marker_line),
+                location: MarkerLocation {
+                    file: path.display().to_string(),
+                    line: *line,
+                },
+            }
+        })
+        .collect()
 }
 
 /// Parses simple enum variant names from a named Rust enum.
@@ -52,6 +93,57 @@ fn parse_enum_variants(file: &File, enum_name: &str) -> HashSet<String> {
         .flat_map(|item_enum| item_enum.variants.iter())
         .map(|variant| variant.ident.to_string())
         .collect()
+}
+
+/// Parses enum variant names and source locations from a named Rust enum.
+fn parse_enum_variant_locations(
+    path: &Path,
+    file: &File,
+    enum_name: &str,
+) -> Vec<(String, MarkerLocation)> {
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(item_enum) if item_enum.ident == enum_name => Some(item_enum),
+            _ => None,
+        })
+        .flat_map(|item_enum| item_enum.variants.iter())
+        .map(|variant| {
+            (
+                variant.ident.to_string(),
+                MarkerLocation {
+                    file: path.display().to_string(),
+                    line: variant.ident.span().start().line,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Parses one `// compliance: event=ACI_*_EVENT` line.
+fn parse_event_marker_line(line: &str) -> Option<String> {
+    let line = line.trim().strip_prefix("//")?.trim();
+    let marker = line.strip_prefix(EVENT_MARKER_PREFIX)?.trim();
+    marker.split_whitespace().find_map(|part| {
+        part.strip_prefix("event=")
+            .map(str::to_owned)
+            .filter(|event| !event.is_empty())
+    })
+}
+
+/// Finds the next enum variant after a marker comment.
+fn next_variant_name(
+    variants: &[(String, MarkerLocation)],
+    marker_line: usize,
+    next_marker_line: Option<usize>,
+) -> Option<String> {
+    variants
+        .iter()
+        .find(|(_, location)| {
+            location.line > marker_line
+                && next_marker_line.is_none_or(|next_marker_line| location.line < next_marker_line)
+        })
+        .map(|(name, _)| name.clone())
 }
 
 /// Parses event variants constructed in `VendorEvent::new` match arms.

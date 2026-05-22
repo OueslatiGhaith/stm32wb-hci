@@ -5,7 +5,7 @@
 //! The result is a serializable report for CLI/CI consumption.
 
 use super::MarkerLocation;
-use super::rust_event::{RustEventCoverage, load_rust_event_coverage};
+use super::rust_event::{EventMarker, RustEventCoverage, load_rust_event_coverage};
 use super::rust_marker::{CommandMarker, load_command_markers};
 use super::rust_method::load_rust_command_methods;
 use super::rust_method::{RustCommandMethod, RustMethodImplementation};
@@ -140,10 +140,18 @@ pub struct EventCoverageReport {
     pub rust_vendor_event_variants_total: usize,
     /// Number of Rust `VendorEvent::new` dispatch arms discovered.
     pub rust_vendor_event_handlers_total: usize,
+    /// Number of explicit `compliance: event=...` markers found on Rust variants.
+    pub vendor_event_markers_total: usize,
     /// Number of ST command-complete vendor commands.
     pub command_complete_events_total: usize,
     /// Number of Rust vendor command-complete opcode handlers discovered.
     pub rust_vendor_return_handlers_total: usize,
+    /// ST vendor events with no explicit Rust event marker.
+    pub missing_vendor_event_markers: Vec<MissingVendorEventMarker>,
+    /// ST vendor events claimed by more than one explicit Rust event marker.
+    pub duplicate_vendor_event_markers: Vec<DuplicateVendorEventMarker>,
+    /// Rust event markers whose ST event is not present in the firmware spec.
+    pub unknown_vendor_event_markers: Vec<UnknownVendorEventMarker>,
     /// ST vendor events with no corresponding Rust `VendorEvent` variant.
     pub missing_vendor_event_variants: Vec<MissingVendorEventVariant>,
     /// ST vendor events with a Rust variant but no decode dispatch arm.
@@ -152,11 +160,31 @@ pub struct EventCoverageReport {
     pub missing_vendor_return_handlers: Vec<MissingVendorReturnHandler>,
 }
 
+/// ST vendor event that is not represented by a Rust event marker.
+#[derive(Debug, Serialize)]
+pub struct MissingVendorEventMarker {
+    pub st_event: String,
+}
+
+/// ST vendor event that is represented by multiple Rust event markers.
+#[derive(Debug, Serialize)]
+pub struct DuplicateVendorEventMarker {
+    pub st_event: String,
+    pub locations: Vec<MarkerLocation>,
+}
+
+/// Rust event marker that does not match any extracted ST event.
+#[derive(Debug, Serialize)]
+pub struct UnknownVendorEventMarker {
+    pub st_event: String,
+    pub variant: Option<String>,
+    pub location: MarkerLocation,
+}
+
 /// ST vendor event whose expected Rust variant is missing.
 #[derive(Debug, Serialize)]
 pub struct MissingVendorEventVariant {
     pub st_event: String,
-    pub expected_variant: String,
 }
 
 /// ST vendor event whose Rust variant is not constructed by the decoder.
@@ -320,6 +348,11 @@ fn check_event_coverage(
         .iter()
         .filter(|event| event.name.starts_with("aci_"))
         .collect::<Vec<_>>();
+    let expected_event_names = expected_vendor_events
+        .iter()
+        .map(|event| formal_event_name(&event.name))
+        .collect::<HashSet<_>>();
+    let event_markers_by_st = group_event_markers_by_st(&rust_events.vendor_event_markers);
     let command_complete_commands = spec
         .commands
         .iter()
@@ -328,25 +361,52 @@ fn check_event_coverage(
 
     let mut missing_vendor_event_variants = Vec::new();
     let mut missing_vendor_event_handlers = Vec::new();
+    let mut missing_vendor_event_markers = Vec::new();
+    let mut duplicate_vendor_event_markers = Vec::new();
+    let mut unknown_vendor_event_markers = Vec::new();
+
     for event in &expected_vendor_events {
-        let expected_variant = expected_vendor_event_variant(&event.name);
-        if !rust_events
-            .vendor_event_variants
-            .contains(expected_variant.as_str())
-        {
-            missing_vendor_event_variants.push(MissingVendorEventVariant {
-                st_event: formal_event_name(&event.name),
-                expected_variant,
+        let st_event = formal_event_name(&event.name);
+        let Some(markers) = event_markers_by_st.get(st_event.as_str()) else {
+            missing_vendor_event_markers.push(MissingVendorEventMarker { st_event });
+            continue;
+        };
+
+        if markers.len() > 1 {
+            duplicate_vendor_event_markers.push(DuplicateVendorEventMarker {
+                st_event: st_event.clone(),
+                locations: markers
+                    .iter()
+                    .map(|marker| marker.location.clone())
+                    .collect(),
             });
+        }
+
+        let Some(expected_variant) = markers.first().and_then(|marker| marker.variant.as_ref())
+        else {
+            missing_vendor_event_variants.push(MissingVendorEventVariant { st_event });
+            continue;
+        };
+
+        if !rust_events.vendor_event_variants.contains(expected_variant) {
+            missing_vendor_event_variants.push(MissingVendorEventVariant { st_event });
             continue;
         }
-        if !rust_events
-            .vendor_event_handlers
-            .contains(expected_variant.as_str())
-        {
+
+        if !rust_events.vendor_event_handlers.contains(expected_variant) {
             missing_vendor_event_handlers.push(MissingVendorEventHandler {
-                st_event: formal_event_name(&event.name),
-                expected_variant,
+                st_event,
+                expected_variant: expected_variant.clone(),
+            });
+        }
+    }
+
+    for marker in &rust_events.vendor_event_markers {
+        if !expected_event_names.contains(marker.st_event.as_str()) {
+            unknown_vendor_event_markers.push(UnknownVendorEventMarker {
+                st_event: marker.st_event.clone(),
+                variant: marker.variant.clone(),
+                location: marker.location.clone(),
             });
         }
     }
@@ -370,8 +430,12 @@ fn check_event_coverage(
         vendor_events_total: expected_vendor_events.len(),
         rust_vendor_event_variants_total: rust_events.vendor_event_variants.len(),
         rust_vendor_event_handlers_total: rust_events.vendor_event_handlers.len(),
+        vendor_event_markers_total: rust_events.vendor_event_markers.len(),
         command_complete_events_total: command_complete_commands.len(),
         rust_vendor_return_handlers_total: rust_events.vendor_return_handlers.len(),
+        missing_vendor_event_markers,
+        duplicate_vendor_event_markers,
+        unknown_vendor_event_markers,
         missing_vendor_event_variants,
         missing_vendor_event_handlers,
         missing_vendor_return_handlers,
@@ -475,126 +539,13 @@ fn group_markers_by_st(markers: &[CommandMarker]) -> HashMap<String, Vec<&Comman
     out
 }
 
-/// Returns the Rust `VendorEvent` variant expected for an ST event function.
-fn expected_vendor_event_variant(event_name: &str) -> String {
-    match event_name {
-        "aci_gap_limited_discoverable_event" => {
-            return "GapLimitedDiscoverableTimeout".to_owned();
-        }
-        "aci_gap_slave_security_initiated_event" => {
-            return "GapPeripheralSecurityInitiated".to_owned();
-        }
-        "aci_gap_authorization_req_event" => return "GapAuthorizationRequest".to_owned(),
-        "aci_gatt_attribute_modified_event" => return "GattAttributeModified".to_owned(),
-        "aci_gatt_write_permit_req_event" => return "AttWritePermitRequest".to_owned(),
-        "aci_gatt_read_permit_req_event" => return "AttReadPermitRequest".to_owned(),
-        "aci_gatt_read_multi_permit_req_event" => return "AttReadMultiplePermitRequest".to_owned(),
-        "aci_gatt_prepare_write_permit_req_event" => {
-            return "AttPrepareWritePermitRequest".to_owned();
-        }
-        "aci_gatt_error_resp_event" => return "AttErrorResponse".to_owned(),
-        "aci_gatt_disc_read_char_by_uuid_resp_event" => {
-            return "GattDiscoverOrReadCharacteristicByUuidResponse".to_owned();
-        }
-        "aci_gatt_mult_notification_event" => return "GattMultiNotification".to_owned(),
-        "aci_hal_scan_req_report_event" => return "HalScanReqReport".to_owned(),
-        _ => {}
+/// Groups event markers by formal ST event name.
+fn group_event_markers_by_st(markers: &[EventMarker]) -> HashMap<String, Vec<&EventMarker>> {
+    let mut out = HashMap::<String, Vec<&EventMarker>>::new();
+    for marker in markers {
+        out.entry(marker.st_event.clone()).or_default().push(marker);
     }
-
-    event_name
-        .trim_start_matches("aci_")
-        .trim_end_matches("_event")
-        .split('_')
-        .map(event_token_to_rust)
-        .collect()
-}
-
-/// Maps ST event-name tokens to the naming used by Rust event variants.
-fn event_token_to_rust(token: &str) -> &'static str {
-    match token {
-        "addr" => "Address",
-        "att" => "Att",
-        "char" => "Characteristic",
-        "coc" => "Coc",
-        "disc" => "Discover",
-        "eatt" => "Eatt",
-        "exec" => "Execute",
-        "fw" => "Firmware",
-        "gap" => "Gap",
-        "gatt" => "Gatt",
-        "hal" => "Hal",
-        "info" => "Information",
-        "l2cap" => "L2Cap",
-        "multi" | "mult" => "Multiple",
-        "proc" => "Procedure",
-        "reconf" => "Reconfig",
-        "req" => "Request",
-        "resp" => "Response",
-        "rx" => "Rx",
-        "tx" => "Tx",
-        "uuid" => "Uuid",
-        "oob" => "Oob",
-        "io" => "Io",
-        "rssi" => "Rssi",
-        "eab" => "Eab",
-        "bd" => "Bd",
-        "le" => "Le",
-        "mtu" => "Mtu",
-        "pool" => "Pool",
-        "available" => "Available",
-        "activity" => "Activity",
-        "bearer" => "Bearer",
-        "blob" => "Blob",
-        "bond" => "Bond",
-        "by" => "By",
-        "command" => "Command",
-        "complete" => "Complete",
-        "confirm" => "Confirm",
-        "confirmation" => "Confirmation",
-        "comparison" => "Comparison",
-        "connect" => "Connect",
-        "connection" => "Connection",
-        "control" => "Control",
-        "data" => "Data",
-        "discoverable" => "Discoverable",
-        "disconnect" => "Disconnect",
-        "end" => "End",
-        "error" => "Error",
-        "exchange" => "Exchange",
-        "ext" => "Ext",
-        "find" => "Find",
-        "flow" => "Flow",
-        "group" => "Group",
-        "indication" => "Indication",
-        "initiated" => "Initiated",
-        "key" => "Key",
-        "keypress" => "Keypress",
-        "limited" => "Limited",
-        "lost" => "Lost",
-        "modified" => "Modified",
-        "notification" => "Notification",
-        "not" => "Not",
-        "numeric" => "Numeric",
-        "of" => "Of",
-        "pairing" => "Pairing",
-        "pass" => "Pass",
-        "prepare" => "Prepare",
-        "radio" => "Radio",
-        "read" => "Read",
-        "reject" => "Reject",
-        "report" => "Report",
-        "resolved" => "Resolved",
-        "scan" => "Scan",
-        "security" => "Security",
-        "server" => "Server",
-        "slave" => "Slave",
-        "timeout" => "Timeout",
-        "type" => "Type",
-        "update" => "Update",
-        "value" => "Value",
-        "write" => "Write",
-        _ => "",
-    }
+    out
 }
 
 /// Returns the ST command name used in marker comments.
