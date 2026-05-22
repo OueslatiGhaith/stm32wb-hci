@@ -1,5 +1,6 @@
 use crate::spec::{
-    CommandSpec, EventSpec, FirmwareSpec, PackedStructSpec, PayloadField, StructFieldSpec,
+    CommandSpec, EventSpec, FirmwareSpec, PackedStructSpec, ParamSpec, PayloadField,
+    StructFieldSpec,
 };
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
@@ -11,6 +12,7 @@ pub struct FirmwareDiff {
     pub commands: CommandDiff,
     pub events: EventDiff,
     pub packed_structs: StructDiff,
+    pub docs: DocumentationDiff,
 }
 
 #[derive(Default, Debug, Serialize)]
@@ -33,6 +35,13 @@ pub struct EventDiff {
     pub removed: Vec<String>,
 }
 
+#[derive(Default, Debug, Serialize)]
+pub struct DocumentationDiff {
+    pub commands: Vec<ChangedItem>,
+    pub events: Vec<ChangedItem>,
+    pub packed_structs: Vec<ChangedItem>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChangedItem {
     pub name: String,
@@ -53,6 +62,7 @@ pub fn diff_firmware(from: &FirmwareSpec, to: &FirmwareSpec) -> FirmwareDiff {
         commands: diff_commands(&from.commands, &to.commands),
         events: diff_events(&from.events, &to.events),
         packed_structs: diff_structs(&from.packed_structs, &to.packed_structs),
+        docs: diff_docs(from, to),
     }
 }
 
@@ -187,6 +197,132 @@ fn struct_changes(from: &PackedStructSpec, to: &PackedStructSpec) -> Vec<Change>
         &field_signature(&from.fields),
         &field_signature(&to.fields),
     );
+    changes
+}
+
+fn diff_docs(from: &FirmwareSpec, to: &FirmwareSpec) -> DocumentationDiff {
+    DocumentationDiff {
+        commands: diff_command_docs(&from.commands, &to.commands),
+        events: diff_event_docs(&from.events, &to.events),
+        packed_structs: diff_struct_docs(&from.packed_structs, &to.packed_structs),
+    }
+}
+
+fn diff_command_docs(from: &[CommandSpec], to: &[CommandSpec]) -> Vec<ChangedItem> {
+    let from_by_name = from
+        .iter()
+        .map(|command| (command.name.as_str(), command))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .iter()
+        .map(|command| (command.name.as_str(), command))
+        .collect::<HashMap<_, _>>();
+
+    sorted_keys(&from_by_name, &to_by_name)
+        .into_iter()
+        .filter_map(|name| {
+            let (Some(from), Some(to)) = (from_by_name.get(name), to_by_name.get(name)) else {
+                return None;
+            };
+            let mut changes = Vec::new();
+            push_change(&mut changes, "doc", &from.doc, &to.doc);
+            push_param_doc_changes(&mut changes, &from.params, &to.params);
+            (!changes.is_empty()).then(|| ChangedItem {
+                name: name.to_owned(),
+                changes,
+            })
+        })
+        .collect()
+}
+
+fn diff_event_docs(from: &[EventSpec], to: &[EventSpec]) -> Vec<ChangedItem> {
+    let from_by_name = from
+        .iter()
+        .map(|event| (event.name.as_str(), event))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .iter()
+        .map(|event| (event.name.as_str(), event))
+        .collect::<HashMap<_, _>>();
+
+    sorted_keys(&from_by_name, &to_by_name)
+        .into_iter()
+        .filter_map(|name| {
+            let (Some(from), Some(to)) = (from_by_name.get(name), to_by_name.get(name)) else {
+                return None;
+            };
+            let mut changes = Vec::new();
+            push_change(&mut changes, "doc", &from.doc, &to.doc);
+            push_param_doc_changes(&mut changes, &from.params, &to.params);
+            (!changes.is_empty()).then(|| ChangedItem {
+                name: name.to_owned(),
+                changes,
+            })
+        })
+        .collect()
+}
+
+fn diff_struct_docs(from: &[PackedStructSpec], to: &[PackedStructSpec]) -> Vec<ChangedItem> {
+    let from_by_name = from
+        .iter()
+        .map(|item| (item.name.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .iter()
+        .map(|item| (item.name.as_str(), item))
+        .collect::<HashMap<_, _>>();
+
+    sorted_keys(&from_by_name, &to_by_name)
+        .into_iter()
+        .filter_map(|name| {
+            let (Some(from), Some(to)) = (from_by_name.get(name), to_by_name.get(name)) else {
+                return None;
+            };
+            let changes = struct_field_doc_changes(from, to);
+            (!changes.is_empty()).then(|| ChangedItem {
+                name: name.to_owned(),
+                changes,
+            })
+        })
+        .collect()
+}
+
+fn push_param_doc_changes(changes: &mut Vec<Change>, from: &[ParamSpec], to: &[ParamSpec]) {
+    let from_by_name = from
+        .iter()
+        .map(|param| (param.name.as_str(), param))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .iter()
+        .map(|param| (param.name.as_str(), param))
+        .collect::<HashMap<_, _>>();
+
+    for name in sorted_keys(&from_by_name, &to_by_name) {
+        let from = from_by_name.get(name).and_then(|param| param.doc.as_ref());
+        let to = to_by_name.get(name).and_then(|param| param.doc.as_ref());
+        push_change(changes, &format!("params.{name}.doc"), &from, &to);
+    }
+}
+
+fn struct_field_doc_changes(from: &PackedStructSpec, to: &PackedStructSpec) -> Vec<Change> {
+    let from_by_name = from
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<HashMap<_, _>>();
+    let to_by_name = to
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<HashMap<_, _>>();
+    let mut changes = Vec::new();
+
+    for name in sorted_keys(&from_by_name, &to_by_name) {
+        let from = from_by_name.get(name).and_then(|field| field.doc.as_ref());
+        let to = to_by_name.get(name).and_then(|field| field.doc.as_ref());
+        push_change(&mut changes, &format!("fields.{name}.doc"), &from, &to);
+    }
+
     changes
 }
 

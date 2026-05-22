@@ -20,9 +20,17 @@ pub(super) struct CommandDocs {
 
 /// Parses command docs from a generated ST header file.
 pub(super) fn parse_command_docs(header: &str) -> Result<HashMap<String, CommandDocs>> {
+    parse_function_docs(header, "tBleStatus")
+}
+
+/// Parses docs attached to generated C function prototypes with the given return type.
+pub(super) fn parse_function_docs(
+    header: &str,
+    return_type: &str,
+) -> Result<HashMap<String, CommandDocs>> {
     let mut docs = HashMap::new();
 
-    for prototype in find_function_prototypes(header, "tBleStatus") {
+    for prototype in find_function_prototypes(header, return_type) {
         let Some((doc_start, doc_end)) = previous_doc_block(header, prototype.start) else {
             continue;
         };

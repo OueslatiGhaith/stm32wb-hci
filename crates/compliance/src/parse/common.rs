@@ -22,6 +22,8 @@ pub(super) struct CFunction {
 pub(super) struct CPrototype {
     /// C function name.
     pub(super) name: String,
+    /// Raw parameter list between the function parentheses.
+    pub(super) signature: String,
     /// Byte offset where the prototype return type starts.
     pub(super) start: usize,
 }
@@ -158,7 +160,8 @@ pub(super) fn find_function_prototypes(source: &str, return_type: &str) -> Vec<C
     let mut cursor = 0;
 
     while let Some(start) = find_keyword(&masked, return_type, cursor) {
-        let Some((name, _, close_paren)) = parse_function_head(&masked, start, return_type.len())
+        let Some((name, open_paren, close_paren)) =
+            parse_function_head(&masked, start, return_type.len())
         else {
             cursor = start + return_type.len();
             continue;
@@ -166,7 +169,11 @@ pub(super) fn find_function_prototypes(source: &str, return_type: &str) -> Vec<C
 
         let after_paren = skip_whitespace(&masked, close_paren + 1);
         if masked[after_paren..].starts_with(';') {
-            prototypes.push(CPrototype { name, start });
+            prototypes.push(CPrototype {
+                name,
+                signature: source[open_paren + 1..close_paren].to_owned(),
+                start,
+            });
         }
         cursor = close_paren + 1;
     }

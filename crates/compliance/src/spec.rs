@@ -33,6 +33,8 @@ pub struct ReturnPayloadSpec {
 #[derive(Debug, Serialize)]
 pub struct EventSpec {
     pub name: String,
+    pub doc: Option<CommandDoc>,
+    pub params: Vec<ParamSpec>,
 }
 
 #[derive(Clone, Debug, Serialize)]

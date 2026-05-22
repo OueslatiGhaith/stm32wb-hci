@@ -72,7 +72,7 @@ fn build_spec(
     let mut packed_structs = parse::parse_packed_structs(&types)?;
     resolve::resolve_command_payloads(&mut commands, &packed_structs);
     resolve::resolve_command_return_payloads(&mut commands, &packed_structs);
-    let events = parse::parse_events(&source.load_auto_file("ble_events.h")?);
+    let events = parse::parse_events(&source.load_auto_file("ble_events.h")?)?;
 
     if let Some(struct_name) = struct_filter {
         packed_structs.retain(|s| s.name == struct_name);
