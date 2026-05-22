@@ -6,11 +6,10 @@
 //! comments themselves must be scanned from source text, but method attachment
 //! is based on the parsed Rust trait syntax.
 
+use super::marker::{MarkerTarget, attach_markers, marker_value};
 use super::{COMMAND_GROUPS, MarkerLocation};
 use anyhow::{Context, Result};
 use std::path::Path;
-
-const MARKER_PREFIX: &str = "compliance:";
 
 /// All marker comments discovered in the Rust vendor command modules.
 #[derive(Default)]
@@ -57,33 +56,29 @@ pub(super) fn load_command_markers(rust_crate: &Path) -> Result<LoadedCommandMar
 
 /// Parses marker comments in a single Rust command file.
 fn parse_markers_in_file(path: &Path, source: &str, file: &syn::File) -> LoadedCommandMarkers {
-    let methods = super::rust_method::parse_trait_methods_in_file(path, file);
-    let marker_lines = source
-        .lines()
-        .enumerate()
-        .filter_map(|(idx, line)| parse_marker_line(line).map(|marker| (idx + 1, marker)))
+    let targets = super::rust_method::parse_trait_methods_in_file(path, file)
+        .into_iter()
+        .map(|method| MarkerTarget {
+            name: method.name,
+            location: method.location,
+        })
         .collect::<Vec<_>>();
     let mut markers = LoadedCommandMarkers::default();
 
-    for (idx, (line, marker)) in marker_lines.iter().enumerate() {
-        let next_marker_line = marker_lines.get(idx + 1).map(|(line, _)| *line);
-        let location = MarkerLocation {
-            file: path.display().to_string(),
-            line: *line,
-        };
-        match marker {
+    for marker in attach_markers(path, source, &targets, parse_marker_body) {
+        match marker.value {
             MarkerKind::Primary { st } => {
                 markers.primary.push(CommandMarker {
-                    st_command: st.clone(),
-                    method: next_method_name(&methods, *line, next_marker_line),
-                    location,
+                    st_command: st,
+                    method: marker.target,
+                    location: marker.location,
                 });
             }
             MarkerKind::Alias { alias_of } => {
                 markers.aliases.push(AliasMarker {
-                    alias_of: alias_of.clone(),
-                    method: next_method_name(&methods, *line, next_marker_line),
-                    location,
+                    alias_of,
+                    method: marker.target,
+                    location: marker.location,
                 });
             }
         }
@@ -101,42 +96,10 @@ enum MarkerKind {
 /// Parses one `// compliance:` line.
 ///
 /// Supported forms are `st=ACI_*` and `alias_of=ACI_*`.
-fn parse_marker_line(line: &str) -> Option<MarkerKind> {
-    let line = line.trim().strip_prefix("//")?.trim();
-    let marker = line.strip_prefix(MARKER_PREFIX)?.trim();
-    let mut st = None;
-    let mut alias_of = None;
-
-    for part in marker.split_whitespace() {
-        if let Some(value) = part.strip_prefix("st=") {
-            st = Some(value.to_owned());
-        } else if let Some(value) = part.strip_prefix("alias_of=") {
-            alias_of = Some(value.to_owned());
-        }
-    }
-
-    if let Some(alias_of) = alias_of {
+fn parse_marker_body(body: &str) -> Option<MarkerKind> {
+    if let Some(alias_of) = marker_value(body, "alias_of") {
         Some(MarkerKind::Alias { alias_of })
     } else {
-        Some(MarkerKind::Primary { st: st? })
+        marker_value(body, "st").map(|st| MarkerKind::Primary { st })
     }
-}
-
-/// Finds the next Rust trait method after a marker comment.
-///
-/// A following compliance marker stops the search so adjacent markers do not
-/// accidentally attach to the same method.
-fn next_method_name(
-    methods: &[super::rust_method::RustCommandMethod],
-    marker_line: usize,
-    next_marker_line: Option<usize>,
-) -> Option<String> {
-    methods
-        .iter()
-        .find(|method| {
-            method.location.line > marker_line
-                && next_marker_line
-                    .is_none_or(|next_marker_line| method.location.line < next_marker_line)
-        })
-        .map(|method| method.name.clone())
 }

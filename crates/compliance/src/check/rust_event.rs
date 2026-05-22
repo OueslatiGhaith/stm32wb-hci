@@ -11,8 +11,7 @@ use syn::visit::Visit;
 use syn::{Expr, ExprMatch, File, Item, Pat};
 
 use super::MarkerLocation;
-
-const EVENT_MARKER_PREFIX: &str = "compliance:";
+use super::marker::{MarkerTarget, attach_markers, marker_value};
 
 /// Rust event coverage surfaces discovered in `src/vendor/event`.
 #[derive(Debug)]
@@ -58,26 +57,13 @@ pub(super) fn load_rust_event_coverage(rust_crate: &Path) -> Result<RustEventCov
 
 /// Parses `// compliance: event=...` markers attached to `VendorEvent` variants.
 fn parse_event_markers_in_file(path: &Path, source: &str, file: &File) -> Vec<EventMarker> {
-    let variants = parse_enum_variant_locations(path, file, "VendorEvent");
-    let marker_lines = source
-        .lines()
-        .enumerate()
-        .filter_map(|(idx, line)| parse_event_marker_line(line).map(|event| (idx + 1, event)))
-        .collect::<Vec<_>>();
-
-    marker_lines
-        .iter()
-        .enumerate()
-        .map(|(idx, (line, st_event))| {
-            let next_marker_line = marker_lines.get(idx + 1).map(|(line, _)| *line);
-            EventMarker {
-                st_event: st_event.clone(),
-                variant: next_variant_name(&variants, *line, next_marker_line),
-                location: MarkerLocation {
-                    file: path.display().to_string(),
-                    line: *line,
-                },
-            }
+    let targets = parse_enum_variant_targets(path, file, "VendorEvent");
+    attach_markers(path, source, &targets, |body| marker_value(body, "event"))
+        .into_iter()
+        .map(|marker| EventMarker {
+            st_event: marker.value,
+            variant: marker.target,
+            location: marker.location,
         })
         .collect()
 }
@@ -96,11 +82,7 @@ fn parse_enum_variants(file: &File, enum_name: &str) -> HashSet<String> {
 }
 
 /// Parses enum variant names and source locations from a named Rust enum.
-fn parse_enum_variant_locations(
-    path: &Path,
-    file: &File,
-    enum_name: &str,
-) -> Vec<(String, MarkerLocation)> {
+fn parse_enum_variant_targets(path: &Path, file: &File, enum_name: &str) -> Vec<MarkerTarget> {
     file.items
         .iter()
         .filter_map(|item| match item {
@@ -108,42 +90,14 @@ fn parse_enum_variant_locations(
             _ => None,
         })
         .flat_map(|item_enum| item_enum.variants.iter())
-        .map(|variant| {
-            (
-                variant.ident.to_string(),
-                MarkerLocation {
-                    file: path.display().to_string(),
-                    line: variant.ident.span().start().line,
-                },
-            )
+        .map(|variant| MarkerTarget {
+            name: variant.ident.to_string(),
+            location: MarkerLocation {
+                file: path.display().to_string(),
+                line: variant.ident.span().start().line,
+            },
         })
         .collect()
-}
-
-/// Parses one `// compliance: event=ACI_*_EVENT` line.
-fn parse_event_marker_line(line: &str) -> Option<String> {
-    let line = line.trim().strip_prefix("//")?.trim();
-    let marker = line.strip_prefix(EVENT_MARKER_PREFIX)?.trim();
-    marker.split_whitespace().find_map(|part| {
-        part.strip_prefix("event=")
-            .map(str::to_owned)
-            .filter(|event| !event.is_empty())
-    })
-}
-
-/// Finds the next enum variant after a marker comment.
-fn next_variant_name(
-    variants: &[(String, MarkerLocation)],
-    marker_line: usize,
-    next_marker_line: Option<usize>,
-) -> Option<String> {
-    variants
-        .iter()
-        .find(|(_, location)| {
-            location.line > marker_line
-                && next_marker_line.is_none_or(|next_marker_line| location.line < next_marker_line)
-        })
-        .map(|(name, _)| name.clone())
 }
 
 /// Parses event variants constructed in `VendorEvent::new` match arms.
