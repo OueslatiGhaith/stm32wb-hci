@@ -7,6 +7,7 @@
 
 mod common;
 mod docs;
+mod events;
 mod function;
 mod packed_struct;
 mod payload;
@@ -67,4 +68,9 @@ pub fn parse_group(source_name: &str, source: &str, header: &str) -> Result<Vec<
 /// Parses packed structs from ST's generated `ble_types.h`.
 pub fn parse_packed_structs(source: &str) -> Result<Vec<PackedStructSpec>> {
     packed_struct::parse_packed_structs(source)
+}
+
+/// Parses generated vendor event prototypes from ST's `ble_events.h`.
+pub fn parse_events(header: &str) -> Vec<crate::spec::EventSpec> {
+    events::parse_events(header)
 }

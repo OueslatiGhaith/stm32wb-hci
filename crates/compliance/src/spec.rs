@@ -5,6 +5,7 @@ pub struct FirmwareSpec {
     pub firmware: String,
     pub packed_structs: Vec<PackedStructSpec>,
     pub commands: Vec<CommandSpec>,
+    pub events: Vec<EventSpec>,
 }
 
 #[derive(Debug, Serialize)]
@@ -19,6 +20,11 @@ pub struct CommandSpec {
     pub doc: Option<CommandDoc>,
     pub params: Vec<ParamSpec>,
     pub payload: Vec<PayloadField>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventSpec {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
