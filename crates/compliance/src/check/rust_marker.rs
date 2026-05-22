@@ -6,9 +6,9 @@
 //! comments themselves must be scanned from source text, but method attachment
 //! is based on the parsed Rust trait syntax.
 
+use super::MarkerLocation;
 use super::marker::{MarkerTarget, attach_markers, marker_value};
-use super::{COMMAND_GROUPS, MarkerLocation};
-use anyhow::{Context, Result};
+use super::rust_source::RustCommandFile;
 use std::path::Path;
 
 /// All marker comments discovered in the Rust vendor command modules.
@@ -36,22 +36,17 @@ pub(super) struct AliasMarker {
     pub(super) location: MarkerLocation,
 }
 
-/// Loads compliance markers from all checked Rust vendor command modules.
-pub(super) fn load_command_markers(rust_crate: &Path) -> Result<LoadedCommandMarkers> {
-    let command_dir = rust_crate.join("src/vendor/command");
+/// Loads compliance markers from parsed Rust vendor command modules.
+pub(super) fn load_command_markers(files: &[RustCommandFile]) -> LoadedCommandMarkers {
     let mut markers = LoadedCommandMarkers::default();
 
-    for group in COMMAND_GROUPS {
-        let path = command_dir.join(format!("{group}.rs"));
-        let source = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let file = super::rust_method::parse_file(&path, &source)?;
-        let file_markers = parse_markers_in_file(&path, &source, &file);
+    for file in files {
+        let file_markers = parse_markers_in_file(&file.path, &file.source, &file.syntax);
         markers.primary.extend(file_markers.primary);
         markers.aliases.extend(file_markers.aliases);
     }
 
-    Ok(markers)
+    markers
 }
 
 /// Parses marker comments in a single Rust command file.

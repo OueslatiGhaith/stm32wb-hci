@@ -8,6 +8,7 @@ use super::rust_event::{EventMarker, RustEventCoverage, load_rust_event_coverage
 use super::rust_marker::{AliasMarker, CommandMarker, load_command_markers};
 use super::rust_method::{RustCommandMethod, RustMethodImplementation, load_rust_command_methods};
 use super::rust_opcode::{RustOpcode, parse_rust_opcodes};
+use super::rust_source::load_rust_command_files;
 use crate::spec::{CommandSpec, FirmwareSpec};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -113,11 +114,12 @@ impl RustCommandIndex {
             .iter()
             .map(|opcode| (opcode.opcode, opcode.name.clone()))
             .collect();
-        let loaded_markers = load_command_markers(rust_crate)?;
+        let command_files = load_rust_command_files(rust_crate)?;
+        let loaded_markers = load_command_markers(&command_files);
         let markers = loaded_markers.primary;
         let alias_markers = loaded_markers.aliases;
-        let methods = load_rust_command_methods(rust_crate)?;
-        let method_impls = super::rust_method::load_rust_method_implementations(rust_crate)?;
+        let methods = load_rust_command_methods(&command_files);
+        let method_impls = super::rust_method::load_rust_method_implementations(&command_files);
         let marked_methods = command_marked_methods(&markers, &alias_markers);
         let markers_by_st = command_markers_by_st(&markers);
 

@@ -14,6 +14,7 @@ mod rust_event;
 mod rust_marker;
 mod rust_method;
 mod rust_opcode;
+mod rust_source;
 
 pub use coverage::check_coverage;
 

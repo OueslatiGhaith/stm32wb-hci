@@ -4,8 +4,8 @@
 //! local helper macro invocations. It extracts trait method declarations and
 //! implementation opcode references without depending on source formatting.
 
-use super::{COMMAND_GROUPS, MarkerLocation};
-use anyhow::{Context, Result};
+use super::MarkerLocation;
+use super::rust_source::RustCommandFile;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::collections::HashMap;
 use std::path::Path;
@@ -25,46 +25,28 @@ pub(super) struct RustMethodImplementation {
     pub(super) opcodes: Vec<String>,
 }
 
-/// Loads command trait methods from all checked vendor command modules.
-pub(super) fn load_rust_command_methods(rust_crate: &Path) -> Result<Vec<RustCommandMethod>> {
-    let command_dir = rust_crate.join("src/vendor/command");
-    let mut methods = Vec::new();
-
-    for group in COMMAND_GROUPS {
-        let path = command_dir.join(format!("{group}.rs"));
-        let source = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let file = parse_file(&path, &source)?;
-        methods.extend(parse_trait_methods_in_file(&path, &file));
-    }
-
-    Ok(methods)
+/// Loads command trait methods from parsed vendor command modules.
+pub(super) fn load_rust_command_methods(files: &[RustCommandFile]) -> Vec<RustCommandMethod> {
+    files
+        .iter()
+        .flat_map(|file| parse_trait_methods_in_file(&file.path, &file.syntax))
+        .collect()
 }
 
 /// Loads method implementations keyed by `(file, method_name)`.
 pub(super) fn load_rust_method_implementations(
-    rust_crate: &Path,
-) -> Result<HashMap<(String, String), RustMethodImplementation>> {
-    let command_dir = rust_crate.join("src/vendor/command");
+    files: &[RustCommandFile],
+) -> HashMap<(String, String), RustMethodImplementation> {
     let mut implementations = HashMap::new();
 
-    for group in COMMAND_GROUPS {
-        let path = command_dir.join(format!("{group}.rs"));
-        let source = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let file = parse_file(&path, &source)?;
-        let file_name = path.display().to_string();
-        for (method, implementation) in parse_method_implementations_in_file(&file) {
+    for file in files {
+        let file_name = file.path.display().to_string();
+        for (method, implementation) in parse_method_implementations_in_file(&file.syntax) {
             implementations.insert((file_name.clone(), method), implementation);
         }
     }
 
-    Ok(implementations)
-}
-
-/// Parses Rust source into a syntax tree with a path-aware error.
-pub(super) fn parse_file(path: &Path, source: &str) -> Result<File> {
-    syn::parse_file(source).with_context(|| format!("failed to parse {}", path.display()))
+    implementations
 }
 
 /// Parses command trait method declarations in one syntax tree.
