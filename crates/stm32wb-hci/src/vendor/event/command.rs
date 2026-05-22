@@ -51,13 +51,24 @@ pub enum VendorReturnParameters {
     /// Status returned by the [HAL Get Link Status](crate::vendor::command::hal::HalCommands::get_link_status) command.
     HalGetLinkStatus(HalLinkStatus),
 
+    /// Status returned by the
+    /// [HAL Set Radio Activity Mask](crate::vendor::command::hal::HalCommands::set_radio_activity_mask) command.
+    HalSetRadioActivityMask(crate::Status),
+
     /// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalCommands::get_anchor_period)
     /// command.
     HalGetAnchorPeriod(HalAnchorPeriod),
 
+    /// Status returned by the [HAL Set Event Mask](crate::vendor::command::hal::HalCommands::set_event_mask) command.
+    HalSetEventMask(crate::Status),
+
     /// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
     /// command.
     HalGetPmDebugInfo(HalPmDebugInfo),
+
+    /// Status returned by the
+    /// [HAL Set Peripheral Latency](crate::vendor::command::hal::HalCommands::set_peripheral_latency) command.
+    HalSetPeripheralLatency(crate::Status),
 
     /// Parameters returned by the [HAL Read RSSI](crate::vendor::command::hal::HalCommands::read_rssi)
     /// command.
@@ -67,9 +78,22 @@ pub enum VendorReturnParameters {
     /// command.
     HalReadRadioReg(u8),
 
+    /// Status returned by the
+    /// [HAL Write Radio Register](crate::vendor::command::hal::HalCommands::write_radio_reg) command.
+    HalWriteRadioReg(crate::Status),
+
     /// Parameters returned by the [HAL Read Raw RSSI](crate::vendor::command::hal::HalCommands::read_raw_rssi)
     /// command.
     HalReadRawRssi(u8),
+
+    /// Status returned by the [HAL RX Start](crate::vendor::command::hal::HalCommands::rx_start) command.
+    HalRxStart(crate::Status),
+
+    /// Status returned by the [HAL RX Stop](crate::vendor::command::hal::HalCommands::rx_stop) command.
+    HalRxStop(crate::Status),
+
+    /// Status returned by the [HAL Stack Reset](crate::vendor::command::hal::HalCommands::stack_reset) command.
+    HalStackReset(crate::Status),
 
     /// Status returned by the
     /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapCommands::gap_set_nondiscoverable)
@@ -172,6 +196,71 @@ pub enum VendorReturnParameters {
     /// command.
     GapIsDeviceBonded(crate::Status),
 
+    /// Status returned by the
+    /// [GAP Numeric Comparison Value Confirm Yes/No](crate::vendor::command::gap::GapCommands::numeric_comparison_value_confirm_yes_no) command.
+    GapNumericComparisonValueConfirmYesNo(crate::Status),
+
+    /// Status returned by the [GAP Passkey Input](crate::vendor::command::gap::GapCommands::passkey_input) command.
+    GapPasskeyInput(crate::Status),
+
+    /// Parameters returned by the [GAP Get OOB Data](crate::vendor::command::gap::GapCommands::get_oob_data) command.
+    GapGetOobData(GapOobData),
+
+    /// Status returned by the [GAP Set OOB Data](crate::vendor::command::gap::GapCommands::set_oob_data) command.
+    GapSetOobData(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Add Devices To Resolving List](crate::vendor::command::gap::GapCommands::add_devices_to_resolving_list) command.
+    GapAddDevicesToResolvingList(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Remove Bonded Device](crate::vendor::command::gap::GapCommands::remove_bonded_device) command.
+    GapRemoveBondedDevice(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Add Devices To List](crate::vendor::command::gap::GapCommands::add_devices_to_list) command.
+    GapAddDevicesToList(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Additional Beacon Start](crate::vendor::command::gap::GapCommands::additional_beacon_start) command.
+    GapAdditionalBeaconStart(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Additional Beacon Stop](crate::vendor::command::gap::GapCommands::additional_beacon_stop) command.
+    GapAdditionalBeaconStop(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Additional Beacon Set Data](crate::vendor::command::gap::GapCommands::additonal_beacon_set_data) command.
+    GapAdditionalBeaconSetData(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Set Configuration](crate::vendor::command::gap::GapCommands::adv_set_config) command.
+    GapAdvSetConfiguration(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Set Enable](crate::vendor::command::gap::GapCommands::adv_set_enable) command.
+    GapAdvSetEnable(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Set Advertising Data](crate::vendor::command::gap::GapCommands::adv_set_advertising_data) command.
+    GapAdvSetAdvData(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Set Scan Response Data](crate::vendor::command::gap::GapCommands::adv_set_scan_response_data) command.
+    GapAdvSetScanResponseData(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Remove Set](crate::vendor::command::gap::GapCommands::adv_remove_set) command.
+    GapAdvRemoveSet(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Clear Sets](crate::vendor::command::gap::GapCommands::adv_clear_sets) command.
+    GapAdvClearSets(crate::Status),
+
+    /// Status returned by the
+    /// [GAP Advertising Set Random Address](crate::vendor::command::gap::GapCommands::adv_set_random_address) command.
+    GapAdvSetRandomAddress(crate::Status),
+
     /// Parameters returned by the
     /// [GATT Init](crate::vendor::command::gatt::GattCommands::init) command.
     GattInit(crate::Status),
@@ -233,6 +322,9 @@ pub enum VendorReturnParameters {
     /// Parameters returned by the [GATT Allow Read](crate::vendor::command::gatt::GattCommands::allow_read) command.
     GattAllowRead(crate::Status),
 
+    /// Status returned by the [GATT Deny Read](crate::vendor::command::gatt::GattCommands::deny_read) command.
+    GattDenyRead(crate::Status),
+
     /// Parameters returned by the
     /// [GATT Set Security Permission](crate::vendor::command::gatt::GattCommands::set_security_permission) command.
     GattSetSecurityPermission(crate::Status),
@@ -245,13 +337,53 @@ pub enum VendorReturnParameters {
     /// [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value) command.
     GattReadHandleValue(GattHandleValue),
 
+    /// Status returned by the
+    /// [GATT Set Access Permission](crate::vendor::command::gatt::GattCommands::set_access_permission) command.
+    GattSetAccessPermission(crate::Status),
+
     /// Parameters returned by the
     /// [GATT Update Long Characteristic Value](crate::vendor::command::gatt::GattCommands::update_characteristic_value_ext) command.
     GattUpdateLongCharacteristicValue(crate::Status),
 
     /// Status returned by the
+    /// [GATT Store Database](crate::vendor::command::gatt::GattCommands::store_database) command.
+    GattStoreDatabase(crate::Status),
+
+    /// Status returned by the
+    /// [GATT Send Multiple Notification](crate::vendor::command::gatt::GattCommands::send_multiple_notification) command.
+    GattSendMultipleNotification(crate::Status),
+
+    /// Status returned by the
     /// [L2CAP Connection Parameter Update Response](crate::vendor::command::l2cap::L2capCommands::connection_parameter_update_response) command.
     L2CapConnectionParameterUpdateResponse(crate::Status),
+
+    /// Status returned by the
+    /// [L2CAP CoC Connect](crate::vendor::command::l2cap::L2capCommands::coc_connect) command.
+    L2CapCocConnect(crate::Status),
+
+    /// Parameters returned by the
+    /// [L2CAP CoC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm) command.
+    L2CapCocConnectConfirm(L2CapCocConnectConfirm),
+
+    /// Status returned by the
+    /// [L2CAP CoC Reconfigure](crate::vendor::command::l2cap::L2capCommands::coc_reconfig) command.
+    L2CapCocReconfigure(crate::Status),
+
+    /// Status returned by the
+    /// [L2CAP CoC Reconfigure Confirm](crate::vendor::command::l2cap::L2capCommands::coc_reconfig_confirm) command.
+    L2CapCocReconfigureConfirm(crate::Status),
+
+    /// Status returned by the
+    /// [L2CAP CoC Disconnect](crate::vendor::command::l2cap::L2capCommands::coc_disconnect) command.
+    L2CapCocDisconnect(crate::Status),
+
+    /// Status returned by the
+    /// [L2CAP CoC Flow Control](crate::vendor::command::l2cap::L2capCommands::coc_flow_control) command.
+    L2CapCocFlowControl(crate::Status),
+
+    /// Status returned by the
+    /// [L2CAP CoC TX Data](crate::vendor::command::l2cap::L2capCommands::coc_tx_data) command.
+    L2CapCocTxData(crate::Status),
 }
 
 impl VendorReturnParameters {
@@ -290,11 +422,20 @@ impl VendorReturnParameters {
             crate::vendor::opcode::HAL_GET_LINK_STATUS => Ok(
                 VendorReturnParameters::HalGetLinkStatus(to_hal_link_status(&bytes[3..])?),
             ),
+            crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK => Ok(
+                VendorReturnParameters::HalSetRadioActivityMask(to_status(&bytes[3..])?),
+            ),
             crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD => Ok(
                 VendorReturnParameters::HalGetAnchorPeriod(to_hal_anchor_period(&bytes[3..])?),
             ),
+            crate::vendor::opcode::HAL_SET_EVENT_MASK => Ok(
+                VendorReturnParameters::HalSetEventMask(to_status(&bytes[3..])?),
+            ),
             crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO => Ok(
                 VendorReturnParameters::HalGetPmDebugInfo(to_hal_pm_debug_info(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::HAL_SET_PERIPHERAL_LATENCY => Ok(
+                VendorReturnParameters::HalSetPeripheralLatency(to_status(&bytes[3..])?),
             ),
             crate::vendor::opcode::HAL_READ_RSSI => Ok(VendorReturnParameters::HalReadRssi({
                 require_len!(&bytes[3..], 1);
@@ -306,12 +447,24 @@ impl VendorReturnParameters {
                     bytes[3]
                 }))
             }
+            crate::vendor::opcode::HAL_WRITE_RADIO_REG => Ok(
+                VendorReturnParameters::HalWriteRadioReg(to_status(&bytes[3..])?),
+            ),
             crate::vendor::opcode::HAL_READ_RAW_RSSI => {
                 Ok(VendorReturnParameters::HalReadRawRssi({
                     require_len!(&bytes[3..], 1);
                     bytes[3]
                 }))
             }
+            crate::vendor::opcode::HAL_RX_START => {
+                Ok(VendorReturnParameters::HalRxStart(to_status(&bytes[3..])?))
+            }
+            crate::vendor::opcode::HAL_RX_STOP => {
+                Ok(VendorReturnParameters::HalRxStop(to_status(&bytes[3..])?))
+            }
+            crate::vendor::opcode::HAL_STACK_RESET => Ok(VendorReturnParameters::HalStackReset(
+                to_status(&bytes[3..])?,
+            )),
             crate::vendor::opcode::GAP_SET_NONDISCOVERABLE => Ok(
                 VendorReturnParameters::GapSetNonDiscoverable(to_status(&bytes[3..])?),
             ),
@@ -386,6 +539,59 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GAP_IS_DEVICE_BONDED => Ok(
                 VendorReturnParameters::GapIsDeviceBonded(to_status(&bytes[3..])?),
             ),
+            crate::vendor::opcode::GAP_NUMERIC_COMPARISON_VALUE_YES_NO => Ok(
+                VendorReturnParameters::GapNumericComparisonValueConfirmYesNo(to_status(
+                    &bytes[3..],
+                )?),
+            ),
+            crate::vendor::opcode::GAP_PASSKEY_INPUT => Ok(
+                VendorReturnParameters::GapPasskeyInput(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_GET_OOB_DATA => Ok(VendorReturnParameters::GapGetOobData(
+                to_gap_oob_data(&bytes[3..])?,
+            )),
+            crate::vendor::opcode::GAP_SET_OOB_DATA => Ok(VendorReturnParameters::GapSetOobData(
+                to_status(&bytes[3..])?,
+            )),
+            crate::vendor::opcode::GAP_ADD_DEVICES_TO_RESOLVING_LIST => Ok(
+                VendorReturnParameters::GapAddDevicesToResolvingList(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_REMOVE_BONDED_DEVICE => Ok(
+                VendorReturnParameters::GapRemoveBondedDevice(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADD_DEVICES_TO_LIST => Ok(
+                VendorReturnParameters::GapAddDevicesToList(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_START => Ok(
+                VendorReturnParameters::GapAdditionalBeaconStart(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_STOP => Ok(
+                VendorReturnParameters::GapAdditionalBeaconStop(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_SET_DATA => Ok(
+                VendorReturnParameters::GapAdditionalBeaconSetData(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_SET_CONFIGURATION => Ok(
+                VendorReturnParameters::GapAdvSetConfiguration(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_SET_ENABLE => Ok(
+                VendorReturnParameters::GapAdvSetEnable(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_SET_ADV_DATA => Ok(
+                VendorReturnParameters::GapAdvSetAdvData(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA => Ok(
+                VendorReturnParameters::GapAdvSetScanResponseData(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_REMOVE_SET => Ok(
+                VendorReturnParameters::GapAdvRemoveSet(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_CLEAR_SETS => Ok(
+                VendorReturnParameters::GapAdvClearSets(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS => Ok(
+                VendorReturnParameters::GapAdvSetRandomAddress(to_status(&bytes[3..])?),
+            ),
             crate::vendor::opcode::GATT_INIT => {
                 Ok(VendorReturnParameters::GattInit(to_status(&bytes[3..])?))
             }
@@ -433,6 +639,9 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GATT_ALLOW_READ => Ok(VendorReturnParameters::GattAllowRead(
                 to_status(&bytes[3..])?,
             )),
+            crate::vendor::opcode::GATT_DENY_READ => Ok(VendorReturnParameters::GattDenyRead(
+                to_status(&bytes[3..])?,
+            )),
             crate::vendor::opcode::GATT_SET_SECURITY_PERMISSION => Ok(
                 VendorReturnParameters::GattSetSecurityPermission(to_status(&bytes[3..])?),
             ),
@@ -442,14 +651,46 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GATT_READ_HANDLE_VALUE => Ok(
                 VendorReturnParameters::GattReadHandleValue(to_gatt_handle_value(&bytes[3..])?),
             ),
+            crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION => Ok(
+                VendorReturnParameters::GattSetAccessPermission(to_status(&bytes[3..])?),
+            ),
             crate::vendor::opcode::GATT_UPDATE_LONG_CHARACTERISTIC_VALUE => Ok(
                 VendorReturnParameters::GattUpdateLongCharacteristicValue(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::GATT_STORE_DB => Ok(VendorReturnParameters::GattStoreDatabase(
+                to_status(&bytes[3..])?,
+            )),
+            crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION => Ok(
+                VendorReturnParameters::GattSendMultipleNotification(to_status(&bytes[3..])?),
             ),
             crate::vendor::opcode::L2CAP_CONN_PARAM_UPDATE_RESP => Ok(
                 VendorReturnParameters::L2CapConnectionParameterUpdateResponse(to_status(
                     &bytes[3..],
                 )?),
             ),
+            crate::vendor::opcode::L2CAP_COC_CONNECT => Ok(
+                VendorReturnParameters::L2CapCocConnect(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM => {
+                Ok(VendorReturnParameters::L2CapCocConnectConfirm(
+                    to_l2cap_coc_connect_confirm(&bytes[3..])?,
+                ))
+            }
+            crate::vendor::opcode::L2CAP_COC_RECONFIG => Ok(
+                VendorReturnParameters::L2CapCocReconfigure(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::L2CAP_COC_RECONFIG_CONFIRM => Ok(
+                VendorReturnParameters::L2CapCocReconfigureConfirm(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::L2CAP_COC_DISCONNECT => Ok(
+                VendorReturnParameters::L2CapCocDisconnect(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL => Ok(
+                VendorReturnParameters::L2CapCocFlowControl(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::L2CAP_COC_TX_DATA => Ok(VendorReturnParameters::L2CapCocTxData(
+                to_status(&bytes[3..])?,
+            )),
             other => Err(crate::event::Error::UnknownOpcode(other)),
         }
     }
@@ -931,6 +1172,72 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
     }
 }
 
+/// Parameters returned by the
+/// [GAP Get OOB Data](crate::vendor::command::gap::GapCommands::get_oob_data) command.
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GapOobData {
+    /// Did the command fail, and if so, how?
+    pub status: crate::Status,
+
+    /// Pairing data returned by the controller.
+    pub data: Option<GapOobDataPayload>,
+}
+
+/// Pairing data returned by the
+/// [GAP Get OOB Data](crate::vendor::command::gap::GapCommands::get_oob_data) command.
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GapOobDataPayload {
+    /// Local identity address returned with the OOB data.
+    pub address: crate::BdAddrType,
+
+    /// Type of OOB data returned by the controller.
+    pub oob_data_type: u8,
+
+    oob_data_len: usize,
+    oob_data: [u8; GapOobDataPayload::MAX_OOB_DATA_LEN],
+}
+
+impl GapOobDataPayload {
+    /// Maximum number of OOB data bytes returned by the controller.
+    pub const MAX_OOB_DATA_LEN: usize = 16;
+
+    /// Return the valid OOB data bytes.
+    pub fn oob_data(&self) -> &[u8] {
+        &self.oob_data[..self.oob_data_len]
+    }
+}
+
+fn to_gap_oob_data(bytes: &[u8]) -> Result<GapOobData, crate::event::Error> {
+    let status = to_status(bytes)?;
+    if status != crate::Status::Success {
+        return Ok(GapOobData { status, data: None });
+    }
+
+    require_len!(bytes, 26);
+
+    let mut address = [0; 6];
+    address.copy_from_slice(&bytes[2..8]);
+
+    let oob_data_len = bytes[9] as usize;
+    require_len_at_least!(&bytes[10..], oob_data_len);
+
+    let mut oob_data = [0; GapOobDataPayload::MAX_OOB_DATA_LEN];
+    oob_data.copy_from_slice(&bytes[10..26]);
+
+    Ok(GapOobData {
+        status,
+        data: Some(GapOobDataPayload {
+            address: crate::to_bd_addr_type(bytes[1], crate::BdAddr(address))
+                .map_err(|e| crate::event::Error::Vendor(super::VendorError::BadBdAddrType(e.0)))?,
+            oob_data_type: bytes[8],
+            oob_data_len,
+            oob_data,
+        }),
+    })
+}
+
 /// Parameters returned by the [GATT Add Service](crate::vendor::command::gatt::GattCommands::add_service) and
 /// [GATT Include Service](crate::vendor::command::gatt::GattCommands::include_service) commands.
 #[derive(Copy, Clone, Debug)]
@@ -1051,4 +1358,68 @@ fn to_gatt_handle_value(bytes: &[u8]) -> Result<GattHandleValue, crate::event::E
     handle_value.value_buf[..value_len].copy_from_slice(&bytes[3..]);
 
     Ok(handle_value)
+}
+
+/// Parameters returned by the
+/// [L2CAP CoC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm) command.
+#[derive(Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct L2CapCocConnectConfirm {
+    /// Did the command fail, and if so, how?
+    pub status: crate::Status,
+
+    channel_index_count: usize,
+    channel_index_buffer: [u8; L2CapCocConnectConfirm::MAX_CHANNEL_INDEXES],
+}
+
+impl Debug for L2CapCocConnectConfirm {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct("L2CapCocConnectConfirm")
+            .field("status", &self.status)
+            .field("channel_indexes", &self.channel_indexes())
+            .finish()
+    }
+}
+
+impl L2CapCocConnectConfirm {
+    /// Maximum number of channel indexes that can fit in a command-complete return payload.
+    pub const MAX_CHANNEL_INDEXES: usize = 253;
+
+    /// Return the channel indexes allocated by the controller.
+    pub fn channel_indexes(&self) -> &[u8] {
+        &self.channel_index_buffer[..self.channel_index_count]
+    }
+}
+
+fn to_l2cap_coc_connect_confirm(
+    bytes: &[u8],
+) -> Result<L2CapCocConnectConfirm, crate::event::Error> {
+    let status = to_status(bytes)?;
+    if status != crate::Status::Success {
+        return Ok(L2CapCocConnectConfirm {
+            status,
+            channel_index_count: 0,
+            channel_index_buffer: [0; L2CapCocConnectConfirm::MAX_CHANNEL_INDEXES],
+        });
+    }
+
+    require_len_at_least!(bytes, 2);
+
+    let channel_index_count = bytes[1] as usize;
+    if channel_index_count > L2CapCocConnectConfirm::MAX_CHANNEL_INDEXES {
+        return Err(crate::event::Error::BadLength(
+            channel_index_count,
+            L2CapCocConnectConfirm::MAX_CHANNEL_INDEXES,
+        ));
+    }
+    require_len!(bytes, 2 + channel_index_count);
+
+    let mut channel_index_buffer = [0; L2CapCocConnectConfirm::MAX_CHANNEL_INDEXES];
+    channel_index_buffer[..channel_index_count].copy_from_slice(&bytes[2..]);
+
+    Ok(L2CapCocConnectConfirm {
+        status,
+        channel_index_count,
+        channel_index_buffer,
+    })
 }
