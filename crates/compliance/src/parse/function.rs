@@ -1,48 +1,21 @@
 //! Parser for generated ST C command functions.
 //!
-//! This module extracts function boundaries and request header assignments such
-//! as `rq.ogf`, `rq.ocf`, `rq.event`, and `rq.rlen`.
+//! This module extracts request header assignments such as `rq.ogf`, `rq.ocf`,
+//! `rq.event`, and `rq.rlen`. Function boundary discovery is delegated to the
+//! shared comment-aware C cursor.
 
-use super::common::{decimal_digits, find_matching_brace, hex_literal, identifier};
-use anyhow::{Context, Result};
+use super::common::{
+    CFunction, decimal_digits, find_function_definitions, hex_literal, identifier,
+};
+use anyhow::Result;
 use chumsky::prelude::*;
 
 /// Generated C command function with its name, raw signature, and body.
-pub(super) struct Function {
-    pub(super) name: String,
-    pub(super) signature: String,
-    pub(super) body: String,
-}
+pub(super) type Function = CFunction;
 
 /// Splits a generated C source file into `tBleStatus` function definitions.
 pub(super) fn split_functions(source: &str) -> Result<Vec<Function>> {
-    let mut functions = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(relative_start) = source[cursor..].find("tBleStatus") {
-        let start = cursor + relative_start;
-        let Some(open_brace) = source[start..].find('{').map(|idx| start + idx) else {
-            break;
-        };
-        let Some((name, signature)) = parse_function_header(&source[start..open_brace]) else {
-            cursor = open_brace + 1;
-            continue;
-        };
-
-        let body_start = open_brace + 1;
-        let body_end = find_matching_brace(source, body_start - 1)
-            .with_context(|| format!("failed to find end of {name}"))?;
-
-        functions.push(Function {
-            name,
-            signature,
-            body: source[body_start..body_end].to_owned(),
-        });
-
-        cursor = body_end + 1;
-    }
-
-    Ok(functions)
+    find_function_definitions(source, "tBleStatus")
 }
 
 /// Parses a hexadecimal request assignment from a function body.
@@ -59,23 +32,6 @@ pub(super) fn parse_decimal_assignment(body: &str, field: &str) -> Result<Option
         .transpose()
 }
 
-/// Parses a `tBleStatus name(args)` function header.
-fn parse_function_header(input: &str) -> Option<(String, String)> {
-    just("tBleStatus")
-        .padded()
-        .ignore_then(identifier().padded())
-        .then(
-            none_of(')')
-                .repeated()
-                .collect::<String>()
-                .delimited_by(just('('), just(')'))
-                .padded(),
-        )
-        .then_ignore(end())
-        .parse(input)
-        .ok()
-}
-
 #[derive(Clone, Copy)]
 enum IntegerBase {
     Hex,
@@ -84,14 +40,17 @@ enum IntegerBase {
 
 /// Finds the first `rq.<field> = <integer>` assignment in a function body.
 fn parse_rq_assignment(body: &str, field: &str, base: IntegerBase) -> Option<Result<u64>> {
-    body.lines().map(str::trim).find_map(|line| {
-        let parsed = match base {
-            IntegerBase::Hex => parse_rq_hex_line(line),
-            IntegerBase::Decimal => parse_rq_decimal_line(line),
-        }?;
+    super::common::split_statements(body)
+        .iter()
+        .map(|statement| statement.trim())
+        .find_map(|line| {
+            let parsed = match base {
+                IntegerBase::Hex => parse_rq_hex_line(line),
+                IntegerBase::Decimal => parse_rq_decimal_line(line),
+            }?;
 
-        (parsed.0 == field).then_some(Ok(parsed.1))
-    })
+            (parsed.0 == field).then_some(Ok(parsed.1))
+        })
 }
 
 /// Parses a hexadecimal `rq.<field> = ...` line.

@@ -4,7 +4,8 @@
 //! value lists, ranges, and unit scaling metadata for command parameters.
 
 use super::common::{
-    clean_doc_line, decimal_number, hex_literal, identifier, parse_number_prefix, whitespace1,
+    clean_doc_line, decimal_number, find_function_prototypes, hex_literal, identifier,
+    parse_number_prefix, whitespace1,
 };
 use crate::spec::{CommandDoc, Constraints, ParamDoc, RangeDoc, UnitDoc, ValueDoc};
 use anyhow::Result;
@@ -20,27 +21,16 @@ pub(super) struct CommandDocs {
 /// Parses command docs from a generated ST header file.
 pub(super) fn parse_command_docs(header: &str) -> Result<HashMap<String, CommandDocs>> {
     let mut docs = HashMap::new();
-    let mut cursor = 0;
 
-    while let Some(relative_start) = header[cursor..].find("tBleStatus") {
-        let function_start = cursor + relative_start;
-        let Some(open_paren) = header[function_start..]
-            .find('(')
-            .map(|idx| function_start + idx)
-        else {
-            break;
-        };
-        let Some(name) = parse_prototype_name(&header[function_start..open_paren]) else {
-            cursor = open_paren + 1;
-            continue;
-        };
-        let Some((doc_start, doc_end)) = previous_doc_block(header, function_start) else {
-            cursor = open_paren + 1;
+    for prototype in find_function_prototypes(header, "tBleStatus") {
+        let Some((doc_start, doc_end)) = previous_doc_block(header, prototype.start) else {
             continue;
         };
 
-        docs.insert(name, parse_doc_block(&header[doc_start + 3..doc_end])?);
-        cursor = open_paren + 1;
+        docs.insert(
+            prototype.name,
+            parse_doc_block(&header[doc_start + 3..doc_end])?,
+        );
     }
 
     Ok(docs)
@@ -53,16 +43,6 @@ pub(super) fn parse_param_doc(lines: &[String]) -> ParamDoc {
         values: parse_values(lines),
         constraints: parse_constraints(lines),
     }
-}
-
-/// Parses a `tBleStatus name` prototype prefix and returns `name`.
-fn parse_prototype_name(input: &str) -> Option<String> {
-    just("tBleStatus")
-        .padded()
-        .ignore_then(identifier().padded())
-        .then_ignore(end())
-        .parse(input)
-        .ok()
 }
 
 /// Finds the Doxygen block immediately preceding a prototype.

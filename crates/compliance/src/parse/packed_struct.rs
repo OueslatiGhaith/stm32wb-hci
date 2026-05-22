@@ -4,55 +4,29 @@
 //! for command/event payload types. This module extracts fields and computes
 //! byte offsets when all field sizes are statically known.
 
-use super::common::{clean_doc_line, find_matching_brace, identifier};
+use super::common::{clean_doc_line, find_packed_structs, identifier};
 use super::docs::parse_param_doc;
 use crate::spec::{PackedStructSpec, ParamDoc, StructFieldSpec, WireType, wire_type_for};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chumsky::prelude::*;
 use std::collections::HashMap;
 
 /// Parses all packed structs from a generated ST header.
 pub(super) fn parse_packed_structs(source: &str) -> Result<Vec<PackedStructSpec>> {
-    let mut structs = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(relative_start) = source[cursor..].find("typedef __PACKED_STRUCT") {
-        let start = cursor + relative_start;
-        let Some(open_brace) = source[start..].find('{').map(|idx| start + idx) else {
-            break;
-        };
-        let close_brace = find_matching_brace(source, open_brace)
-            .with_context(|| format!("failed to find packed struct end at byte {start}"))?;
-        let after_brace = &source[close_brace + 1..];
-        let Some((name, consumed)) = parse_struct_name(after_brace) else {
-            cursor = close_brace + 1;
-            continue;
-        };
-
-        structs.push(PackedStructSpec {
-            name,
-            byte_size: None,
-            fields: parse_struct_fields(&source[open_brace + 1..close_brace])?,
-        });
-
-        cursor = close_brace + 1 + consumed;
-    }
+    let mut structs = find_packed_structs(source)?
+        .into_iter()
+        .map(|packed| {
+            Ok(PackedStructSpec {
+                name: packed.name,
+                byte_size: None,
+                fields: parse_struct_fields(&packed.body)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     resolve_struct_layouts(&mut structs);
 
     Ok(structs)
-}
-
-/// Parses the typedef name after a packed struct body.
-fn parse_struct_name(input: &str) -> Option<(String, usize)> {
-    let trimmed = input.trim_start();
-    let skipped = input.len() - trimmed.len();
-    let name = identifier().parse(trimmed).ok()?;
-    let suffix = &trimmed[name.len()..];
-    let rest = suffix.trim_start();
-    let after_semicolon = rest.strip_prefix(';')?;
-    let consumed = skipped + name.len() + (suffix.len() - after_semicolon.len());
-    Some((name, consumed))
 }
 
 /// Parses fields and field docs from the body of one packed struct.

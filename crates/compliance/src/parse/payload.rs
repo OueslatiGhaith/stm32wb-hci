@@ -1,9 +1,10 @@
 //! Parser for command payload writes in generated ST function bodies.
 //!
 //! Payload fields are inferred from assignments to `cpN->field` and generated
-//! `Osal_MemCpy((void*) &cpN->field, ...)` calls.
+//! `Osal_MemCpy((void*) &cpN->field, ...)` calls. The function body is split
+//! into C statements first, so generated writes may span multiple source lines.
 
-use super::common::{decimal_digits, identifier};
+use super::common::{decimal_digits, identifier, split_statements};
 use super::docs::CommandDocs;
 use crate::spec::{PayloadField, WireType, wire_type_for};
 use anyhow::Result;
@@ -18,8 +19,9 @@ pub(super) fn parse_payload(
 ) -> Result<Vec<PayloadField>> {
     let mut payload = Vec::new();
 
-    for line in body.lines().map(str::trim) {
-        if let Some(field) = parse_cp_assignment(line) {
+    for statement in split_statements(body) {
+        let statement = statement.trim();
+        if let Some(field) = parse_cp_assignment(statement) {
             let c_type = param_types.get(&field).cloned();
             payload.push(PayloadField {
                 wire: wire_type_for(c_type.as_deref()),
@@ -32,7 +34,7 @@ pub(super) fn parse_payload(
             continue;
         }
 
-        if let Some((field, src, len)) = parse_memcpy(line) {
+        if let Some((field, src, len)) = parse_memcpy(statement) {
             payload.push(PayloadField {
                 name: field.clone(),
                 c_type: param_types.get(&src).cloned(),
