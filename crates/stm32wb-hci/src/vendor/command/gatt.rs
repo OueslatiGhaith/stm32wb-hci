@@ -878,6 +878,7 @@ pub trait GattCommands {
     /// parameter. The handles provided as parameters must be the handles of the characteristic
     /// declarations.
     // compliance: st=ACI_GATT_SEND_MULT_NOTIFICATION
+    #[cfg(since_fw_v1_15_0)]
     async fn send_multiple_notification(
         &mut self,
         conn_handle: ConnectionHandle,
@@ -894,6 +895,7 @@ pub trait GattCommands {
     /// [ATT Read Multiple Response](crate::vendor::event::VendorEvent::AttReadMultipleResponse)
     /// event.
     // compliance: st=ACI_GATT_READ_MULTIPLE_VAR_CHAR_VALUE
+    #[cfg(since_fw_v1_15_0)]
     async fn read_multiple_variable_characteristic_value(
         &mut self,
         conn_handle: ConnectionHandle,

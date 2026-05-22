@@ -175,6 +175,7 @@ pub trait HalCommands {
 
     /// This command returns the value of the RSSI.
     // compliance: st=ACI_HAL_READ_RSSI
+    #[cfg(since_fw_v1_15_0)]
     async fn read_rssi(&mut self);
 
     /// This command reads a register value from the RF module
@@ -307,8 +308,11 @@ impl<T: WritableController> HalCommands for T {
     }
 
     async fn write_radio_reg(&mut self, address: u8, value: u8) {
-        self.controller_write(crate::vendor::opcode::HAL_WRITE_RADIO_REG, &[address, value])
-            .await;
+        self.controller_write(
+            crate::vendor::opcode::HAL_WRITE_RADIO_REG,
+            &[address, value],
+        )
+        .await;
     }
 
     async fn read_raw_rssi(&mut self) {

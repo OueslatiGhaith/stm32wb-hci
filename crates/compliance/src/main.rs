@@ -26,6 +26,7 @@ fn main() -> Result<()> {
             );
         }
         Some(Command::Check { rust_crate }) => {
+            // TODO: add support for cfgs
             let tag = (!cli.worktree).then(|| cli.tag.clone());
             let spec = build_spec(&cli.cube, tag, None, None)?;
             println!(
