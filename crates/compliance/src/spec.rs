@@ -41,6 +41,10 @@ pub struct EventSpec {
 pub struct CommandDoc {
     pub brief: Option<String>,
     pub description: String,
+    #[serde(skip_serializing_if = "FamilyAvailability::is_empty")]
+    pub availability: FamilyAvailability,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unclassified_family_mentions: Vec<FamilyMention>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +57,10 @@ pub struct ParamSpec {
 #[derive(Debug, Serialize, Clone)]
 pub struct ParamDoc {
     pub description: String,
+    #[serde(skip_serializing_if = "FamilyAvailability::is_empty")]
+    pub availability: FamilyAvailability,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unclassified_family_mentions: Vec<FamilyMention>,
     pub values: Vec<ValueDoc>,
     pub constraints: Constraints,
 }
@@ -63,6 +71,10 @@ pub struct ValueDoc {
     pub raw: String,
     pub label: Option<String>,
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "FamilyAvailability::is_empty")]
+    pub availability: FamilyAvailability,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unclassified_family_mentions: Vec<FamilyMention>,
 }
 
 #[derive(Default, Debug, Serialize, Clone)]
@@ -77,6 +89,10 @@ pub struct RangeDoc {
     pub max: u64,
     pub raw: String,
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "FamilyAvailability::is_empty")]
+    pub availability: FamilyAvailability,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unclassified_family_mentions: Vec<FamilyMention>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -85,6 +101,32 @@ pub struct UnitDoc {
     pub scale: String,
     pub unit: String,
     pub raw: String,
+}
+
+#[derive(Default, Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct FamilyAvailability {
+    pub only: Vec<DeviceFamily>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<FamilyMention>,
+}
+
+impl FamilyAvailability {
+    pub fn is_empty(&self) -> bool {
+        self.only.is_empty()
+    }
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceFamily {
+    Stm32Wb,
+    Stm32Wba,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct FamilyMention {
+    pub family: DeviceFamily,
+    pub text: String,
 }
 
 #[derive(Debug, Serialize)]
