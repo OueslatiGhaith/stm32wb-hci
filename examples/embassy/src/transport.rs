@@ -240,7 +240,7 @@ pub fn make_cc_with_cs<'a>(
                 return_param_bytes: RemainingBytes::default(),
             })
         }
-        _ => return Err(CmdError::Io(ErrorKind::InvalidData)),
+        _ => Err(CmdError::Io(ErrorKind::InvalidData)),
     }
 }
 
@@ -331,13 +331,8 @@ impl<'d> ControllerAdapter<'d> {
             .lock()
             .await
             .receive(|| unsafe {
-                if let Some(node_ptr) = critical_section::with(|cs| {
-                    LinkedListNode::remove_head(cs, EVT_QUEUE.as_mut_ptr())
-                }) {
-                    Some(EvtBox::new(node_ptr.cast()))
-                } else {
-                    None
-                }
+                critical_section::with(|cs| LinkedListNode::remove_head(cs, EVT_QUEUE.as_mut_ptr()))
+                    .map(|node_ptr| EvtBox::new(node_ptr.cast()))
             })
             .await;
 
@@ -899,7 +894,7 @@ impl CmdPacket {
     }
 }
 
-impl<'d> embedded_io::ErrorType for VolatileWriter {
+impl embedded_io::ErrorType for VolatileWriter {
     type Error = embedded_io::ErrorKind;
 }
 

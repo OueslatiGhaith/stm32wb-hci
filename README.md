@@ -11,17 +11,17 @@ and events from the specification, and vendor-specific commands and events.
 
 This crate aims to match the [latest firmware binaries](https://github.com/STMicroelectronics/STM32CubeWB/tree/master/Projects/STM32WB_Copro_Wireless_Binaries/STM32WB5x) released by ST. The minor version number of this crate should indicate the appropriate firmware version to use, refer to this table in unclear:
 
-| crate version   | firmware version |
-| --------------- | ---------------- |
-| 0.17.2 / 0.17.3 | 1.17.1           |
-| 0.17.0          | 1.17.0           |
-| 0.16.0          | 1.16.0           |
-| older           | 1.15.0           |
+| crate version            | firmware version |
+| ------------------------ | ---------------- |
+| 0.17.2 / 0.17.3 / 0.18.0 | 1.17.1           |
+| 0.17.0                   | 1.17.0           |
+| 0.16.0                   | 1.16.0           |
+| older                    | 1.15.0           |
 
 ## Usage
 
 This crate works with any controller that implements `bt_hci::Controller` and the proprietary ST
-HCI specification. Currently, this includes stm32wb and stm32wb microcontroller families. 
+HCI specification. Currently, this includes stm32wb and stm32wb microcontroller families.
 
 The `read_packet` function may have to be polled for commands to complete. A channel or other
 methods may be used to accomplish this so that `read_packet` is never in a state where it is not

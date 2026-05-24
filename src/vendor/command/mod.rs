@@ -78,15 +78,13 @@ macro_rules! hci_impl_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             params.copy_into_slice(&mut bytes);
 
-            Ok(
-                $cmd::new((&bytes[..]).into())
+            $cmd::new((&bytes[..]).into())
                     .exec(self)
                     .await
                     .map_err(|e| Error::from(e))?
                     .buf()
                     .try_into()
-                    .map_err(|e| Error::from(e))?
-            )
+                    .map_err(|e| Error::from(e))
         }
     };
     ($method:ident<$($genlife:lifetime),*>, $param_type:ident<$($lifetime:lifetime),*>, $cmd:ident) => {
@@ -156,15 +154,13 @@ macro_rules! hci_impl_validate_variable_length_params {
             let mut bytes = [0; $param_type::MAX_LENGTH];
             let len = params.copy_into_slice(&mut bytes);
 
-            Ok(
-                $cmd::new((&bytes[..len]).into())
+            $cmd::new((&bytes[..len]).into())
                     .exec(self)
                     .await
                     .map_err(|e| Error::from(e))?
                     .buf()
                     .try_into()
-                    .map_err(|e| Error::from(e))?
-            )
+                    .map_err(|e| Error::from(e))
         }
     };
 }

@@ -1652,13 +1652,13 @@ where
         LittleEndian::write_u16(&mut bytes, handle.0);
         bytes[2] = offset as u8;
 
-        Ok(GattReadHandleValueOffset::new((&bytes[..]).into())
+        GattReadHandleValueOffset::new((&bytes[..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     hci_impl_validate_variable_length_params!(

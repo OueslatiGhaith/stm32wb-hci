@@ -353,7 +353,7 @@ where
             HalGetFirmwareRevision::new()
                 .exec(self)
                 .await
-                .map_err(|e| Error::from(e))?
+                .map_err(Error::from)?
                 .buf()
                 .try_into()
                 .unwrap(),
@@ -363,13 +363,13 @@ where
     hci_impl_variable_length_params!(write_config_data, ConfigData, HalWriteConfigData);
 
     async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error> {
-        Ok(HalReadConfigData::new((&[param as u8][..]).into())
+        HalReadConfigData::new((&[param as u8][..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn set_tx_power_level(&self, level: PowerLevel) -> Result<(), Error> {
@@ -385,19 +385,19 @@ where
     }
 
     async fn get_tx_test_packet_count(&self) -> Result<HalTxTestPacketCount, Error> {
-        Ok(HalGetTxTestPacketCount::new()
+        HalGetTxTestPacketCount::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn start_tone(&self, channel: u8, freq_offset: u8) -> Result<(), Error> {
         const MAX_CHANNEL: u8 = 39;
         if channel > MAX_CHANNEL {
-            return Err(Error::from(Error::InvalidChannel(channel)));
+            return Err(Error::InvalidChannel(channel));
         }
 
         HalStartTone::new((&[channel, freq_offset][..]).into())
@@ -411,23 +411,23 @@ where
     }
 
     async fn get_link_status(&self) -> Result<HalLinkStatus, Error> {
-        Ok(HalGetLinkStatus::new()
+        HalGetLinkStatus::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn get_anchor_period(&self) -> Result<HalAnchorPeriod, Error> {
-        Ok(HalGetAnchorPeriod::new()
+        HalGetAnchorPeriod::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error> {
@@ -451,13 +451,13 @@ where
     }
 
     async fn get_pm_debug_info(&self) -> Result<HalPmDebugInfo, Error> {
-        Ok(HalGetPmDebugInfo::new()
+        HalGetPmDebugInfo::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn set_peripheral_latency(&self, enabled: bool) -> Result<(), Error> {
@@ -471,7 +471,7 @@ where
         Ok(HalReadRssi::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()[0])
     }
 
@@ -479,7 +479,7 @@ where
         Ok(HalReadRadioReg::new((&[address][..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()[0])
     }
 
@@ -487,7 +487,7 @@ where
         Ok(HalReadRawRssi::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()[0])
     }
 

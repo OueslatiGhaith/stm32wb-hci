@@ -1,4 +1,28 @@
+## [0.18.0] - 2026-05-24
+
+### 🚀 Features
+
+- rebase on top of bt-hci controller trait
+
+### ⚙️ Miscellaneous Tasks
+
+- Clippy
+- Add embassy example
+- Adjust example debug settings
+- Add job for examples
+
+## [0.17.4] - 2026-03-30
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version
+
 ## [0.17.3] - 2025-12-15
+
+### 📚 Documentation
+
+- Update CHANGELOG.md
+- Update slugs
 
 ### ⚙️ Miscellaneous Tasks
 

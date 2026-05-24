@@ -9,8 +9,7 @@ use vendor::RecordingSink;
 #[tokio::test]
 async fn disconnect() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .disconnect(hci::ConnectionHandle(0x0201), hci::Status::AuthFailure)
+    sink.disconnect(hci::ConnectionHandle(0x0201), hci::Status::AuthFailure)
         .await
         .unwrap();
     assert_eq!(sink.written_data(), [1, 0x06, 0x04, 3, 0x01, 0x02, 0x05]);
@@ -136,8 +135,7 @@ async fn le_set_event_mask() {
 #[tokio::test]
 async fn le_set_random_address() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_random_address(hci::BdAddr([0x01, 0x02, 0x04, 0x08, 0x10, 0x20]))
+    sink.le_set_random_address(hci::BdAddr([0x01, 0x02, 0x04, 0x08, 0x10, 0x20]))
         .await
         .unwrap();
     assert_eq!(
@@ -180,22 +178,17 @@ async fn le_set_random_address_invalid_addr_type() {
 #[tokio::test]
 async fn le_set_advertising_parameters() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_advertising_parameters(&AdvertisingParameters {
-            advertising_interval: AdvertisingInterval::for_type(
-                AdvertisingType::ConnectableUndirected,
-            )
+    sink.le_set_advertising_parameters(&AdvertisingParameters {
+        advertising_interval: AdvertisingInterval::for_type(AdvertisingType::ConnectableUndirected)
             .with_range(Duration::from_millis(21), Duration::from_millis(1000))
             .unwrap(),
-            own_address_type: OwnAddressType::Public,
-            peer_address: hci::BdAddrType::Random(hci::BdAddr([
-                0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
-            ])),
-            advertising_channel_map: Channels::CH_37 | Channels::CH_39,
-            advertising_filter_policy: AdvertisingFilterPolicy::AllowConnectionAndScan,
-        })
-        .await
-        .unwrap();
+        own_address_type: OwnAddressType::Public,
+        peer_address: hci::BdAddrType::Random(hci::BdAddr([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])),
+        advertising_channel_map: Channels::CH_37 | Channels::CH_39,
+        advertising_filter_policy: AdvertisingFilterPolicy::AllowConnectionAndScan,
+    })
+    .await
+    .unwrap();
     assert_eq!(
         sink.written_data(),
         [
@@ -249,7 +242,7 @@ async fn le_set_advertising_parameters_bad_channel_map() {
 #[tokio::test]
 async fn le_set_advertising_data_empty() {
     let sink = RecordingSink::new();
-    let _ = sink.le_set_advertising_data(&[]).await.unwrap();
+    sink.le_set_advertising_data(&[]).await.unwrap();
     assert_eq!(
         sink.written_data(),
         vec![
@@ -262,8 +255,7 @@ async fn le_set_advertising_data_empty() {
 #[tokio::test]
 async fn le_set_advertising_data_partial() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_advertising_data(&[1, 2, 3, 4, 5, 6, 7, 8])
+    sink.le_set_advertising_data(&[1, 2, 3, 4, 5, 6, 7, 8])
         .await
         .unwrap();
     assert_eq!(
@@ -278,13 +270,12 @@ async fn le_set_advertising_data_partial() {
 #[tokio::test]
 async fn le_set_advertising_data_full() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_advertising_data(&[
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31,
-        ])
-        .await
-        .unwrap();
+    sink.le_set_advertising_data(&[
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31,
+    ])
+    .await
+    .unwrap();
     assert_eq!(
         sink.written_data(),
         vec![
@@ -304,7 +295,7 @@ async fn le_set_advertising_data_too_long() {
 #[tokio::test]
 async fn le_set_scan_response_data_empty() {
     let sink = RecordingSink::new();
-    let _ = sink.le_set_scan_response_data(&[]).await.unwrap();
+    sink.le_set_scan_response_data(&[]).await.unwrap();
     assert_eq!(
         sink.written_data(),
         vec![
@@ -317,8 +308,7 @@ async fn le_set_scan_response_data_empty() {
 #[tokio::test]
 async fn le_set_scan_response_data_partial() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_scan_response_data(&[1, 2, 3, 4, 5, 6, 7, 8])
+    sink.le_set_scan_response_data(&[1, 2, 3, 4, 5, 6, 7, 8])
         .await
         .unwrap();
     assert_eq!(
@@ -333,13 +323,12 @@ async fn le_set_scan_response_data_partial() {
 #[tokio::test]
 async fn le_set_scan_response_data_full() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_scan_response_data(&[
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31,
-        ])
-        .await
-        .unwrap();
+    sink.le_set_scan_response_data(&[
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31,
+    ])
+    .await
+    .unwrap();
     assert_eq!(
         sink.written_data(),
         vec![
@@ -539,21 +528,20 @@ async fn le_connection_update() {
 #[tokio::test]
 async fn le_set_host_channel_classification() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_set_host_channel_classification(
-            hci::ChannelClassification::CH_0
-                | hci::ChannelClassification::CH_4
-                | hci::ChannelClassification::CH_8
-                | hci::ChannelClassification::CH_12
-                | hci::ChannelClassification::CH_16
-                | hci::ChannelClassification::CH_20
-                | hci::ChannelClassification::CH_24
-                | hci::ChannelClassification::CH_28
-                | hci::ChannelClassification::CH_32
-                | hci::ChannelClassification::CH_36,
-        )
-        .await
-        .unwrap();
+    sink.le_set_host_channel_classification(
+        hci::ChannelClassification::CH_0
+            | hci::ChannelClassification::CH_4
+            | hci::ChannelClassification::CH_8
+            | hci::ChannelClassification::CH_12
+            | hci::ChannelClassification::CH_16
+            | hci::ChannelClassification::CH_20
+            | hci::ChannelClassification::CH_24
+            | hci::ChannelClassification::CH_28
+            | hci::ChannelClassification::CH_32
+            | hci::ChannelClassification::CH_36,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         sink.written_data(),
         [1, 0x14, 0x20, 5, 0x11, 0x11, 0x11, 0x11, 0x11]
@@ -641,7 +629,7 @@ async fn le_long_term_key_request_reply() {
 #[tokio::test]
 async fn le_receiver_test() {
     let sink = RecordingSink::new();
-    let _ = sink.le_receiver_test(0x27).await.unwrap();
+    sink.le_receiver_test(0x27).await.unwrap();
     assert_eq!(sink.written_data(), [1, 0x1D, 0x20, 1, 0x27]);
 }
 
@@ -656,8 +644,7 @@ async fn le_receiver_test_out_of_range() {
 #[tokio::test]
 async fn le_transmitter_test() {
     let sink = RecordingSink::new();
-    let _ = sink
-        .le_transmitter_test(0x27, 0x25, TestPacketPayload::PrbS9)
+    sink.le_transmitter_test(0x27, 0x25, TestPacketPayload::PrbS9)
         .await
         .unwrap();
     assert_eq!(sink.written_data(), [1, 0x1E, 0x20, 3, 0x27, 0x25, 0x00]);

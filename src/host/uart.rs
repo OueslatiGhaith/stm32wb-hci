@@ -88,13 +88,13 @@ where
         const MAX_EVENT_LENGTH: usize = 256;
 
         let mut packet = [0u8; MAX_EVENT_LENGTH];
-        let pkt = <Self as Controller>::read(&self, &mut packet)
+        let pkt = <Self as Controller>::read(self, &mut packet)
             .await
             .map_err(|_| Error::IoError)?;
 
         match pkt {
             ControllerToHostPacket::Event(pkt) => Ok(Packet::Event(
-                match Event::from_kind_and_payload(pkt.kind.0, &pkt.data).map_err(Error::BLE) {
+                match Event::from_kind_and_payload(pkt.kind.0, pkt.data).map_err(Error::BLE) {
                     Ok(pkt) => Ok(pkt),
                     Err(err) => {
                         warn!(

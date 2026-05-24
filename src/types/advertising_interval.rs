@@ -169,14 +169,14 @@ pub enum AdvertisingType {
     ConnectableDirectedLowDutyCycle = 0x04,
 }
 
-impl Into<AdvKind> for AdvertisingType {
-    fn into(self) -> AdvKind {
-        match self {
-            Self::ConnectableUndirected => AdvKind::AdvInd,
-            Self::ConnectableDirectedHighDutyCycle => AdvKind::AdvDirectIndHigh,
-            Self::ScannableUndirected => AdvKind::AdvScanInd,
-            Self::NonConnectableUndirected => AdvKind::AdvNonconnInd,
-            Self::ConnectableDirectedLowDutyCycle => AdvKind::AdvDirectIndLow,
+impl From<AdvertisingType> for AdvKind {
+    fn from(val: AdvertisingType) -> Self {
+        match val {
+            AdvertisingType::ConnectableUndirected => AdvKind::AdvInd,
+            AdvertisingType::ConnectableDirectedHighDutyCycle => AdvKind::AdvDirectIndHigh,
+            AdvertisingType::ScannableUndirected => AdvKind::AdvScanInd,
+            AdvertisingType::NonConnectableUndirected => AdvKind::AdvNonconnInd,
+            AdvertisingType::ConnectableDirectedLowDutyCycle => AdvKind::AdvDirectIndLow,
         }
     }
 }

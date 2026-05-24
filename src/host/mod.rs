@@ -1585,7 +1585,7 @@ where
             params.own_address_type.into(),
             params.conn_interval.interval().0.into(),
             params.conn_interval.interval().1.into(),
-            params.conn_interval.conn_latency().into(),
+            params.conn_interval.conn_latency(),
             params.conn_interval.supervision_timeout().into(),
             params.expected_connection_length.range.0.into(),
             params.expected_connection_length.range.1.into(),
@@ -2354,13 +2354,13 @@ pub enum OwnAddressType {
     PrivateFallbackRandom = 0x03,
 }
 
-impl Into<AddrKind> for OwnAddressType {
-    fn into(self) -> AddrKind {
-        match self {
-            Self::Public => AddrKind::PUBLIC,
-            Self::Random => AddrKind::RANDOM,
-            Self::PrivateFallbackPublic => AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC,
-            Self::PrivateFallbackRandom => AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM,
+impl From<OwnAddressType> for AddrKind {
+    fn from(val: OwnAddressType) -> Self {
+        match val {
+            OwnAddressType::Public => AddrKind::PUBLIC,
+            OwnAddressType::Random => AddrKind::RANDOM,
+            OwnAddressType::PrivateFallbackPublic => AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC,
+            OwnAddressType::PrivateFallbackRandom => AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM,
         }
     }
 }
@@ -2392,12 +2392,12 @@ defmt::bitflags! {
     }
 }
 
-impl Into<AdvChannelMap> for Channels {
-    fn into(self) -> AdvChannelMap {
+impl From<Channels> for AdvChannelMap {
+    fn from(val: Channels) -> Self {
         AdvChannelMap::new()
-            .enable_channel_37(self.contains(Self::CH_37))
-            .enable_channel_38(self.contains(Self::CH_38))
-            .enable_channel_39(self.contains(Self::CH_39))
+            .enable_channel_37(val.contains(Channels::CH_37))
+            .enable_channel_38(val.contains(Channels::CH_38))
+            .enable_channel_39(val.contains(Channels::CH_39))
     }
 }
 
@@ -2427,13 +2427,15 @@ pub enum AdvertisingFilterPolicy {
     WhiteListConnectionAndScan = 0x03,
 }
 
-impl Into<AdvFilterPolicy> for AdvertisingFilterPolicy {
-    fn into(self) -> AdvFilterPolicy {
-        match self {
-            Self::AllowConnectionAndScan => AdvFilterPolicy::Unfiltered,
-            Self::AllowConnectionWhiteListScan => AdvFilterPolicy::FilterScan,
-            Self::WhiteListConnectionAllowScan => AdvFilterPolicy::FilterConn,
-            Self::WhiteListConnectionAndScan => AdvFilterPolicy::FilterConnAndScan,
+impl From<AdvertisingFilterPolicy> for AdvFilterPolicy {
+    fn from(val: AdvertisingFilterPolicy) -> Self {
+        match val {
+            AdvertisingFilterPolicy::AllowConnectionAndScan => AdvFilterPolicy::Unfiltered,
+            AdvertisingFilterPolicy::AllowConnectionWhiteListScan => AdvFilterPolicy::FilterScan,
+            AdvertisingFilterPolicy::WhiteListConnectionAllowScan => AdvFilterPolicy::FilterConn,
+            AdvertisingFilterPolicy::WhiteListConnectionAndScan => {
+                AdvFilterPolicy::FilterConnAndScan
+            }
         }
     }
 }
@@ -2480,9 +2482,9 @@ pub enum ScanType {
     Active = 0x01,
 }
 
-impl Into<LeScanKind> for ScanType {
-    fn into(self) -> LeScanKind {
-        match self {
+impl From<ScanType> for LeScanKind {
+    fn from(val: ScanType) -> Self {
+        match val {
             ScanType::Active => LeScanKind::Active,
             ScanType::Passive => LeScanKind::Passive,
         }
@@ -2518,13 +2520,13 @@ pub enum ScanFilterPolicy {
     WhiteListAddressedToThisDevice = 0x03,
 }
 
-impl Into<ScanningFilterPolicy> for ScanFilterPolicy {
-    fn into(self) -> ScanningFilterPolicy {
-        match self {
-            Self::AcceptAll => ScanningFilterPolicy::BasicUnfiltered,
-            Self::WhiteList => ScanningFilterPolicy::BasicFiltered,
-            Self::AddressedToThisDevice => ScanningFilterPolicy::ExtUnfiltered,
-            Self::WhiteListAddressedToThisDevice => ScanningFilterPolicy::ExtFiltered,
+impl From<ScanFilterPolicy> for ScanningFilterPolicy {
+    fn from(val: ScanFilterPolicy) -> Self {
+        match val {
+            ScanFilterPolicy::AcceptAll => ScanningFilterPolicy::BasicUnfiltered,
+            ScanFilterPolicy::WhiteList => ScanningFilterPolicy::BasicFiltered,
+            ScanFilterPolicy::AddressedToThisDevice => ScanningFilterPolicy::ExtUnfiltered,
+            ScanFilterPolicy::WhiteListAddressedToThisDevice => ScanningFilterPolicy::ExtFiltered,
         }
     }
 }
@@ -2631,24 +2633,28 @@ pub enum PeerAddrType {
     RandomIdentityAddress(crate::BdAddr),
 }
 
-impl Into<bt_hci::param::BdAddr> for PeerAddrType {
-    fn into(self) -> bt_hci::param::BdAddr {
-        match self {
-            Self::PublicDeviceAddress(addr) => bt_hci::param::BdAddr(addr.0),
-            Self::RandomDeviceAddress(addr) => bt_hci::param::BdAddr(addr.0),
-            Self::PublicIdentityAddress(addr) => bt_hci::param::BdAddr(addr.0),
-            Self::RandomIdentityAddress(addr) => bt_hci::param::BdAddr(addr.0),
+impl From<PeerAddrType> for bt_hci::param::BdAddr {
+    fn from(val: PeerAddrType) -> Self {
+        match val {
+            PeerAddrType::PublicDeviceAddress(addr) => bt_hci::param::BdAddr(addr.0),
+            PeerAddrType::RandomDeviceAddress(addr) => bt_hci::param::BdAddr(addr.0),
+            PeerAddrType::PublicIdentityAddress(addr) => bt_hci::param::BdAddr(addr.0),
+            PeerAddrType::RandomIdentityAddress(addr) => bt_hci::param::BdAddr(addr.0),
         }
     }
 }
 
-impl Into<bt_hci::param::AddrKind> for PeerAddrType {
-    fn into(self) -> bt_hci::param::AddrKind {
-        match self {
-            Self::PublicDeviceAddress(_) => bt_hci::param::AddrKind::PUBLIC,
-            Self::RandomDeviceAddress(_) => bt_hci::param::AddrKind::RANDOM,
-            Self::PublicIdentityAddress(_) => bt_hci::param::AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC,
-            Self::RandomIdentityAddress(_) => bt_hci::param::AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM,
+impl From<PeerAddrType> for bt_hci::param::AddrKind {
+    fn from(val: PeerAddrType) -> Self {
+        match val {
+            PeerAddrType::PublicDeviceAddress(_) => bt_hci::param::AddrKind::PUBLIC,
+            PeerAddrType::RandomDeviceAddress(_) => bt_hci::param::AddrKind::RANDOM,
+            PeerAddrType::PublicIdentityAddress(_) => {
+                bt_hci::param::AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC
+            }
+            PeerAddrType::RandomIdentityAddress(_) => {
+                bt_hci::param::AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM
+            }
         }
     }
 }

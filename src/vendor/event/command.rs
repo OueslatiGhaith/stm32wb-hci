@@ -790,7 +790,7 @@ impl TryFrom<&[u8]> for GapInit {
     type Error = crate::event::Error;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_gap_init(&bytes)
+        to_gap_init(bytes)
     }
 }
 

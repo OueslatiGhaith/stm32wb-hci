@@ -541,9 +541,9 @@ impl From<ConnectionHandle> for ConnHandle {
     }
 }
 
-impl Into<ConnectionHandle> for ConnHandle {
-    fn into(self) -> ConnectionHandle {
-        ConnectionHandle(self.0)
+impl From<ConnHandle> for ConnectionHandle {
+    fn from(val: ConnHandle) -> Self {
+        ConnectionHandle(val.0)
     }
 }
 
@@ -566,9 +566,9 @@ impl From<bt_hci::param::BdAddr> for BdAddr {
     }
 }
 
-impl Into<bt_hci::param::BdAddr> for BdAddr {
-    fn into(self) -> bt_hci::param::BdAddr {
-        bt_hci::param::BdAddr(self.0)
+impl From<BdAddr> for bt_hci::param::BdAddr {
+    fn from(val: BdAddr) -> Self {
+        bt_hci::param::BdAddr(val.0)
     }
 }
 
@@ -583,20 +583,20 @@ pub enum BdAddrType {
     Random(BdAddr),
 }
 
-impl Into<bt_hci::param::AddrKind> for BdAddrType {
-    fn into(self) -> bt_hci::param::AddrKind {
-        match self {
-            Self::Public(_) => AddrKind::PUBLIC,
-            Self::Random(_) => AddrKind::RANDOM,
+impl From<BdAddrType> for bt_hci::param::AddrKind {
+    fn from(val: BdAddrType) -> Self {
+        match val {
+            BdAddrType::Public(_) => AddrKind::PUBLIC,
+            BdAddrType::Random(_) => AddrKind::RANDOM,
         }
     }
 }
 
-impl Into<bt_hci::param::BdAddr> for BdAddrType {
-    fn into(self) -> bt_hci::param::BdAddr {
-        match self {
-            Self::Public(addr) => addr,
-            Self::Random(addr) => addr,
+impl From<BdAddrType> for bt_hci::param::BdAddr {
+    fn from(val: BdAddrType) -> Self {
+        match val {
+            BdAddrType::Public(addr) => addr,
+            BdAddrType::Random(addr) => addr,
         }
         .into()
     }
@@ -821,8 +821,8 @@ impl From<ChannelMap> for ChannelClassification {
     }
 }
 
-impl Into<ChannelMap> for ChannelClassification {
-    fn into(self) -> ChannelMap {
-        ChannelMap(self.0)
+impl From<ChannelClassification> for ChannelMap {
+    fn from(val: ChannelClassification) -> Self {
+        ChannelMap(val.0)
     }
 }

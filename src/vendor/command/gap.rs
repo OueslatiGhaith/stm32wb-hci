@@ -1376,13 +1376,13 @@ where
         bytes[1] = privacy_enabled as u8;
         bytes[2] = dev_name_characteristic_len;
 
-        Ok(CmdGapInit::new((&bytes[..]).into())
+        CmdGapInit::new((&bytes[..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn set_nonconnectable(
@@ -1400,7 +1400,7 @@ where
         GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))
+            .map_err(Error::from)
     }
 
     hci_impl_validate_params!(
@@ -1454,13 +1454,13 @@ where
 
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        Ok(GapGetSecurityLevel::new((&bytes[..]).into())
+        GapGetSecurityLevel::new((&bytes[..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn set_event_mask(&self, flags: EventFlags) -> Result<(), Error> {
@@ -1580,13 +1580,13 @@ where
         &self,
         addr: crate::BdAddr,
     ) -> Result<GapResolvePrivateAddress, Error> {
-        Ok(CmdGapResolvePrivateAddress::new((&addr.0[..]).into())
+        CmdGapResolvePrivateAddress::new((&addr.0[..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     hci_impl_validate_variable_length_params!(
@@ -1602,13 +1602,13 @@ where
     );
 
     async fn get_bonded_devices(&self) -> Result<GapBondedDevices, Error> {
-        Ok(GapGetBondedDevices::new()
+        GapGetBondedDevices::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|e| Error::from(e))?)
+            .map_err(Error::from)
     }
 
     async fn is_device_bonded(&self, addr: crate::host::PeerAddrType) -> Result<(), Error> {
@@ -1644,13 +1644,13 @@ where
     }
 
     async fn get_oob_data(&self, oob_data_type: OobDataType) -> Result<[u8; 26], Error> {
-        Ok(GapGetOobData::new((&[oob_data_type as u8][..]).into())
+        GapGetOobData::new((&[oob_data_type as u8][..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
             .buf()
             .try_into()
-            .map_err(|_| Error::IoError)?)
+            .map_err(|_| Error::IoError)
     }
 
     hci_impl_params!(set_oob_data, SetOobDataParameters, GapSetOobData);
