@@ -1,3 +1,5 @@
+use core::ops::Add;
+
 use bt_hci::{FromHciBytes, ReadHci, WriteHci};
 
 macro_rules! hci_impl_params {
@@ -280,7 +282,7 @@ impl<'de, const MAX_LEN: usize> FromHciBytes<'de> for ReturnBuffer<MAX_LEN> {
 
             buf[1..][..data.len()].copy_from_slice(data);
 
-            Ok((Self(buf, data.len()), &[]))
+            Ok((Self(buf, data.len().add(1)), &[]))
         } else {
             Err(bt_hci::FromHciBytesError::InvalidSize)
         }
