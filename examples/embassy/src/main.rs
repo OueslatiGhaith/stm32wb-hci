@@ -89,11 +89,13 @@ async fn main(spawner: Spawner) {
             }
         },
         async {
+            defmt::info!("hci: reset");
             // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
             // after this line are normal stm32wb-hci host/vendor commands, not transport code.
             let response = ble.reset().await;
             defmt::info!("{}", response);
 
+            defmt::info!("hci: write config data");
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
             let response = ble
                 .write_config_data(
@@ -103,9 +105,11 @@ async fn main(spawner: Spawner) {
                 .await;
             defmt::info!("{}", response);
 
+            defmt::info!("hci: init gatt");
             let response = ble.init_gatt().await;
             defmt::info!("{}", response);
 
+            defmt::info!("hci: init gap");
             let response = ble
                 .init_gap(
                     stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
