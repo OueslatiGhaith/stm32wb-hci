@@ -1,5 +1,6 @@
 //! Types related to the LE advertising interval.
 
+use bt_hci::param::AdvKind;
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
@@ -21,7 +22,7 @@ use core::time::Duration;
 #[derive(Clone, Debug)]
 pub struct AdvertisingInterval {
     // The first field is the min; the second is the max
-    interval: (Duration, Duration),
+    pub interval: (Duration, Duration),
     _advertising_type: AdvertisingType,
 }
 
@@ -166,4 +167,16 @@ pub enum AdvertisingType {
     NonConnectableUndirected = 0x03,
     /// Connectable low duty cycle directed advertising
     ConnectableDirectedLowDutyCycle = 0x04,
+}
+
+impl Into<AdvKind> for AdvertisingType {
+    fn into(self) -> AdvKind {
+        match self {
+            Self::ConnectableUndirected => AdvKind::AdvInd,
+            Self::ConnectableDirectedHighDutyCycle => AdvKind::AdvDirectIndHigh,
+            Self::ScannableUndirected => AdvKind::AdvScanInd,
+            Self::NonConnectableUndirected => AdvKind::AdvNonconnInd,
+            Self::ConnectableDirectedLowDutyCycle => AdvKind::AdvDirectIndLow,
+        }
+    }
 }

@@ -10,7 +10,7 @@ use core::time::Duration;
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExpectedConnectionLength {
-    range: (Duration, Duration),
+    pub range: (Duration, Duration),
 }
 
 impl ExpectedConnectionLength {

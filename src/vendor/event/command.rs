@@ -482,9 +482,6 @@ fn to_status(bytes: &[u8]) -> Result<crate::Status, crate::event::Error> {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalFirmwareRevision {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// The firmware revision number.
     pub revision: u16,
 }
@@ -493,9 +490,16 @@ fn to_hal_firmware_revision(bytes: &[u8]) -> Result<HalFirmwareRevision, crate::
     require_len!(bytes, 3);
 
     Ok(HalFirmwareRevision {
-        status: to_status(bytes)?,
         revision: LittleEndian::read_u16(&bytes[1..]),
     })
+}
+
+impl TryFrom<&[u8]> for HalFirmwareRevision {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_firmware_revision(bytes)
+    }
 }
 
 /// Parameters returned by the [HAL Read Config Data](crate::vendor::command::hal::HalCommands::read_config_data)
@@ -503,9 +507,6 @@ fn to_hal_firmware_revision(bytes: &[u8]) -> Result<HalFirmwareRevision, crate::
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalConfigData {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Requested value.
     ///
     /// The value is requested by offset, and distinguished upon return by length only. This means
@@ -548,9 +549,16 @@ pub enum HalConfigParameter {
 fn to_hal_config_data(bytes: &[u8]) -> Result<HalConfigData, crate::event::Error> {
     require_len_at_least!(bytes, 2);
     Ok(HalConfigData {
-        status: to_status(bytes)?,
         value: to_hal_config_parameter(&bytes[1..])?,
     })
+}
+
+impl TryFrom<&[u8]> for HalConfigData {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_config_data(bytes)
+    }
 }
 
 fn to_hal_config_parameter(bytes: &[u8]) -> Result<HalConfigParameter, crate::event::Error> {
@@ -584,9 +592,6 @@ fn to_hal_config_parameter(bytes: &[u8]) -> Result<HalConfigParameter, crate::ev
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalTxTestPacketCount {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Number of packets sent during the last Direct TX test.
     pub packet_count: u32,
 }
@@ -594,18 +599,22 @@ pub struct HalTxTestPacketCount {
 fn to_hal_tx_test_packet_count(bytes: &[u8]) -> Result<HalTxTestPacketCount, crate::event::Error> {
     require_len!(bytes, 5);
     Ok(HalTxTestPacketCount {
-        status: to_status(bytes)?,
         packet_count: LittleEndian::read_u32(&bytes[1..]),
     })
+}
+
+impl TryFrom<&[u8]> for HalTxTestPacketCount {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_tx_test_packet_count(bytes)
+    }
 }
 
 /// Parameters returned by the [HAL Get Link Status](crate::vendor::command::hal::HalCommands::get_link_status) command.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalLinkStatus {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// State of the client connections.
     pub clients: [ClientStatus; 8],
 }
@@ -665,7 +674,6 @@ fn to_hal_link_status(bytes: &[u8]) -> Result<HalLinkStatus, crate::event::Error
     require_len!(bytes, 25);
 
     let mut status = HalLinkStatus {
-        status: to_status(&bytes[0..])?,
         clients: [ClientStatus {
             state: LinkState::Idle,
             conn_handle: crate::ConnectionHandle(0),
@@ -684,14 +692,19 @@ fn to_hal_link_status(bytes: &[u8]) -> Result<HalLinkStatus, crate::event::Error
     Ok(status)
 }
 
+impl TryFrom<&[u8]> for HalLinkStatus {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_link_status(bytes)
+    }
+}
+
 /// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalCommands::get_anchor_period)
 /// command.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalAnchorPeriod {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Duration between the beginnings of sniff anchor points.
     pub anchor_interval: Duration,
 
@@ -703,12 +716,19 @@ fn to_hal_anchor_period(bytes: &[u8]) -> Result<HalAnchorPeriod, crate::event::E
     require_len!(bytes, 9);
 
     Ok(HalAnchorPeriod {
-        status: to_status(bytes)?,
         anchor_interval: Duration::from_micros(
             625 * u64::from(LittleEndian::read_u32(&bytes[1..5])),
         ),
         max_slot: Duration::from_micros(625 * u64::from(LittleEndian::read_u32(&bytes[5..9]))),
     })
+}
+
+impl TryFrom<&[u8]> for HalAnchorPeriod {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_anchor_period(bytes)
+    }
 }
 
 /// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
@@ -725,26 +745,27 @@ pub struct HalPmDebugInfo {
 }
 
 fn to_hal_pm_debug_info(bytes: &[u8]) -> Result<HalPmDebugInfo, crate::event::Error> {
-    require_len!(bytes, 3);
+    require_len!(bytes, 4);
 
     Ok(HalPmDebugInfo {
-        tx: bytes[0],
-        rx: bytes[1],
-        mblocks: bytes[2],
+        tx: bytes[1],
+        rx: bytes[2],
+        mblocks: bytes[3],
     })
+}
+
+impl TryFrom<&[u8]> for HalPmDebugInfo {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hal_pm_debug_info(bytes)
+    }
 }
 
 /// Parameters returned by the [GAP Init](crate::vendor::command::gap::GapCommands::init) command.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapInit {
-    /// Did the command fail, and if so, how?
-    ///
-    /// Should be one of:
-    /// - [Success](crate::Status::Success)
-    /// - [InvalidParameters](crate::Status::InvalidParameters)
-    pub status: crate::Status,
-
     /// Handle for the GAP service
     pub service_handle: AttributeHandle,
 
@@ -759,11 +780,18 @@ fn to_gap_init(bytes: &[u8]) -> Result<GapInit, crate::event::Error> {
     require_len!(bytes, 7);
 
     Ok(GapInit {
-        status: to_status(bytes)?,
         service_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..])),
         dev_name_handle: AttributeHandle(LittleEndian::read_u16(&bytes[3..])),
         appearance_handle: AttributeHandle(LittleEndian::read_u16(&bytes[5..])),
     })
+}
+
+impl TryFrom<&[u8]> for GapInit {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gap_init(&bytes)
+    }
 }
 
 /// Parameters returned by the [GAP Get Security Level](crate::vendor::command::gap::GapCommands::get_security_level)
@@ -771,9 +799,6 @@ fn to_gap_init(bytes: &[u8]) -> Result<GapInit, crate::event::Error> {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapSecurityLevel {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Is MITM (man-in-the-middle) protection required?
     pub mitm_protection_required: bool,
 
@@ -785,6 +810,14 @@ pub struct GapSecurityLevel {
 
     /// Is a pass key required, and if so, how is it generated?
     pub pass_key_required: PassKeyRequirement,
+}
+
+impl TryFrom<&[u8]> for GapSecurityLevel {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gap_security_level(bytes)
+    }
 }
 
 /// Options for pass key generation.
@@ -824,7 +857,6 @@ fn to_gap_security_level(bytes: &[u8]) -> Result<GapSecurityLevel, crate::event:
     require_len!(bytes, 5);
 
     Ok(GapSecurityLevel {
-        status: to_status(&bytes[0..])?,
         mitm_protection_required: to_boolean(bytes[1]).map_err(crate::event::Error::Vendor)?,
         bonding_required: to_boolean(bytes[2]).map_err(crate::event::Error::Vendor)?,
         out_of_band_data_present: to_boolean(bytes[3]).map_err(crate::event::Error::Vendor)?,
@@ -837,12 +869,17 @@ fn to_gap_security_level(bytes: &[u8]) -> Result<GapSecurityLevel, crate::event:
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapResolvePrivateAddress {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// If the address was successfully resolved, the peer address is returned.  This value is
     /// `None` if the address could not be resolved.
     pub bd_addr: Option<crate::BdAddr>,
+}
+
+impl TryFrom<&[u8]> for GapResolvePrivateAddress {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gap_resolve_private_address(bytes)
+    }
 }
 
 fn to_gap_resolve_private_address(
@@ -856,14 +893,10 @@ fn to_gap_resolve_private_address(
         addr.copy_from_slice(&bytes[1..7]);
 
         Ok(GapResolvePrivateAddress {
-            status,
             bd_addr: Some(crate::BdAddr(addr)),
         })
     } else {
-        Ok(GapResolvePrivateAddress {
-            status,
-            bd_addr: None,
-        })
+        Ok(GapResolvePrivateAddress { bd_addr: None })
     }
 }
 
@@ -872,12 +905,17 @@ fn to_gap_resolve_private_address(
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapBondedDevices {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     // Number of peer addresses in the event, and a buffer that can hold all of the addresses.
     address_count: usize,
     address_buffer: [crate::BdAddrType; MAX_ADDRESSES],
+}
+
+impl TryFrom<&[u8]> for GapBondedDevices {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gap_bonded_devices(bytes)
+    }
 }
 
 // Max packet size (255 bytes) less non-address data (4 bytes) divided by peer address size (7):
@@ -927,13 +965,11 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
             }
 
             Ok(GapBondedDevices {
-                status,
                 address_count,
                 address_buffer,
             })
         }
         _ => Ok(GapBondedDevices {
-            status,
             address_count: 0,
             address_buffer: [crate::BdAddrType::Public(crate::BdAddr([0; 6])); MAX_ADDRESSES],
         }),
@@ -945,9 +981,6 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattService {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the Service
     ///
     /// When this service is added to the server, a handle is allocated by the server to this
@@ -957,11 +990,18 @@ pub struct GattService {
     pub service_handle: AttributeHandle,
 }
 
+impl TryFrom<&[u8]> for GattService {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_service(bytes)
+    }
+}
+
 fn to_gatt_service(bytes: &[u8]) -> Result<GattService, crate::event::Error> {
     require_len!(bytes, 3);
 
     Ok(GattService {
-        status: to_status(bytes)?,
         service_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
 }
@@ -971,9 +1011,6 @@ fn to_gatt_service(bytes: &[u8]) -> Result<GattService, crate::event::Error> {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattCharacteristic {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the characteristic.
     pub characteristic_handle: AttributeHandle,
 }
@@ -982,9 +1019,16 @@ fn to_gatt_characteristic(bytes: &[u8]) -> Result<GattCharacteristic, crate::eve
     require_len!(bytes, 3);
 
     Ok(GattCharacteristic {
-        status: to_status(bytes)?,
         characteristic_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
+}
+
+impl TryFrom<&[u8]> for GattCharacteristic {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_characteristic(bytes)
+    }
 }
 
 /// Parameters returned by the
@@ -992,9 +1036,6 @@ fn to_gatt_characteristic(bytes: &[u8]) -> Result<GattCharacteristic, crate::eve
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattCharacteristicDescriptor {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     /// Handle of the characteristic.
     pub descriptor_handle: AttributeHandle,
 }
@@ -1005,9 +1046,16 @@ fn to_gatt_characteristic_descriptor(
     require_len!(bytes, 3);
 
     Ok(GattCharacteristicDescriptor {
-        status: to_status(bytes)?,
         descriptor_handle: AttributeHandle(LittleEndian::read_u16(&bytes[1..3])),
     })
+}
+
+impl TryFrom<&[u8]> for GattCharacteristicDescriptor {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_characteristic_descriptor(bytes)
+    }
 }
 
 /// Parameters returned by the [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value)
@@ -1015,9 +1063,6 @@ fn to_gatt_characteristic_descriptor(
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GattHandleValue {
-    /// Did the command fail, and if so, how?
-    pub status: crate::Status,
-
     value_buf: [u8; GattHandleValue::MAX_VALUE_BUF],
     value_len: usize,
 }
@@ -1025,7 +1070,6 @@ pub struct GattHandleValue {
 impl Debug for GattHandleValue {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "{{")?;
-        write!(f, "status: {:?}; value: {{", self.status)?;
         for addr in self.value().iter() {
             write!(f, "{:?}, ", addr)?;
         }
@@ -1048,16 +1092,22 @@ impl GattHandleValue {
 fn to_gatt_handle_value(bytes: &[u8]) -> Result<GattHandleValue, crate::event::Error> {
     require_len_at_least!(bytes, 3);
 
-    let status = to_status(bytes)?;
     let value_len = LittleEndian::read_u16(&bytes[1..3]) as usize;
     require_len!(bytes, 3 + value_len);
 
     let mut handle_value = GattHandleValue {
-        status,
         value_buf: [0; GattHandleValue::MAX_VALUE_BUF],
         value_len,
     };
     handle_value.value_buf[..value_len].copy_from_slice(&bytes[3..]);
 
     Ok(handle_value)
+}
+
+impl TryFrom<&[u8]> for GattHandleValue {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_gatt_handle_value(bytes)
+    }
 }

@@ -91,6 +91,7 @@ mod opcode;
 pub mod types;
 pub mod vendor;
 
+use bt_hci::param::{AddrKind, ChannelMap, ConnHandle, DisconnectReason};
 pub use event::Event;
 pub use opcode::Opcode;
 
@@ -331,6 +332,7 @@ pub enum Status {
 }
 
 /// Wrapper enum for errors converting a u8 into a [`Status`].
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BadStatusError {
     /// The value does not map to a [`Status`].
@@ -498,6 +500,31 @@ impl core::convert::From<Status> for u8 {
     }
 }
 
+impl TryFrom<Status> for DisconnectReason {
+    type Error = host::Error;
+
+    fn try_from(reason: Status) -> Result<Self, Self::Error> {
+        match reason {
+            Status::AuthFailure => Ok(DisconnectReason::AuthenticationFailure),
+            Status::RemoteTerminationByUser => Ok(DisconnectReason::RemoteUserTerminatedConn),
+            Status::RemoteTerminationLowResources => {
+                Ok(DisconnectReason::RemoteDeviceTerminatedConnLowResources)
+            }
+            Status::RemoteTerminationPowerOff => {
+                Ok(DisconnectReason::RemoteDeviceTerminatedConnPowerOff)
+            }
+            Status::UnsupportedRemoteFeature => Ok(DisconnectReason::UnsupportedRemoteFeature),
+            Status::PairingWithUnitKeyNotSupported => {
+                Ok(DisconnectReason::PairingWithUnitKeyNotSupported)
+            }
+            Status::UnacceptableConnectionParameters => {
+                Ok(DisconnectReason::UnacceptableConnParameters)
+            }
+            _ => Err(host::Error::BadDisconnectionReason(reason)),
+        }
+    }
+}
+
 /// Newtype for a connection handle.
 ///
 /// Values:
@@ -507,6 +534,18 @@ impl core::convert::From<Status> for u8 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionHandle(pub u16);
+
+impl From<ConnectionHandle> for ConnHandle {
+    fn from(handle: ConnectionHandle) -> Self {
+        ConnHandle(handle.0)
+    }
+}
+
+impl Into<ConnectionHandle> for ConnHandle {
+    fn into(self) -> ConnectionHandle {
+        ConnectionHandle(self.0)
+    }
+}
 
 /// Newtype for an advertising handle.
 ///
@@ -521,6 +560,18 @@ pub struct AdvertisingHandle(pub u8);
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BdAddr(pub [u8; 6]);
 
+impl From<bt_hci::param::BdAddr> for BdAddr {
+    fn from(addr: bt_hci::param::BdAddr) -> Self {
+        BdAddr(addr.0)
+    }
+}
+
+impl Into<bt_hci::param::BdAddr> for BdAddr {
+    fn into(self) -> bt_hci::param::BdAddr {
+        bt_hci::param::BdAddr(self.0)
+    }
+}
+
 /// Potential values for BDADDR
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -530,6 +581,25 @@ pub enum BdAddrType {
 
     /// Random address.
     Random(BdAddr),
+}
+
+impl Into<bt_hci::param::AddrKind> for BdAddrType {
+    fn into(self) -> bt_hci::param::AddrKind {
+        match self {
+            Self::Public(_) => AddrKind::PUBLIC,
+            Self::Random(_) => AddrKind::RANDOM,
+        }
+    }
+}
+
+impl Into<bt_hci::param::BdAddr> for BdAddrType {
+    fn into(self) -> bt_hci::param::BdAddr {
+        match self {
+            Self::Public(addr) => addr,
+            Self::Random(addr) => addr,
+        }
+        .into()
+    }
 }
 
 impl BdAddrType {
@@ -743,4 +813,16 @@ bitflag_array! {
     const CH_35 = 4, 1 << 3;
     /// Channel 36 classification not known.
     const CH_36 = 4, 1 << 4;
+}
+
+impl From<ChannelMap> for ChannelClassification {
+    fn from(map: ChannelMap) -> Self {
+        Self(map.0)
+    }
+}
+
+impl Into<ChannelMap> for ChannelClassification {
+    fn into(self) -> ChannelMap {
+        ChannelMap(self.0)
+    }
 }

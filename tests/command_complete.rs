@@ -113,7 +113,6 @@ fn read_tx_power_level() {
             assert_eq!(event.num_hci_command_packets, 6);
             match event.return_params {
                 ReturnParameters::ReadTxPowerLevel(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.conn_handle, hci::ConnectionHandle(0x0201));
                     assert_eq!(params.tx_power_level_dbm, 0x03);
                 }
@@ -134,7 +133,6 @@ fn read_local_version_information() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::ReadLocalVersionInformation(local_version_info) => {
-                    assert_eq!(local_version_info.status, hci::Status::Success);
                     assert_eq!(local_version_info.hci_version, 2);
                     assert_eq!(local_version_info.hci_revision, 0x0403);
                     assert_eq!(local_version_info.lmp_version, 5);
@@ -165,7 +163,6 @@ fn read_local_supported_commands() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::ReadLocalSupportedCommands(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(
                         params.supported_commands,
                         CommandFlags::INQUIRY
@@ -207,9 +204,11 @@ fn read_local_supported_commands() {
                             | CommandFlags::LE_READ_PERIODIC_ADVERTISER_LIST_SIZE_COMMAND
                     );
                     assert!(params.supported_commands.is_set(CommandFlags::INQUIRY));
-                    assert!(params
-                        .supported_commands
-                        .contains(CommandFlags::INQUIRY | CommandFlags::REJECT_CONNECTION_REQUEST));
+                    assert!(
+                        params.supported_commands.contains(
+                            CommandFlags::INQUIRY | CommandFlags::REJECT_CONNECTION_REQUEST
+                        )
+                    );
                 }
                 other => panic!(
                     "Did not get Read Supported Commands return params: {:?}",
@@ -246,7 +245,6 @@ fn read_local_supported_features() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::ReadLocalSupportedFeatures(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(
                         params.supported_features,
                         LmpFeatures::THREE_SLOT_PACKETS
@@ -279,7 +277,6 @@ fn read_bd_addr() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::ReadBdAddr(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(
                         params.bd_addr,
                         hci::BdAddr([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
@@ -300,7 +297,6 @@ fn read_rssi() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::ReadRssi(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.conn_handle, hci::ConnectionHandle(0x0201));
                     assert_eq!(params.rssi, 0x03);
                 }
@@ -319,7 +315,6 @@ fn le_read_buffer_size() {
             assert_eq!(event.num_hci_command_packets, 2);
             match event.return_params {
                 ReturnParameters::LeReadBufferSize(event) => {
-                    assert_eq!(event.status, hci::Status::Success);
                     assert_eq!(event.data_packet_length, 0x0201);
                     assert_eq!(event.data_packet_count, 0x03);
                 }
@@ -340,7 +335,6 @@ fn le_read_local_supported_features() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeReadLocalSupportedFeatures(event) => {
-                    assert_eq!(event.status, hci::Status::Success);
                     assert_eq!(
                         event.supported_features,
                         LeFeatures::EXTENDED_REJECT_INDICATION
@@ -363,7 +357,6 @@ fn le_read_advertising_channel_tx_power() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeReadAdvertisingChannelTxPower(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.power, 0x01);
                 }
                 other => panic!(
@@ -407,7 +400,6 @@ fn le_read_channel_map() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeReadChannelMap(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.conn_handle, hci::ConnectionHandle(0x0201));
                     assert_eq!(
                         params.channel_map,
@@ -456,7 +448,6 @@ fn le_encrypt() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeEncrypt(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(
                         params.encrypted_data.0,
                         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
@@ -479,7 +470,6 @@ fn le_rand() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeRand(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.random_number, 0x0807_0605_0403_0201);
                 }
                 other => panic!("Did not get LE Rand return params: {:?}", other),
@@ -497,7 +487,6 @@ fn le_long_term_key_request_reply() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeLongTermKeyRequestReply(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.conn_handle, hci::ConnectionHandle(0x0201));
                 }
                 other => panic!(
@@ -518,7 +507,6 @@ fn le_long_term_key_request_negative_reply() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeLongTermKeyRequestNegativeReply(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.conn_handle, hci::ConnectionHandle(0x0201));
                 }
                 other => panic!(
@@ -541,7 +529,6 @@ fn le_read_supported_states() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeReadSupportedStates(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(
                         params.supported_states,
                         LeStates::NON_CONNECTABLE_ADVERTISING
@@ -583,7 +570,6 @@ fn le_test_end() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::LeTestEnd(params) => {
-                    assert_eq!(params.status, hci::Status::Success);
                     assert_eq!(params.number_of_packets, 0x0201);
                 }
                 other => panic!("Did not get LE Test End return params: {:?}", other),
@@ -601,9 +587,7 @@ fn vendor_command() {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::Vendor(params) => match params {
-                    VendorReturnParameters::HalGetFirmwareRevision(rev) => {
-                        assert_eq!(rev.status, hci::Status::Success);
-                    }
+                    VendorReturnParameters::HalGetFirmwareRevision(_rev) => {}
                     other => panic!(
                         "Did not get a Get Firmware Revision return params: {:?}",
                         other

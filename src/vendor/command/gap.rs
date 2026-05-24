@@ -3,19 +3,22 @@
 extern crate byteorder;
 
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
-pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
-use crate::{AdvertisingHandle, ConnectionHandle};
-pub use crate::{BdAddr, BdAddrType};
-use crate::{
-    WritableController,
-    types::extended_advertisement::{
-        AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
-    },
+use crate::types::extended_advertisement::{
+    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
 };
+pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
+use crate::vendor::command::{ParamBuffer, ReturnBuffer};
+use crate::vendor::event::command::{
+    GapBondedDevices, GapInit, GapResolvePrivateAddress, GapSecurityLevel,
+};
+use crate::{AdvertisingHandle, BadStatusError, ConnectionHandle, Status};
+pub use crate::{BdAddr, BdAddrType};
 use crate::{
     host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
     types::extended_advertisement::AdvertisingMode,
 };
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
@@ -32,7 +35,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetNonDiscoverable) event
     /// is generated.
-    async fn gap_set_nondiscoverable(&mut self);
+    async fn gap_set_nondiscoverable(&self) -> Result<(), Error>;
 
     /// Set the device in limited discoverable mode.
     ///
@@ -63,7 +66,7 @@ pub trait GapCommands {
     /// (i.e. limited discovery period has elapsed), the controller generates an
     /// [GAP Limited Discoverable Complete](crate::vendor::event::VendorEvent::GapLimitedDiscoverableTimeout) event.
     async fn set_limited_discoverable(
-        &mut self,
+        &self,
         params: &DiscoverableParameters<'_, '_>,
     ) -> Result<(), Error>;
 
@@ -93,10 +96,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetDiscoverable) event is
     /// generated.
-    async fn set_discoverable(
-        &mut self,
-        params: &DiscoverableParameters<'_, '_>,
-    ) -> Result<(), Error>;
+    async fn set_discoverable(&self, params: &DiscoverableParameters<'_, '_>) -> Result<(), Error>;
 
     /// Set the device in direct connectable mode.
     ///
@@ -130,7 +130,7 @@ pub trait GapCommands {
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetDirectConnectable) event
     /// is generated.
     async fn set_direct_connectable(
-        &mut self,
+        &self,
         params: &DirectConnectableParameters,
     ) -> Result<(), Error>;
 
@@ -146,7 +146,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetIoCapability) event is
     /// generated.
-    async fn set_io_capability(&mut self, capability: IoCapability);
+    async fn set_io_capability(&self, capability: IoCapability) -> Result<(), Error>;
 
     /// Set the authentication requirements for the device.
     ///
@@ -169,7 +169,7 @@ pub trait GapCommands {
     /// - If [`fixed_pin`](AuthenticationRequirements::fixed_pin) is [Request](Pin::Requested), then
     ///   a [GAP Pass Key](crate::vendor::event::VendorEvent::GapPassKeyRequest) event is generated.
     async fn set_authentication_requirement(
-        &mut self,
+        &self,
         requirements: &AuthenticationRequirements,
     ) -> Result<(), Error>;
 
@@ -190,10 +190,10 @@ pub trait GapCommands {
     ///   [GAP Authorization Request](crate::vendor::event::VendorEvent::GapAuthorizationRequest)
     ///   event is generated.
     async fn set_authorization_requirement(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         authorization_required: bool,
-    );
+    ) -> Result<(), Error>;
 
     /// This command should be send by the host in response to the
     /// [GAP Pass Key Request](crate::vendor::event::VendorEvent::GapPassKeyRequest) event.
@@ -212,7 +212,7 @@ pub trait GapCommands {
     /// - When the pairing process completes, it will generate a
     ///   [PairingComplete](crate::vendor::event::VendorEvent::GapPairingComplete) event.
     async fn pass_key_response(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         pin: u32,
     ) -> Result<(), Error>;
@@ -229,10 +229,10 @@ pub trait GapCommands {
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapAuthorizationResponse)
     /// event is generated.
     async fn authorization_response(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         authorization: Authorization,
-    );
+    ) -> Result<(), Error>;
 
     /// Register the GAP service with the GATT.
     ///
@@ -247,17 +247,22 @@ pub trait GapCommands {
     /// # Generated events
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapInit) event is generated.
-    async fn init(&mut self, role: Role, privacy_enabled: bool, dev_name_characteristic_len: u8);
+    async fn init(
+        &self,
+        role: Role,
+        privacy_enabled: bool,
+        dev_name_characteristic_len: u8,
+    ) -> Result<GapInit, Error>;
 
     /// Register the GAP service with the GATT.
     ///
     /// This function exists to prevent name conflicts with other Commands traits' init methods.
     async fn init_gap(
-        &mut self,
+        &self,
         role: Role,
         privacy_enabled: bool,
         dev_name_characteristic_len: u8,
-    ) {
+    ) -> Result<GapInit, Error> {
         self.init(role, privacy_enabled, dev_name_characteristic_len)
             .await
     }
@@ -281,9 +286,9 @@ pub trait GapCommands {
     ///
     /// # Generated events
     ///
-    /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapInit) event is generated.
+    /// A [Command Complete](crate::Status) event is generated.
     async fn set_nonconnectable(
-        &mut self,
+        &self,
         advertising_type: AdvertisingType,
         address_type: AddressType,
     ) -> Result<(), Error>;
@@ -306,7 +311,7 @@ pub trait GapCommands {
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetUndirectedConnectable)
     /// event is generated.
     async fn set_undirected_connectable(
-        &mut self,
+        &self,
         params: &UndirectedConnectableParameters,
     ) -> Result<(), Error>;
 
@@ -324,7 +329,10 @@ pub trait GapCommands {
     /// successfully transmitted to the master, a
     /// [GAP Peripheral Security Initiated](crate::vendor::event::VendorEvent::GapPeripheralSecurityInitiated)
     /// vendor-specific event will be generated.
-    async fn peripheral_security_request(&mut self, conn_handle: &ConnectionHandle);
+    async fn peripheral_security_request(
+        &self,
+        conn_handle: &ConnectionHandle,
+    ) -> Result<(), Error>;
 
     /// This command can be used to update the advertising data for a particular AD type. If the AD
     /// type specified does not exist, then it is added to the advertising data. If the overall
@@ -341,7 +349,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapUpdateAdvertisingData)
     /// event is generated.
-    async fn update_advertising_data(&mut self, data: &[u8]) -> Result<(), Error>;
+    async fn update_advertising_data(&self, data: &[u8]) -> Result<(), Error>;
 
     /// This command can be used to delete the specified AD type from the advertisement data if
     /// present.
@@ -354,7 +362,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapDeleteAdType) event is
     /// generated.
-    async fn delete_ad_type(&mut self, ad_type: AdvertisingDataType);
+    async fn delete_ad_type(&self, ad_type: AdvertisingDataType) -> Result<(), Error>;
 
     /// This command can be used to get the current security settings of the device.
     ///
@@ -366,7 +374,10 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapGetSecurityLevel) event is
     /// generated.
-    async fn get_security_level(&mut self, conn_handle: &ConnectionHandle);
+    async fn get_security_level(
+        &self,
+        conn_handle: &ConnectionHandle,
+    ) -> Result<GapSecurityLevel, Error>;
 
     /// Allows masking events from the GAP.
     ///
@@ -380,13 +391,13 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapSetEventMask) event is
     /// generated.
-    async fn set_event_mask(&mut self, flags: EventFlags);
+    async fn set_event_mask(&self, flags: EventFlags) -> Result<(), Error>;
 
     /// Allows masking events from the GAP.
     ///
     /// This function exists to prevent name conflicts with other Commands traits' set_event_mask
     /// methods.
-    async fn set_gap_event_mask(&mut self, flags: EventFlags) {
+    async fn set_gap_event_mask(&self, flags: EventFlags) -> Result<(), Error> {
         self.set_event_mask(flags).await
     }
 
@@ -401,7 +412,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapConfigureWhiteList) event
     /// is generated.
-    async fn configure_white_list(&mut self);
+    async fn configure_white_list(&self) -> Result<(), Error>;
 
     /// Command the controller to terminate the connection.
     ///
@@ -425,7 +436,7 @@ pub trait GapCommands {
     /// event will be generated when the link is
     /// disconnected.
     async fn terminate(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         reason: crate::Status,
     ) -> Result<(), Error>;
@@ -446,7 +457,7 @@ pub trait GapCommands {
     ///
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapClearSecurityDatabase)
     /// event is generated.
-    async fn clear_security_database(&mut self);
+    async fn clear_security_database(&self) -> Result<(), Error>;
 
     /// This command should be given by the application when it receives the
     /// [GAP Bond Lost](crate::vendor::event::VendorEvent::GapBondLost) event if it wants the re-bonding to happen
@@ -462,7 +473,7 @@ pub trait GapCommands {
     /// A [Command Complete](crate::vendor::event::command::VendorReturnParameters::GapAllowRebond) event is
     /// generated. Even if the command is given when it is not valid, success will be returned but
     /// internally it will have no effect.
-    async fn allow_rebond(&mut self, conn_handle: crate::ConnectionHandle);
+    async fn allow_rebond(&self, conn_handle: crate::ConnectionHandle) -> Result<(), Error>;
 
     /// Start the limited discovery procedure.
     ///
@@ -489,7 +500,10 @@ pub trait GapCommands {
     ///
     /// The device found when the procedure is ongoing is returned to the upper layers through the
     /// [LeAdvertisingReport](crate::event::Event::LeAdvertisingReport) event.
-    async fn start_limited_discovery_procedure(&mut self, params: &DiscoveryProcedureParameters);
+    async fn start_limited_discovery_procedure(
+        &self,
+        params: &DiscoveryProcedureParameters,
+    ) -> Result<(), Error>;
 
     /// Start the general discovery procedure. The controller is commanded to start active scanning.
     ///
@@ -512,7 +526,10 @@ pub trait GapCommands {
     ///
     /// The device found when the procedure is ongoing is returned to the upper layers through the
     /// [LeAdvertisingReport](crate::event::Event::LeAdvertisingReport) event.
-    async fn start_general_discovery_procedure(&mut self, params: &DiscoveryProcedureParameters);
+    async fn start_general_discovery_procedure(
+        &self,
+        params: &DiscoveryProcedureParameters,
+    ) -> Result<(), Error>;
 
     /// Start the auto connection establishment procedure.
     ///
@@ -531,7 +548,7 @@ pub trait GapCommands {
     ///   [WhiteListTooLong](Error::WhiteListTooLong) is returned. The list cannot have more than 33
     ///   elements.
     async fn start_auto_connection_establishment_procedure(
-        &mut self,
+        &self,
         params: &AutoConnectionEstablishmentParameters<'_>,
     ) -> Result<(), Error>;
 
@@ -553,9 +570,9 @@ pub trait GapCommands {
     ///
     /// Only underlying communication errors are reported.
     async fn start_general_connection_establishment_procedure(
-        &mut self,
+        &self,
         params: &GeneralConnectionEstablishmentParameters,
-    );
+    ) -> Result<(), Error>;
 
     /// Start a selective connection establishment procedure.
     ///
@@ -575,7 +592,7 @@ pub trait GapCommands {
     ///   [WhiteListTooLong](Error::WhiteListTooLong) is returned. The list cannot have more than 35
     ///   elements.
     async fn start_selective_connection_establishment_procedure(
-        &mut self,
+        &self,
         params: &SelectiveConnectionEstablishmentParameters<'_>,
     ) -> Result<(), Error>;
 
@@ -604,7 +621,7 @@ pub trait GapCommands {
     /// command [`terminate_procedure`](GapCommands::terminate_gap_procedure) with the procedure_code set
     /// to
     /// [DirectConnectionEstablishment](crate::vendor::event::GapProcedure::DirectConnectionEstablishment).
-    async fn create_connection(&mut self, params: &ConnectionParameters);
+    async fn create_connection(&self, params: &ConnectionParameters) -> Result<(), Error>;
 
     /// The GAP procedure(s) specified is terminated.
     ///
@@ -620,7 +637,7 @@ pub trait GapCommands {
     /// will be [Success](crate::Status::Success) and a
     /// [ProcedureCompleted](crate::vendor::event::VendorEvent::GapProcedureComplete) event is returned
     /// with the procedure code set to the corresponding procedure.
-    async fn terminate_gap_procedure(&mut self, procedure: Procedure) -> Result<(), Error>;
+    async fn terminate_gap_procedure(&self, procedure: Procedure) -> Result<(), Error>;
 
     /// Start the connection update procedure.
     ///
@@ -638,7 +655,10 @@ pub trait GapCommands {
     /// connection update, a
     /// [LeConnectionUpdateComplete](crate::event::Event::LeConnectionUpdateComplete) event is
     /// returned to the upper layer.
-    async fn start_connection_update(&mut self, params: &ConnectionUpdateParameters);
+    async fn start_connection_update(
+        &self,
+        params: &ConnectionUpdateParameters,
+    ) -> Result<(), Error>;
 
     /// Send the SM pairing request to start a pairing process. The authentication requirements and
     /// I/O capabilities should be set before issuing this command using the
@@ -656,7 +676,7 @@ pub trait GapCommands {
     /// received. If [Success](crate::Status::Success) is returned in the command status event, a
     /// [Pairing Complete](crate::vendor::event::VendorEvent::GapPairingComplete) event is returned after
     /// the pairing process is completed.
-    async fn send_pairing_request(&mut self, params: &PairingRequest);
+    async fn send_pairing_request(&self, params: &PairingRequest) -> Result<(), Error>;
 
     /// This command tries to resolve the address provided with the IRKs present in its database.
     ///
@@ -673,7 +693,10 @@ pub trait GapCommands {
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapResolvePrivateAddress)
     /// event is generated. If [Success](crate::Status::Success) is returned as the status, then the
     /// address is also returned in the event.
-    async fn resolve_private_address(&mut self, addr: crate::BdAddr);
+    async fn resolve_private_address(
+        &self,
+        addr: crate::BdAddr,
+    ) -> Result<GapResolvePrivateAddress, Error>;
 
     /// This command puts the device into broadcast mode.
     ///
@@ -693,7 +716,7 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapSetBroadcastMode) event is
     /// returned where the status indicates whether the command was successful.
-    async fn set_broadcast_mode(&mut self, params: &BroadcastModeParameters) -> Result<(), Error>;
+    async fn set_broadcast_mode(&self, params: &BroadcastModeParameters) -> Result<(), Error>;
 
     /// Starts an Observation procedure, when the device is in Observer Role.
     ///
@@ -709,7 +732,10 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapStartObservationProcedure)
     /// event is generated.
-    async fn start_observation_procedure(&mut self, params: &ObservationProcedureParameters);
+    async fn start_observation_procedure(
+        &self,
+        params: &ObservationProcedureParameters,
+    ) -> Result<(), Error>;
 
     /// This command gets the list of the devices which are bonded. It returns the number of
     /// addresses and the corresponding address types and values.
@@ -722,7 +748,7 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices) event is
     /// generated.
-    async fn get_bonded_devices(&mut self);
+    async fn get_bonded_devices(&self) -> Result<GapBondedDevices, Error>;
 
     /// The command finds whether the device, whose address is specified in the command, is
     /// bonded. If the device is using a resolvable private address and it has been bonded, then the
@@ -736,57 +762,65 @@ pub trait GapCommands {
     ///
     /// A [command complete](crate::vendor::event::command::VendorReturnParameters::GapIsDeviceBonded) event is
     /// generated.
-    async fn is_device_bonded(&mut self, addr: crate::host::PeerAddrType);
+    async fn is_device_bonded(&self, addr: crate::host::PeerAddrType) -> Result<(), Error>;
 
     /// This command allows the user to validate/confirm or not the numeric comparison value showed through
     /// the [`NumericComparisonValueEvent`]
     async fn numeric_comparison_value_confirm_yes_no(
-        &mut self,
+        &self,
         params: &NumericComparisonValueConfirmYesNoParameters,
-    );
+    ) -> Result<(), Error>;
 
     /// This command permits to signal to the Stack the input type detected during Passkey input.
-    async fn passkey_input(&mut self, conn_handle: ConnectionHandle, input_type: InputType);
+    async fn passkey_input(
+        &self,
+        conn_handle: ConnectionHandle,
+        input_type: InputType,
+    ) -> Result<(), Error>;
 
     /// This command is sent by the user to get (i.e. to extract from the Stack) the OOB
     /// data generated by the Stack itself.
-    async fn get_oob_data(&mut self, oob_data_type: OobDataType);
+    async fn get_oob_data(&self, oob_data_type: OobDataType) -> Result<[u8; 26], Error>;
 
     /// This command is sent (by the User) to input the OOB data arrived via OOB
     /// communication.
-    async fn set_oob_data(&mut self, params: &SetOobDataParameters);
+    async fn set_oob_data(&self, params: &SetOobDataParameters) -> Result<(), Error>;
 
     /// This  command is used to add devices to the list of address translations
     /// used to resolve Resolvable Private Addresses in the Controller.
     async fn add_devices_to_resolving_list(
-        &mut self,
+        &self,
         whitelist_identities: &[PeerAddrType],
         clear_resolving_list: bool,
-    );
+    ) -> Result<(), Error>;
 
     /// This command is used to remove a specified device from bonding table
-    async fn remove_bonded_device(&mut self, address: BdAddrType);
+    async fn remove_bonded_device(&self, address: BdAddrType) -> Result<(), Error>;
 
     /// This  command is used to add specific device addresses to the white and/or resolving list.
-    async fn add_devices_to_list(&mut self, list_entries: &[BdAddrType], mode: AddDeviceToListMode);
+    async fn add_devices_to_list(
+        &self,
+        list_entries: &[BdAddrType],
+        mode: AddDeviceToListMode,
+    ) -> Result<(), Error>;
 
     /// This command starts an advertising beacon. It allows additional advertising
     /// packets to be transmitted independently of the packets transmitted with GAP
     /// advertising commands such as ACI_GAP_SET_DISCOVERABLE or
     /// ACI_GAP_SET_LIMITED_DISCOVERABLE.
     async fn additional_beacon_start(
-        &mut self,
+        &self,
         params: &AdditonalBeaconStartParameters,
     ) -> Result<(), Error>;
 
     /// This command stops the advertising beacon started with
     /// ACI_GAP_ADDITIONAL_BEACON_START.
-    async fn additional_beacon_stop(&mut self);
+    async fn additional_beacon_stop(&self) -> Result<(), Error>;
 
     /// This command sets the data transmitted by the advertising beacon started
     /// with ACI_GAP_ADDITIONAL_BEACON_START. If the advertising beacon is already
     /// started, the new data is used in subsequent beacon advertising events.
-    async fn additonal_beacon_set_data(&mut self, advertising_data: &[u8]);
+    async fn additonal_beacon_set_data(&self, advertising_data: &[u8]) -> Result<(), Error>;
 
     /// This command is used to set the extended advertising configuration for one
     /// advertising set.
@@ -805,88 +839,500 @@ pub trait GapCommands {
     /// [set_undirected_connectable](GapCommands::set_undirected_connectable) and
     /// [set_broadcast_mode](GapCommands::set_broadcast_mode) that only support
     /// legacy advertising.
-    async fn adv_set_config(&mut self, params: &AdvSetConfig);
+    async fn adv_set_config(&self, params: &AdvSetConfig) -> Result<(), Error>;
 
     /// This command is used to request the Controller to enable or disbale one
     /// or more extended advertising sets.
-    async fn adv_set_enable<'a>(&mut self, params: &AdvSetEnable<'a>);
+    async fn adv_set_enable<'a>(&self, params: &AdvSetEnable<'a>) -> Result<(), Error>;
 
     /// This command is used to set the data used in extended advertising PDUs
     /// that have a data field
-    async fn adv_set_advertising_data(&mut self, params: &AdvSetAdvertisingData);
+    async fn adv_set_advertising_data(&self, params: &AdvSetAdvertisingData) -> Result<(), Error>;
 
     /// This command is used to provide scan response data used during extended
     /// advertising
-    async fn adv_set_scan_response_data(&mut self, params: &AdvSetAdvertisingData);
+    async fn adv_set_scan_response_data(&self, params: &AdvSetAdvertisingData)
+    -> Result<(), Error>;
 
     /// This command is used to remove an advertising set from the Controller.
-    async fn adv_remove_set(&mut self, handle: AdvertisingHandle);
+    async fn adv_remove_set(&self, handle: AdvertisingHandle) -> Result<(), Error>;
 
     /// This command is used to remove all exisiting advertising sets from
     /// the Controller.
-    async fn adv_clear_sets(&mut self);
+    async fn adv_clear_sets(&self) -> Result<(), Error>;
 
     /// This command is used to set the random device address of an advertising
     /// set configured to use specific random address.
-    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr);
+    async fn adv_set_random_address(
+        &self,
+        handle: AdvertisingHandle,
+        addr: BdAddr,
+    ) -> Result<(), Error>;
 }
 
-impl<T: WritableController> GapCommands for T {
-    async fn gap_set_nondiscoverable(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_SET_NONDISCOVERABLE, &[])
+vendor_cmd! {
+    GapSetNonDiscoverable(GAP_SET_NONDISCOVERABLE) {
+        Params = ();
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetLimitedDiscoverable(GAP_SET_LIMITED_DISCOVERABLE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapSetDiscoverable(GAP_SET_DISCOVERABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetDirectConnectable(GAP_SET_DIRECT_CONNECTABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetIoCapability(GAP_SET_IO_CAPABILITY) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetAuthenticationRequirement(GAP_SET_AUTHENTICATION_REQUIREMENT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetAuthorizationRequirement(GAP_SET_AUTHORIZATION_REQUIREMENT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapPassKeyResponse(GAP_PASS_KEY_RESPONSE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAuthorizationResponse(GAP_AUTHORIZATION_RESPONSE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+// TODO: verify these return parameters
+
+vendor_cmd! {
+    CmdGapInit(GAP_INIT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ReturnBuffer<7>;
+    }
+}
+
+vendor_cmd! {
+    GapSetNonConnectable(GAP_SET_NONCONNECTABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapSetUnidirectedConnectable(GAP_SET_UNDIRECTED_CONNECTABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapUpdateAdvertisingData(GAP_UPDATE_ADVERTISING_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapDeleteAdType(GAP_DELETE_AD_TYPE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapGetSecurityLevel(GAP_GET_SECURITY_LEVEL) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ReturnBuffer<5>;
+    }
+}
+
+vendor_cmd! {
+    GapSetEventMask(GAP_SET_EVENT_MASK) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapConfigureWhitelist(GAP_CONFIGURE_WHITE_LIST) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapTerminate(GAP_TERMINATE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapClearSecurityDatabase(GAP_CLEAR_SECURITY_DATABASE) {
+        Params = ();
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAllowRebond(GAP_ALLOW_REBOND) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapStartLimitedDiscoveryProcedure(GAP_START_LIMITED_DISCOVERY_PROCEDURE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapStartGeneralDiscoveryProcedure(GAP_START_GENERAL_DISCOVERY_PROCEDURE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapStartAutoConnectionEstablishmentProcedure(GAP_START_AUTO_CONNECTION_ESTABLISHMENT) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapStartGeneralConnectionEstablishmentProcedure(GAP_START_GENERAL_CONNECTION_ESTABLISHMENT) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapStartSelectiveConnectionEstablishmentProcedure(GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapCreateConnection(GAP_CREATE_CONNECTION) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapTerminateProcedure(GAP_TERMINATE_PROCEDURE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapStartConnectionUpdate(GAP_START_CONNECTION_UPDATE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapSendPairingRequest(GAP_SEND_PAIRING_REQUEST) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    CmdGapResolvePrivateAddress(GAP_RESOLVE_PRIVATE_ADDRESS) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ReturnBuffer<7>;
+    }
+}
+
+vendor_cmd! {
+    GapSetBroadcastMode(GAP_SET_BROADCAST_MODE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapStartObservationProcedure(GAP_START_OBSERVATION_PROCEDURE) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapGetBondedDevices(GAP_GET_BONDED_DEVICES) {
+        Params = ();
+        Return = ReturnBuffer<255>;
+    }
+}
+
+vendor_cmd! {
+    GapIsDeviceBonded(GAP_IS_DEVICE_BONDED) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapConfirmNumericComparisonValue(GAP_NUMERIC_COMPARISON_VALUE_YES_NO) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapPasskeyInput(GAP_PASSKEY_INPUT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+vendor_cmd! {
+    GapGetOobData(GAP_GET_OOB_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ReturnBuffer<26>;
+    }
+}
+
+vendor_cmd! {
+    GapSetOobData(GAP_SET_OOB_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAddDevicesToResolvingList(GAP_ADD_DEVICES_TO_RESOLVING_LIST) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapRemoveBondedDevice(GAP_REMOVE_BONDED_DEVICE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAddDevicesToList(GAP_ADD_DEVICES_TO_LIST) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdditionalBeaconStart(GAP_ADDITIONAL_BEACON_START) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdditionalBeaconStop(GAP_ADDITIONAL_BEACON_STOP) {
+        Params = ();
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdditionalBeaconSetData(GAP_ADDITIONAL_BEACON_SET_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetConfig(GAP_ADV_SET_CONFIGURATION) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetEnable(GAP_ADV_SET_ENABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetAdvertisingData(GAP_ADV_SET_ADV_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetScanResponseData(GAP_ADV_SET_SCAN_RESPONSE_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvRemoveSet(GAP_ADV_REMOVE_SET) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
+        Params = ();
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetRandomAddress(GAP_ADV_SET_RANDOM_ADDRESS) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+impl<T> GapCommands for T
+where
+    T: ControllerCmdSync<GapSetNonDiscoverable>
+        + for<'t> ControllerCmdAsync<GapSetLimitedDiscoverable<'t>>
+        + for<'t> ControllerCmdSync<GapSetDiscoverable<'t>>
+        + for<'t> ControllerCmdSync<GapSetDirectConnectable<'t>>
+        + for<'t> ControllerCmdSync<GapSetIoCapability<'t>>
+        + for<'t> ControllerCmdSync<GapSetAuthenticationRequirement<'t>>
+        + for<'t> ControllerCmdSync<GapSetAuthorizationRequirement<'t>>
+        + for<'t> ControllerCmdSync<GapPassKeyResponse<'t>>
+        + for<'t> ControllerCmdSync<GapAuthorizationResponse<'t>>
+        + for<'t> ControllerCmdSync<CmdGapInit<'t>>
+        + for<'t> ControllerCmdSync<GapSetNonConnectable<'t>>
+        + for<'t> ControllerCmdSync<GapSetUnidirectedConnectable<'t>>
+        + for<'t> ControllerCmdAsync<GapPeripheralSecurityRequest<'t>>
+        + for<'t> ControllerCmdSync<GapUpdateAdvertisingData<'t>>
+        + for<'t> ControllerCmdSync<GapGetSecurityLevel<'t>>
+        + for<'t> ControllerCmdSync<GapSetEventMask<'t>>
+        + for<'t> ControllerCmdSync<GapConfigureWhitelist<'t>>
+        + for<'t> ControllerCmdAsync<GapTerminate<'t>>
+        + ControllerCmdSync<GapClearSecurityDatabase>
+        + for<'t> ControllerCmdSync<GapAllowRebond<'t>>
+        + for<'t> ControllerCmdAsync<GapStartLimitedDiscoveryProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapStartGeneralDiscoveryProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapStartAutoConnectionEstablishmentProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapStartGeneralConnectionEstablishmentProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapStartSelectiveConnectionEstablishmentProcedure<'t>>
+        + for<'t> ControllerCmdAsync<GapCreateConnection<'t>>
+        + for<'t> ControllerCmdSync<GapTerminateProcedure<'t>>
+        + for<'t> ControllerCmdSync<CmdGapResolvePrivateAddress<'t>>
+        + for<'t> ControllerCmdSync<GapSetBroadcastMode<'t>>
+        + for<'t> ControllerCmdAsync<GapStartObservationProcedure<'t>>
+        + ControllerCmdSync<GapGetBondedDevices>
+        + for<'t> ControllerCmdSync<GapIsDeviceBonded<'t>>
+        + for<'t> ControllerCmdSync<GapConfirmNumericComparisonValue<'t>>
+        + for<'t> ControllerCmdAsync<GapStartConnectionUpdate<'t>>
+        + for<'t> ControllerCmdAsync<GapSendPairingRequest<'t>>
+        + for<'t> ControllerCmdSync<GapPasskeyInput<'t>>
+        + for<'t> ControllerCmdSync<GapGetOobData<'t>>
+        + for<'t> ControllerCmdSync<GapSetOobData<'t>>
+        + for<'t> ControllerCmdSync<GapAddDevicesToResolvingList<'t>>
+        + for<'t> ControllerCmdSync<GapRemoveBondedDevice<'t>>
+        + for<'t> ControllerCmdSync<GapAdditionalBeaconStart<'t>>
+        + ControllerCmdSync<GapAdditionalBeaconStop>
+        + for<'t> ControllerCmdSync<GapAdditionalBeaconSetData<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetConfig<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetEnable<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetAdvertisingData<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetScanResponseData<'t>>
+        + for<'t> ControllerCmdSync<GapAdvRemoveSet<'t>>
+        + for<'t> ControllerCmdSync<GapAddDevicesToList<'t>>
+        + ControllerCmdSync<GapAdvClearSets>
+        + for<'t> ControllerCmdSync<GapAdvSetRandomAddress<'t>>
+        + for<'t> ControllerCmdSync<GapDeleteAdType<'t>>,
+{
+    async fn gap_set_nondiscoverable(&self) -> Result<(), Error> {
+        GapSetNonDiscoverable::new()
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    impl_validate_variable_length_params!(
+    hci_impl_validate_variable_length_params!(
         set_limited_discoverable<'a, 'b>,
         DiscoverableParameters<'a, 'b>,
-        crate::vendor::opcode::GAP_SET_LIMITED_DISCOVERABLE
+        GapSetLimitedDiscoverable
     );
 
-    impl_validate_variable_length_params!(
+    hci_impl_validate_variable_length_params!(
         set_discoverable<'a, 'b>,
         DiscoverableParameters<'a, 'b>,
-        crate::vendor::opcode::GAP_SET_DISCOVERABLE
+        GapSetDiscoverable
     );
 
-    impl_validate_params!(
+    hci_impl_validate_params!(
         set_direct_connectable,
         DirectConnectableParameters,
-        crate::vendor::opcode::GAP_SET_DIRECT_CONNECTABLE
+        GapSetDirectConnectable
     );
 
-    async fn set_io_capability(&mut self, capability: IoCapability) {
-        self.controller_write(
-            crate::vendor::opcode::GAP_SET_IO_CAPABILITY,
-            &[capability as u8],
-        )
-        .await
+    async fn set_io_capability(&self, capability: IoCapability) -> Result<(), Error> {
+        GapSetIoCapability::new((&[capability as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    impl_validate_params!(
+    hci_impl_validate_params!(
         set_authentication_requirement,
         AuthenticationRequirements,
-        crate::vendor::opcode::GAP_SET_AUTHENTICATION_REQUIREMENT
+        GapSetAuthenticationRequirement
     );
 
     async fn set_authorization_requirement(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         authorization_required: bool,
-    ) {
+    ) -> Result<(), Error> {
         let mut bytes = [0; 3];
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization_required as u8;
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_SET_AUTHORIZATION_REQUIREMENT,
-            &bytes,
-        )
-        .await
+        GapSetAuthorizationRequirement::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn pass_key_response(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         pin: u32,
     ) -> Result<(), Error> {
@@ -898,37 +1344,49 @@ impl<T: WritableController> GapCommands for T {
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         LittleEndian::write_u32(&mut bytes[2..6], pin);
 
-        self.controller_write(crate::vendor::opcode::GAP_PASS_KEY_RESPONSE, &bytes)
-            .await;
-
-        Ok(())
+        GapPassKeyResponse::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn authorization_response(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         authorization: Authorization,
-    ) {
+    ) -> Result<(), Error> {
         let mut bytes = [0; 3];
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = authorization as u8;
 
-        self.controller_write(crate::vendor::opcode::GAP_AUTHORIZATION_RESPONSE, &bytes)
+        GapAuthorizationResponse::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    async fn init(&mut self, role: Role, privacy_enabled: bool, dev_name_characteristic_len: u8) {
+    async fn init(
+        &self,
+        role: Role,
+        privacy_enabled: bool,
+        dev_name_characteristic_len: u8,
+    ) -> Result<GapInit, Error> {
         let mut bytes = [0; 3];
         bytes[0] = role.bits();
         bytes[1] = privacy_enabled as u8;
         bytes[2] = dev_name_characteristic_len;
 
-        self.controller_write(crate::vendor::opcode::GAP_INIT, &bytes)
-            .await;
+        Ok(CmdGapInit::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))?
+            .buf()
+            .try_into()
+            .map_err(|e| Error::from(e))?)
     }
 
     async fn set_nonconnectable(
-        &mut self,
+        &self,
         advertising_type: AdvertisingType,
         address_type: AddressType,
     ) -> Result<(), Error> {
@@ -939,34 +1397,33 @@ impl<T: WritableController> GapCommands for T {
             }
         }
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_SET_NONCONNECTABLE,
-            &[advertising_type as u8, address_type as u8],
-        )
-        .await;
-
-        Ok(())
+        GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))
     }
 
-    impl_validate_params!(
+    hci_impl_validate_params!(
         set_undirected_connectable,
         UndirectedConnectableParameters,
-        crate::vendor::opcode::GAP_SET_UNDIRECTED_CONNECTABLE
+        GapSetUnidirectedConnectable
     );
 
-    async fn peripheral_security_request(&mut self, conn_handle: &ConnectionHandle) {
+    async fn peripheral_security_request(
+        &self,
+        conn_handle: &ConnectionHandle,
+    ) -> Result<(), Error> {
         let mut bytes = [0; 2];
 
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_PERIPHERAL_SECURITY_REQUEST,
-            &bytes,
-        )
-        .await
+        GapPeripheralSecurityRequest::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn update_advertising_data(&mut self, data: &[u8]) -> Result<(), Error> {
+    async fn update_advertising_data(&self, data: &[u8]) -> Result<(), Error> {
         const MAX_LENGTH: usize = 31;
         if data.len() > MAX_LENGTH {
             return Err(Error::BadAdvertisingDataLength(data.len()));
@@ -976,44 +1433,55 @@ impl<T: WritableController> GapCommands for T {
         bytes[0] = data.len() as u8;
         bytes[1..=data.len()].copy_from_slice(data);
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_UPDATE_ADVERTISING_DATA,
-            &bytes[0..=data.len()],
-        )
-        .await;
-
-        Ok(())
-    }
-
-    async fn delete_ad_type(&mut self, ad_type: AdvertisingDataType) {
-        self.controller_write(crate::vendor::opcode::GAP_DELETE_AD_TYPE, &[ad_type as u8])
+        GapUpdateAdvertisingData::new((&bytes[0..=data.len()]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    async fn get_security_level(&mut self, conn_handle: &ConnectionHandle) {
+    async fn delete_ad_type(&self, ad_type: AdvertisingDataType) -> Result<(), Error> {
+        GapDeleteAdType::new((&[ad_type as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn get_security_level(
+        &self,
+        conn_handle: &ConnectionHandle,
+    ) -> Result<GapSecurityLevel, Error> {
         let mut bytes = [0; 2];
 
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
 
-        self.controller_write(crate::vendor::opcode::GAP_GET_SECURITY_LEVEL, &bytes)
+        Ok(GapGetSecurityLevel::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| Error::from(e))?
+            .buf()
+            .try_into()
+            .map_err(|e| Error::from(e))?)
     }
 
-    async fn set_event_mask(&mut self, flags: EventFlags) {
+    async fn set_event_mask(&self, flags: EventFlags) -> Result<(), Error> {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, flags.bits());
 
-        self.controller_write(crate::vendor::opcode::GAP_SET_EVENT_MASK, &bytes)
+        GapSetEventMask::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    async fn configure_white_list(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_CONFIGURE_WHITE_LIST, &[])
+    async fn configure_white_list(&self) -> Result<(), Error> {
+        GapConfigureWhitelist::new((&[][..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
     async fn terminate(
-        &mut self,
+        &self,
         conn_handle: crate::ConnectionHandle,
         reason: crate::Status,
     ) -> Result<(), Error> {
@@ -1025,156 +1493,173 @@ impl<T: WritableController> GapCommands for T {
             | crate::Status::UnsupportedRemoteFeature
             | crate::Status::PairingWithUnitKeyNotSupported
             | crate::Status::UnacceptableConnectionParameters => (),
-            _ => return Err(Error::BadTerminationReason(reason)),
+            _ => {
+                return Err(Error::BadTerminationReason(reason));
+            }
         }
 
         let mut bytes = [0; 3];
         LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
         bytes[2] = reason.into();
 
-        self.controller_write(crate::vendor::opcode::GAP_TERMINATE, &bytes)
-            .await;
-        Ok(())
-    }
-
-    async fn clear_security_database(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_CLEAR_SECURITY_DATABASE, &[])
+        GapTerminate::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    async fn allow_rebond(&mut self, conn_handle: crate::ConnectionHandle) {
+    async fn clear_security_database(&self) -> Result<(), Error> {
+        GapClearSecurityDatabase::new()
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn allow_rebond(&self, conn_handle: crate::ConnectionHandle) -> Result<(), Error> {
         let mut bytes = [0; 2];
         LittleEndian::write_u16(&mut bytes, conn_handle.0);
-        self.controller_write(crate::vendor::opcode::GAP_ALLOW_REBOND, &bytes)
+
+        GapAllowRebond::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    impl_params!(
+    hci_impl_params!(
         start_limited_discovery_procedure,
         DiscoveryProcedureParameters,
-        crate::vendor::opcode::GAP_START_LIMITED_DISCOVERY_PROCEDURE
+        GapStartLimitedDiscoveryProcedure
     );
 
-    impl_params!(
+    hci_impl_params!(
         start_general_discovery_procedure,
         DiscoveryProcedureParameters,
-        crate::vendor::opcode::GAP_START_GENERAL_DISCOVERY_PROCEDURE
+        GapStartGeneralDiscoveryProcedure
     );
 
-    impl_validate_variable_length_params!(
+    hci_impl_validate_variable_length_params!(
         start_auto_connection_establishment_procedure<'a>,
         AutoConnectionEstablishmentParameters<'a>,
-        crate::vendor::opcode::GAP_START_AUTO_CONNECTION_ESTABLISHMENT
+        GapStartAutoConnectionEstablishmentProcedure
     );
 
-    impl_params!(
+    hci_impl_params!(
         start_general_connection_establishment_procedure,
         GeneralConnectionEstablishmentParameters,
-        crate::vendor::opcode::GAP_START_GENERAL_CONNECTION_ESTABLISHMENT
+        GapStartGeneralConnectionEstablishmentProcedure
     );
 
-    impl_validate_variable_length_params!(
+    hci_impl_validate_variable_length_params!(
         start_selective_connection_establishment_procedure<'a>,
         SelectiveConnectionEstablishmentParameters<'a>,
-        crate::vendor::opcode::GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT
-    );
-    impl_params!(
-        create_connection,
-        ConnectionParameters,
-        crate::vendor::opcode::GAP_CREATE_CONNECTION
+        GapStartSelectiveConnectionEstablishmentProcedure
     );
 
-    async fn terminate_gap_procedure(&mut self, procedure: Procedure) -> Result<(), Error> {
+    hci_impl_params!(create_connection, ConnectionParameters, GapCreateConnection);
+
+    async fn terminate_gap_procedure(&self, procedure: Procedure) -> Result<(), Error> {
         if procedure.is_empty() {
             return Err(Error::NoProcedure);
         }
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_TERMINATE_PROCEDURE,
-            &[procedure.bits()],
-        )
-        .await;
-
-        Ok(())
+        GapTerminateProcedure::new((&[procedure.bits()][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    impl_params!(
+    hci_impl_params!(
         start_connection_update,
         ConnectionUpdateParameters,
-        crate::vendor::opcode::GAP_START_CONNECTION_UPDATE
+        GapStartConnectionUpdate
     );
 
-    impl_params!(
-        send_pairing_request,
-        PairingRequest,
-        crate::vendor::opcode::GAP_SEND_PAIRING_REQUEST
-    );
+    hci_impl_params!(send_pairing_request, PairingRequest, GapSendPairingRequest);
 
-    async fn resolve_private_address(&mut self, addr: crate::BdAddr) {
-        self.controller_write(crate::vendor::opcode::GAP_RESOLVE_PRIVATE_ADDRESS, &addr.0)
+    async fn resolve_private_address(
+        &self,
+        addr: crate::BdAddr,
+    ) -> Result<GapResolvePrivateAddress, Error> {
+        Ok(CmdGapResolvePrivateAddress::new((&addr.0[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| Error::from(e))?
+            .buf()
+            .try_into()
+            .map_err(|e| Error::from(e))?)
     }
 
-    impl_validate_variable_length_params!(
+    hci_impl_validate_variable_length_params!(
         set_broadcast_mode<'a, 'b>,
         BroadcastModeParameters<'a, 'b>,
-        crate::vendor::opcode::GAP_SET_BROADCAST_MODE
+        GapSetBroadcastMode
     );
 
-    impl_params!(
+    hci_impl_params!(
         start_observation_procedure,
         ObservationProcedureParameters,
-        crate::vendor::opcode::GAP_START_OBSERVATION_PROCEDURE
+        GapStartObservationProcedure
     );
 
-    async fn get_bonded_devices(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_GET_BONDED_DEVICES, &[])
+    async fn get_bonded_devices(&self) -> Result<GapBondedDevices, Error> {
+        Ok(GapGetBondedDevices::new()
+            .exec(self)
             .await
+            .map_err(|e| Error::from(e))?
+            .buf()
+            .try_into()
+            .map_err(|e| Error::from(e))?)
     }
 
-    async fn is_device_bonded(&mut self, addr: crate::host::PeerAddrType) {
+    async fn is_device_bonded(&self, addr: crate::host::PeerAddrType) -> Result<(), Error> {
         let mut bytes = [0; 7];
         addr.copy_into_slice(&mut bytes);
 
-        self.controller_write(crate::vendor::opcode::GAP_IS_DEVICE_BONDED, &bytes)
+        GapIsDeviceBonded::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    impl_params!(
+    hci_impl_params!(
         numeric_comparison_value_confirm_yes_no,
         NumericComparisonValueConfirmYesNoParameters,
-        crate::vendor::opcode::GAP_NUMERIC_COMPARISON_VALUE_YES_NO
+        GapConfirmNumericComparisonValue
     );
 
-    async fn passkey_input(&mut self, conn_handle: ConnectionHandle, input_type: InputType) {
+    async fn passkey_input(
+        &self,
+        conn_handle: ConnectionHandle,
+        input_type: InputType,
+    ) -> Result<(), Error> {
         let mut bytes = [0; 3];
 
         LittleEndian::write_u16(&mut bytes[..2], conn_handle.0);
         bytes[2] = input_type as u8;
 
-        self.controller_write(crate::vendor::opcode::GAP_PASSKEY_INPUT, &bytes)
+        GapPasskeyInput::new((&bytes[..]).into())
+            .exec(self)
             .await
+            .map_err(|e| e.into())
     }
 
-    async fn get_oob_data(&mut self, oob_data_type: OobDataType) {
-        self.controller_write(
-            crate::vendor::opcode::GAP_GET_OOB_DATA,
-            &[oob_data_type as u8],
-        )
-        .await
+    async fn get_oob_data(&self, oob_data_type: OobDataType) -> Result<[u8; 26], Error> {
+        Ok(GapGetOobData::new((&[oob_data_type as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))?
+            .buf()
+            .try_into()
+            .map_err(|_| Error::IoError)?)
     }
 
-    impl_params!(
-        set_oob_data,
-        SetOobDataParameters,
-        crate::vendor::opcode::GAP_SET_OOB_DATA
-    );
+    hci_impl_params!(set_oob_data, SetOobDataParameters, GapSetOobData);
 
     async fn add_devices_to_resolving_list(
-        &mut self,
+        &self,
         whitelist_identities: &[PeerAddrType],
         clear_resolving_list: bool,
-    ) {
+    ) -> Result<(), Error> {
         let mut bytes = [0; 254];
 
         bytes[0] = whitelist_identities.len() as u8;
@@ -1186,26 +1671,27 @@ impl<T: WritableController> GapCommands for T {
         }
         bytes[index] = clear_resolving_list as u8;
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_ADD_DEVICES_TO_RESOLVING_LIST,
-            &bytes[..(index + 1)],
-        )
-        .await;
+        GapAddDevicesToResolvingList::new((&bytes[..(index + 1)]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn remove_bonded_device(&mut self, address: BdAddrType) {
+    async fn remove_bonded_device(&self, address: BdAddrType) -> Result<(), Error> {
         let mut bytes = [0; 7];
 
         address.copy_into_slice(&mut bytes);
-        self.controller_write(crate::vendor::opcode::GAP_REMOVE_BONDED_DEVICE, &bytes)
-            .await;
+        GapRemoveBondedDevice::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn add_devices_to_list(
-        &mut self,
+        &self,
         list_entries: &[BdAddrType],
         mode: AddDeviceToListMode,
-    ) {
+    ) -> Result<(), Error> {
         let mut bytes = [0; 254];
 
         bytes[0] = list_entries.len() as u8;
@@ -1217,72 +1703,75 @@ impl<T: WritableController> GapCommands for T {
         }
         bytes[index] = mode as u8;
 
-        self.controller_write(
-            crate::vendor::opcode::GAP_ADD_DEVICES_TO_LIST,
-            &bytes[..(index + 1)],
-        )
-        .await;
+        GapAddDevicesToList::new((&bytes[..(index + 1)]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    impl_validate_params!(
+    hci_impl_validate_params!(
         additional_beacon_start,
         AdditonalBeaconStartParameters,
-        crate::vendor::opcode::GAP_ADDITIONAL_BEACON_START
+        GapAdditionalBeaconStart
     );
 
-    async fn additional_beacon_stop(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_ADDITIONAL_BEACON_STOP, &[])
-            .await;
+    async fn additional_beacon_stop(&self) -> Result<(), Error> {
+        GapAdditionalBeaconStop::new()
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn additonal_beacon_set_data(&mut self, advertising_data: &[u8]) {
-        self.controller_write(
-            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_SET_DATA,
-            advertising_data,
-        )
-        .await;
+    async fn additonal_beacon_set_data(&self, advertising_data: &[u8]) -> Result<(), Error> {
+        GapAdditionalBeaconSetData::new((advertising_data[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    impl_params!(
-        adv_set_config,
-        AdvSetConfig,
-        crate::vendor::opcode::GAP_ADV_SET_CONFIGURATION
-    );
+    hci_impl_params!(adv_set_config, AdvSetConfig, GapAdvSetConfig);
 
-    impl_variable_length_params!(
-        adv_set_enable<'a>,
-        AdvSetEnable<'a>,
-        crate::vendor::opcode::GAP_ADV_SET_ENABLE
-    );
+    hci_impl_variable_length_params!(adv_set_enable<'a>, AdvSetEnable<'a>, GapAdvSetEnable);
 
-    impl_variable_length_params!(
+    hci_impl_variable_length_params!(
         adv_set_advertising_data<'a>,
         AdvSetAdvertisingData<'a>,
-        crate::vendor::opcode::GAP_ADV_SET_ADV_DATA
+        GapAdvSetAdvertisingData
     );
 
-    impl_variable_length_params!(
+    hci_impl_variable_length_params!(
         adv_set_scan_response_data<'a>,
         AdvSetAdvertisingData<'a>,
-        crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA
+        GapAdvSetScanResponseData
     );
 
-    async fn adv_remove_set(&mut self, handle: AdvertisingHandle) {
-        self.controller_write(crate::vendor::opcode::GAP_ADV_REMOVE_SET, &[handle.0])
-            .await;
+    async fn adv_remove_set(&self, handle: AdvertisingHandle) -> Result<(), Error> {
+        GapAdvRemoveSet::new((&[handle.0][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn adv_clear_sets(&mut self) {
-        self.controller_write(crate::vendor::opcode::GAP_ADV_CLEAR_SETS, &[])
-            .await;
+    async fn adv_clear_sets(&self) -> Result<(), Error> {
+        GapAdvClearSets::new()
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn adv_set_random_address(&mut self, handle: AdvertisingHandle, addr: BdAddr) {
+    async fn adv_set_random_address(
+        &self,
+        handle: AdvertisingHandle,
+        addr: BdAddr,
+    ) -> Result<(), Error> {
         let mut payload = [0; 7];
         payload[0] = handle.0;
         payload[1..].copy_from_slice(&addr.0);
-        self.controller_write(crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS, &payload)
-            .await;
+
+        GapAdvSetRandomAddress::new((&payload[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 }
 
@@ -1354,6 +1843,36 @@ pub enum Error {
     /// For the [GAP Terminate Procedure](GapCommands::terminate_gap_procedure) command, the
     /// provided bitfield had no bits set.
     NoProcedure,
+
+    /// Event Parsing Error
+    ParseError(crate::event::Error),
+
+    /// An error occurred during execution of the command
+    HciError(Status),
+
+    /// An error occurred during execution of the command
+    UnknownHciError(u8),
+
+    /// An internal error occurred during execution of the controller. This is a bug.
+    IoError,
+}
+
+impl<T> From<bt_hci::cmd::Error<T>> for Error {
+    fn from(err: bt_hci::cmd::Error<T>) -> Self {
+        match err {
+            bt_hci::cmd::Error::Io(_) => Self::IoError,
+            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
+                Ok(status) => Self::HciError(status),
+                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
+            },
+        }
+    }
+}
+
+impl From<crate::event::Error> for Error {
+    fn from(e: crate::event::Error) -> Self {
+        Self::ParseError(e)
+    }
 }
 
 fn to_conn_interval_value(d: Duration) -> u16 {

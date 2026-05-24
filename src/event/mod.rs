@@ -31,8 +31,8 @@ macro_rules! require_len_at_least {
 pub mod command;
 
 use crate::types::{ConnectionIntervalError, FixedConnectionInterval};
-use crate::vendor::event::VendorEvent;
 use crate::vendor::VendorError;
+use crate::vendor::event::VendorEvent;
 use crate::{BadStatusError, ConnectionHandle, Status};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
@@ -269,6 +269,10 @@ impl Event {
         let event_type = packet.0[EVENT_TYPE_BYTE];
         let payload = &packet.0[PACKET_HEADER_LENGTH..packet.full_length()];
 
+        Self::from_kind_and_payload(event_type, payload)
+    }
+
+    pub fn from_kind_and_payload(event_type: u8, payload: &[u8]) -> Result<Event, Error> {
         match event_type {
             0x03 => Ok(Event::ConnectionComplete(to_connection_complete(payload)?)),
             0x05 => Ok(Event::DisconnectionComplete(to_disconnection_complete(

@@ -12,12 +12,12 @@ impl Opcode {
     }
 
     /// Return the OGF (Opcode group field) of the opcode.
-    pub fn ogf(&self) -> u16 {
+    pub const fn ogf(&self) -> u16 {
         self.0 >> 10
     }
 
     /// Return the OCF (Opcode command field) of the opcode.
-    pub fn ocf(&self) -> u16 {
+    pub const fn ocf(&self) -> u16 {
         self.0 & 0x03ff
     }
 }
@@ -32,6 +32,7 @@ macro_rules! opcodes {
         )+
     ) => {
         $($(
+            #[allow(dead_code)]
             pub const $var: Opcode = Opcode::new($ogf, $ocf);
         )+)+
     }

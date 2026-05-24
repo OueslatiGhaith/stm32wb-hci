@@ -3,8 +3,13 @@
 extern crate byteorder;
 
 use crate::{
-    ConnectionHandle, WritableController,
+    BadStatusError, ConnectionHandle, Status,
     types::{ConnectionInterval, ExpectedConnectionLength},
+    vendor::command::ParamBuffer,
+};
+use bt_hci::{
+    cmd::SyncCmd,
+    controller::{ControllerCmdAsync, ControllerCmdSync},
 };
 use byteorder::{ByteOrder, LittleEndian};
 
@@ -23,9 +28,9 @@ pub trait L2capCommands {
     /// an [L2CAP Connection Update Response](crate::vendor::event::L2CapConnectionUpdateResponse) event when the master
     /// responds to the request (accepts or rejects).
     async fn connection_parameter_update_request(
-        &mut self,
+        &self,
         params: &ConnectionParameterUpdateRequest,
-    );
+    ) -> Result<(), Error>;
 
     /// This command should be sent in response to the
     /// [`L2CapConnectionUpdateResponse`](crate::vendor::event::L2CapConnectionUpdateResponse)
@@ -40,33 +45,33 @@ pub trait L2capCommands {
     ///
     /// A [Command Complete](crate::event::command::CommandComplete) event is generated.
     async fn connection_parameter_update_response(
-        &mut self,
+        &self,
         params: &ConnectionParameterUpdateResponse,
-    );
+    ) -> Result<(), Error>;
 
     /// This command sends a Credit-Based Connection Request packet to the specified connection.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_connect(&mut self, params: &L2CapCocConnect);
+    async fn coc_connect(&self, params: &L2CapCocConnect) -> Result<(), Error>;
 
     /// This command sends a Credit-Based Connection Response packet. It must be used upon receipt
     /// of a connection request though [L2CAP COC Connection](crate::vendor::event::VendorEvent::L2CapCocConnect)
     /// event.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_connect_confirm(&mut self, params: &L2CapCocConnectConfirm);
+    async fn coc_connect_confirm(&self, params: &L2CapCocConnectConfirm) -> Result<(), Error>;
 
     /// This command sends a Credit-Based Reconfigure Request packet on the specified connection.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_reconfig(&mut self, params: &L2CapCocReconfig);
+    async fn coc_reconfig(&self, params: &L2CapCocReconfig) -> Result<(), Error>;
 
     /// This command sends a Credit-Based Reconfigure Response packet. It must be use upon receipt
     /// of a Credit-Based Reconfigure Request through
     /// [L2CAP COC Reconfigure](crate::vendor::event::VendorEvent::L2CapCocReconfig) event.
     ///
     ///  See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_reconfig_confirm(&mut self, params: &L2CapCocReconfigConfirm);
+    async fn coc_reconfig_confirm(&self, params: &L2CapCocReconfigConfirm) -> Result<(), Error>;
 
     /// This command sends a Disconnection Request signaling packet on the specified connection-oriented
     /// channel.
@@ -76,13 +81,13 @@ pub trait L2capCommands {
     /// # Generated events
     /// A [L2CAP COC Disconnection](crate::vendor::event::VendorEvent::L2CapCocDisconnect) event is
     /// received when the disconnection of the channel is effective.
-    async fn coc_disconnect(&mut self, channel_index: u8);
+    async fn coc_disconnect(&self, channel_index: u8) -> Result<(), Error>;
 
     /// This command sends a Flow Control Credit signaling packet on the specified connection-oriented
     /// channel.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_flow_control(&mut self, params: &L2CapCocFlowControl);
+    async fn coc_flow_control(&self, params: &L2CapCocFlowControl) -> Result<(), Error>;
 
     /// This command sends a K-frame packet on the specified connection-oriented channel.
     ///
@@ -95,65 +100,157 @@ pub trait L2capCommands {
     /// contain the K-frame information payload.
     /// The Length value must not exceed (BLE_CMD_MAX_PARAM_LEN - 3) i.e. 252 for
     /// BLE_CMD_MAX_PARAM_LEN default value.
-    async fn coc_tx_data(&mut self, params: &L2CapCocTxData);
+    async fn coc_tx_data(&self, params: &L2CapCocTxData) -> Result<(), Error>;
 }
 
-impl<T: WritableController> L2capCommands for T {
-    impl_params!(
+vendor_cmd! {
+    L2ConnectionParameterUpdateRequest(L2CAP_CONN_PARAM_UPDATE_REQ) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    L2ConnectionParameterUpdateResponse(L2CAP_CONN_PARAM_UPDATE_RESP) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocConnect(L2CAP_COC_CONNECT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocConnectConfirm(L2CAP_COC_CONNECT_CONFIRM) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocReconfig(L2CAP_COC_RECONFIG) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocReconfigConfirm(L2CAP_COC_RECONFIG_CONFIRM) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocDisconnect(L2CAP_COC_DISCONNECT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocFlowControl(L2CAP_COC_DISCONNECT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    L2CocTxData(L2CAP_COC_TX_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+impl<T> L2capCommands for T
+where
+    T: for<'t> ControllerCmdAsync<L2ConnectionParameterUpdateRequest<'t>>
+        + for<'t> ControllerCmdSync<L2ConnectionParameterUpdateResponse<'t>>
+        + for<'t> ControllerCmdSync<L2CocConnect<'t>>
+        + for<'t> ControllerCmdSync<L2CocConnectConfirm<'t>>
+        + for<'t> ControllerCmdSync<L2CocReconfig<'t>>
+        + for<'t> ControllerCmdSync<L2CocReconfigConfirm<'t>>
+        + for<'t> ControllerCmdSync<L2CocDisconnect<'t>>
+        + for<'t> ControllerCmdSync<L2CocFlowControl<'t>>
+        + for<'t> ControllerCmdSync<L2CocTxData<'t>>,
+{
+    hci_impl_params!(
         connection_parameter_update_request,
         ConnectionParameterUpdateRequest,
-        crate::vendor::opcode::L2CAP_CONN_PARAM_UPDATE_REQ
+        L2ConnectionParameterUpdateRequest
     );
 
-    impl_params!(
+    hci_impl_params!(
         connection_parameter_update_response,
         ConnectionParameterUpdateResponse,
-        crate::vendor::opcode::L2CAP_CONN_PARAM_UPDATE_RESP
+        L2ConnectionParameterUpdateResponse
     );
 
-    impl_params!(
-        coc_connect,
-        L2CapCocConnect,
-        crate::vendor::opcode::L2CAP_COC_CONNECT
-    );
+    hci_impl_params!(coc_connect, L2CapCocConnect, L2CocConnect);
 
-    impl_variable_length_params!(
+    // TODO: This has a return buffer
+    hci_impl_variable_length_params!(
         coc_connect_confirm,
         L2CapCocConnectConfirm,
-        crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM
+        L2CocConnectConfirm
     );
 
-    impl_variable_length_params!(
-        coc_reconfig,
-        L2CapCocReconfig,
-        crate::vendor::opcode::L2CAP_COC_RECONFIG
-    );
+    hci_impl_variable_length_params!(coc_reconfig, L2CapCocReconfig, L2CocReconfig);
 
-    impl_params!(
+    hci_impl_params!(
         coc_reconfig_confirm,
         L2CapCocReconfigConfirm,
-        crate::vendor::opcode::L2CAP_COC_RECONFIG_CONFIRM
+        L2CocReconfigConfirm
     );
 
-    async fn coc_disconnect(&mut self, channel_index: u8) {
-        self.controller_write(
-            crate::vendor::opcode::L2CAP_COC_DISCONNECT,
-            &[channel_index],
-        )
-        .await
+    async fn coc_disconnect(&self, channel_index: u8) -> Result<(), Error> {
+        L2CocDisconnect::new((&[channel_index][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
-    impl_params!(
-        coc_flow_control,
-        L2CapCocFlowControl,
-        crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL
-    );
+    hci_impl_params!(coc_flow_control, L2CapCocFlowControl, L2CocFlowControl);
 
-    impl_variable_length_params!(
-        coc_tx_data,
-        L2CapCocTxData,
-        crate::vendor::opcode::L2CAP_COC_TX_DATA
-    );
+    hci_impl_variable_length_params!(coc_tx_data, L2CapCocTxData, L2CocTxData);
+}
+
+/// Potential errors from parameter validation.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Error {
+    /// Event Parsing Error
+    ParseError(crate::event::Error),
+
+    /// An error occurred during execution of the command
+    HciError(Status),
+
+    /// An error occurred during execution of the command
+    UnknownHciError(u8),
+
+    /// An internal error occurred during execution of the controller. This is a bug.
+    IoError,
+}
+
+impl<T> From<bt_hci::cmd::Error<T>> for Error {
+    fn from(err: bt_hci::cmd::Error<T>) -> Self {
+        match err {
+            bt_hci::cmd::Error::Io(_) => Self::IoError,
+            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
+                Ok(status) => Self::HciError(status),
+                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
+            },
+        }
+    }
+}
+
+impl From<crate::event::Error> for Error {
+    fn from(e: crate::event::Error) -> Self {
+        Self::ParseError(e)
+    }
 }
 
 /// Parameters for the
