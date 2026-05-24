@@ -4,6 +4,16 @@ use std::fs;
 use std::path::Path;
 
 const FIRMWARE_FEATURE_PREFIX: &str = "fw_v";
+const FEATURE_SELECTIONS: &[FeatureSelection] = &[
+    FeatureSelection {
+        name: "advertising mode",
+        features: &["legacy", "extended"],
+    },
+    FeatureSelection {
+        name: "chip family",
+        features: &["wb", "wba"],
+    },
+];
 
 fn main() {
     let manifest_dir =
@@ -19,6 +29,8 @@ fn main() {
     if firmware_features.is_empty() {
         panic!("Cargo.toml must define at least one `{FIRMWARE_FEATURE_PREFIX}*` feature");
     }
+
+    validate_feature_selections();
 
     for feature in &firmware_features {
         println!("cargo:rerun-if-env-changed={}", feature.cargo_env_name());
@@ -46,6 +58,38 @@ fn main() {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+fn validate_feature_selections() {
+    for selection in FEATURE_SELECTIONS {
+        for feature in selection.features {
+            println!(
+                "cargo:rerun-if-env-changed={}",
+                cargo_feature_env_name(feature)
+            );
+        }
+
+        let selected = selection
+            .features
+            .iter()
+            .copied()
+            .filter(|feature| env::var_os(cargo_feature_env_name(feature)).is_some())
+            .collect::<Vec<_>>();
+
+        match selected.as_slice() {
+            [_] => {}
+            [] => panic!(
+                "select exactly one {} feature: {}",
+                selection.name,
+                selection.features.join(", ")
+            ),
+            _ => panic!(
+                "select only one {} feature, found: {}",
+                selection.name,
+                selected.join(", ")
+            ),
+        }
     }
 }
 
@@ -122,12 +166,21 @@ struct FirmwareFeature {
 
 impl FirmwareFeature {
     fn cargo_env_name(&self) -> String {
-        format!("CARGO_FEATURE_{}", self.name.to_ascii_uppercase())
+        cargo_feature_env_name(&self.name)
     }
 
     fn cfg_name(&self) -> String {
         format!("fw_{}", self.version.cfg_suffix())
     }
+}
+
+struct FeatureSelection {
+    name: &'static str,
+    features: &'static [&'static str],
+}
+
+fn cargo_feature_env_name(feature: &str) -> String {
+    format!("CARGO_FEATURE_{}", feature.to_ascii_uppercase())
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

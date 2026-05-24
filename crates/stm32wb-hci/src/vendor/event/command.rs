@@ -873,6 +873,9 @@ pub enum LinkState {
     TxTest,
     /// RX Test
     RxTest,
+    #[cfg(feature = "wb")]
+    /// Advertising with Additional Beacon (only for STM32WB)
+    AdvertisingWithAdditionalBeacon,
 }
 
 impl TryFrom<u8> for LinkState {
@@ -888,6 +891,8 @@ impl TryFrom<u8> for LinkState {
             5 => Ok(LinkState::ConnectedAsPrimary),
             6 => Ok(LinkState::TxTest),
             7 => Ok(LinkState::RxTest),
+            #[cfg(feature = "wb")]
+            0x81 => Ok(LinkState::AdvertisingWithAdditionalBeacon),
             _ => Err(super::VendorError::UnknownLinkState(value)),
         }
     }

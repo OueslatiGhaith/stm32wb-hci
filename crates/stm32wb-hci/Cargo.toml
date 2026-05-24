@@ -14,8 +14,15 @@ repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
 exclude = ["tests"]
 
 [features]
-default = ["fw_v1_15_0"]
+default = ["fw_v1_15_0", "legacy", "wb"]
 defmt = ["dep:defmt"]
+
+legacy = []
+extended = []
+
+wb = []
+wba = []
+
 fw_v1_15_0 = []
 
 [dependencies]

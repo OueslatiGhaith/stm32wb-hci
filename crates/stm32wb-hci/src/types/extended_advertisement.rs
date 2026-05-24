@@ -154,6 +154,9 @@ pub enum AdvertisingPhy {
     Le1M = 0x01,
     /// Advertisement PHY is LE 2M
     Le2M = 0x02,
+    #[cfg(not(feature = "wb"))]
+    /// Aadvertisement PHY is LE Coded (not supported on STM32WB)
+    LeCoded = 0x03,
 }
 
 /// Advertising set

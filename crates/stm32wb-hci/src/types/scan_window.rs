@@ -56,13 +56,26 @@ impl ScanWindow {
         })
     }
 
+    /// This is defined as the time interval from when the Controller started its last
+    /// LE scan until it begins the subsequent LE scan.
+    ///
+    /// Time = N * 0.625 ms.
+    ///
+    /// Values:
+    /// - 0x0004 (2.500 ms)  ... 0x4000 (10240.000 ms) : legacy advertising
+    /// - 0x0004 (2.500 ms)  ... 0x5DC0 (15000.000 ms) : extended advertising with STM32WB
+    /// - 0x0004 (2.500 ms)  ... 0xFFFF (40959.375 ms) : extended advertising with STM32WBA
     fn validate(d: Duration) -> Result<Duration, ScanWindowError> {
         const MIN: Duration = Duration::from_micros(2500);
         if d < MIN {
             return Err(ScanWindowError::TooShort(d));
         }
 
-        const MAX: Duration = Duration::from_millis(10240);
+        const MAX: Duration = cfg_select! {
+            feature = "legacy" => Duration::from_millis(10_240),
+            all(feature = "extended", feature = "wb") => Duration::from_millis(15_000),
+            all(feature = "extended", feature = "wba") => Duration::from_nanos(40_959_375),
+        };
         if d > MAX {
             return Err(ScanWindowError::TooLong(d));
         }
