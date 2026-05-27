@@ -15,7 +15,6 @@ use crate::event::command::{
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
 use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
-use bt_hci::FromHciBytes;
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize as CmdHostBufferSize, HostNumberOfCompletedPackets, ReadTransmitPowerLevel,
@@ -48,6 +47,7 @@ use bt_hci::param::{
     ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind, PrivacyMode,
     ScanningFilterPolicy,
 };
+use bt_hci::{AsHciBytes, FromHciBytes};
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::slice;
@@ -2207,6 +2207,12 @@ impl From<EventFlags> for EventMask {
     }
 }
 
+impl From<EventMask> for EventFlags {
+    fn from(value: EventMask) -> Self {
+        EventFlags::from_bits_truncate(u64::from_le_bytes(value.as_hci_bytes().try_into().unwrap()))
+    }
+}
+
 /// For the [`read_tx_power_level`](HostHci::read_tx_power_level) command, the allowed values for the
 /// type of power level to read.
 ///
@@ -2413,6 +2419,14 @@ defmt::bitflags! {
 impl From<LeEventFlags> for LeEventMask {
     fn from(flags: LeEventFlags) -> Self {
         LeEventMask::from_hci_bytes_complete(&flags.bits().to_le_bytes()).unwrap()
+    }
+}
+
+impl From<LeEventMask> for LeEventFlags {
+    fn from(value: LeEventMask) -> Self {
+        LeEventFlags::from_bits_truncate(u64::from_le_bytes(
+            value.as_hci_bytes().try_into().unwrap(),
+        ))
     }
 }
 
