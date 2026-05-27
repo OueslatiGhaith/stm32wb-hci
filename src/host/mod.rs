@@ -25,15 +25,18 @@ use bt_hci::cmd::info::{
     ReadLocalVersionInformation,
 };
 use bt_hci::cmd::le::{
-    LeAddDeviceToFilterAcceptList, LeClearFilterAcceptList, LeConnUpdate, LeCreateConn,
-    LeCreateConnCancel, LeEnableEncryption, LeEncrypt, LeLongTermKeyRequestNegativeReply,
+    LeAddDeviceToFilterAcceptList, LeAddDeviceToResolvingList, LeClearFilterAcceptList,
+    LeClearResolvingList, LeConnUpdate, LeCreateConn, LeCreateConnCancel, LeEnableEncryption,
+    LeEncrypt, LeLongTermKeyRequestNegativeReply,
     LeLongTermKeyRequestReply as CmdLeLongTermKeyRequestReply, LeRand,
     LeReadAdvPhysicalChannelTxPower, LeReadBufferSize as CmdLeReadBufferSize, LeReadChannelMap,
     LeReadFilterAcceptListSize, LeReadLocalSupportedFeatures as CmdLeReadLocalSupportedFeatures,
-    LeReadRemoteFeatures, LeReadSupportedStates as CmdLeReadSupportedStates,
-    LeRemoveDeviceFromFilterAcceptList, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
-    LeSetEventMask, LeSetHostChannelClassification, LeSetRandomAddr, LeSetScanEnable,
-    LeSetScanParams, LeSetScanResponseData, LeTestEnd as CmdLeTestEnd,
+    LeReadRemoteFeatures, LeReadResolvingListSize,
+    LeReadSupportedStates as CmdLeReadSupportedStates, LeRemoveDeviceFromFilterAcceptList,
+    LeRemoveDeviceFromResolvingList, LeSetAddrResolutionEnable, LeSetAdvData, LeSetAdvEnable,
+    LeSetAdvParams, LeSetEventMask, LeSetHostChannelClassification, LeSetPrivacyMode,
+    LeSetRandomAddr, LeSetResolvablePrivateAddrTimeout, LeSetScanEnable, LeSetScanParams,
+    LeSetScanResponseData, LeTestEnd as CmdLeTestEnd,
 };
 use bt_hci::cmd::link_control::{Disconnect, ReadRemoteVersionInformation};
 use bt_hci::cmd::status::ReadRssi as CmdReadRssi;
@@ -41,7 +44,7 @@ use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvFilterPolicy, ConnHandleCompletedPackets,
-    ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind,
+    ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind, PrivacyMode,
     ScanningFilterPolicy,
 };
 use byteorder::{ByteOrder, LittleEndian};
@@ -1153,6 +1156,92 @@ pub trait HostHci {
     ///
     /// A [Command Complete](crate::event::command::ReturnParameters::LeTestEnd) event is generated.
     async fn le_test_end(&self) -> Result<LeTestEnd, Error>;
+
+    /// Adds one device to the resolving list used to generate and resolve Resolvable Private
+    /// Addresses in the Controller.
+    ///
+    /// This command can be used at any time except when:
+    /// - address resolution is enabled and advertising is enabled.
+    /// - address resolution is enabled and scanning is enabled.
+    /// - address resolution is enabled and an
+    ///   [`le_create_connection`](HostHci::le_create_connection) command is outstanding.
+    ///
+    /// `peer_irk` and `local_irk` are little-endian 128-bit values. An all-zero IRK means the peer
+    /// does not use Resolvable Private Addresses (the identity address is used directly).
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.38.
+    ///
+    /// # Generated events
+    ///
+    /// A Command Complete event is generated. When a Controller cannot add a device to the
+    /// resolving list because there is no space available, it shall return
+    /// [`OutOfMemory`](Status::OutOfMemory).
+    async fn le_add_device_to_resolving_list(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+        peer_irk: [u8; 16],
+        local_irk: [u8; 16],
+    ) -> Result<(), Error>;
+
+    /// Removes one device from the resolving list used to resolve Resolvable Private Addresses in
+    /// the Controller.
+    ///
+    /// Same usage restrictions as
+    /// [`le_add_device_to_resolving_list`](HostHci::le_add_device_to_resolving_list).
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.39.
+    async fn le_remove_device_from_resolving_list(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+    ) -> Result<(), Error>;
+
+    /// Removes all devices from the resolving list used to resolve Resolvable Private Addresses
+    /// in the Controller.
+    ///
+    /// Same usage restrictions as
+    /// [`le_add_device_to_resolving_list`](HostHci::le_add_device_to_resolving_list).
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.40.
+    async fn le_clear_resolving_list(&self) -> Result<(), Error>;
+
+    /// Reads the total number of entries supported by the Controller in the resolving list.
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.41.
+    async fn le_read_resolving_list_size(&self) -> Result<u8, Error>;
+
+    /// Enables or disables resolution of Resolvable Private Addresses in the Controller.
+    ///
+    /// This command can be used at any time except when:
+    /// - advertising is enabled.
+    /// - scanning is enabled.
+    /// - an [`le_create_connection`](HostHci::le_create_connection) command is outstanding.
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.44.
+    async fn le_set_address_resolution_enable(&self, enable: bool) -> Result<(), Error>;
+
+    /// Sets the length of time the Controller uses a Resolvable Private Address before generating
+    /// and using a new RPA. `timeout` is rounded down to whole seconds and clamped to the spec
+    /// range (1 s .. 41 460 s).
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.45.
+    async fn le_set_resolvable_private_address_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<(), Error>;
+
+    /// Sets the privacy mode for the peer identified by the given identity address. Device
+    /// Privacy ignores the peer's identity address when the peer is using an RPA; Network Privacy
+    /// (the default) requires the peer to use an RPA.
+    ///
+    /// The peer must already be present in the resolving list (added via
+    /// [`le_add_device_to_resolving_list`](HostHci::le_add_device_to_resolving_list)).
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.77.
+    async fn le_set_privacy_mode(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+        privacy_mode: PrivacyMode,
+    ) -> Result<(), Error>;
 }
 
 /// Errors that may occur when sending commands to the controller.  Must be specialized on the types
@@ -1307,7 +1396,14 @@ where
         + ControllerCmdSync<CmdLeReadLocalSupportedFeatures>
         + ControllerCmdSync<LeReadAdvPhysicalChannelTxPower>
         + ControllerCmdSync<CmdReadBdAddr>
-        + ControllerCmdSync<LeSetAdvParams>,
+        + ControllerCmdSync<LeSetAdvParams>
+        + ControllerCmdSync<LeAddDeviceToResolvingList>
+        + ControllerCmdSync<LeRemoveDeviceFromResolvingList>
+        + ControllerCmdSync<LeClearResolvingList>
+        + ControllerCmdSync<LeReadResolvingListSize>
+        + ControllerCmdSync<LeSetAddrResolutionEnable>
+        + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
+        + ControllerCmdSync<LeSetPrivacyMode>,
 {
     async fn disconnect(&self, conn_handle: ConnectionHandle, reason: Status) -> Result<(), Error> {
         Disconnect::new(conn_handle.into(), reason.try_into()?)
@@ -1806,6 +1902,85 @@ where
             .map(|ret| LeTestEnd {
                 number_of_packets: ret.into(),
             })
+    }
+
+    async fn le_add_device_to_resolving_list(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+        peer_irk: [u8; 16],
+        local_irk: [u8; 16],
+    ) -> Result<(), Error> {
+        LeAddDeviceToResolvingList::new(
+            peer_identity_address.into(),
+            peer_identity_address.into(),
+            peer_irk,
+            local_irk,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
+    }
+
+    async fn le_remove_device_from_resolving_list(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+    ) -> Result<(), Error> {
+        LeRemoveDeviceFromResolvingList::new(
+            peer_identity_address.into(),
+            peer_identity_address.into(),
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
+    }
+
+    async fn le_clear_resolving_list(&self) -> Result<(), Error> {
+        LeClearResolvingList::new()
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn le_read_resolving_list_size(&self) -> Result<u8, Error> {
+        LeReadResolvingListSize::new()
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn le_set_address_resolution_enable(&self, enable: bool) -> Result<(), Error> {
+        LeSetAddrResolutionEnable::new(enable)
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn le_set_resolvable_private_address_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<(), Error> {
+        // Spec range is 1..=0xA1B0 seconds (Vol 2, Part E, §7.8.45). Clamp before sending so
+        // out-of-range host values produce a controller-side error rather than overflow.
+        let secs = timeout.as_secs().clamp(1, 0xA1B0) as u32;
+        LeSetResolvablePrivateAddrTimeout::new(bt_hci::param::Duration::from_secs(secs))
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn le_set_privacy_mode(
+        &self,
+        peer_identity_address: crate::BdAddrType,
+        privacy_mode: PrivacyMode,
+    ) -> Result<(), Error> {
+        LeSetPrivacyMode::new(
+            peer_identity_address.into(),
+            peer_identity_address.into(),
+            privacy_mode,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 }
 

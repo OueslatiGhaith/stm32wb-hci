@@ -100,5 +100,12 @@ opcodes! {
         pub const LE_RECEIVER_TEST = 0x001D;
         pub const LE_TRANSMITTER_TEST = 0x001E;
         pub const LE_TEST_END = 0x001F;
+        pub const LE_ADD_DEVICE_TO_RESOLVING_LIST = 0x0027;
+        pub const LE_REMOVE_DEVICE_FROM_RESOLVING_LIST = 0x0028;
+        pub const LE_CLEAR_RESOLVING_LIST = 0x0029;
+        pub const LE_READ_RESOLVING_LIST_SIZE = 0x002A;
+        pub const LE_SET_ADDRESS_RESOLUTION_ENABLE = 0x002D;
+        pub const LE_SET_RESOLVABLE_PRIVATE_ADDRESS_TIMEOUT = 0x002E;
+        pub const LE_SET_PRIVACY_MODE = 0x004E;
     }
 }
