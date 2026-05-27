@@ -868,6 +868,44 @@ pub trait GapCommands {
         handle: AdvertisingHandle,
         addr: BdAddr,
     ) -> Result<(), Error>;
+
+    /// Reply to ACI_GAP_PAIRING_REQUEST_EVENT to accept or reject pairing.
+    async fn pairing_request_reply(
+        &self,
+        conn_handle: crate::ConnectionHandle,
+        accept: bool,
+    ) -> Result<(), Error>;
+
+    /// Set parameters for periodic advertising.
+    async fn adv_set_periodic_parameters(
+        &self,
+        params: &AdvSetPeriodicParameters,
+    ) -> Result<(), Error>;
+
+    /// Set data for periodic advertising PDUs.
+    async fn adv_set_periodic_data<'a>(
+        &self,
+        params: &AdvSetPeriodicData<'a>,
+    ) -> Result<(), Error>;
+
+    /// Enable or disable periodic advertising.
+    async fn adv_set_periodic_enable(
+        &self,
+        enable: u8,
+        handle: AdvertisingHandle,
+    ) -> Result<(), Error>;
+
+    /// Set extended advertising configuration (V2 with 4-byte intervals and PHY options).
+    async fn adv_set_configuration_v2(
+        &self,
+        params: &AdvSetConfigV2,
+    ) -> Result<(), Error>;
+
+    /// Start extended scan procedure.
+    async fn ext_start_scan(&self, params: &ExtStartScanParams) -> Result<(), Error>;
+
+    /// Create connection using extended advertising.
+    async fn ext_create_connection(&self, params: &ExtCreateConnectionParams) -> Result<(), Error>;
 }
 
 vendor_cmd! {
@@ -1223,6 +1261,53 @@ vendor_cmd! {
     }
 }
 
+vendor_cmd! {
+    GapPairingRequestReply(GAP_PAIRING_REQUEST_REPLY) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetPeriodicParameters(GAP_ADV_SET_PERIODIC_PARAMETERS) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetPeriodicData(GAP_ADV_SET_PERIODIC_DATA) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetPeriodicEnable(GAP_ADV_SET_PERIODIC_ENABLE) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapAdvSetConfigurationV2(GAP_ADV_SET_CONFIGURATION_V2) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GapExtStartScan(GAP_EXT_START_SCAN) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
+vendor_cmd! {
+    GapExtCreateConnection(GAP_EXT_CREATE_CONNECTION) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
 impl<T> GapCommands for T
 where
     T: ControllerCmdSync<GapSetNonDiscoverable>
@@ -1276,7 +1361,14 @@ where
         + for<'t> ControllerCmdSync<GapAddDevicesToList<'t>>
         + ControllerCmdSync<GapAdvClearSets>
         + for<'t> ControllerCmdSync<GapAdvSetRandomAddress<'t>>
-        + for<'t> ControllerCmdSync<GapDeleteAdType<'t>>,
+        + for<'t> ControllerCmdSync<GapDeleteAdType<'t>>
+        + for<'t> ControllerCmdSync<GapPairingRequestReply<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetPeriodicParameters<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetPeriodicData<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetPeriodicEnable<'t>>
+        + for<'t> ControllerCmdSync<GapAdvSetConfigurationV2<'t>>
+        + for<'t> ControllerCmdAsync<GapExtStartScan<'t>>
+        + for<'t> ControllerCmdAsync<GapExtCreateConnection<'t>>,
 {
     async fn gap_set_nondiscoverable(&self) -> Result<(), Error> {
         GapSetNonDiscoverable::new()
@@ -1769,6 +1861,85 @@ where
         payload[1..].copy_from_slice(&addr.0);
 
         GapAdvSetRandomAddress::new((&payload[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn pairing_request_reply(
+        &self,
+        conn_handle: crate::ConnectionHandle,
+        accept: bool,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; 3];
+        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
+        bytes[2] = accept as u8;
+        GapPairingRequestReply::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn adv_set_periodic_parameters(
+        &self,
+        params: &AdvSetPeriodicParameters,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; AdvSetPeriodicParameters::LENGTH];
+        params.copy_into_slice(&mut bytes);
+        GapAdvSetPeriodicParameters::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn adv_set_periodic_data<'a>(
+        &self,
+        params: &AdvSetPeriodicData<'a>,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; AdvSetPeriodicData::MAX_LENGTH];
+        let len = params.copy_into_slice(&mut bytes);
+        GapAdvSetPeriodicData::new((&bytes[..len]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn adv_set_periodic_enable(
+        &self,
+        enable: u8,
+        handle: AdvertisingHandle,
+    ) -> Result<(), Error> {
+        GapAdvSetPeriodicEnable::new((&[enable, handle.0][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn adv_set_configuration_v2(
+        &self,
+        params: &AdvSetConfigV2,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; AdvSetConfigV2::LENGTH];
+        params.copy_into_slice(&mut bytes);
+        GapAdvSetConfigurationV2::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn ext_start_scan(&self, params: &ExtStartScanParams) -> Result<(), Error> {
+        let mut bytes = [0u8; ExtStartScanParams::MAX_LENGTH];
+        let len = params.copy_into_slice(&mut bytes);
+        GapExtStartScan::new((&bytes[..len]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn ext_create_connection(&self, params: &ExtCreateConnectionParams) -> Result<(), Error> {
+        let mut bytes = [0u8; ExtCreateConnectionParams::MAX_LENGTH];
+        let len = params.copy_into_slice(&mut bytes);
+        GapExtCreateConnection::new((&bytes[..len]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -3107,5 +3278,209 @@ impl<'a> AdvSetAdvertisingData<'a> {
         let length = self.data.len();
         bytes[3] = length as u8;
         bytes[4..(4 + length)].copy_from_slice(self.data);
+    }
+}
+
+/// Parameters for [adv_set_periodic_parameters](GapCommands::adv_set_periodic_parameters).
+pub struct AdvSetPeriodicParameters {
+    pub advertising_handle: AdvertisingHandle,
+    pub periodic_adv_interval_min: u16,
+    pub periodic_adv_interval_max: u16,
+    pub periodic_adv_properties: u16,
+    pub num_subevents: u8,
+    pub subevent_interval: u8,
+    pub response_slot_delay: u8,
+    pub response_slot_spacing: u8,
+    pub num_response_slots: u8,
+}
+
+impl AdvSetPeriodicParameters {
+    pub(crate) const LENGTH: usize = 12;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::LENGTH);
+        bytes[0] = self.advertising_handle.0;
+        LittleEndian::write_u16(&mut bytes[1..3], self.periodic_adv_interval_min);
+        LittleEndian::write_u16(&mut bytes[3..5], self.periodic_adv_interval_max);
+        LittleEndian::write_u16(&mut bytes[5..7], self.periodic_adv_properties);
+        bytes[7] = self.num_subevents;
+        bytes[8] = self.subevent_interval;
+        bytes[9] = self.response_slot_delay;
+        bytes[10] = self.response_slot_spacing;
+        bytes[11] = self.num_response_slots;
+    }
+}
+
+/// Parameters for [adv_set_periodic_data](GapCommands::adv_set_periodic_data).
+pub struct AdvSetPeriodicData<'a> {
+    pub advertising_handle: AdvertisingHandle,
+    pub operation: AdvertisingOperation,
+    pub data: &'a [u8],
+}
+
+impl<'a> AdvSetPeriodicData<'a> {
+    pub(crate) const MAX_LENGTH: usize = 255;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+        bytes[0] = self.advertising_handle.0;
+        bytes[1] = self.operation as u8;
+        let len = self.data.len();
+        bytes[2] = len as u8;
+        bytes[3..3 + len].copy_from_slice(self.data);
+        3 + len
+    }
+}
+
+/// Parameters for [adv_set_configuration_v2](GapCommands::adv_set_configuration_v2).
+///
+/// Like [AdvSetConfig] but uses 4-byte primary advertising intervals and adds PHY fields.
+pub struct AdvSetConfigV2 {
+    pub adv_mode: AdvertisingMode,
+    pub adv_handle: AdvertisingHandle,
+    pub adv_event_properties: AdvertisingEvent,
+    /// Minimum primary advertising interval (N * 0.625 ms).
+    pub primary_adv_interval_min: u32,
+    /// Maximum primary advertising interval (N * 0.625 ms).
+    pub primary_adv_interval_max: u32,
+    pub primary_adv_channel_map: Channels,
+    pub own_addr_type: OwnAddressType,
+    pub peer_addr: BdAddrType,
+    pub adv_filter_policy: AdvertisingFilterPolicy,
+    pub adv_tx_power: u8,
+    pub primary_adv_phy: AdvertisingPhy,
+    pub secondary_adv_max_skip: u8,
+    pub secondary_adv_phy: AdvertisingPhy,
+    pub adv_sid: u8,
+    pub scan_req_notification_enable: bool,
+    pub primary_adv_phy_options: u8,
+}
+
+impl AdvSetConfigV2 {
+    pub(crate) const LENGTH: usize = 29;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= Self::LENGTH);
+        bytes[0] = self.adv_mode.bits();
+        bytes[1] = self.adv_handle.0;
+        LittleEndian::write_u16(&mut bytes[2..4], self.adv_event_properties.bits());
+        LittleEndian::write_u32(&mut bytes[4..8], self.primary_adv_interval_min);
+        LittleEndian::write_u32(&mut bytes[8..12], self.primary_adv_interval_max);
+        bytes[12] = self.primary_adv_channel_map.bits();
+        bytes[13] = self.own_addr_type as u8;
+        self.peer_addr.copy_into_slice(&mut bytes[14..]);
+        bytes[21] = self.adv_filter_policy as u8;
+        bytes[22] = self.adv_tx_power;
+        bytes[23] = self.primary_adv_phy as u8;
+        bytes[24] = self.secondary_adv_max_skip;
+        bytes[25] = self.secondary_adv_phy as u8;
+        bytes[26] = self.adv_sid;
+        bytes[27] = self.scan_req_notification_enable as u8;
+        bytes[28] = self.primary_adv_phy_options;
+    }
+}
+
+/// Per-PHY scan parameters for [ExtStartScanParams].
+pub struct ExtScanPhyParams {
+    pub scan_type: u8,
+    pub scan_interval: u16,
+    pub scan_window: u16,
+}
+
+/// Parameters for [ext_start_scan](GapCommands::ext_start_scan).
+pub struct ExtStartScanParams {
+    pub scan_mode: u8,
+    pub procedure: u8,
+    pub own_address_type: u8,
+    pub filter_duplicates: u8,
+    pub duration: u16,
+    pub period: u16,
+    pub scanning_filter_policy: u8,
+    pub scanning_phys: u8,
+    /// Per-PHY parameters (one entry per set bit in scanning_phys, max 2).
+    pub phy_params: [ExtScanPhyParams; 2],
+    pub num_phys: usize,
+}
+
+impl ExtStartScanParams {
+    pub(crate) const MAX_LENGTH: usize = 10 + 2 * 5; // fixed(10) + up to 2 PHYs * 5 bytes each
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+        bytes[0] = self.scan_mode;
+        bytes[1] = self.procedure;
+        bytes[2] = self.own_address_type;
+        bytes[3] = self.filter_duplicates;
+        LittleEndian::write_u16(&mut bytes[4..6], self.duration);
+        LittleEndian::write_u16(&mut bytes[6..8], self.period);
+        bytes[8] = self.scanning_filter_policy;
+        bytes[9] = self.scanning_phys;
+        let mut offset = 10;
+        for i in 0..self.num_phys.min(2) {
+            bytes[offset] = self.phy_params[i].scan_type;
+            LittleEndian::write_u16(&mut bytes[offset + 1..offset + 3], self.phy_params[i].scan_interval);
+            LittleEndian::write_u16(&mut bytes[offset + 3..offset + 5], self.phy_params[i].scan_window);
+            offset += 5;
+        }
+        offset
+    }
+}
+
+/// Per-PHY connection parameters for [ExtCreateConnectionParams].
+pub struct ExtConnPhyParams {
+    pub scan_interval: u16,
+    pub scan_window: u16,
+    pub conn_interval_min: u16,
+    pub conn_interval_max: u16,
+    pub conn_latency: u16,
+    pub supervision_timeout: u16,
+    pub min_ce_length: u16,
+    pub max_ce_length: u16,
+}
+
+/// Parameters for [ext_create_connection](GapCommands::ext_create_connection).
+pub struct ExtCreateConnectionParams {
+    pub initiating_mode: u8,
+    pub procedure: u8,
+    pub own_address_type: u8,
+    pub peer_address_type: u8,
+    pub peer_address: BdAddr,
+    pub advertising_handle: u8,
+    pub subevent: u8,
+    pub initiator_filter_policy: u8,
+    pub initiating_phys: u8,
+    /// Per-PHY parameters (one entry per set bit in initiating_phys, max 3).
+    pub phy_params: [ExtConnPhyParams; 3],
+    pub num_phys: usize,
+}
+
+impl ExtCreateConnectionParams {
+    pub(crate) const MAX_LENGTH: usize = 14 + 3 * 16;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
+        assert!(bytes.len() >= Self::MAX_LENGTH);
+        bytes[0] = self.initiating_mode;
+        bytes[1] = self.procedure;
+        bytes[2] = self.own_address_type;
+        bytes[3] = self.peer_address_type;
+        bytes[4..10].copy_from_slice(&self.peer_address.0);
+        bytes[10] = self.advertising_handle;
+        bytes[11] = self.subevent;
+        bytes[12] = self.initiator_filter_policy;
+        bytes[13] = self.initiating_phys;
+        let mut offset = 14;
+        for i in 0..self.num_phys.min(3) {
+            let p = &self.phy_params[i];
+            LittleEndian::write_u16(&mut bytes[offset..], p.scan_interval);
+            LittleEndian::write_u16(&mut bytes[offset + 2..], p.scan_window);
+            LittleEndian::write_u16(&mut bytes[offset + 4..], p.conn_interval_min);
+            LittleEndian::write_u16(&mut bytes[offset + 6..], p.conn_interval_max);
+            LittleEndian::write_u16(&mut bytes[offset + 8..], p.conn_latency);
+            LittleEndian::write_u16(&mut bytes[offset + 10..], p.supervision_timeout);
+            LittleEndian::write_u16(&mut bytes[offset + 12..], p.min_ce_length);
+            LittleEndian::write_u16(&mut bytes[offset + 14..], p.max_ce_length);
+            offset += 16;
+        }
+        offset
     }
 }

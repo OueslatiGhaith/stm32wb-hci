@@ -14,6 +14,7 @@ pub trait UartController:
     + command::gatt::GattCommands
     + command::hal::HalCommands
     + command::l2cap::L2capCommands
+    + command::sys::SysCommands
     + crate::host::HostHci
     + crate::host::uart::UartHci
 {
@@ -24,6 +25,7 @@ impl<T> UartController for T where
         + command::gatt::GattCommands
         + command::hal::HalCommands
         + command::l2cap::L2capCommands
+        + command::sys::SysCommands
         + crate::host::HostHci
         + crate::host::uart::UartHci
 {

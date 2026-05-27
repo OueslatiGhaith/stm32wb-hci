@@ -312,6 +312,71 @@ fn le_connection_complete_failed_bad_central_clock_accuracy() {
 }
 
 #[test]
+fn le_enhanced_connection_complete_resolved_public_identity() {
+    // Subevent 0x0A. Address type 0x02 = "Public Identity Address (Resolved)".
+    // The 6-byte address is the peer's identity; the two 6-byte fields after it
+    // are the local and peer RPAs.
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Ok(Event::LeEnhancedConnectionComplete(event)) => {
+            assert_eq!(event.status, hci::Status::Success);
+            assert_eq!(event.conn_handle, hci::ConnectionHandle(0x0201));
+            assert_eq!(event.role, ConnectionRole::Central);
+            assert_eq!(
+                hci::BdAddrType::try_from(event.peer_bd_addr).unwrap(),
+                hci::BdAddrType::Public(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
+            );
+            assert_eq!(
+                event.local_resolvable_private_address,
+                hci::BdAddr([0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
+            );
+            assert_eq!(
+                event.peer_resolvable_private_address,
+                hci::BdAddr([0x21, 0x22, 0x23, 0x24, 0x25, 0x26])
+            );
+        }
+        other => panic!("Did not get LE enhanced connection complete: {:?}", other),
+    }
+}
+
+#[test]
+fn le_enhanced_connection_complete_resolved_random_identity() {
+    // Address type 0x03 = "Random Identity Address (Resolved)".
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x03, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Ok(Event::LeEnhancedConnectionComplete(event)) => {
+            assert_eq!(
+                hci::BdAddrType::try_from(event.peer_bd_addr).unwrap(),
+                hci::BdAddrType::Random(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
+            );
+        }
+        other => panic!("Did not get LE enhanced connection complete: {:?}", other),
+    }
+}
+
+#[test]
+fn le_enhanced_connection_complete_failed_bad_address_type() {
+    // 0x04 is not a defined peer-address-type value.
+    let buffer = [
+        0x3E, 31, 0x0A, 0x00, 0x01, 0x02, 0x00, 0x04, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x16, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x09, 0x00, 0x0B, 0x00,
+        0x0D, 0x0A, 0x00,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Err(Error::BadLeAddressType(code)) => assert_eq!(code, 0x04),
+        other => panic!("Did not get bad address type: {:?}", other),
+    }
+}
+
+#[test]
 fn le_advertising_report() {
     let buffer = [
         0x3E, 27, 0x02, 2, 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 2, 0x07, 0x08, 0x09, 1, 1,
@@ -446,5 +511,45 @@ fn le_long_term_key_request() {
             assert_eq!(event.encrypted_diversifier, 0x0C0B);
         }
         other => panic!("Did not Get LE LTK Request: {:?}", other),
+    }
+}
+
+#[test]
+fn test_parse_misc_events() {
+    let events = "
+        [4, 3e, 1f, a, 0, 0, 0, 1, 1, 33, a6, ae, bb, b9, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 0, 0, 0, 48, 0, 1] [] 
+        [4, 3e, 6, c, 0, 0, 0, 2, 2] [] 
+        [4, 3e, b, 7, 0, 0, fb, 0, 90, 42, fb, 0, 48, 8] [] 
+        [4, ff, 6, 3, c, 0, 0, f7, 0] [] 
+        [4, ff, c, 1, c, 0, 0, 4, 0, 0, 0, 2, 0, 2, 0] [] 
+        [4, 3e, 42, 8, 0, 84, e6, 7a, a1, 86, 69, 18, a, bf, 29, a5, c0, b, 7a, d0, 2f, 74, 58, d4, ed, f4, 48, dc, c5, 8e, e5, d9, ba, be, 73, 7f, df, 90, d2, 26, 76, 0, 56, 64, 36, c3, 6, 78, 79, a5, f5, 94, a6, 4d, e2, 55, 56, f2, 15, 7c, 35, f5, 78, 9e, f, 29, 25, da, 59] [] 
+        [4, 3e, 22, 9, 0, b7, 88, 77, b1, 91, 6a, bd, 83, e5, 79, c6, 73, 37, f1, dc, 7f, a1, 2c, e6, 7b, 7f, 73, c0, 29, 14, 0, be, 22, 19, 55, 7e, e3] [] 
+        [4, ff, 8, 9, 4, 0, 0, dd, 55, 3, 0] [] 
+        [4, 8, 4, 0, 0, 0, 1] [] 
+        [4, ff, 13, 1, c, 0, 0, 13, 0, 0, 0, 9, 0, 41, 68, 61, 68, 61, 68, 61, 68, 61] [] 
+        [4, ff, 6, 1, 4, 0, 0, 0, 0] [] 
+        [4, 5, 4, 0, 0, 0, 13] [] 
+    ";
+
+    for line in events.lines() {
+        if line.trim_start().starts_with("#") {
+            continue;
+        }
+
+        let bytes: Vec<u8> = line
+            .replace("[", " ")
+            .replace("]", " ")
+            .replace(",", " ")
+            .split_whitespace()
+            .filter_map(|b| u8::from_str_radix(b, 16).ok())
+            .collect();
+
+        if bytes.len() < 1 {
+            continue;
+        }
+
+        if TestEvent::new(Packet(&bytes[1..])).is_err() {
+            panic!("failed to parse event: {:x?}", bytes);
+        }
     }
 }

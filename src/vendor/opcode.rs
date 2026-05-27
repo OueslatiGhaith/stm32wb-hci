@@ -38,14 +38,18 @@ vendor_opcodes! {
         // length (7 bits). The C source code has 0x19, which is valid.
         pub const HAL_GET_ANCHOR_PERIOD = 0x19;
         pub const HAL_SET_EVENT_MASK = 0x1A;
+        pub const HAL_GET_LINK_STATUS_V2 = 0x1B;
         pub const HAL_GET_PM_DEBUG_INFO = 0x1C;
         pub const HAL_SET_PERIPHERAL_LATENCY = 0x20;
+        pub const HAL_SET_SYNC_EVENT_CONFIG = 0x21;
         pub const HAL_READ_RSSI = 0x22;
         pub const HAL_READ_RADIO_REG = 0x30;
         pub const HAL_READ_RAW_RSSI = 0x32;
         pub const HAL_RX_START = 0x33;
         pub const HAL_RX_STOP = 0x34;
         pub const HAL_STACK_RESET = 0x3B;
+        pub const HAL_CONTINUOUS_TX_START = 0x2E;
+        pub const HAL_EAD_ENCRYPT_DECRYPT = 0x2F;
     }
     Gap = 0x1;
     {
@@ -102,6 +106,13 @@ vendor_opcodes! {
         pub const GAP_ADV_REMOVE_SET = 0x44;
         pub const GAP_ADV_CLEAR_SETS = 0x45;
         pub const GAP_ADV_SET_RANDOM_ADDRESS = 0x46;
+        pub const GAP_ADV_SET_PERIODIC_PARAMETERS = 0x47;
+        pub const GAP_ADV_SET_PERIODIC_DATA = 0x48;
+        pub const GAP_ADV_SET_PERIODIC_ENABLE = 0x49;
+        pub const GAP_ADV_SET_CONFIGURATION_V2 = 0x4D;
+        pub const GAP_PAIRING_REQUEST_REPLY = 0x2D;
+        pub const GAP_EXT_START_SCAN = 0x50;
+        pub const GAP_EXT_CREATE_CONNECTION = 0x51;
     }
     Gatt = 0x2;
     {
@@ -154,6 +165,8 @@ vendor_opcodes! {
         pub const GATT_STORE_DB = 0x30;
         pub const GATT_SEND_MULT_NOTIFICATION = 0x31;
         pub const GATT_READ_MULTIPLE_VAR_CHAR_VALUE = 0x32;
+        pub const GATT_WRITE_WITHOUT_RESP_EXT = 0x40;
+        pub const GATT_WRITE_WITH_RESP_EXT = 0x41;
     }
     L2Cap = 0x3;
     {
@@ -166,5 +179,12 @@ vendor_opcodes! {
         pub const L2CAP_COC_DISCONNECT = 0x0C;
         pub const L2CAP_COC_FLOW_CONTROL = 0x0D;
         pub const L2CAP_COC_TX_DATA = 0x0E;
+    }
+    Sys = 0x6;
+    {
+        pub const SYS_RESET = 0x00;
+        pub const SYS_GET_INFORMATION = 0x01;
+        pub const SYS_WRITE_CONFIG_DATA = 0x02;
+        pub const SYS_READ_CONFIG_DATA = 0x03;
     }
 }
