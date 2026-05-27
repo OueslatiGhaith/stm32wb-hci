@@ -14,7 +14,7 @@ use crate::event::command::{
     LeRandom, LeReadBufferSize, LeReadSupportedStates, LeStates, LeSupportedFeatures, LeTestEnd,
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
-use crate::{BadStatusError, BdAddr, ConnectionHandle};
+use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize as CmdHostBufferSize, HostNumberOfCompletedPackets, ReadTransmitPowerLevel,
@@ -2808,6 +2808,16 @@ pub enum PeerAddrType {
     RandomIdentityAddress(crate::BdAddr),
 }
 
+impl From<PeerAddrType> for BdAddrType {
+    fn from(val: PeerAddrType) -> Self {
+        match val {
+            PeerAddrType::PublicDeviceAddress(addr) => BdAddrType::Public(addr),
+            PeerAddrType::PublicIdentityAddress(addr) => BdAddrType::Public(addr),
+            PeerAddrType::RandomDeviceAddress(addr) => BdAddrType::Random(addr),
+            PeerAddrType::RandomIdentityAddress(addr) => BdAddrType::Random(addr),
+        }
+    }
+}
 impl From<PeerAddrType> for bt_hci::param::BdAddr {
     fn from(val: PeerAddrType) -> Self {
         match val {
@@ -2860,6 +2870,16 @@ impl PeerAddrType {
                 bytes[1..7].copy_from_slice(&bd_addr.0);
             }
         }
+    }
+}
+
+pub fn to_peer_addr_type(bd_addr_type: u8, addr: BdAddr) -> Result<PeerAddrType, BdAddrTypeError> {
+    match AddrKind(bd_addr_type) {
+        AddrKind::PUBLIC => Ok(PeerAddrType::PublicDeviceAddress(addr)),
+        AddrKind::RESOLVABLE_PRIVATE_OR_PUBLIC => Ok(PeerAddrType::PublicIdentityAddress(addr)),
+        AddrKind::RANDOM => Ok(PeerAddrType::RandomDeviceAddress(addr)),
+        AddrKind::RESOLVABLE_PRIVATE_OR_RANDOM => Ok(PeerAddrType::RandomIdentityAddress(addr)),
+        _ => Err(BdAddrTypeError(bd_addr_type)),
     }
 }
 

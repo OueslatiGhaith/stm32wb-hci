@@ -30,6 +30,7 @@ macro_rules! require_len_at_least {
 
 pub mod command;
 
+use crate::host::{PeerAddrType, to_peer_addr_type};
 use crate::types::{ConnectionIntervalError, FixedConnectionInterval};
 use crate::vendor::VendorError;
 use crate::vendor::event::VendorEvent;
@@ -119,7 +120,6 @@ pub enum Event {
     // TODO: le_advertising_set_terminated
     // TODO: le_scan_request_received
     // TODO: le_channel_selection_algorithm
-
     /// Vol 4, Part E, Section 7.7.65.21 — IQ samples from a CTE-bearing packet.
     LeConnectionIqReport(LeConnectionIqReport),
 
@@ -1322,18 +1322,18 @@ fn to_le_phy_update_complete(payload: &[u8]) -> Result<LePhyUpdateComplete, Erro
 }
 
 fn to_le_read_local_p256_public_key(payload: &[u8]) -> Result<[u8; 64], Error> {
-    require_len!(payload, 65);
+    require_len!(payload, 66);
 
     let mut key = [0; 64];
-    key.copy_from_slice(&payload[1..]);
+    key.copy_from_slice(&payload[1..65]);
     Ok(key)
 }
 
 fn to_le_generate_dhkey_complete(payload: &[u8]) -> Result<[u8; 32], Error> {
-    require_len!(payload, 33);
+    require_len!(payload, 34);
 
     let mut key = [0; 32];
-    key.copy_from_slice(&payload[1..]);
+    key.copy_from_slice(&payload[2..]);
     Ok(key)
 }
 
@@ -1369,7 +1369,7 @@ pub struct LeEnhancedConnectionComplete {
     pub role: ConnectionRole,
 
     /// Address of the peer device.
-    pub peer_bd_addr: crate::BdAddrType,
+    pub peer_bd_addr: PeerAddrType,
 
     /// Resolvable Private Address being used by the local device for this connection.
     ///
@@ -1419,8 +1419,7 @@ fn to_le_enhanced_connection_complete(
         status: payload[1].try_into().map_err(rewrap_bad_status)?,
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[2..])),
         role: payload[4].try_into()?,
-        peer_bd_addr: crate::to_bd_addr_type_with_identity(payload[5], bd_addr)
-            .map_err(rewrap_bd_addr_type_err)?,
+        peer_bd_addr: to_peer_addr_type(payload[5], bd_addr).map_err(rewrap_bd_addr_type_err)?,
         local_resolvable_private_address,
         peer_resolvable_private_address,
         conn_interval: FixedConnectionInterval::from_bytes(&payload[24..30])
