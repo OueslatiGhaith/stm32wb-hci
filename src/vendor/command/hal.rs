@@ -191,6 +191,29 @@ pub trait HalCommands {
     /// This command is equivalent to [HCI Reset](crate::host::HostHci::reset) but ensures
     /// the sleep mode is entered immediately after its completion.
     async fn stack_reset(&self) -> Result<(), Error>;
+
+    /// Returns the status of BLE links (up to 20 links plus 2 ISO streams).
+    async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error>;
+
+    /// Configure ACI_HAL_SYNC_EVENT.
+    async fn set_sync_event_config(
+        &self,
+        group_id: u8,
+        enable_sync: bool,
+        enable_cb_trigger: bool,
+        trigger_source: SyncTriggerSource,
+    ) -> Result<(), Error>;
+
+    /// Start continuous transmit test mode.
+    async fn continuous_tx_start(
+        &self,
+        rf_channel: u8,
+        phy: ContinuousTxPhy,
+        pattern: ContinuousTxPattern,
+    ) -> Result<(), Error>;
+
+    /// Encrypt or decrypt data using the Encrypted Advertising Data scheme.
+    async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error>;
 }
 
 vendor_cmd! {
@@ -326,6 +349,34 @@ vendor_cmd! {
     }
 }
 
+vendor_cmd! {
+    HalGetLinkStatusV2(HAL_GET_LINK_STATUS_V2) {
+        Params = ();
+        Return = ReturnBuffer<67>;
+    }
+}
+
+vendor_cmd! {
+    HalSetSyncEventConfig(HAL_SET_SYNC_EVENT_CONFIG) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    HalContinuousTxStart(HAL_CONTINUOUS_TX_START) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    HalEadEncryptDecrypt(HAL_EAD_ENCRYPT_DECRYPT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ReturnBuffer<32>;
+    }
+}
+
 impl<T> HalCommands for T
 where
     T: ControllerCmdSync<HalGetFirmwareRevision>
@@ -346,7 +397,11 @@ where
         + for<'t> ControllerCmdSync<HalReadRadioReg<'t>>
         + for<'t> ControllerCmdSync<HalRxStart<'t>>
         + ControllerCmdSync<HalRxStop>
-        + ControllerCmdSync<HalStackReset>,
+        + ControllerCmdSync<HalStackReset>
+        + ControllerCmdSync<HalGetLinkStatusV2>
+        + for<'t> ControllerCmdSync<HalSetSyncEventConfig<'t>>
+        + for<'t> ControllerCmdSync<HalContinuousTxStart<'t>>
+        + for<'t> ControllerCmdSync<HalEadEncryptDecrypt<'t>>,
 {
     async fn get_firmware_revision(&self) -> Result<u64, Error> {
         Ok(u64::from_le_bytes(
@@ -504,6 +559,65 @@ where
 
     async fn stack_reset(&self) -> Result<(), Error> {
         HalStackReset::new().exec(self).await.map_err(|e| e.into())
+    }
+
+    async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error> {
+        let buf = HalGetLinkStatusV2::new()
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))?;
+        let b = buf.buf();
+        let mut status = HalLinkStatusV2 {
+            link_status: [0u8; 22],
+            link_connection_handles: [0u16; 22],
+        };
+        status.link_status.copy_from_slice(&b[0..22]);
+        for i in 0..22 {
+            status.link_connection_handles[i] = LittleEndian::read_u16(&b[22 + i * 2..]);
+        }
+        Ok(status)
+    }
+
+    async fn set_sync_event_config(
+        &self,
+        group_id: u8,
+        enable_sync: bool,
+        enable_cb_trigger: bool,
+        trigger_source: SyncTriggerSource,
+    ) -> Result<(), Error> {
+        HalSetSyncEventConfig::new(
+            (&[group_id, enable_sync as u8, enable_cb_trigger as u8, trigger_source as u8][..])
+                .into(),
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
+    }
+
+    async fn continuous_tx_start(
+        &self,
+        rf_channel: u8,
+        phy: ContinuousTxPhy,
+        pattern: ContinuousTxPattern,
+    ) -> Result<(), Error> {
+        HalContinuousTxStart::new((&[rf_channel, phy as u8, pattern as u8][..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error> {
+        let mut bytes = [0u8; EadParams::MAX_LENGTH];
+        let len = params.copy_into_slice(&mut bytes);
+        let buf = HalEadEncryptDecrypt::new((&bytes[..len]).into())
+            .exec(self)
+            .await
+            .map_err(|e| Error::from(e))?;
+        let b = buf.buf();
+        let out_len = LittleEndian::read_u16(&b[0..2]) as usize;
+        let mut data = [0u8; 248];
+        data[..out_len].copy_from_slice(&b[2..2 + out_len]);
+        Ok(HalEadResult { data, data_len: out_len })
     }
 }
 
@@ -1060,4 +1174,82 @@ defmt::bitflags! {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
         const SCAN_REQ_REPORT = 0x00000001;
     }
+}
+
+/// Return value for [get_link_status_v2](HalCommands::get_link_status_v2).
+pub struct HalLinkStatusV2 {
+    /// Link statuses for up to 20 links + 2 ISO streams.
+    pub link_status: [u8; 22],
+    /// Connection handles for each link (0 if not connected).
+    pub link_connection_handles: [u16; 22],
+}
+
+/// Trigger source for [set_sync_event_config](HalCommands::set_sync_event_config).
+#[repr(u8)]
+pub enum SyncTriggerSource {
+    Cig = 0x00,
+    Big = 0x01,
+}
+
+/// PHY for [continuous_tx_start](HalCommands::continuous_tx_start).
+#[repr(u8)]
+pub enum ContinuousTxPhy {
+    Le1M = 0x01,
+    Le2M = 0x02,
+}
+
+/// Data pattern for [continuous_tx_start](HalCommands::continuous_tx_start).
+#[repr(u8)]
+pub enum ContinuousTxPattern {
+    Prbs9 = 0x00,
+    Alternating11110000 = 0x01,
+    Alternating10101010 = 0x02,
+    Prbs15 = 0x03,
+    AllOnes = 0x04,
+    AllZeros = 0x05,
+    Alternating00001111 = 0x06,
+    Alternating0101 = 0x07,
+}
+
+/// Mode for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum EadMode {
+    Encrypt = 0x00,
+    Decrypt = 0x01,
+}
+
+/// Parameters for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+pub struct EadParams {
+    /// EAD operation mode.
+    pub mode: EadMode,
+    /// Session key (16 bytes, little-endian).
+    pub key: [u8; 16],
+    /// Initialization vector (8 bytes, little-endian).
+    pub iv: [u8; 8],
+    /// Input data (up to 248 bytes).
+    pub data: [u8; 248],
+    /// Length of valid data in `data`.
+    pub data_len: usize,
+}
+
+impl EadParams {
+    pub(crate) const MAX_LENGTH: usize = 27 + 248; // mode(1) + key(16) + iv(8) + in_len(2) + data
+
+    pub(crate) fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
+        bytes[0] = self.mode as u8;
+        bytes[1..17].copy_from_slice(&self.key);
+        bytes[17..25].copy_from_slice(&self.iv);
+        LittleEndian::write_u16(&mut bytes[25..27], self.data_len as u16);
+        bytes[27..27 + self.data_len].copy_from_slice(&self.data[..self.data_len]);
+        27 + self.data_len
+    }
+}
+
+/// Return value for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+pub struct HalEadResult {
+    /// Result data.
+    pub data: [u8; 248],
+    /// Length of valid data in `data`.
+    pub data_len: usize,
 }

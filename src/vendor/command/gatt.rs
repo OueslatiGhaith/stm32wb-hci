@@ -886,6 +886,27 @@ pub trait GattCommands {
         conn_handle: ConnectionHandle,
         handles: &[AttributeHandle],
     ) -> Result<(), Error>;
+
+    /// Write an attribute value without response, using the extra data buffer.
+    async fn write_without_resp_ext(
+        &self,
+        conn_handle: ConnectionHandle,
+        attr_handle: u16,
+        signed_mode: bool,
+        data_len: u16,
+        data_pointer: u32,
+    ) -> Result<(), Error>;
+
+    /// Write an attribute value with response, using the extra data buffer.
+    async fn write_with_resp_ext(
+        &self,
+        conn_handle: ConnectionHandle,
+        attr_handle: u16,
+        write_mode: u8,
+        val_offset: u16,
+        data_len: u16,
+        data_pointer: u32,
+    ) -> Result<(), Error>;
 }
 
 vendor_cmd! {
@@ -1200,6 +1221,19 @@ vendor_cmd! {
     }
 }
 
+vendor_cmd! {
+    GattWriteWithoutRespExt(GATT_WRITE_WITHOUT_RESP_EXT) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
+    GattWriteWithRespExt(GATT_WRITE_WITH_RESP_EXT) {
+        Params<'a> = ParamBuffer<'a>;
+    }
+}
+
 impl<T> GattCommands for T
 where
     T: ControllerCmdSync<GattInit>
@@ -1249,7 +1283,9 @@ where
         + for<'t> ControllerCmdSync<GattSendMultipleNotification<'t>>
         + for<'t> ControllerCmdSync<GattReadMultipleVarCharValue<'t>>
         + for<'t> ControllerCmdAsync<GattWriteCharacteristicDescriptor<'t>>
-        + for<'t> ControllerCmdSync<GattAddCharacteristic<'t>>,
+        + for<'t> ControllerCmdSync<GattAddCharacteristic<'t>>
+        + for<'t> ControllerCmdSync<GattWriteWithoutRespExt<'t>>
+        + for<'t> ControllerCmdAsync<GattWriteWithRespExt<'t>>,
 {
     async fn init(&self) -> Result<(), Error> {
         GattInit::new().exec(self).await.map_err(|e| e.into())
@@ -1733,6 +1769,48 @@ where
         }
 
         GattReadMultipleVarCharValue::new((&payload[..2 + (handles.len() * 2)]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn write_without_resp_ext(
+        &self,
+        conn_handle: ConnectionHandle,
+        attr_handle: u16,
+        signed_mode: bool,
+        data_len: u16,
+        data_pointer: u32,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; 11];
+        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
+        LittleEndian::write_u16(&mut bytes[2..4], attr_handle);
+        bytes[4] = signed_mode as u8;
+        LittleEndian::write_u16(&mut bytes[5..7], data_len);
+        LittleEndian::write_u32(&mut bytes[7..11], data_pointer);
+        GattWriteWithoutRespExt::new((&bytes[..]).into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn write_with_resp_ext(
+        &self,
+        conn_handle: ConnectionHandle,
+        attr_handle: u16,
+        write_mode: u8,
+        val_offset: u16,
+        data_len: u16,
+        data_pointer: u32,
+    ) -> Result<(), Error> {
+        let mut bytes = [0u8; 13];
+        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
+        LittleEndian::write_u16(&mut bytes[2..4], attr_handle);
+        bytes[4] = write_mode;
+        LittleEndian::write_u16(&mut bytes[5..7], val_offset);
+        LittleEndian::write_u16(&mut bytes[7..9], data_len);
+        LittleEndian::write_u32(&mut bytes[9..13], data_pointer);
+        GattWriteWithRespExt::new((&bytes[..]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
