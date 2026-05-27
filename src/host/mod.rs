@@ -15,6 +15,7 @@ use crate::event::command::{
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
 use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
+use bt_hci::FromHciBytes;
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize as CmdHostBufferSize, HostNumberOfCompletedPackets, ReadTransmitPowerLevel,
@@ -49,8 +50,8 @@ use bt_hci::param::{
 };
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
+use core::slice;
 use core::time::Duration;
-use core::{mem, slice};
 
 pub mod uart;
 
@@ -2202,14 +2203,7 @@ defmt::bitflags! {
 
 impl From<EventFlags> for EventMask {
     fn from(flags: EventFlags) -> Self {
-        // Fix alignment
-        let flags = flags.bits().to_le_bytes();
-
-        // Assert precondition
-        assert_eq!(size_of::<[u8; 8]>(), size_of::<EventMask>());
-        assert_eq!(align_of::<[u8; 8]>(), align_of::<EventMask>());
-
-        unsafe { mem::transmute(flags) }
+        EventMask::from_hci_bytes_complete(&flags.bits().to_le_bytes()).unwrap()
     }
 }
 
@@ -2418,14 +2412,7 @@ defmt::bitflags! {
 
 impl From<LeEventFlags> for LeEventMask {
     fn from(flags: LeEventFlags) -> Self {
-        // Fix alignment
-        let flags: [u8; 8] = flags.bits().to_le_bytes();
-
-        // Assert precondition
-        assert_eq!(size_of::<[u8; 8]>(), size_of::<LeEventMask>());
-        assert_eq!(align_of::<[u8; 8]>(), align_of::<LeEventMask>());
-
-        unsafe { mem::transmute(flags) }
+        LeEventMask::from_hci_bytes_complete(&flags.bits().to_le_bytes()).unwrap()
     }
 }
 
