@@ -1,12 +1,14 @@
 //! Host-side interface to the Bluetooth HCI.
 //!
-//! # Ideas for discussion and improvements
+//! The [`HostHci`] trait defines standard Bluetooth HCI commands. It is implemented for controller
+//! adapters that can execute the corresponding [`bt-hci`] command types through
+//! [`bt_hci::controller::ControllerCmdSync`] and
+//! [`bt_hci::controller::ControllerCmdAsync`].
 //!
-//! - Remove `cmd_link` and `event_link` modules. These provide alternative mechanisms for writing
-//!   to and reading from the controller, respectively, without the packet identifier byte. The
-//!   open-source Bluetooth implementations I have found (admittedly, I haven't looked hard) only
-//!   support sending the packet ID, as `uart` does. In that case, it would make sense to also remove
-//!   `uart` and move its contents up one level.
+//! Packet reads live in [`uart`], because command execution and incoming events are separate flows
+//! for most STM32WB applications.
+//!
+//! [`bt-hci`]: https://crates.io/crates/bt-hci
 
 use crate::event::NumberOfCompletedPackets;
 use crate::event::command::{

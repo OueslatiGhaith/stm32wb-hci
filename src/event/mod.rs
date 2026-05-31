@@ -808,7 +808,7 @@ fn to_encryption_key_refresh_complete(
 /// event shall be provided to the Host that had issued the [LE Create Connection](crate::host::HostHci::le_create_connection)
 /// command.
 ///
-/// This event indicates to the Host which issued a [LE Create Connection](crate::host::Hci::le_create_connection)
+/// This event indicates to the Host which issued a [LE Create Connection](crate::host::HostHci::le_create_connection)
 /// command and received a [Command Status](Event::CommandStatus) event if the connection establishment failed or was successful.
 ///
 /// Defined in Vol 2, Part E, Section 7.7.65.1 of the spec.
