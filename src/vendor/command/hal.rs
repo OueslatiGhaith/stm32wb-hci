@@ -55,7 +55,7 @@ pub trait HalCommands {
     /// This command sets the TX power level of the BlueNRG-MS.
     ///
     /// When the system starts up or reboots, the default TX power level will be used, which is the
-    /// maximum value of [8 dBm](PowerLevel::Dbm8_0). Once this command is given, the output power
+    /// maximum value of [6 dBm](PowerLevel::Plus6dBm). Once this command is given, the output power
     /// will be changed instantly, regardless if there is Bluetooth communication going on or
     /// not. For example, for debugging purpose, the BlueNRG-MS can be set to advertise all the
     /// time. And use this command to observe the signal strength changing.
@@ -137,10 +137,10 @@ pub trait HalCommands {
     async fn get_link_status(&self) -> Result<HalLinkStatus, Error>;
 
     /// This command sets the bitmask associated to
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
     ///
     /// Only the radio activities enabled in the mask will be reported to the application by the
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
     async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error>;
 
     /// This command is intended to retrieve information about the current Anchor Interval and

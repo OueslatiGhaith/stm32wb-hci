@@ -224,7 +224,7 @@ pub enum Error {
     Vendor(VendorError),
 }
 
-/// Extracts the value from a [`BadStatusError`](BadStatusError) and returns it as a
+/// Extracts the value from a [`BadStatusError`] and returns it as a
 /// [`BadStatus`](Error::BadStatus) error.
 pub fn rewrap_bad_status(bad_status: BadStatusError) -> Error {
     let BadStatusError::BadValue(v) = bad_status;
@@ -1078,7 +1078,7 @@ pub struct LeAdvertisement<'a> {
 
 /// Types of advertisement reports.
 ///
-/// See [`LeAdvertisement`](crate::event::LeAdvertisement).
+/// See [`LeAdvertisement`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdvertisementEvent {

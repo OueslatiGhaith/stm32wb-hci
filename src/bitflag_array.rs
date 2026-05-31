@@ -15,7 +15,8 @@ pub extern crate core as _core;
 ///
 /// # Example
 ///
-/// See [`ChannelClassification`] and [`event::command::CommandFlags`] for examples in this crate.
+/// See [`ChannelClassification`](crate::ChannelClassification) and
+/// [`CommandFlags`](crate::event::command::CommandFlags) for examples in this crate.
 ///
 /// Basic usage is similar to [bitflags](https://crates.io/crates/bitflags):
 ///

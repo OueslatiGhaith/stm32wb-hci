@@ -75,7 +75,7 @@ pub trait GapCommands {
     /// Limited discoverability is defined in in GAP specification volume 3, section 9.2.4. The
     /// device will be discoverable for maximum period of TGAP (lim_adv_timeout) = 180 seconds (from
     /// errata). The advertising can be disabled at any time by issuing a
-    /// [`set_nondiscoverable`](GapCommands::set_nondiscoverable) command.
+    /// [`set_nondiscoverable`](GapCommands::gap_set_nondiscoverable) command.
     ///
     /// # Errors
     ///
@@ -534,11 +534,11 @@ pub trait GapCommands {
     /// Start the auto connection establishment procedure.
     ///
     /// The devices specified are added to the white list of the controller and a
-    /// [`le_create_connection`](crate::host::crate::le_create_connection) call will be made to the
+    /// [`le_create_connection`](crate::host::HostHci::le_create_connection) call will be made to the
     /// controller by GAP with the [initiator filter policy](crate::host::ConnectionParameters::initiator_filter_policy) set to
     /// [WhiteList](crate::host::ConnectionFilterPolicy::WhiteList), to "use whitelist to determine
     /// which advertiser to connect to". When a command is issued to terminate the procedure by
-    /// upper layer, a [`le_create_connection_cancel`](crate::host::crate::le_create_connection_cancel)
+    /// upper layer, a [`le_create_connection_cancel`](crate::host::HostHci::le_create_connection_cancel)
     /// call will be made to the controller by GAP.
     ///
     /// # Errors
@@ -554,7 +554,7 @@ pub trait GapCommands {
 
     /// Start a general connection establishment procedure.
     ///
-    /// The host [enables scanning](crate::host::crate::le_set_scan_enable) in the controller with the
+    /// The host [enables scanning](crate::host::HostHci::le_set_scan_enable) in the controller with the
     /// scanner [filter policy](crate::host::ScanParameters::filter_policy) set to
     /// [AcceptAll](crate::host::ScanFilterPolicy::AcceptAll), to "accept all advertising packets" and
     /// from the scanning results, all the devices are sent to the upper layer using the event
@@ -598,7 +598,7 @@ pub trait GapCommands {
 
     /// Start the direct connection establishment procedure.
     ///
-    /// A [LE Create Connection](crate::host::crate::le_create_connection) call will be made to the
+    /// A [LE Create Connection](crate::host::HostHci::le_create_connection) call will be made to the
     /// controller by GAP with the initiator [filter policy](crate::host::ConnectionParameters::initiator_filter_policy) set to
     /// [UseAddress](crate::host::ConnectionFilterPolicy::UseAddress) to "ignore whitelist and process
     /// connectable advertising packets only for the specified device". The procedure can be
@@ -765,7 +765,7 @@ pub trait GapCommands {
     async fn is_device_bonded(&self, addr: crate::host::PeerAddrType) -> Result<(), Error>;
 
     /// This command allows the user to validate/confirm or not the numeric comparison value showed through
-    /// the [`NumericComparisonValueEvent`]
+    /// the [`GapNumericComparisonValue`](crate::vendor::event::GapNumericComparisonValue) event.
     async fn numeric_comparison_value_confirm_yes_no(
         &self,
         params: &NumericComparisonValueConfirmYesNoParameters,
@@ -2441,7 +2441,7 @@ impl AuthenticationRequirements {
     }
 }
 
-/// Options for [`out_of_band_auth`](AuthenticationRequirements::out_of_band_auth).
+/// Options for out-of-band authentication.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandAuthentication {
     /// Out Of Band authentication not enabled
@@ -2632,7 +2632,7 @@ impl DiscoveryProcedureParameters {
     }
 }
 
-/// Parameters for the [GAP Name Discovery](GapCommands::start_name_discovery_procedure)
+/// Parameters for the GAP Name Discovery
 /// procedure.
 pub struct NameDiscoveryProcedureParameters {
     /// Scanning window for the discovery procedure.
@@ -2823,7 +2823,7 @@ impl<'a> SelectiveConnectionEstablishmentParameters<'a> {
     }
 }
 
-/// The parameters for the [GAP Name Discovery](GapCommands::start_name_discovery_procedure)
+/// The parameters for the GAP Name Discovery
 /// and [GAP Create Connection](GapCommands::create_connection) commands are identical.
 pub type ConnectionParameters = NameDiscoveryProcedureParameters;
 
@@ -2835,15 +2835,15 @@ bitflags::bitflags! {
         const LIMITED_DISCOVERY = 0x01;
         /// [General Discovery](GapCommands::start_general_discovery_procedure) procedure.
         const GENERAL_DISCOVERY = 0x02;
-        /// [Name Discovery](GapCommands::start_name_discovery_procedure) procedure.
+        /// Name Discovery procedure.
         const NAME_DISCOVERY = 0x04;
-        /// [Auto Connection Establishment](GapCommands::auto_connection_establishment).
+        /// [Auto Connection Establishment](GapCommands::start_auto_connection_establishment_procedure).
         const AUTO_CONNECTION_ESTABLISHMENT = 0x08;
-        /// [General Connection Establishment](GapCommands::general_connection_establishment).
+        /// [General Connection Establishment](GapCommands::start_general_connection_establishment_procedure).
         const GENERAL_CONNECTION_ESTABLISHMENT = 0x10;
-        /// [Selective Connection Establishment](GapCommands::selective_connection_establishment).
+        /// [Selective Connection Establishment](GapCommands::start_selective_connection_establishment_procedure).
         const SELECTIVE_CONNECTION_ESTABLISHMENT = 0x20;
-        /// [Direct Connection Establishment](GapCommands::direct_connection_establishment).
+        /// Direct Connection Establishment.
         const DIRECT_CONNECTION_ESTABLISHMENT = 0x40;
         /// [Observation](GapCommands::start_observation_procedure) procedure.
         const OBSERVATION = 0x80;
@@ -2858,15 +2858,15 @@ defmt::bitflags! {
         const LIMITED_DISCOVERY = 0x01;
         /// [General Discovery](GapCommands::start_general_discovery_procedure) procedure.
         const GENERAL_DISCOVERY = 0x02;
-        /// [Name Discovery](GapCommands::start_name_discovery_procedure) procedure.
+        /// Name Discovery procedure.
         const NAME_DISCOVERY = 0x04;
-        /// [Auto Connection Establishment](GapCommands::auto_connection_establishment).
+        /// [Auto Connection Establishment](GapCommands::start_auto_connection_establishment_procedure).
         const AUTO_CONNECTION_ESTABLISHMENT = 0x08;
-        /// [General Connection Establishment](GapCommands::general_connection_establishment).
+        /// [General Connection Establishment](GapCommands::start_general_connection_establishment_procedure).
         const GENERAL_CONNECTION_ESTABLISHMENT = 0x10;
-        /// [Selective Connection Establishment](GapCommands::selective_connection_establishment).
+        /// [Selective Connection Establishment](GapCommands::start_selective_connection_establishment_procedure).
         const SELECTIVE_CONNECTION_ESTABLISHMENT = 0x20;
-        /// [Direct Connection Establishment](GapCommands::direct_connection_establishment).
+        /// Direct Connection Establishment.
         const DIRECT_CONNECTION_ESTABLISHMENT = 0x40;
         /// [Observation](GapCommands::start_observation_procedure) procedure.
         const OBSERVATION = 0x80;

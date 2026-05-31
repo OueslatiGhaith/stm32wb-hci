@@ -792,7 +792,7 @@ pub trait GattCommands {
     /// The command returns the value of the attribute handle from the specified offset.
     ///
     /// If the length to be returned is greater than 128, then only 128 bytes are
-    /// [returned](crate::event::command::ReturnParameters::GattReadHandleValueOffset). The
+    /// [returned](crate::vendor::event::command::VendorReturnParameters::GattReadHandleValueOffset). The
     /// application should send this command with incremented offsets until it gets an error with
     /// the offset it specified or the number of byes of attribute value returned is less than 128.
     ///

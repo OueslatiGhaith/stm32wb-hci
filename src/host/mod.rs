@@ -637,13 +637,13 @@ pub trait HostHci {
     /// A [Command Complete](crate::event::command::ReturnParameters::LeSetAdvertisingEnable) event
     /// is generated.
     ///
-    /// If [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// If [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle) and
     /// the directed advertising fails to create a connection, an
     /// [LE Connection Complete](crate::event::Event::LeConnectionComplete) event shall be generated with the
     /// Status code set to [`AdvertisingTimeout`](Status::AdvertisingTimeout).
     ///
-    /// If [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// If [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableUndirected`](AdvertisingType::ConnectableUndirected),
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle), or
     /// [`ConnectableDirectedLowDutyCycle`](AdvertisingType::ConnectableDirectedLowDutyCycle) and a
@@ -652,7 +652,7 @@ pub trait HostHci {
     /// event shall be generated.
     ///
     /// Note: There is a possible race condition if `enable` is set to false (Disable) and
-    /// [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableUndirected`](AdvertisingType::ConnectableUndirected),
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle), or
     /// [`ConnectableDirectedLowDutyCycle`](AdvertisingType::ConnectableDirectedLowDutyCycle). The
@@ -2573,7 +2573,7 @@ impl Default for Channels {
 
 /// Possible filter policies used for undirected advertising.
 ///
-/// See [`AdvertisingParameters`](crate::host::AdvertisingParameters).
+/// See [`AdvertisingParameters`].
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
