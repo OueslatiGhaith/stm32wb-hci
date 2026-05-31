@@ -11,11 +11,11 @@
 
 use crate::vendor::opcode::VENDOR_OGF;
 use crate::{ConnectionHandle, Status};
+use bt_hci::AsHciBytes;
 use bt_hci::param::{CmdMask, LeFeatureMask, LmpFeatureMask};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
-use core::mem;
 
 /// The [Command Complete](super::Event::CommandComplete) event is used by the Controller for most
 /// commands to transmit return status of a command and the other event parameters that are
@@ -974,7 +974,7 @@ impl From<CmdMask> for CommandFlags {
         assert_eq!(size_of::<CmdMask>(), size_of::<CommandFlags>());
         assert_eq!(align_of::<CmdMask>(), align_of::<CommandFlags>());
 
-        unsafe { mem::transmute(mask) }
+        CommandFlags(mask.as_hci_bytes().try_into().unwrap())
     }
 }
 
@@ -1257,20 +1257,7 @@ defmt::bitflags! {
 
 impl From<LmpFeatureMask> for LmpFeatures {
     fn from(mask: LmpFeatureMask) -> Self {
-        // Assert precondition
-        assert_eq!(size_of::<[u8; 8]>(), size_of::<LmpFeatureMask>());
-        assert_eq!(align_of::<[u8; 8]>(), align_of::<LmpFeatureMask>());
-
-        // Fix alignment
-        let mask: [u8; 8] = unsafe { mem::transmute(mask) };
-
-        // Assert precondition
-        assert_eq!(size_of::<LmpFeatures>(), size_of::<u64>());
-        assert_eq!(align_of::<LmpFeatures>(), align_of::<u64>());
-
-        // Fix alignment, again
-
-        unsafe { mem::transmute(u64::from_le_bytes(mask)) }
+        LmpFeatures::from_bits_truncate(u64::from_le_bytes(mask.as_hci_bytes().try_into().unwrap()))
     }
 }
 
@@ -1460,14 +1447,7 @@ defmt::bitflags! {
 
 impl From<LeFeatureMask> for LeFeatures {
     fn from(mask: LeFeatureMask) -> Self {
-        // Assert precondition
-        assert_eq!(size_of::<LeFeatureMask>(), size_of::<[u8; 8]>());
-        assert_eq!(align_of::<LeFeatureMask>(), align_of::<[u8; 8]>());
-
-        // Fix alignment
-        let mask: [u8; 8] = unsafe { mem::transmute(mask) };
-
-        unsafe { mem::transmute(u64::from_le_bytes(mask)) }
+        LeFeatures::from_bits_truncate(u64::from_le_bytes(mask.as_hci_bytes().try_into().unwrap()))
     }
 }
 
