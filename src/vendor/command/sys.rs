@@ -3,8 +3,8 @@
 use bt_hci::{cmd::SyncCmd, controller::ControllerCmdSync};
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::{BadStatusError, Status};
 use crate::vendor::command::{ParamBuffer, ReturnBuffer};
+use crate::{BadStatusError, Status};
 
 /// System-level commands.
 pub trait SysCommands {
@@ -60,12 +60,10 @@ impl<T> From<bt_hci::cmd::Error<T>> for Error {
     fn from(err: bt_hci::cmd::Error<T>) -> Self {
         match err {
             bt_hci::cmd::Error::Io(_) => Self::IoError,
-            bt_hci::cmd::Error::Hci(err) => {
-                match Status::try_from(err.to_status().into_inner()) {
-                    Ok(status) => Self::HciError(status),
-                    Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
-                }
-            }
+            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
+                Ok(status) => Self::HciError(status),
+                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
+            },
         }
     }
 }
@@ -119,7 +117,7 @@ where
         let buf = SysGetInformation::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let mut info = SysInformation {
             version: [0u8; 8],
@@ -147,7 +145,7 @@ where
         let buf = SysReadConfigData::new((&[offset][..]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let len = b.len().min(32);
         let mut result = SysConfigData {

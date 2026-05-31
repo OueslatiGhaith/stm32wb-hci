@@ -565,7 +565,7 @@ where
         let buf = HalGetLinkStatusV2::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let mut status = HalLinkStatusV2 {
             link_status: [0u8; 22],
@@ -586,7 +586,12 @@ where
         trigger_source: SyncTriggerSource,
     ) -> Result<(), Error> {
         HalSetSyncEventConfig::new(
-            (&[group_id, enable_sync as u8, enable_cb_trigger as u8, trigger_source as u8][..])
+            (&[
+                group_id,
+                enable_sync as u8,
+                enable_cb_trigger as u8,
+                trigger_source as u8,
+            ][..])
                 .into(),
         )
         .exec(self)
@@ -612,12 +617,15 @@ where
         let buf = HalEadEncryptDecrypt::new((&bytes[..len]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let out_len = LittleEndian::read_u16(&b[0..2]) as usize;
         let mut data = [0u8; 248];
         data[..out_len].copy_from_slice(&b[2..2 + out_len]);
-        Ok(HalEadResult { data, data_len: out_len })
+        Ok(HalEadResult {
+            data,
+            data_len: out_len,
+        })
     }
 }
 

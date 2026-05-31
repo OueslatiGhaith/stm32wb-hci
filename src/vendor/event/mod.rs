@@ -694,7 +694,7 @@ impl VendorEvent {
         require_len_at_least!(buffer, 2);
 
         let (event_code, buffer) = buffer.split_at(2);
-        let event_code = LittleEndian::read_u16(&event_code);
+        let event_code = LittleEndian::read_u16(event_code);
 
         match event_code {
             // SHCI "C2 Ready" event
@@ -825,7 +825,7 @@ impl VendorEvent {
             )),
             0x0C1B => Ok(VendorEvent::GattNotificationComplete({
                 require_len!(buffer[..], 2);
-                AttributeHandle(LittleEndian::read_u16(&buffer[..]))
+                AttributeHandle(LittleEndian::read_u16(buffer))
             })),
             0x0C1D => Ok(VendorEvent::GattReadExt(to_gatt_read_ext(buffer)?)),
             0x0C1E => Ok(VendorEvent::GattIndicationExt(to_attribute_value_ext(
@@ -879,7 +879,7 @@ fn to_coprocessor_ready(buffer: &[u8]) -> Result<FirmwareKind, crate::event::Err
 
 macro_rules! require_l2cap_event_data_len {
     ($left:expr, $right:expr) => {
-        let actual = $left[3];
+        let actual = $left[2];
         if actual != $right {
             return Err(crate::event::Error::Vendor(
                 VendorError::BadL2CapDataLength(actual, $right),
@@ -985,7 +985,7 @@ fn to_l2cap_connection_update_response(
     require_len!(buffer, 4);
 
     Ok(L2CapConnectionUpdateResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         result: to_l2cap_connection_update_accepted_result(LittleEndian::read_u16(&buffer[2..]))
             .map_err(crate::event::Error::Vendor)?,
     })
@@ -1001,10 +1001,10 @@ pub struct L2CapProcedureTimeout {
 }
 
 fn to_l2cap_procedure_timeout(buffer: &[u8]) -> Result<ConnectionHandle, crate::event::Error> {
-    require_len!(buffer, 4);
+    require_len!(buffer, 3);
     require_l2cap_event_data_len!(buffer, 0);
 
-    Ok(ConnectionHandle(LittleEndian::read_u16(&buffer[..])))
+    Ok(ConnectionHandle(LittleEndian::read_u16(buffer)))
 }
 
 /// The event is given by the L2CAP layer when a connection update request is received from the
@@ -1046,7 +1046,7 @@ fn to_l2cap_connection_update_request(
         .map_err(crate::event::Error::Vendor)?;
 
     Ok(L2CapConnectionUpdateRequest {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         identifier: buffer[2],
         l2cap_length: LittleEndian::read_u16(&buffer[3..5]),
         conn_interval: interval,
@@ -1141,7 +1141,7 @@ fn to_gap_pairing_complete(buffer: &[u8]) -> Result<GapPairingComplete, crate::e
     require_len!(buffer, 4);
 
     Ok(GapPairingComplete {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer)),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         status: to_gap_pairing_status(buffer[2], GapPairingReason::try_from(buffer[3]))
             .map_err(crate::event::Error::Vendor)?,
     })
@@ -1149,7 +1149,7 @@ fn to_gap_pairing_complete(buffer: &[u8]) -> Result<GapPairingComplete, crate::e
 
 fn to_conn_handle(buffer: &[u8]) -> Result<ConnectionHandle, crate::event::Error> {
     require_len_at_least!(buffer, 2);
-    Ok(ConnectionHandle(LittleEndian::read_u16(&buffer)))
+    Ok(ConnectionHandle(LittleEndian::read_u16(buffer)))
 }
 
 /// This event is sent by the GAP to the upper layers when a procedure previously started has been
@@ -1272,7 +1272,7 @@ fn to_gap_procedure_complete(buffer: &[u8]) -> Result<GapProcedureComplete, crat
 
     Ok(GapProcedureComplete {
         procedure,
-        status: buffer[3].try_into().map_err(crate::event::Error::Vendor)?,
+        status: buffer[1].try_into().map_err(crate::event::Error::Vendor)?,
     })
 }
 
@@ -1340,7 +1340,7 @@ fn to_gatt_attribute_modified(buffer: &[u8]) -> Result<GattAttributeModified, cr
 
     let offset_field = LittleEndian::read_u16(&buffer[4..]);
     Ok(GattAttributeModified {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         attr_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
         offset: (offset_field & 0x7FFF),
         data_len,
@@ -1362,7 +1362,7 @@ pub struct AttExchangeMtuResponse {
 fn to_att_exchange_mtu_resp(buffer: &[u8]) -> Result<AttExchangeMtuResponse, crate::event::Error> {
     require_len!(buffer, 4);
     Ok(AttExchangeMtuResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         server_rx_mtu: LittleEndian::read_u16(&buffer[2..]) as usize,
     })
 }
@@ -1548,7 +1548,7 @@ fn to_att_find_information_response(
             2 => to_handle_uuid128_pairs(&buffer[4..]).map_err(crate::event::Error::Vendor)?,
             _ => {
                 return Err(crate::event::Error::Vendor(
-                    VendorError::BadAttFindInformationResponseFormat(buffer[4]),
+                    VendorError::BadAttFindInformationResponseFormat(buffer[2]),
                 ));
             }
         },
@@ -1683,19 +1683,19 @@ fn to_att_find_by_value_type_response(
 ) -> Result<AttFindByTypeValueResponse, crate::event::Error> {
     const PAIR_LEN: usize = 4;
 
-    require_len_at_least!(buffer, 5);
+    require_len_at_least!(buffer, 3);
 
-    let data_len = buffer[4] as usize;
-    require_len!(buffer, 5 + data_len);
+    let count = buffer[2] as usize;
+    let data_len = count * PAIR_LEN;
+    require_len!(buffer, 3 + data_len);
 
-    let pair_buffer = &buffer[5..];
+    let pair_buffer = &buffer[3..];
     if !pair_buffer.len().is_multiple_of(PAIR_LEN) {
         return Err(crate::event::Error::Vendor(
             VendorError::AttFindByTypeValuePartial,
         ));
     }
 
-    let count = pair_buffer.len() / PAIR_LEN;
     let mut pairs = [HandleInfoPair {
         attribute: AttributeHandle(0),
         group_end: GroupEndHandle(0),
@@ -1810,6 +1810,12 @@ fn to_att_read_by_type_response(
     require_len!(buffer, 4 + data_len);
 
     let handle_value_pair_len = buffer[2] as usize;
+    if handle_value_pair_len == 0 {
+        return Err(crate::event::Error::Vendor(
+            VendorError::AttReadByTypeResponsePartial,
+        ));
+    }
+
     let handle_value_pair_buf = &buffer[4..];
     if !handle_value_pair_buf
         .len()
@@ -1825,7 +1831,7 @@ fn to_att_read_by_type_response(
         .copy_from_slice(handle_value_pair_buf);
 
     Ok(AttReadByTypeResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         data_len: handle_value_pair_buf.len(),
         value_len: handle_value_pair_len - 2,
         handle_value_pair_buf: full_handle_value_pair_buf,
@@ -1878,7 +1884,7 @@ fn to_att_read_response(buffer: &[u8]) -> Result<AttReadResponse, crate::event::
     value_buf[..data_len].copy_from_slice(&buffer[3..]);
 
     Ok(AttReadResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         value_len: data_len,
         value_buf,
     })
@@ -1991,9 +1997,9 @@ fn to_att_read_by_group_type_response(
     let data_len = buffer[3] as usize;
     require_len!(buffer, 4 + data_len);
 
-    let attribute_group_len = buffer[4] as usize;
+    let attribute_group_len = buffer[2] as usize;
 
-    if !buffer[4..].len().is_multiple_of(attribute_group_len) {
+    if attribute_group_len == 0 || !data_len.is_multiple_of(attribute_group_len) {
         return Err(crate::event::Error::Vendor(
             VendorError::AttReadByGroupTypeResponsePartial,
         ));
@@ -2002,8 +2008,8 @@ fn to_att_read_by_group_type_response(
     let mut attribute_data_buf = [0; MAX_ATTRIBUTE_DATA_BUF_LEN];
     attribute_data_buf[..data_len].copy_from_slice(&buffer[4..]);
     Ok(AttReadByGroupTypeResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
-        data_len, // lose 1 byte to attribute_group_len
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
+        data_len,
         attribute_group_len,
         attribute_data_buf,
     })
@@ -2061,9 +2067,9 @@ fn to_att_prepare_write_response(
     let mut value_buf = [0; MAX_WRITE_RESPONSE_VALUE_LEN];
     value_buf[..value_len].copy_from_slice(&buffer[7..]);
     Ok(AttPrepareWriteResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
-        offset: LittleEndian::read_u16(&buffer[6..]) as usize,
+        offset: LittleEndian::read_u16(&buffer[4..]) as usize,
         value_len,
         value_buf,
     })
@@ -2117,7 +2123,7 @@ fn to_attribute_value(buffer: &[u8]) -> Result<AttributeValue, crate::event::Err
     let mut value_buf = [0; MAX_ATTRIBUTE_VALUE_LEN];
     value_buf[..value_len].copy_from_slice(&buffer[5..]);
     Ok(AttributeValue {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
         value_len,
         value_buf,
@@ -2163,11 +2169,11 @@ impl TryFrom<u8> for GattProcedureStatus {
 }
 
 fn to_gatt_procedure_complete(buffer: &[u8]) -> Result<GattProcedureComplete, crate::event::Error> {
-    require_len!(buffer, 5);
+    require_len!(buffer, 3);
 
     Ok(GattProcedureComplete {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
-        status: buffer[4].try_into()?,
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
+        status: buffer[2].try_into()?,
     })
 }
 
@@ -2475,12 +2481,12 @@ impl TryFrom<u8> for AttRequest {
 }
 
 fn to_att_error_response(buffer: &[u8]) -> Result<AttErrorResponse, crate::event::Error> {
-    require_len!(buffer, 8);
+    require_len!(buffer, 6);
     Ok(AttErrorResponse {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
-        request: buffer[4].try_into().map_err(crate::event::Error::Vendor)?,
-        attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[5..])),
-        error: buffer[7]
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
+        request: buffer[2].try_into().map_err(crate::event::Error::Vendor)?,
+        attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[3..])),
+        error: buffer[5]
             .try_into()
             .map_err(VendorError::BadAttError)
             .map_err(crate::event::Error::Vendor)?,
@@ -2512,7 +2518,7 @@ pub struct AttReadPermitRequest {
 fn to_att_read_permit_request(buffer: &[u8]) -> Result<AttReadPermitRequest, crate::event::Error> {
     require_len!(buffer, 6);
     Ok(AttReadPermitRequest {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
         offset: LittleEndian::read_u16(&buffer[4..]) as usize,
     })
@@ -2567,6 +2573,7 @@ fn to_att_read_multiple_permit_request(
     require_len_at_least!(buffer, 3);
 
     let data_len = buffer[2] as usize;
+    require_len!(buffer, 3 + data_len);
     if !data_len.is_multiple_of(2) {
         return Err(crate::event::Error::Vendor(
             VendorError::AttReadMultiplePermitRequestPartial,
@@ -2581,7 +2588,7 @@ fn to_att_read_multiple_permit_request(
     }
 
     Ok(AttReadMultiplePermitRequest {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         handles_len: handle_len,
         handles_buf: handles,
     })
@@ -2602,7 +2609,7 @@ pub struct GattTxPoolAvailable {
 fn to_gatt_tx_pool_available(buffer: &[u8]) -> Result<GattTxPoolAvailable, crate::event::Error> {
     require_len!(buffer, 4);
     Ok(GattTxPoolAvailable {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         available_buffers: LittleEndian::read_u16(&buffer[2..]) as usize,
     })
 }
@@ -2668,7 +2675,7 @@ fn to_att_prepare_write_permit_request(
     let mut value_buf = [0; MAX_PREPARE_WRITE_PERMIT_REQ_VALUE_LEN];
     value_buf[..data_len].copy_from_slice(&buffer[7..]);
     Ok(AttPrepareWritePermitRequest {
-        conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         attribute_handle: AttributeHandle(LittleEndian::read_u16(&buffer[2..])),
         offset: LittleEndian::read_u16(&buffer[4..]) as usize,
         value_len: data_len,
@@ -2697,7 +2704,7 @@ fn to_numeric_comparison_value(
     require_len!(buffer, 6);
 
     Ok(GapNumericComparisonValue {
-        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[..])),
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(buffer)),
         numeric_value: LittleEndian::read_u32(&buffer[2..]),
     })
 }
@@ -2772,6 +2779,7 @@ fn to_l2cap_command_reject(buffer: &[u8]) -> Result<L2CapCommandReject, crate::e
 
     let mut data = [0; 247];
     let len = buffer[5] as usize;
+    require_len!(buffer, 6 + len);
     data[..len].copy_from_slice(&buffer[6..(6 + len)]);
 
     Ok(L2CapCommandReject {
@@ -2791,26 +2799,26 @@ fn to_l2cap_coc_connect(buffer: &[u8]) -> Result<L2CapCocConnect, crate::event::
         mtu: LittleEndian::read_u16(&buffer[4..]),
         mps: LittleEndian::read_u16(&buffer[6..]),
         initial_credits: LittleEndian::read_u16(&buffer[8..]),
-        channel_number: buffer[11],
+        channel_number: buffer[10],
     })
 }
 
 fn to_l2cap_coc_connect_confirm(
     buffer: &[u8],
 ) -> Result<L2CapCocConnectConfirm, crate::event::Error> {
-    require_len!(buffer, 12);
+    require_len_at_least!(buffer, 11);
 
     let mut channel_index_list = [0; 246];
-    let tmp = &buffer[7..];
+    let tmp = &buffer[11..];
     channel_index_list[..tmp.len()].copy_from_slice(tmp);
 
     Ok(L2CapCocConnectConfirm {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
-        mtu: LittleEndian::read_u16(&buffer[4..]),
-        mps: LittleEndian::read_u16(&buffer[6..]),
-        initial_credits: LittleEndian::read_u16(&buffer[8..]),
-        result: LittleEndian::read_u16(&buffer[10..]),
-        channel_number: buffer[12],
+        mtu: LittleEndian::read_u16(&buffer[2..]),
+        mps: LittleEndian::read_u16(&buffer[4..]),
+        initial_credits: LittleEndian::read_u16(&buffer[6..]),
+        result: LittleEndian::read_u16(&buffer[8..]),
+        channel_number: buffer[10],
         channel_index_list,
     })
 }
@@ -2874,6 +2882,7 @@ fn to_l2cap_coc_rx_data(buffer: &[u8]) -> Result<L2CapCocRxData, crate::event::E
     require_len_at_least!(buffer, 3);
 
     let length = LittleEndian::read_u16(&buffer[1..]);
+    require_len!(buffer, 3 + length as usize);
     let mut data = [0; 250];
     data[..length as usize].copy_from_slice(&buffer[3..]);
 
@@ -2946,8 +2955,9 @@ fn to_gatt_multi_notification(buffer: &[u8]) -> Result<GattMultiNotification, cr
     require_len_at_least!(buffer, 6);
 
     let data_len = LittleEndian::read_u16(&buffer[4..]);
+    require_len!(buffer, 6 + data_len as usize);
     let mut data = [0; 247];
-    data[..data_len as usize].copy_from_slice(&buffer[4..]);
+    data[..data_len as usize].copy_from_slice(&buffer[6..]);
 
     Ok(GattMultiNotification {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
@@ -3020,7 +3030,7 @@ pub struct AttributeValueExt {
 }
 
 fn to_attribute_value_ext(buffer: &[u8]) -> Result<AttributeValueExt, crate::event::Error> {
-    require_len_at_least!(buffer, 6);
+    require_len_at_least!(buffer, 8);
 
     let value_len = LittleEndian::read_u16(&buffer[6..]) as usize;
     require_len!(buffer, 8 + value_len);
@@ -3099,7 +3109,7 @@ impl TryFrom<u8> for RadioEvent {
 fn to_hal_end_of_radio_activity(
     buffer: &[u8],
 ) -> Result<HalEndOfRadioActivity, crate::event::Error> {
-    require_len!(buffer, 5);
+    require_len!(buffer, 8);
 
     Ok(HalEndOfRadioActivity {
         last_state: RadioEvent::try_from(buffer[0])?,
@@ -3127,7 +3137,7 @@ pub struct HalScanReqReport {
 }
 
 fn to_hal_scan_req_report(buffer: &[u8]) -> Result<HalScanReqReport, crate::event::Error> {
-    require_len!(buffer, 6);
+    require_len!(buffer, 8);
 
     let mut addr = crate::BdAddr([0; 6]);
     addr.0.copy_from_slice(&buffer[2..]);
@@ -3205,6 +3215,7 @@ fn to_hal_firmware_error(buffer: &[u8]) -> Result<HalFirmwareError, crate::event
     require_len_at_least!(buffer, 2);
 
     let data_len = buffer[1] as usize;
+    require_len!(buffer, 2 + data_len);
     let mut data = [0; 251];
     data[..data_len].copy_from_slice(&buffer[2..(2 + data_len)]);
 
