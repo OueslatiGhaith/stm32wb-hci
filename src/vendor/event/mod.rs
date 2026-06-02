@@ -73,7 +73,7 @@ pub enum VendorEvent {
     /// is called to reestablish a bond with a peripheral but the peripheral has lost the bond. In
     /// order to create a new bond the central device has to launch `gap_send_pairing_request` with
     /// `force_rebond` set to `true`.
-    GapBondLost,
+    GapBondLost(ConnectionHandle),
 
     /// This event is sent by the GAP to the upper layers when a procedure previously started has
     /// been terminated by the upper layer or has completed for any other reason
@@ -718,7 +718,7 @@ impl VendorEvent {
                 buffer,
             )?)),
             0x0404 => Ok(VendorEvent::GapPeripheralSecurityInitiated),
-            0x0405 => Ok(VendorEvent::GapBondLost),
+            0x0405 => Ok(VendorEvent::GapBondLost(to_conn_handle(buffer)?)),
             0x0407 => Ok(VendorEvent::GapProcedureComplete(
                 to_gap_procedure_complete(buffer)?,
             )),
@@ -1301,6 +1301,11 @@ pub struct GattAttributeModified {
 }
 
 impl GattAttributeModified {
+    /// Returns the attribute offset from which data has been written.
+    pub fn offset(&self) -> usize {
+        self.offset as usize
+    }
+
     /// Returns the valid attribute data returned by the ATT attribute modified event as a slice of
     /// bytes.
     pub fn data(&self) -> &[u8] {
