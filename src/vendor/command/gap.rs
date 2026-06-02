@@ -678,6 +678,13 @@ pub trait GapCommands {
     /// the pairing process is completed.
     async fn send_pairing_request(&self, params: &PairingRequest) -> Result<(), Error>;
 
+    /// Reply to a pairing/security request reported by
+    /// [`GapPairingRequest`](crate::vendor::event::VendorEvent::GapPairingRequest).
+    ///
+    /// Use this when SMP mode is configured so that pairing requests are surfaced
+    /// to the host for explicit accept/reject.
+    async fn pairing_request_reply(&self, params: &PairingRequestReply) -> Result<(), Error>;
+
     /// This command tries to resolve the address provided with the IRKs present in its database.
     ///
     /// If the address is resolved successfully with any one of the IRKs present in the database, it
@@ -1110,6 +1117,13 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
+    GapPairingRequestReply(GAP_PAIRING_REQUEST_REPLY) {
+        Params<'a> = ParamBuffer<'a>;
+        Return = ();
+    }
+}
+
+vendor_cmd! {
     CmdGapResolvePrivateAddress(GAP_RESOLVE_PRIVATE_ADDRESS) {
         Params<'a> = ParamBuffer<'a>;
         Return = ReturnBuffer<7>;
@@ -1345,6 +1359,7 @@ where
         + for<'t> ControllerCmdSync<GapConfirmNumericComparisonValue<'t>>
         + for<'t> ControllerCmdAsync<GapStartConnectionUpdate<'t>>
         + for<'t> ControllerCmdAsync<GapSendPairingRequest<'t>>
+        + for<'t> ControllerCmdSync<GapPairingRequestReply<'t>>
         + for<'t> ControllerCmdSync<GapPasskeyInput<'t>>
         + for<'t> ControllerCmdSync<GapGetOobData<'t>>
         + for<'t> ControllerCmdSync<GapSetOobData<'t>>
@@ -1667,6 +1682,7 @@ where
     );
 
     hci_impl_params!(send_pairing_request, PairingRequest, GapSendPairingRequest);
+    hci_impl_params!(pairing_request_reply, PairingRequestReply, GapPairingRequestReply);
 
     async fn resolve_private_address(
         &self,
@@ -2906,6 +2922,23 @@ pub struct PairingRequest {
     /// Whether pairing request has to be sent if the device is previously bonded or not. If false,
     /// the pairing request is sent only if the device has not previously bonded.
     pub force_rebond: bool,
+}
+
+/// Parameters for [`pairing_request_reply`](GapCommands::pairing_request_reply).
+pub struct PairingRequestReply {
+    /// Connection for which the pairing request is being handled.
+    pub conn_handle: ConnectionHandle,
+    /// Whether to accept (`true`) or reject (`false`) the request.
+    pub accept: bool,
+}
+
+impl PairingRequestReply {
+    const LENGTH: usize = 3;
+
+    fn copy_into_slice(&self, bytes: &mut [u8]) {
+        LittleEndian::write_u16(bytes, self.conn_handle.0);
+        bytes[2] = self.accept as u8;
+    }
 }
 
 impl PairingRequest {
