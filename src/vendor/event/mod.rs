@@ -828,9 +828,7 @@ impl VendorEvent {
             0x0C18 => Ok(VendorEvent::AttPrepareWritePermitRequest(
                 to_att_prepare_write_permit_request(buffer)?,
             )),
-            0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(
-                &buffer[2..],
-            )?)),
+            0x0C19 => Ok(VendorEvent::GattEattBrearer(to_gatt_eatt_bearer(buffer)?)),
             0x0C1A => Ok(VendorEvent::GattMultiNotification(
                 to_gatt_multi_notification(buffer)?,
             )),
@@ -2780,12 +2778,12 @@ pub struct GapPairingRequest {
 }
 
 fn to_gap_pairing_request(buffer: &[u8]) -> Result<GapPairingRequest, crate::event::Error> {
-    require_len!(buffer, 6);
+    require_len!(buffer, 4);
 
     Ok(GapPairingRequest {
-        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[2..])),
-        bonded: buffer[4] != 0,
-        auth_req: buffer[5],
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        bonded: buffer[2] != 0,
+        auth_req: buffer[3],
     })
 }
 
