@@ -1345,6 +1345,7 @@ where
         + for<'t> ControllerCmdSync<GapConfirmNumericComparisonValue<'t>>
         + for<'t> ControllerCmdAsync<GapStartConnectionUpdate<'t>>
         + for<'t> ControllerCmdAsync<GapSendPairingRequest<'t>>
+        + for<'t> ControllerCmdSync<GapPairingRequestReply<'t>>
         + for<'t> ControllerCmdSync<GapPasskeyInput<'t>>
         + for<'t> ControllerCmdSync<GapGetOobData<'t>>
         + for<'t> ControllerCmdSync<GapSetOobData<'t>>
@@ -1667,7 +1668,6 @@ where
     );
 
     hci_impl_params!(send_pairing_request, PairingRequest, GapSendPairingRequest);
-
     async fn resolve_private_address(
         &self,
         addr: crate::BdAddr,

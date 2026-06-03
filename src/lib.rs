@@ -623,6 +623,8 @@ impl BdAddrType {
 /// The BD Address type is not recognized.  Includes the unrecognized byte.
 ///
 /// See [`to_bd_addr_type`]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BdAddrTypeError(pub u8);
 
 /// Wraps a [`BdAddr`] in a [`BdAddrType`].

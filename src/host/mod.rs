@@ -267,7 +267,7 @@ pub trait HostHci {
     /// or a reset always be sent by the Host before the first
     /// [Number of Completed Packets](HostHci::number_of_completed_packets) command is sent.
     ///
-    /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) commad
+    /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) command
     /// is used to turn flow control on or off.
     async fn host_buffer_size(&self, params: HostBufferSize) -> Result<(), Error>;
 
@@ -2271,7 +2271,7 @@ impl From<FlowControl> for ControllerToHostFlowControl {
 
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Parameters for the [host_buffer_size](HostHci::host_buffer_size) commad
+/// Parameters for the [host_buffer_size](HostHci::host_buffer_size) command
 ///
 /// # Note:
 /// The [Host ACL Data Packet Length](HostBufferSize::acl_data_packet_length) and
