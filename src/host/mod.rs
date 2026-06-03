@@ -17,6 +17,7 @@ use crate::event::command::{
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
 use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
+use bt_hci::AsHciBytes;
 use bt_hci::FromHciBytes;
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
@@ -50,7 +51,6 @@ use bt_hci::param::{
     ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind, PrivacyMode,
     ScanningFilterPolicy,
 };
-use bt_hci::{AsHciBytes, FromHciBytes};
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::slice;
