@@ -20,8 +20,10 @@ This crate aims to match the [latest firmware binaries](https://github.com/STMic
 
 ## Usage
 
-This crate works with any controller that implements `bt_hci::Controller` and the proprietary ST
-HCI specification. Currently, this includes stm32wb and stm32wb microcontroller families.
+This crate works with controllers that implement `bt_hci::controller::Controller` and the
+proprietary ST HCI specification. Command traits such as `stm32wb_hci::host::HostHci` and the
+vendor command traits are implemented for adapters that can execute the relevant `bt-hci` command
+types through `ControllerCmdSync` and `ControllerCmdAsync`.
 
 The `read_packet` function may have to be polled for commands to complete. A channel or other
 methods may be used to accomplish this so that `read_packet` is never in a state where it is not
@@ -39,8 +41,8 @@ polled.
             }
         },
         async {
-            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
+            // From this point `ble` implements the bt-hci controller traits. All commands after
+            // this line are normal stm32wb-hci host/vendor commands, not transport code.
             let response = ble.reset().await;
             defmt::info!("{}", response);
 

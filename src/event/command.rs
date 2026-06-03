@@ -1399,7 +1399,7 @@ bitflags::bitflags! {
 #[cfg(feature = "defmt")]
 defmt::bitflags! {
     /// Possible LE features for the
-    /// [LE Read Local Supported Features](::host::Hci::le_read_local_supported_features) command.
+    /// [LE Read Local Supported Features](crate::host::HostHci::le_read_local_supported_features) command.
     /// See the Bluetooth specification, Vol 6, Part B, Section 4.6.  See Table 4.3 (v4.1 of the spec),
     /// Table 4.4 (v4.2 and v5.0).
     #[derive(Default)]

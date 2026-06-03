@@ -55,7 +55,7 @@ pub trait HalCommands {
     /// This command sets the TX power level of the BlueNRG-MS.
     ///
     /// When the system starts up or reboots, the default TX power level will be used, which is the
-    /// maximum value of [8 dBm](PowerLevel::Dbm8_0). Once this command is given, the output power
+    /// maximum value of [6 dBm](PowerLevel::Plus6dBm). Once this command is given, the output power
     /// will be changed instantly, regardless if there is Bluetooth communication going on or
     /// not. For example, for debugging purpose, the BlueNRG-MS can be set to advertise all the
     /// time. And use this command to observe the signal strength changing.
@@ -137,10 +137,10 @@ pub trait HalCommands {
     async fn get_link_status(&self) -> Result<HalLinkStatus, Error>;
 
     /// This command sets the bitmask associated to
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
     ///
     /// Only the radio activities enabled in the mask will be reported to the application by the
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::EndOfRadioActivity) event.
+    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
     async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error>;
 
     /// This command is intended to retrieve information about the current Anchor Interval and
@@ -565,7 +565,7 @@ where
         let buf = HalGetLinkStatusV2::new()
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let mut status = HalLinkStatusV2 {
             link_status: [0u8; 22],
@@ -586,7 +586,12 @@ where
         trigger_source: SyncTriggerSource,
     ) -> Result<(), Error> {
         HalSetSyncEventConfig::new(
-            (&[group_id, enable_sync as u8, enable_cb_trigger as u8, trigger_source as u8][..])
+            (&[
+                group_id,
+                enable_sync as u8,
+                enable_cb_trigger as u8,
+                trigger_source as u8,
+            ][..])
                 .into(),
         )
         .exec(self)
@@ -612,12 +617,15 @@ where
         let buf = HalEadEncryptDecrypt::new((&bytes[..len]).into())
             .exec(self)
             .await
-            .map_err(|e| Error::from(e))?;
+            .map_err(Error::from)?;
         let b = buf.buf();
         let out_len = LittleEndian::read_u16(&b[0..2]) as usize;
         let mut data = [0u8; 248];
         data[..out_len].copy_from_slice(&b[2..2 + out_len]);
-        Ok(HalEadResult { data, data_len: out_len })
+        Ok(HalEadResult {
+            data,
+            data_len: out_len,
+        })
     }
 }
 
