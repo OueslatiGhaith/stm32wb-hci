@@ -1,12 +1,14 @@
 //! Host-side interface to the Bluetooth HCI.
 //!
-//! # Ideas for discussion and improvements
+//! The [`HostHci`] trait defines standard Bluetooth HCI commands. It is implemented for controller
+//! adapters that can execute the corresponding [`bt-hci`] command types through
+//! [`bt_hci::controller::ControllerCmdSync`] and
+//! [`bt_hci::controller::ControllerCmdAsync`].
 //!
-//! - Remove `cmd_link` and `event_link` modules. These provide alternative mechanisms for writing
-//!   to and reading from the controller, respectively, without the packet identifier byte. The
-//!   open-source Bluetooth implementations I have found (admittedly, I haven't looked hard) only
-//!   support sending the packet ID, as `uart` does. In that case, it would make sense to also remove
-//!   `uart` and move its contents up one level.
+//! Packet reads live in [`uart`], because command execution and incoming events are separate flows
+//! for most STM32WB applications.
+//!
+//! [`bt-hci`]: https://crates.io/crates/bt-hci
 
 use crate::event::NumberOfCompletedPackets;
 use crate::event::command::{
@@ -15,6 +17,7 @@ use crate::event::command::{
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
 use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
+use bt_hci::FromHciBytes;
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
     HostBufferSize as CmdHostBufferSize, HostNumberOfCompletedPackets, ReadTransmitPowerLevel,
@@ -635,13 +638,13 @@ pub trait HostHci {
     /// A [Command Complete](crate::event::command::ReturnParameters::LeSetAdvertisingEnable) event
     /// is generated.
     ///
-    /// If [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// If [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle) and
     /// the directed advertising fails to create a connection, an
     /// [LE Connection Complete](crate::event::Event::LeConnectionComplete) event shall be generated with the
     /// Status code set to [`AdvertisingTimeout`](Status::AdvertisingTimeout).
     ///
-    /// If [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// If [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableUndirected`](AdvertisingType::ConnectableUndirected),
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle), or
     /// [`ConnectableDirectedLowDutyCycle`](AdvertisingType::ConnectableDirectedLowDutyCycle) and a
@@ -650,7 +653,7 @@ pub trait HostHci {
     /// event shall be generated.
     ///
     /// Note: There is a possible race condition if `enable` is set to false (Disable) and
-    /// [`advertising_type`](crate::types::AdvertisingInterval::_advertising_type) is
+    /// [`advertising_type`](crate::types::AdvertisingInterval::advertising_type) is
     /// [`ConnectableUndirected`](AdvertisingType::ConnectableUndirected),
     /// [`ConnectableDirectedHighDutyCycle`](AdvertisingType::ConnectableDirectedHighDutyCycle), or
     /// [`ConnectableDirectedLowDutyCycle`](AdvertisingType::ConnectableDirectedLowDutyCycle). The
@@ -2585,7 +2588,7 @@ impl Default for Channels {
 
 /// Possible filter policies used for undirected advertising.
 ///
-/// See [`AdvertisingParameters`](crate::host::AdvertisingParameters).
+/// See [`AdvertisingParameters`].
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

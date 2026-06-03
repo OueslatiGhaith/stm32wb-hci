@@ -82,8 +82,8 @@ impl ExtendedAdvertisingInterval {
     ///
     /// - [TooShort](ExtendedAdvertisingIntervalError::TooShort) if the minimum value is too small. For
     ///   Bluetooth specifications v4.x, if the advertising type is
-    ///   [ScannableUndirected](AdvertisingType::ScannableUndirected), then the minimum value is 100
-    ///   ms. In all other cases, the minimum value is 20 ms.
+    ///   [ScannableUndirected](crate::types::AdvertisingType::ScannableUndirected), then the
+    ///   minimum value is 100 ms. In all other cases, the minimum value is 20 ms.
     /// - [TooLong](ExtendedAdvertisingIntervalError::TooLong) if the maximum value is too large. The
     ///   maximum value is 10.24 seconds.
     /// - [Inverted](ExtendedAdvertisingIntervalError::Inverted) if the minimum is greater than the

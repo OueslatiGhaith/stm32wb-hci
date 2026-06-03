@@ -1,4 +1,8 @@
-//! Implementation of the HCI that includes the packet ID byte in the header.
+//! Packet-oriented HCI helpers for transports that include the packet indicator byte.
+//!
+//! [`UartHci`] is implemented for any [`bt_hci::controller::Controller`]. It complements the
+//! command traits in [`crate::host`] and [`crate::vendor::command`] by providing a polling entry
+//! point for controller-to-host packets.
 
 use crate::event::{Error as EventError, Event};
 use bt_hci::{ControllerToHostPacket, controller::Controller};
@@ -10,9 +14,7 @@ const PACKET_TYPE_HCI_COMMAND: u8 = 0x01;
 #[allow(dead_code)]
 const PACKET_TYPE_HCI_EVENT: u8 = 0x04;
 
-/// Potential errors from reading or writing packets to the controller.
-///
-/// Must be specialized both for communication errors (`E`) and vendor-specific errors (`VE`).
+/// Potential errors from reading packets from the controller.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
@@ -44,9 +46,6 @@ pub struct CommandHeader {
 }
 
 /// Trait for reading packets from the controller.
-///
-/// Must be specialized for communication errors (`E`), vendor-specific events (`Vendor`), and
-/// vendor-specific errors (`VE`).
 pub trait UartHci {
     /// Reads and returns a packet from the controller. Consumes exactly enough bytes to read the
     /// next packet including its header.
@@ -58,7 +57,7 @@ pub trait UartHci {
     /// - Returns [`Error::BLE`] if there is an error deserializing the
     ///   packet (such as a mismatch between the packet length and the expected length of the
     ///   event). See [`crate::event::Error`] for possible values of `e`.
-    /// - Returns [`Error::Comm`] if there is an error reading from the
+    /// - Returns [`Error::IoError`] if there is an error reading from the
     ///   controller.
     async fn read_packet(&self) -> Result<Packet, Error>;
 }

@@ -1,78 +1,34 @@
-//! A Bluetooth implementation for embedded systems.
+//! Bluetooth HCI commands and events for STM32WB controllers.
 //!
-//! This crate is a proof-of-concept implementation of the host (application) side of the
-//! [`Bluetooth`] specification. It is still woefully incomplete, and will undoubtedly be redesigned
-//! completely, and potentially split into multiple crates before being stabilized.
+//! This crate provides host-side command helpers, event parsers, and ST vendor-specific extensions
+//! for the STM32WB wireless coprocessor. It builds on [`bt-hci`] for command transport and packet
+//! framing, while this crate supplies the STM32WB-focused command traits and parameter types.
 //!
-//! When the documentation refers to a specific section of "the" Bluetooth specification, the same
-//! section applies for all supported versions of the specification. If the versions differ, the
-//! specific version will also be included in the reference.
+//! # Controller model
 //!
-//! # Design
+//! New controller adapters should implement [`bt_hci::controller::Controller`] to read and write
+//! transport packets. The [`bt-hci`] command helpers then provide
+//! [`bt_hci::controller::ControllerCmdSync`] and [`bt_hci::controller::ControllerCmdAsync`]
+//! implementations for command execution.
 //!
-//! Like other core embedded crates (e.g, [`embedded-hal`]), this crate uses traits to be agnostic
-//! about the specific Bluetooth module. It provides a default implementation of the HCI for devices
-//! that implement the core [`Controller`] trait. The traits also make use of async in traits, so the
-//! #![feature(async_fn_in_trait)] feature is required.
-//! support different asynchronous or synchronous operation modes.
+//! The host command traits in [`host`] and [`vendor::command`] are implemented for any controller
+//! type that satisfies those [`bt-hci`] command-execution traits. In practice this means application
+//! code can call methods such as [`host::HostHci::reset`] or
+//! [`vendor::command::gap::GapCommands::init_gap`] directly on a transport adapter once it implements
+//! the [`bt-hci`] controller traits.
 //!
-//! ## Commands
+//! Event reads are exposed separately through [`host::uart::UartHci::read_packet`], which is
+//! implemented for types that implement [`bt_hci::controller::Controller`].
 //!
-//! The [`host::Hci`] trait defines all of the functions that communicate from the host to the
-//! controller. The [`host::uart::Hci`] trait defines a read function that returns a
-//! [`host::uart::Packet`], which can contain an [`Event`], `AclData` (TODO), or `SyncData`
-//! (TODO). Both of these traits have default implementations in terms of the [`Controller`], so
-//! calling code does not need to implement any commands or event parsing code.
+//! # Compatibility traits
 //!
-//! ## Vendor-specific commands and events
-//!
-//! The [`host::uart::Hci`] trait requires specialization for the type of vendor-specific events
-//! (which implement [`event::VendorEvent`]) and vendor-specific errors. Any vendor-specific
-//! extensions will need to convert byte buffers into the appropriate event type (as defined by the
-//! vendor), but will not need to read data using the [`Controller`]. The Bluetooth standard
-//! provides packet length in a common header, so only complete packets will be passed on to the
-//! vendor code for deserialization.
-//!
-//! There is not yet support for vendor-specific commands. The vendor crate will have to serialize
-//! the command packets directly and write them to the [`Controller`].
-//!
-//! # Reference implementation
-//!
-//! The [`bluenrg`] crate provides a sample implementation for STMicro's BlueNRG Bluetooth
-//! controllers.
-//!
-//! # Ideas for discussion and improvement
-//!
-//! - Add traits to facilitate writing Bluetooth controllers. These controllers would have a host on
-//!   one side and a link layer on the other. Separate crate? If so, move common definitions (Status
-//!   codes, opcodes, etc.) to a bluetooth-core crate.
-//!
-//! - Add a helper function for vendor-specific commands. This should take care of creating the
-//!   header and writing the data to the [`Controller`]. Vendor code should only be responsible for
-//!   serializing commands into byte slices.
-//!
-//! - Remove the `cmd_link` and `event_link` modules, and merge `uart` up into `host`. The Bluetooth
-//!   spec made it seem like there were devices that do not include the packet type byte at the
-//!   beginning of packets, but STMicro's BlueNRG implementation and Nordic's Zephyr implementation
-//!   both include it. If there is a controller that does *not* include the packet type, the
-//!   `event_link` HCI can always be brought back.
-//!
-//! - Provide config features for different versions of the Bluetooth Specification.
-//!
-//! - Implement all of the specified functions and events.
-//!
-//! - Provide opt-in config features for certain types of commands and events. For example, BlueNRG
-//!   devices only implement 40 commands and 14 events, but the spec has around 250 commands and 76
-//!   events. It would be nice if unused events could be compiled out. This would be less important
-//!   for commands, since those functions would simply never be called, and could be removed by the
-//!   linker. This would entail significant work both on the part of the crate authors and on crate
-//!   users, who would need to configure the crate appropriately. All combinations of features would
-//!   also never be tested; there are simply too many, even if we only provide features for the
-//!   events. On the other hand, those features should not interact, so maybe it would be feasible.
+//! This crate still exposes the older [`Controller`], [`ReadableController`], and
+//! [`WritableController`] traits for source compatibility with earlier versions. They are not the
+//! primary extension point for new transports. Prefer implementing the [`bt-hci`] traits described
+//! above, as the current host and vendor command implementations are based on that abstraction.
 //!
 //! [`Bluetooth`]: https://www.bluetooth.com/specifications/bluetooth-core-specification
-//! [`embedded-hal`]: https://crates.io/crates/embedded-hal
-//! [`bluenrg`]: https://github.com/danielgallagher0/bluenrg
+//! [`bt-hci`]: https://crates.io/crates/bt-hci
 
 #![no_std]
 #![allow(async_fn_in_trait)]
@@ -97,12 +53,13 @@ pub use opcode::Opcode;
 
 use core::fmt::Debug;
 
-/// Interface to the Bluetooth controller from the host's perspective.
+/// Compatibility interface to the Bluetooth controller from the host's perspective.
 ///
-/// The Bluetooth application host must communicate with a controller (which, in turn, communicates
-/// with the link layer) to control the Bluetooth radio. Device crates must implement this trait,
-/// which enables full access to all of the functions and events of the HCI through [`host::Hci`]
-/// and [`host::uart::Hci`], respectively.
+/// This trait is retained for code written against earlier versions of this crate. New transport
+/// adapters should usually implement [`bt_hci::controller::Controller`] instead. The current
+/// command traits, including [`host::HostHci`] and the traits under [`vendor::command`], are
+/// implemented in terms of [`bt_hci::controller::ControllerCmdSync`] and
+/// [`bt_hci::controller::ControllerCmdAsync`].
 pub trait Controller {
     /// Writes the bytes to the controller, in a single transaction if possible. All of `header`
     /// shall be written, followed by all of `payload`.
@@ -153,8 +110,13 @@ pub trait Controller {
     async fn controller_read_into(&mut self, buf: &mut [u8]);
 }
 
+/// Compatibility trait for adapters that only expose the read half of [`Controller`].
+///
+/// New code should prefer [`bt_hci::controller::Controller`].
 pub trait ReadableController {
-    /// Reads data from the controller into the provided `buffer`. See `Controller::controller_read_into.`
+    /// Reads data from the controller into the provided `buffer`.
+    ///
+    /// See [`Controller::controller_read_into`].
     async fn controller_read_into(&mut self, buf: &mut [u8]);
 }
 
@@ -164,8 +126,13 @@ impl<T: Controller> ReadableController for T {
     }
 }
 
+/// Compatibility trait for adapters that only expose the write half of [`Controller`].
+///
+/// New code should prefer [`bt_hci::controller::Controller`].
 pub trait WritableController {
-    /// Writes data to the controller into the provided `buffer`. See `Controller::contoller_write.`
+    /// Writes data to the controller.
+    ///
+    /// See [`Controller::controller_write`].
     async fn controller_write(&mut self, opcode: Opcode, payload: &[u8]);
 }
 

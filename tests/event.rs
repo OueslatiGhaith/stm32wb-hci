@@ -327,7 +327,7 @@ fn le_enhanced_connection_complete_resolved_public_identity() {
             assert_eq!(event.conn_handle, hci::ConnectionHandle(0x0201));
             assert_eq!(event.role, ConnectionRole::Central);
             assert_eq!(
-                hci::BdAddrType::try_from(event.peer_bd_addr).unwrap(),
+                hci::BdAddrType::from(event.peer_bd_addr),
                 hci::BdAddrType::Public(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
             );
             assert_eq!(
@@ -354,7 +354,7 @@ fn le_enhanced_connection_complete_resolved_random_identity() {
     match TestEvent::new(Packet(&buffer)) {
         Ok(Event::LeEnhancedConnectionComplete(event)) => {
             assert_eq!(
-                hci::BdAddrType::try_from(event.peer_bd_addr).unwrap(),
+                hci::BdAddrType::from(event.peer_bd_addr),
                 hci::BdAddrType::Random(hci::BdAddr([0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
             );
         }
@@ -544,7 +544,7 @@ fn test_parse_misc_events() {
             .filter_map(|b| u8::from_str_radix(b, 16).ok())
             .collect();
 
-        if bytes.len() < 1 {
+        if bytes.is_empty() {
             continue;
         }
 

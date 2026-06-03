@@ -54,7 +54,7 @@ pub enum VendorReturnParameters {
     HalSetTxPowerLevel(crate::Status),
 
     /// Status returned by the
-    /// [HAL Device Standby](crate::vendor::command::hal::HalCommands::device_standby) command.
+    /// HAL Device Standby command.
     HalDeviceStandby(crate::Status),
 
     /// Parameters returned by the
@@ -362,7 +362,7 @@ pub enum VendorReturnParameters {
     GattSetDescriptorValue(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value) command.
+    /// GATT Read Handle Value command.
     GattReadHandleValue(GattHandleValue),
 
     /// Parameters returned by the
@@ -1337,7 +1337,7 @@ impl TryFrom<&[u8]> for GattCharacteristicDescriptor {
     }
 }
 
-/// Parameters returned by the [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value)
+/// Parameters returned by the GATT Read Handle Value
 /// command.
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
