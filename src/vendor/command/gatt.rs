@@ -1744,13 +1744,9 @@ where
         handles: &[AttributeHandle],
     ) -> Result<(), Error> {
         let mut payload = [0; 255];
-        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
-        payload[1] = handles.len() as u8;
-        for (idx, handle) in handles.iter().enumerate() {
-            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
-        }
+        let len = copy_multiple_handle_payload(&mut payload, conn_handle, handles)?;
 
-        GattSendMultipleNotification::new((&payload[..2 + (handles.len() * 2)]).into())
+        GattSendMultipleNotification::new((&payload[..len]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1762,13 +1758,9 @@ where
         handles: &[AttributeHandle],
     ) -> Result<(), Error> {
         let mut payload = [0; 255];
-        LittleEndian::write_u16(&mut payload[0..], conn_handle.0);
-        payload[1] = handles.len() as u8;
-        for (idx, handle) in handles.iter().enumerate() {
-            LittleEndian::write_u16(&mut payload[2 + (idx * 2)..], handle.0);
-        }
+        let len = copy_multiple_handle_payload(&mut payload, conn_handle, handles)?;
 
-        GattReadMultipleVarCharValue::new((&payload[..2 + (handles.len() * 2)]).into())
+        GattReadMultipleVarCharValue::new((&payload[..len]).into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1815,6 +1807,29 @@ where
             .await
             .map_err(|e| e.into())
     }
+}
+
+fn copy_multiple_handle_payload(
+    bytes: &mut [u8],
+    conn_handle: ConnectionHandle,
+    handles: &[AttributeHandle],
+) -> Result<usize, Error> {
+    const MAX_HANDLE_COUNT: usize = 126;
+    if handles.len() > MAX_HANDLE_COUNT {
+        return Err(Error::TooManyHandlesToRead);
+    }
+
+    assert!(bytes.len() >= 3 + 2 * handles.len());
+
+    LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
+    bytes[2] = handles.len() as u8;
+    let mut next = 3;
+    for handle in handles.iter() {
+        LittleEndian::write_u16(&mut bytes[next..next + 2], handle.0);
+        next += 2;
+    }
+
+    Ok(next)
 }
 
 /// Potential errors from parameter validation.
