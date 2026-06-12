@@ -224,6 +224,12 @@ pub enum Error {
     Vendor(VendorError),
 }
 
+impl From<VendorError> for Error {
+    fn from(err: VendorError) -> Self {
+        Self::Vendor(err)
+    }
+}
+
 /// Extracts the value from a [`BadStatusError`] and returns it as a
 /// [`BadStatus`](Error::BadStatus) error.
 pub fn rewrap_bad_status(bad_status: BadStatusError) -> Error {

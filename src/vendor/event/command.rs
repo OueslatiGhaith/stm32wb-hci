@@ -221,7 +221,7 @@ pub enum VendorReturnParameters {
 
     /// Parameters returned by the
     /// [GAP Get OOB Data](crate::vendor::command::gap::GapCommands::get_oob_data) command.
-    GapGetOobData(crate::Status),
+    GapGetOobData((crate::Status, [u8; 26])),
 
     /// Parameters returned by the
     /// [GAP Passkey Input](crate::vendor::command::gap::GapCommands::passkey_input) command.
@@ -261,7 +261,7 @@ pub enum VendorReturnParameters {
     GapAdditionalBeaconSetData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Configuration](crate::vendor::command::gap::GapCommands::adv_set_configuration)
+    /// [GAP Adv Set Configuration](crate::vendor::command::gap::GapCommands::adv_set_config)
     /// command.
     GapAdvSetConfiguration(crate::Status),
 
@@ -383,7 +383,7 @@ pub enum VendorReturnParameters {
     GattSetAccessPermission(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Store DB](crate::vendor::command::gatt::GattCommands::store_db) command.
+    /// [GATT Store DB](crate::vendor::command::gatt::GattCommands::store_database)
     GattStoreDb(crate::Status),
 
     /// Parameters returned by the
@@ -505,9 +505,9 @@ impl VendorReturnParameters {
             crate::vendor::opcode::HAL_RX_STOP => {
                 Ok(VendorReturnParameters::HalRxStop(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::HAL_STACK_RESET => {
-                Ok(VendorReturnParameters::HalStackReset(to_status(&bytes[3..])?))
-            }
+            crate::vendor::opcode::HAL_STACK_RESET => Ok(VendorReturnParameters::HalStackReset(
+                to_status(&bytes[3..])?,
+            )),
             crate::vendor::opcode::GAP_SET_NONDISCOVERABLE => Ok(
                 VendorReturnParameters::GapSetNonDiscoverable(to_status(&bytes[3..])?),
             ),
@@ -585,15 +585,17 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GAP_PAIRING_REQUEST_REPLY => Ok(
                 VendorReturnParameters::GapPairingRequestReply(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_GET_OOB_DATA => Ok(
-                VendorReturnParameters::GapGetOobData(to_status(&bytes[3..])?),
-            ),
+            crate::vendor::opcode::GAP_GET_OOB_DATA => Ok(VendorReturnParameters::GapGetOobData({
+                require_len!(bytes, 26 - 1 - 3);
+
+                (to_status(&bytes[3..4])?, bytes[4..].try_into().unwrap())
+            })),
             crate::vendor::opcode::GAP_PASSKEY_INPUT => Ok(
                 VendorReturnParameters::GapPasskeyInput(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_OOB_DATA => Ok(
-                VendorReturnParameters::GapSetOobData(to_status(&bytes[3..])?),
-            ),
+            crate::vendor::opcode::GAP_SET_OOB_DATA => Ok(VendorReturnParameters::GapSetOobData(
+                to_status(&bytes[3..])?,
+            )),
             crate::vendor::opcode::GAP_ADD_DEVICES_TO_RESOLVING_LIST => Ok(
                 VendorReturnParameters::GapAddDevicesToResolvingList(to_status(&bytes[3..])?),
             ),
@@ -721,6 +723,7 @@ impl VendorReturnParameters {
                 VendorReturnParameters::L2CapCocConnect(to_status(&bytes[3..])?),
             ),
             crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM => Ok(
+                // TODO: This has a return buffer
                 VendorReturnParameters::L2CapCocConnectConfirm(to_status(&bytes[3..])?),
             ),
             crate::vendor::opcode::L2CAP_COC_RECONFIG => Ok(
@@ -735,9 +738,9 @@ impl VendorReturnParameters {
             crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL => Ok(
                 VendorReturnParameters::L2CapCocFlowControl(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_TX_DATA => Ok(
-                VendorReturnParameters::L2CapCocTxData(to_status(&bytes[3..])?),
-            ),
+            crate::vendor::opcode::L2CAP_COC_TX_DATA => Ok(VendorReturnParameters::L2CapCocTxData(
+                to_status(&bytes[3..])?,
+            )),
             other => Err(crate::event::Error::UnknownOpcode(other)),
         }
     }
@@ -1124,7 +1127,7 @@ impl TryFrom<u8> for PassKeyRequirement {
     }
 }
 
-fn to_boolean(value: u8) -> Result<bool, super::VendorError> {
+pub(crate) fn to_boolean(value: u8) -> Result<bool, super::VendorError> {
     match value {
         0 => Ok(false),
         1 => Ok(true),

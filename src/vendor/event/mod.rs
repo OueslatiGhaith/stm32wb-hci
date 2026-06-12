@@ -19,6 +19,7 @@ use crate::vendor::command::l2cap::{
     L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocFlowControl, L2CapCocReconfig,
     L2CapCocReconfigConfirm,
 };
+use crate::vendor::event::command::to_boolean;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 
 /// Vendor-specific events for the STM32WB5x radio coprocessor.
@@ -2788,7 +2789,7 @@ fn to_gap_pairing_request(buffer: &[u8]) -> Result<GapPairingRequest, crate::eve
 
     Ok(GapPairingRequest {
         connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
-        bonded: buffer[2] != 0,
+        bonded: to_boolean(buffer[2])?,
         auth_req: buffer[3],
     })
 }
