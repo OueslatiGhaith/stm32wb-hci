@@ -19,6 +19,7 @@ use crate::vendor::command::l2cap::{
     L2CapCocConnect, L2CapCocConnectConfirm, L2CapCocFlowControl, L2CapCocReconfig,
     L2CapCocReconfigConfirm,
 };
+use crate::vendor::event::command::to_boolean;
 pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
 
 /// Vendor-specific events for the STM32WB5x radio coprocessor.
@@ -72,7 +73,7 @@ pub enum VendorEvent {
     /// is called to reestablish a bond with a peripheral but the peripheral has lost the bond. In
     /// order to create a new bond the central device has to launch `gap_send_pairing_request` with
     /// `force_rebond` set to `true`.
-    GapBondLost,
+    GapBondLost(ConnectionHandle),
 
     /// This event is sent by the GAP to the upper layers when a procedure previously started has
     /// been terminated by the upper layer or has completed for any other reason
@@ -96,6 +97,12 @@ pub enum VendorEvent {
     /// having Keyboard only I/O capabilities. When this event is received, no
     /// action is required to the User.
     GapKeypressNotification(GapKeypressNotification),
+
+    /// This event is generated when SMP mode is configured to surface pairing
+    /// requests to the host.
+    ///
+    /// The host should answer using the GAP pairing-request-reply command.
+    GapPairingRequest(GapPairingRequest),
 
     /// This event is generated when the central device responds to the L2CAP connection update
     /// request packet. For more info see
@@ -717,7 +724,7 @@ impl VendorEvent {
                 buffer,
             )?)),
             0x0404 => Ok(VendorEvent::GapPeripheralSecurityInitiated),
-            0x0405 => Ok(VendorEvent::GapBondLost),
+            0x0405 => Ok(VendorEvent::GapBondLost(to_conn_handle(buffer)?)),
             0x0407 => Ok(VendorEvent::GapProcedureComplete(
                 to_gap_procedure_complete(buffer)?,
             )),
@@ -728,6 +735,9 @@ impl VendorEvent {
             0x040A => Ok(VendorEvent::GapKeypressNotification(
                 to_keypress_notification(buffer)?,
             )),
+            0x040B => Ok(VendorEvent::GapPairingRequest(to_gap_pairing_request(
+                buffer,
+            )?)),
             0x0800 => Ok(VendorEvent::L2CapConnectionUpdateResponse(
                 to_l2cap_connection_update_response(buffer)?,
             )),
@@ -1300,6 +1310,11 @@ pub struct GattAttributeModified {
 }
 
 impl GattAttributeModified {
+    /// Returns the attribute offset from which data has been written.
+    pub fn offset(&self) -> usize {
+        self.offset as usize
+    }
+
     /// Returns the valid attribute data returned by the ATT attribute modified event as a slice of
     /// bytes.
     pub fn data(&self) -> &[u8] {
@@ -2757,6 +2772,28 @@ fn to_keypress_notification(buffer: &[u8]) -> Result<GapKeypressNotification, cr
     })
 }
 
+/// Pairing request event payload.
+#[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GapPairingRequest {
+    /// Handle of the connection where this event occurred.
+    pub connection_handle: ConnectionHandle,
+    /// Whether the peer is already bonded.
+    pub bonded: bool,
+    /// AuthReq bitfield from Pairing/Security Request.
+    pub auth_req: u8,
+}
+
+fn to_gap_pairing_request(buffer: &[u8]) -> Result<GapPairingRequest, crate::event::Error> {
+    require_len!(buffer, 4);
+
+    Ok(GapPairingRequest {
+        connection_handle: ConnectionHandle(LittleEndian::read_u16(&buffer[0..])),
+        bonded: to_boolean(buffer[2])?,
+        auth_req: buffer[3],
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// This event is generated upon receipt of a valid Command Reject packet (e.g.
@@ -2903,6 +2940,9 @@ pub struct GattEattBrearer {
     /// Status error code
     pub status: GattProcedureStatus,
 }
+
+/// Preferred spelling alias kept for API ergonomics.
+pub type GattEattBearer = GattEattBrearer;
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -3223,4 +3263,49 @@ fn to_hal_firmware_error(buffer: &[u8]) -> Result<HalFirmwareError, crate::event
         data_len: buffer[1],
         data,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_gap_pairing_request_event() {
+        // 0x040B + conn_handle(0x0123) + bonded(1) + auth_req(0x2D)
+        let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01, 0x2D];
+        let event = VendorEvent::new(&bytes).expect("parse pairing request");
+
+        match event {
+            VendorEvent::GapPairingRequest(e) => {
+                assert_eq!(e.connection_handle.0, 0x0123);
+                assert!(e.bonded);
+                assert_eq!(e.auth_req, 0x2D);
+            }
+            _ => panic!("unexpected event variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_short_gap_pairing_request_event() {
+        let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01];
+        let err = VendorEvent::new(&bytes).expect_err("must reject short payload");
+
+        assert!(matches!(err, crate::event::Error::BadLength(_, _)));
+    }
+
+    #[test]
+    fn parses_gatt_eatt_bearer_event() {
+        // 0x0C19 + channel_index(2) + eab_state(created) + status(success)
+        let bytes = [0x19, 0x0C, 0x02, 0x00, 0x00];
+        let event = VendorEvent::new(&bytes).expect("parse eatt bearer");
+
+        match event {
+            VendorEvent::GattEattBrearer(e) => {
+                assert_eq!(e.channel_index, 2);
+                assert!(matches!(e.eab_state, EabState::AttBearerCreated));
+                assert_eq!(e.status, GattProcedureStatus::Success);
+            }
+            _ => panic!("unexpected event variant"),
+        }
+    }
 }

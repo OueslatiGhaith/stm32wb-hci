@@ -17,6 +17,7 @@ use crate::event::command::{
     LocalSupportedCommands, LocalSupportedFeatures, LocalVersionInfo, ReadBdAddr, ReadRssi,
 };
 use crate::{BadStatusError, BdAddr, BdAddrType, BdAddrTypeError, ConnectionHandle};
+use bt_hci::AsHciBytes;
 use bt_hci::FromHciBytes;
 use bt_hci::cmd::cmd;
 use bt_hci::cmd::controller_baseband::{
@@ -269,7 +270,7 @@ pub trait HostHci {
     /// or a reset always be sent by the Host before the first
     /// [Number of Completed Packets](HostHci::number_of_completed_packets) command is sent.
     ///
-    /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) commad
+    /// The [Set Controller to Host Flow Control](HostHci::set_controller_to_host_flow_control) command
     /// is used to turn flow control on or off.
     async fn host_buffer_size(&self, params: HostBufferSize) -> Result<(), Error>;
 
@@ -2209,6 +2210,12 @@ impl From<EventFlags> for EventMask {
     }
 }
 
+impl From<EventMask> for EventFlags {
+    fn from(value: EventMask) -> Self {
+        EventFlags::from_bits_truncate(u64::from_le_bytes(value.as_hci_bytes().try_into().unwrap()))
+    }
+}
+
 /// For the [`read_tx_power_level`](HostHci::read_tx_power_level) command, the allowed values for the
 /// type of power level to read.
 ///
@@ -2267,7 +2274,7 @@ impl From<FlowControl> for ControllerToHostFlowControl {
 
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Parameters for the [host_buffer_size](HostHci::host_buffer_size) commad
+/// Parameters for the [host_buffer_size](HostHci::host_buffer_size) command
 ///
 /// # Note:
 /// The [Host ACL Data Packet Length](HostBufferSize::acl_data_packet_length) and
@@ -2415,6 +2422,14 @@ defmt::bitflags! {
 impl From<LeEventFlags> for LeEventMask {
     fn from(flags: LeEventFlags) -> Self {
         LeEventMask::from_hci_bytes_complete(&flags.bits().to_le_bytes()).unwrap()
+    }
+}
+
+impl From<LeEventMask> for LeEventFlags {
+    fn from(value: LeEventMask) -> Self {
+        LeEventFlags::from_bits_truncate(u64::from_le_bytes(
+            value.as_hci_bytes().try_into().unwrap(),
+        ))
     }
 }
 

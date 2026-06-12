@@ -152,7 +152,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocFlowControl(L2CAP_COC_DISCONNECT) {
+    L2CocFlowControl(L2CAP_COC_FLOW_CONTROL) {
         Params<'a> = ParamBuffer<'a>;
         Return = ();
     }

@@ -970,10 +970,6 @@ bitflag_array! {
 
 impl From<CmdMask> for CommandFlags {
     fn from(mask: CmdMask) -> Self {
-        // Assert precondition
-        assert_eq!(size_of::<CmdMask>(), size_of::<CommandFlags>());
-        assert_eq!(align_of::<CmdMask>(), align_of::<CommandFlags>());
-
         CommandFlags(mask.as_hci_bytes().try_into().unwrap())
     }
 }

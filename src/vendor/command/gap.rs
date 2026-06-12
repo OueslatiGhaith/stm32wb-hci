@@ -883,10 +883,8 @@ pub trait GapCommands {
     ) -> Result<(), Error>;
 
     /// Set data for periodic advertising PDUs.
-    async fn adv_set_periodic_data<'a>(
-        &self,
-        params: &AdvSetPeriodicData<'a>,
-    ) -> Result<(), Error>;
+    async fn adv_set_periodic_data<'a>(&self, params: &AdvSetPeriodicData<'a>)
+    -> Result<(), Error>;
 
     /// Enable or disable periodic advertising.
     async fn adv_set_periodic_enable(
@@ -896,10 +894,7 @@ pub trait GapCommands {
     ) -> Result<(), Error>;
 
     /// Set extended advertising configuration (V2 with 4-byte intervals and PHY options).
-    async fn adv_set_configuration_v2(
-        &self,
-        params: &AdvSetConfigV2,
-    ) -> Result<(), Error>;
+    async fn adv_set_configuration_v2(&self, params: &AdvSetConfigV2) -> Result<(), Error>;
 
     /// Start extended scan procedure.
     async fn ext_start_scan(&self, params: &ExtStartScanParams) -> Result<(), Error>;
@@ -1667,7 +1662,6 @@ where
     );
 
     hci_impl_params!(send_pairing_request, PairingRequest, GapSendPairingRequest);
-
     async fn resolve_private_address(
         &self,
         addr: crate::BdAddr,
@@ -1915,10 +1909,7 @@ where
             .map_err(|e| e.into())
     }
 
-    async fn adv_set_configuration_v2(
-        &self,
-        params: &AdvSetConfigV2,
-    ) -> Result<(), Error> {
+    async fn adv_set_configuration_v2(&self, params: &AdvSetConfigV2) -> Result<(), Error> {
         let mut bytes = [0u8; AdvSetConfigV2::LENGTH];
         params.copy_into_slice(&mut bytes);
         GapAdvSetConfigurationV2::new((&bytes[..]).into())
@@ -3418,8 +3409,14 @@ impl ExtStartScanParams {
         let mut offset = 10;
         for i in 0..self.num_phys.min(2) {
             bytes[offset] = self.phy_params[i].scan_type;
-            LittleEndian::write_u16(&mut bytes[offset + 1..offset + 3], self.phy_params[i].scan_interval);
-            LittleEndian::write_u16(&mut bytes[offset + 3..offset + 5], self.phy_params[i].scan_window);
+            LittleEndian::write_u16(
+                &mut bytes[offset + 1..offset + 3],
+                self.phy_params[i].scan_interval,
+            );
+            LittleEndian::write_u16(
+                &mut bytes[offset + 3..offset + 5],
+                self.phy_params[i].scan_window,
+            );
             offset += 5;
         }
         offset
