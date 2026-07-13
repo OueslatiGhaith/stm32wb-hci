@@ -201,7 +201,15 @@ pub(crate) fn compare_vendor_wire_with_external_events(
 }
 
 fn compare_event_payload(event: &CatalogEvent, metadata: &EventMetadata, report: &mut WireReport) {
-    compare_event_payload_layout(&event.payload, metadata, report);
+    let Some(payload) = &event.payload else {
+        report.unavailable.push(WireUnavailable {
+            code: metadata.code,
+            command: metadata.name.clone(),
+            reason: "generated vendor event has no payload evidence".to_owned(),
+        });
+        return;
+    };
+    compare_event_payload_layout(payload, metadata, report);
 }
 
 fn compare_event_payload_layout(
@@ -334,11 +342,8 @@ fn response_envelope(layout: &ResponseLayout) -> Result<EnvelopeExpectation, Str
                 WireEnvelope::bounded(minimum as usize, maximum as usize),
             ))
         }
-        ResponseLayout::CStruct(type_name) => Err(format!(
-            "CubeWB command return uses unresolved packed C structure `{type_name}`"
-        )),
         ResponseLayout::Unresolved(expression) => Err(format!(
-            "CubeWB command return length uses unsupported expression `{expression}`"
+            "CubeWB command return layout is unresolved: {expression}"
         )),
         ResponseLayout::None => {
             Err("CubeWB does not state a command-complete response length".to_owned())
@@ -357,8 +362,8 @@ fn event_payload_envelope(layout: &EventPayloadLayout) -> Result<EnvelopeExpecta
                 *maximum as usize,
             )))
         }
-        EventPayloadLayout::CStruct(type_name) => Err(format!(
-            "CubeWB event payload uses unresolved packed C structure `{type_name}`"
+        EventPayloadLayout::Unresolved(reason) => Err(format!(
+            "CubeWB event payload layout is unresolved: {reason}"
         )),
     }
 }
@@ -511,7 +516,7 @@ mod tests {
             name: format!("aci_fixture_{code:04x}_event_process"),
             source_name: "ble_events.c".to_owned(),
             source_offset: 0,
-            payload,
+            payload: Some(payload),
         }
     }
 
@@ -806,31 +811,6 @@ mod tests {
     }
 
     #[test]
-    fn reports_unresolved_packed_struct_responses_as_unavailable() {
-        let descriptor = fixture_descriptor(
-            "Structured",
-            0x003,
-            CompletionExpectation::CommandComplete,
-            WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(4)),
-        );
-        let coverage = fixture_coverage(vec![descriptor], &["Structured"]);
-        let commands = vec![fixture_command(
-            0x003,
-            CompletionExpectation::CommandComplete,
-            RequestLayout::Empty,
-            ResponseLayout::CStruct("aci_fixture_rp0".to_owned()),
-        )];
-
-        let report = compare_vendor_wire(&commands, &[], &coverage);
-
-        assert_eq!(report.checked, 1);
-        assert!(report.differences.is_empty());
-        assert_eq!(report.unavailable.len(), 1);
-        assert!(report.unavailable[0].reason.contains("aci_fixture_rp0"));
-    }
-
-    #[test]
     fn rejects_command_complete_without_a_return_envelope() {
         let descriptor = fixture_descriptor(
             "Structured",
@@ -844,7 +824,7 @@ mod tests {
             0x003,
             CompletionExpectation::CommandComplete,
             RequestLayout::Empty,
-            ResponseLayout::CStruct("aci_fixture_rp0".to_owned()),
+            ResponseLayout::Unresolved("packed C structure `aci_fixture_rp0`".to_owned()),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);

@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 5;
+pub const CATALOG_SCHEMA_VERSION: u16 = 6;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -72,7 +72,6 @@ pub enum ResponseLayout {
         minimum: u32,
         maximum: u32,
     },
-    CStruct(String),
     /// Source expression which cannot yet become a stable wire envelope.
     Unresolved(String),
 }
@@ -82,8 +81,12 @@ pub enum ResponseLayout {
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
 pub enum EventPayloadLayout {
     Fixed(u32),
-    Variable { minimum: u32, maximum: u32 },
-    CStruct(String),
+    Variable {
+        minimum: u32,
+        maximum: u32,
+    },
+    /// Source evidence which cannot yet become a stable wire envelope.
+    Unresolved(String),
 }
 
 /// One generated command declaration normalized from a family source adapter.
@@ -112,7 +115,9 @@ pub struct CatalogEvent {
     pub name: String,
     pub source_name: String,
     pub source_offset: u32,
-    pub payload: EventPayloadLayout,
+    /// Vendor ACI payload envelope. Standard HCI and LE Meta events are
+    /// inventory-only and intentionally carry no payload claim.
+    pub payload: Option<EventPayloadLayout>,
 }
 
 /// Stable, normalized result of parsing one immutable firmware source tag.
@@ -299,7 +304,15 @@ mod tests {
             name: "gap_event".to_owned(),
             source_name: "ble_events.c".to_owned(),
             source_offset: 12,
-            payload: EventPayloadLayout::Fixed(0),
+            payload: Some(EventPayloadLayout::Fixed(0)),
+        });
+        schema.events.push(CatalogEvent {
+            scope: EventScope::LeMeta,
+            code: 0x01,
+            name: "le_event".to_owned(),
+            source_name: "ble_events.c".to_owned(),
+            source_offset: 18,
+            payload: None,
         });
         schema.normalize();
 
@@ -307,6 +320,7 @@ mod tests {
         assert_eq!(value["schema_version"], CATALOG_SCHEMA_VERSION);
         assert_eq!(value["family"], "stm32_wb");
         assert_eq!(value["commands"][0]["name"], "a_first");
+        assert!(value["events"][1]["payload"].is_null());
         assert_eq!(
             value["commands"][0]["request"],
             serde_json::json!({

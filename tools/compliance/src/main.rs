@@ -981,7 +981,9 @@ fn parse_policy_event_envelope(value: &str) -> Result<EventPayloadLayout, String
     let maximum = match layout {
         EventPayloadLayout::Fixed(length) => length,
         EventPayloadLayout::Variable { maximum, .. } => maximum,
-        EventPayloadLayout::CStruct(_) => unreachable!("policy parser never creates C layouts"),
+        EventPayloadLayout::Unresolved(_) => {
+            unreachable!("policy parser always creates a concrete envelope")
+        }
     };
     if maximum > MAX_VENDOR_EVENT_PAYLOAD {
         return Err(format!(

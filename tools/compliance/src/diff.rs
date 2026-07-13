@@ -279,7 +279,7 @@ mod tests {
             name: name.to_owned(),
             source_name: "events.c".to_owned(),
             source_offset: 0,
-            payload: EventPayloadLayout::Fixed(0),
+            payload: Some(EventPayloadLayout::Fixed(0)),
         }
     }
 

@@ -19,6 +19,9 @@
   baseline for CI.
 - Collapse unresolved catalog formulas and expressions into one fail-closed representation, and
   derive fixed request-type evidence from the shared packed-envelope parser.
+- Keep CubeWB packed C type names private to the source adapter, parse their evidence once, and
+  emit only resolved or explicitly unresolved catalog layouts; standard events remain
+  inventory-only and carry no payload claim.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 

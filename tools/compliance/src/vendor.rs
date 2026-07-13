@@ -26,7 +26,7 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
 
     let types_path = format!("{AUTO_SOURCE_DIR}/{TYPES_SOURCE}");
     let types_source = git_show(cube_dir, tag, &types_path)?;
-    let request_types = RequestTypeEvidence::from_source(&types_source);
+    let packed_layouts = parse_packed_struct_envelopes(&types_source);
 
     let mut catalog = CatalogSchema::new(CatalogFamily::Stm32Wb, tag);
     for file in command_source_files(cube_dir, tag)? {
@@ -36,14 +36,19 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
             &source,
             &file,
             CommandScope::VendorAci,
-            &request_types,
+            &packed_layouts,
         )?;
         catalog.commands.extend(commands);
     }
 
     let path = format!("{AUTO_SOURCE_DIR}/{EVENT_SOURCE}");
     let source = git_show(cube_dir, tag, &path)?;
-    let vendor_events = extract_event_table(&source, "hci_vs_event_table", EventScope::VendorAci)?;
+    let vendor_events = extract_event_table_with_evidence(
+        &source,
+        "hci_vs_event_table",
+        EventScope::VendorAci,
+        &packed_layouts,
+    )?;
     catalog.events.extend(vendor_events);
 
     let standard_path = format!("{AUTO_SOURCE_DIR}/{STANDARD_HCI_SOURCE}");
@@ -52,22 +57,25 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
         &standard_source,
         STANDARD_HCI_SOURCE,
         CommandScope::StandardHci,
-        &request_types,
+        &packed_layouts,
     )?;
     catalog.commands.extend(standard_commands);
 
-    let standard_events = extract_event_table(&source, "hci_event_table", EventScope::StandardHci)?;
+    let standard_events = extract_event_table_with_evidence(
+        &source,
+        "hci_event_table",
+        EventScope::StandardHci,
+        &packed_layouts,
+    )?;
     catalog.events.extend(standard_events);
 
-    let le_events = extract_event_table(&source, "hci_le_event_table", EventScope::LeMeta)?;
+    let le_events = extract_event_table_with_evidence(
+        &source,
+        "hci_le_event_table",
+        EventScope::LeMeta,
+        &packed_layouts,
+    )?;
     catalog.events.extend(le_events);
-
-    // `rq.rlen = sizeof(resp)` is a wire claim only when the generated packed
-    // response structure can be resolved. Fixed layouts become exact sizes;
-    // capacity arrays become bounded envelopes. Unknown layouts deliberately
-    // stay as `CStruct` for the wire checker to report as unavailable.
-    resolve_packed_response_layouts(&mut catalog.commands, &types_source);
-    resolve_packed_event_layouts(&mut catalog.events, &types_source);
 
     catalog.normalize();
     Ok(catalog)
@@ -285,19 +293,14 @@ pub(crate) fn extract_command_metadata(
     source_name: &str,
     scope: CommandScope,
 ) -> Result<Vec<CatalogCommand>, String> {
-    extract_command_metadata_with_evidence(
-        source,
-        source_name,
-        scope,
-        &RequestTypeEvidence::default(),
-    )
+    extract_command_metadata_with_evidence(source, source_name, scope, &PackedLayouts::new())
 }
 
 fn extract_command_metadata_with_evidence(
     source: &str,
     source_name: &str,
     scope: CommandScope,
-    request_types: &RequestTypeEvidence,
+    packed_layouts: &PackedLayouts,
 ) -> Result<Vec<CatalogCommand>, String> {
     let tree = parse_c_tree(source, source_name)?;
     let mut functions = Vec::new();
@@ -351,8 +354,8 @@ fn extract_command_metadata_with_evidence(
             ocf,
             opcode,
             completion: completion_expectation(body, source),
-            request: request_layout(declarator, body, source, request_types),
-            response: response_layout(body, source),
+            request: request_layout(declarator, body, source, packed_layouts),
+            response: response_layout(body, source, packed_layouts),
         });
     }
 
@@ -383,10 +386,20 @@ fn find_event_table_initializer<'tree>(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn extract_event_table(
     source: &str,
     table_name: &str,
     scope: EventScope,
+) -> Result<Vec<CatalogEvent>, String> {
+    extract_event_table_with_evidence(source, table_name, scope, &PackedLayouts::new())
+}
+
+fn extract_event_table_with_evidence(
+    source: &str,
+    table_name: &str,
+    scope: EventScope,
+    packed_layouts: &PackedLayouts,
 ) -> Result<Vec<CatalogEvent>, String> {
     let tree = parse_c_tree(source, EVENT_SOURCE)?;
     let table = find_event_table_initializer(tree.root_node(), source, table_name)
@@ -396,7 +409,11 @@ pub(crate) fn extract_event_table(
             "ble_events.c: {table_name} initializer contains C syntax errors"
         ));
     }
-    let process_layouts = event_process_layouts(tree.root_node(), source);
+    let process_layouts = if scope == EventScope::VendorAci {
+        event_process_layouts(tree.root_node(), source, packed_layouts)
+    } else {
+        BTreeMap::new()
+    };
 
     let mut entries = Vec::new();
     let mut cursor = table.walk();
@@ -421,17 +438,22 @@ pub(crate) fn extract_event_table(
             ));
         }
         let handler_name = node_text(handler, source);
-        let payload = process_layouts
-            .get(handler_name)
-            .cloned()
-            .unwrap_or_else(|| {
-                EventPayloadLayout::CStruct(format!(
-                    "{}_rp0",
-                    handler_name
-                        .strip_suffix("_process")
-                        .unwrap_or(handler_name)
-                ))
-            });
+        let payload = (scope == EventScope::VendorAci).then(|| {
+            process_layouts
+                .get(handler_name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    event_payload_layout(
+                        format!(
+                            "{}_rp0",
+                            handler_name
+                                .strip_suffix("_process")
+                                .unwrap_or(handler_name)
+                        ),
+                        packed_layouts,
+                    )
+                })
+        });
         entries.push(CatalogEvent {
             scope,
             code,
@@ -450,7 +472,11 @@ pub(crate) fn extract_event_table(
     Ok(entries)
 }
 
-fn event_process_layouts(root: Node<'_>, source: &str) -> BTreeMap<String, EventPayloadLayout> {
+fn event_process_layouts(
+    root: Node<'_>,
+    source: &str,
+    packed_layouts: &PackedLayouts,
+) -> BTreeMap<String, EventPayloadLayout> {
     let mut functions = Vec::new();
     collect_nodes(root, "function_definition", &mut functions);
     functions
@@ -466,15 +492,15 @@ fn event_process_layouts(root: Node<'_>, source: &str) -> BTreeMap<String, Event
             let layout = type_name.map_or_else(
                 || {
                     if body_uses_identifier(body, source, "in") {
-                        EventPayloadLayout::CStruct(format!(
-                            "{}_rp0",
-                            name.strip_suffix("_process").unwrap_or(&name)
-                        ))
+                        event_payload_layout(
+                            format!("{}_rp0", name.strip_suffix("_process").unwrap_or(&name)),
+                            packed_layouts,
+                        )
                     } else {
                         EventPayloadLayout::Fixed(0)
                     }
                 },
-                EventPayloadLayout::CStruct,
+                |type_name| event_payload_layout(type_name, packed_layouts),
             );
             Some((name, layout))
         })
@@ -628,14 +654,14 @@ struct RequestExpressionContext<'a, 'tree> {
     body: Node<'tree>,
     source: &'a str,
     before: usize,
-    types: &'a RequestTypeEvidence,
+    packed_layouts: &'a PackedLayouts,
 }
 
 fn request_layout(
     function_declarator: Node<'_>,
     body: Node<'_>,
     source: &str,
-    types: &RequestTypeEvidence,
+    packed_layouts: &PackedLayouts,
 ) -> RequestLayout {
     let Some(value) = assignment_value(body, source, "rq", "clen") else {
         return RequestLayout::Empty;
@@ -670,7 +696,7 @@ fn request_layout(
             body,
             source,
             before: value.start_byte(),
-            types,
+            packed_layouts,
         };
         let mut resolving = BTreeSet::new();
         let total = terms.iter().try_fold(
@@ -733,7 +759,7 @@ fn request_expression_values(
                 .trim_end_matches(')')
                 .trim();
             primitive_c_size(type_name)
-                .or_else(|| context.types.fixed_sizes.get(type_name).copied().flatten())
+                .or_else(|| fixed_packed_size(context.packed_layouts, type_name))
                 .and_then(RequestValues::exact)
         }
         "binary_expression" => {
@@ -917,7 +943,7 @@ fn c_variable_type(body: Node<'_>, source: &str, variable: &str) -> Option<Strin
     })
 }
 
-fn response_layout(body: Node<'_>, source: &str) -> ResponseLayout {
+fn response_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -> ResponseLayout {
     let Some(value) = assignment_value(body, source, "rq", "rlen") else {
         return ResponseLayout::None;
     };
@@ -934,57 +960,41 @@ fn response_layout(body: Node<'_>, source: &str) -> ResponseLayout {
     if let Some(variable) = sizeof_variable(value)
         && let Some(type_name) = c_variable_type(body, source, node_text(variable, source))
     {
-        return ResponseLayout::CStruct(type_name);
+        return response_layout_for_struct(type_name, packed_layouts);
     }
     ResponseLayout::Unresolved(value_text.to_owned())
 }
 
-/// Convert `sizeof(resp)` response layouts into fixed or bounded byte counts
-/// when the tagged C header proves the packed structure layout. Capacity-sized
-/// fields contribute zero bytes to the minimum and their complete declared
-/// storage to the maximum. Unknown C declarations remain unavailable.
-fn resolve_packed_response_layouts(commands: &mut [CatalogCommand], types_source: &str) {
-    let layouts = parse_packed_struct_envelopes(types_source);
-    for command in commands {
-        let ResponseLayout::CStruct(type_name) = &command.response else {
-            continue;
-        };
-        let Some(Some(layout)) = layouts.get(type_name) else {
-            continue;
-        };
-        let (Ok(minimum), Ok(maximum)) =
-            (u32::try_from(layout.minimum), u32::try_from(layout.maximum))
-        else {
-            continue;
-        };
-        command.response = if layout.variable {
-            ResponseLayout::Variable { minimum, maximum }
-        } else {
-            ResponseLayout::Fixed(maximum)
-        };
+fn response_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> ResponseLayout {
+    match normalized_packed_layout(&type_name, layouts) {
+        Ok((minimum, maximum, true)) => ResponseLayout::Variable { minimum, maximum },
+        Ok((_, maximum, false)) => ResponseLayout::Fixed(maximum),
+        Err(reason) => ResponseLayout::Unresolved(reason),
     }
 }
 
-fn resolve_packed_event_layouts(events: &mut [CatalogEvent], types_source: &str) {
-    let layouts = parse_packed_struct_envelopes(types_source);
-    for event in events {
-        let EventPayloadLayout::CStruct(type_name) = &event.payload else {
-            continue;
-        };
-        let Some(Some(layout)) = layouts.get(type_name) else {
-            continue;
-        };
-        let (Ok(minimum), Ok(maximum)) =
-            (u32::try_from(layout.minimum), u32::try_from(layout.maximum))
-        else {
-            continue;
-        };
-        event.payload = if layout.variable {
-            EventPayloadLayout::Variable { minimum, maximum }
-        } else {
-            EventPayloadLayout::Fixed(maximum)
-        };
+fn event_payload_layout(type_name: String, layouts: &PackedLayouts) -> EventPayloadLayout {
+    match normalized_packed_layout(&type_name, layouts) {
+        Ok((minimum, maximum, true)) => EventPayloadLayout::Variable { minimum, maximum },
+        Ok((_, maximum, false)) => EventPayloadLayout::Fixed(maximum),
+        Err(reason) => EventPayloadLayout::Unresolved(reason),
     }
+}
+
+fn normalized_packed_layout(
+    type_name: &str,
+    layouts: &PackedLayouts,
+) -> Result<(u32, u32, bool), String> {
+    let layout = layouts
+        .get(type_name)
+        .copied()
+        .flatten()
+        .ok_or_else(|| format!("packed C structure `{type_name}` could not be resolved"))?;
+    let minimum = u32::try_from(layout.minimum)
+        .map_err(|_| format!("packed C structure `{type_name}` minimum exceeds schema range"))?;
+    let maximum = u32::try_from(layout.maximum)
+        .map_err(|_| format!("packed C structure `{type_name}` maximum exceeds schema range"))?;
+    Ok((minimum, maximum, layout.variable))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -992,6 +1002,13 @@ struct PackedEnvelope {
     minimum: usize,
     maximum: usize,
     variable: bool,
+}
+
+type PackedLayouts = BTreeMap<String, Option<PackedEnvelope>>;
+
+fn fixed_packed_size(layouts: &PackedLayouts, type_name: &str) -> Option<usize> {
+    let layout = layouts.get(type_name).copied().flatten()?;
+    (!layout.variable && layout.minimum == layout.maximum).then_some(layout.maximum)
 }
 
 #[derive(Clone, Debug)]
@@ -1012,27 +1029,7 @@ struct PackedEnvelopeDefinition {
     fields: Option<Vec<PackedEnvelopeField>>,
 }
 
-#[derive(Clone, Debug, Default)]
-struct RequestTypeEvidence {
-    fixed_sizes: BTreeMap<String, Option<usize>>,
-}
-
-impl RequestTypeEvidence {
-    fn from_source(source: &str) -> Self {
-        let fixed_sizes = parse_packed_struct_envelopes(source)
-            .into_iter()
-            .map(|(name, layout)| {
-                let size = layout.and_then(|layout| {
-                    (!layout.variable && layout.minimum == layout.maximum).then_some(layout.maximum)
-                });
-                (name, size)
-            })
-            .collect();
-        Self { fixed_sizes }
-    }
-}
-
-fn parse_packed_struct_envelopes(source: &str) -> BTreeMap<String, Option<PackedEnvelope>> {
+fn parse_packed_struct_envelopes(source: &str) -> PackedLayouts {
     const PACKED_MARKER: &str = "__PACKED_STRUCT";
     const PARSABLE_MARKER: &str = "struct         ";
     debug_assert_eq!(PACKED_MARKER.len(), PARSABLE_MARKER.len());
@@ -1434,7 +1431,7 @@ mod tests {
             source,
             "fixture.c",
             CommandScope::VendorAci,
-            &RequestTypeEvidence::from_source(types),
+            &parse_packed_struct_envelopes(types),
         )
         .unwrap();
         assert_eq!(
@@ -1483,7 +1480,7 @@ mod tests {
             source,
             "fixture.c",
             CommandScope::VendorAci,
-            &RequestTypeEvidence::from_source(types),
+            &parse_packed_struct_envelopes(types),
         )
         .unwrap();
         assert_eq!(
@@ -1783,6 +1780,12 @@ mod tests {
         assert_eq!(ordinary[0].code, 0x05);
         assert_eq!(le[0].code, 0x01);
         assert_eq!(vendor[0].code, 0x0400);
+        assert!(ordinary[0].payload.is_none());
+        assert!(le[0].payload.is_none());
+        assert!(matches!(
+            &vendor[0].payload,
+            Some(EventPayloadLayout::Unresolved(reason)) if reason.contains("vendor_rp0")
+        ));
     }
 
     #[test]
@@ -1844,60 +1847,46 @@ mod tests {
                 uint8_t Channel_Index_List[(BLE_EVT_MAX_PARAM_LEN - 3) - 2];
             } l2cap_rp0;
         "#;
-        let evidence = RequestTypeEvidence::from_source(types);
-        assert_eq!(evidence.fixed_sizes.get("nested_rp0"), Some(&Some(2)));
-        assert_eq!(evidence.fixed_sizes.get("fixed_rp0"), Some(&Some(7)));
-        assert_eq!(evidence.fixed_sizes.get("capacity_rp0"), Some(&None));
+        let layouts = parse_packed_struct_envelopes(types);
+        assert_eq!(fixed_packed_size(&layouts, "nested_rp0"), Some(2));
+        assert_eq!(fixed_packed_size(&layouts, "fixed_rp0"), Some(7));
+        assert_eq!(fixed_packed_size(&layouts, "capacity_rp0"), None);
 
-        let command = |ocf, type_name: &str| CatalogCommand {
-            scope: CommandScope::VendorAci,
-            name: type_name.to_owned(),
-            source_name: "fixture.c".to_owned(),
-            source_offset: 0,
-            ogf: None,
-            ocf,
-            opcode: None,
-            completion: CompletionExpectation::CommandComplete,
-            request: RequestLayout::Empty,
-            response: ResponseLayout::CStruct(type_name.to_owned()),
-        };
-        let mut commands = vec![
-            command(1, "fixed_rp0"),
-            command(2, "hal_rp0"),
-            command(3, "gap_rp0"),
-            command(4, "gatt_rp0"),
-            command(5, "l2cap_rp0"),
-        ];
-        resolve_packed_response_layouts(&mut commands, types);
-        assert_eq!(commands[0].response, ResponseLayout::Fixed(7));
+        let responses = ["fixed_rp0", "hal_rp0", "gap_rp0", "gatt_rp0", "l2cap_rp0"]
+            .map(|type_name| response_layout_for_struct(type_name.to_owned(), &layouts));
+        assert_eq!(responses[0], ResponseLayout::Fixed(7));
         assert_eq!(
-            commands[1].response,
+            responses[1],
             ResponseLayout::Variable {
                 minimum: 2,
                 maximum: 252,
             }
         );
         assert_eq!(
-            commands[2].response,
+            responses[2],
             ResponseLayout::Variable {
                 minimum: 2,
                 maximum: 247,
             }
         );
         assert_eq!(
-            commands[3].response,
+            responses[3],
             ResponseLayout::Variable {
                 minimum: 5,
                 maximum: 252,
             }
         );
         assert_eq!(
-            commands[4].response,
+            responses[4],
             ResponseLayout::Variable {
                 minimum: 2,
                 maximum: 252,
             }
         );
+        assert!(matches!(
+            response_layout_for_struct("missing_rp0".to_owned(), &layouts),
+            ResponseLayout::Unresolved(reason) if reason.contains("missing_rp0")
+        ));
     }
 
     #[test]
@@ -1914,8 +1903,8 @@ mod tests {
             } active_rp0;
         "#;
 
-        let evidence = RequestTypeEvidence::from_source(types);
-        assert_eq!(evidence.fixed_sizes.get("active_rp0"), Some(&Some(3)));
+        let layouts = parse_packed_struct_envelopes(types);
+        assert_eq!(fixed_packed_size(&layouts, "active_rp0"), Some(3));
     }
 
     #[test]
