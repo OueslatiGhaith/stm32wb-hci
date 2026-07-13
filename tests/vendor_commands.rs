@@ -8,16 +8,16 @@ use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::{
     command::{
         gap::{
-            AddDeviceToListMode, AddressType, CmdGapInit, GapAddDevicesToList,
-            GapAdditionalBeaconSetData, GapAdditionalBeaconStart, GapAdvSetEnable,
-            GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
+            AddDeviceToListMode, AddressType, AdvertisingChannelMap, CmdGapInit,
+            GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdditionalBeaconStart,
+            GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
             GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
             GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
             GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable,
             GapSetNonDiscoverable, GapSetOobData, GapSetUnidirectedConnectable, GapTerminate,
-            GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataType,
-            OobDeviceType, PassKey, PowerAmplifierOutputLevel, Procedure, Role,
-            SecureConnectionSupport, TerminationReason,
+            GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataLength,
+            OobDataType, OobDeviceType, PassKey, PowerAmplifierOutputLevel, Procedure, Role,
+            ScanType, ScanningFilterPolicy, SecureConnectionSupport, TerminationReason,
         },
         gatt::{
             AccessPermission, CharacteristicEvent, CharacteristicPermission,
@@ -28,7 +28,7 @@ use hci::vendor::{
             GattFindByTypeValueRequest, GattHandleValue, GattIncludeService,
             GattReadByGroupTypeRequest, GattReadByTypeRequest, GattReadCharacteristicUsingUUID,
             GattReadHandleValue, GattReadMultipleVarCharValue, GattService, GattSetEventMask,
-            ServiceType, Uuid,
+            GattWriteResponse, ServiceType, Uuid, WriteStatus,
         },
         hal::{
             HalEventFlags, HalFirmwareRevision, HalGetFirmwareRevision, HalGetLinkStatus,
@@ -87,6 +87,66 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     );
 
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn semantic_scan_domains_encode_their_declared_values() {
+    use core::time::Duration;
+    use hci::vendor::command::gap::GapStartGeneralConnectionEstablishmentProcedure;
+
+    let scan_window = hci::types::ScanWindow::start_every(Duration::from_millis(10))
+        .unwrap()
+        .open_for(Duration::from_millis(5))
+        .unwrap();
+    let sink = RecordingSink::new();
+
+    GapStartGeneralConnectionEstablishmentProcedure::new(
+        ScanType::Active,
+        scan_window,
+        ScanningFilterPolicy::ExtendedFiltered,
+        AddressType::ResolvablePrivate,
+        true,
+    )
+    .exec(&sink)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sink.written_data(),
+        [1, 0x9A, 0xFC, 8, 1, 0x10, 0, 0x08, 0, 3, 2, 1]
+    );
+    assert!(
+        <ScanType as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x02]).is_err()
+    );
+    assert!(
+        <ScanningFilterPolicy as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x04])
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn gatt_write_response_uses_a_closed_write_status() {
+    let sink = RecordingSink::new();
+
+    GattWriteResponse::try_new(
+        hci::bt_hci::param::ConnHandle(0x1234),
+        AttributeHandle(0x5678),
+        WriteStatus::Rejected,
+        0x0E,
+        &[0xAA],
+    )
+    .unwrap()
+    .exec(&sink)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sink.written_data(),
+        [1, 0x26, 0xFD, 8, 0x34, 0x12, 0x78, 0x56, 1, 0x0E, 1, 0xAA,]
+    );
+    assert!(
+        <WriteStatus as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x02]).is_err()
+    );
 }
 
 #[tokio::test]
@@ -269,13 +329,27 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         .is_err()
     );
     assert!(PowerAmplifierOutputLevel::try_new(0x24).is_err());
-    let _ = GapAdditionalBeaconStart::new(
+    assert!(
+        GapAdditionalBeaconStart::try_new(
+            0x20,
+            0x30,
+            AdvertisingChannelMap::empty(),
+            address,
+            PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
+        )
+        .is_err()
+    );
+    let _ = GapAdditionalBeaconStart::try_new(
         0x20,
         0x30,
-        7,
+        AdvertisingChannelMap::CHANNEL_37
+            | AdvertisingChannelMap::CHANNEL_38
+            | AdvertisingChannelMap::CHANNEL_39,
         address,
         PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
-    );
+    )
+    .unwrap();
+    assert!(AdvertisingChannelMap::from_bits(0x08).is_none());
     assert!(ToneChannel::try_new(40).is_err());
 }
 
@@ -308,7 +382,7 @@ async fn declarative_gap_set_oob_data_includes_type_and_length() {
         OobDeviceType::Remote,
         hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([1, 2, 3, 4, 5, 6])),
         OobDataType::Random,
-        16,
+        OobDataLength::Present,
         [0xAA; 16],
     )
     .exec(&sink)
@@ -355,7 +429,7 @@ async fn declarative_gap_add_devices_to_list_counts_complete_records() {
 }
 
 #[cfg(after_fw_0_17_1)]
-use hci::vendor::command::gap::{ExtScanPhyParams, GapExtStartScan};
+use hci::vendor::command::gap::{ExtScanMode, ExtScanPhyParams, GapExtStartScan, ScanningPhy};
 
 #[tokio::test]
 async fn hal_get_link_status_uses_its_source_ocf() {
@@ -1105,28 +1179,38 @@ async fn declarative_bitmap_selected_phy_items_match_cubewb() {
     let sink = RecordingSink::new();
     let phy_params = [
         ExtScanPhyParams {
-            scan_type: 6,
+            scan_type: ScanType::Passive,
             scan_interval: 0x5566,
             scan_window: 0x7788,
         },
         ExtScanPhyParams {
-            scan_type: 7,
+            scan_type: ScanType::Active,
             scan_interval: 0x99AA,
             scan_window: 0xBBCC,
         },
     ];
 
-    GapExtStartScan::try_new(1, 2, 3, 4, 0x1122, 0x3344, 5, 0x05, &phy_params)
-        .unwrap()
-        .exec(&sink)
-        .await
-        .unwrap();
+    GapExtStartScan::try_new(
+        ExtScanMode::Default,
+        Procedure::GENERAL_DISCOVERY,
+        AddressType::Public,
+        true,
+        0x1122,
+        0x3344,
+        ScanningFilterPolicy::BasicFiltered,
+        ScanningPhy::LE_1M | ScanningPhy::LE_CODED,
+        &phy_params,
+    )
+    .unwrap()
+    .exec(&sink)
+    .await
+    .unwrap();
 
     assert_eq!(
         sink.written_data(),
         [
-            1, 0xD0, 0xFC, 20, 1, 2, 3, 4, 0x22, 0x11, 0x44, 0x33, 5, 0x05, 6, 0x66, 0x55, 0x88,
-            0x77, 7, 0xAA, 0x99, 0xCC, 0xBB,
+            1, 0xD0, 0xFC, 20, 0, 2, 0, 1, 0x22, 0x11, 0x44, 0x33, 1, 0x05, 0, 0x66, 0x55, 0x88,
+            0x77, 1, 0xAA, 0x99, 0xCC, 0xBB,
         ]
     );
 }
@@ -1135,13 +1219,26 @@ async fn declarative_bitmap_selected_phy_items_match_cubewb() {
 #[test]
 fn declarative_bitmap_selected_phy_items_reject_mismatch() {
     let phy_params = [ExtScanPhyParams {
-        scan_type: 0,
+        scan_type: ScanType::Passive,
         scan_interval: 0,
         scan_window: 0,
     }];
 
-    let Err(error) = GapExtStartScan::try_new(0, 0, 0, 0, 0, 0, 0, 0x05, &phy_params) else {
+    let Err(error) = GapExtStartScan::try_new(
+        ExtScanMode::Default,
+        Procedure::GENERAL_DISCOVERY,
+        AddressType::Public,
+        false,
+        0,
+        0,
+        ScanningFilterPolicy::BasicUnfiltered,
+        ScanningPhy::LE_1M | ScanningPhy::LE_CODED,
+        &phy_params,
+    ) else {
         panic!("mismatched PHY record count was not rejected");
+    };
+    let hci::vendor::command::HciValidationError::Length(error) = error else {
+        panic!("unexpected constraint error");
     };
     assert_eq!(error.actual(), 1);
     assert_eq!(error.minimum(), 2);
@@ -1151,32 +1248,90 @@ fn declarative_bitmap_selected_phy_items_reject_mismatch() {
 #[cfg(after_fw_0_17_1)]
 #[test]
 fn declarative_bitmap_selected_phy_items_reject_unknown_bits() {
-    let Err(error) = GapExtStartScan::try_new(0, 0, 0, 0, 0, 0, 0, 0x02, &[]) else {
-        panic!("unsupported PHY bit was not rejected");
+    assert!(ScanningPhy::from_bits(0x02).is_none());
+}
+
+#[cfg(after_fw_0_17_1)]
+#[test]
+fn extended_gatt_write_command_uses_a_closed_mode() {
+    use hci::vendor::command::gatt::{GattWriteWithRespExt, WriteMode};
+
+    let _ = GattWriteWithRespExt::new(
+        hci::bt_hci::param::ConnHandle(1),
+        2,
+        WriteMode::ReliableCharacteristic,
+        3,
+        4,
+        5,
+    );
+    assert!(
+        <WriteMode as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x03]).is_err()
+    );
+}
+
+#[cfg(after_fw_0_17_1)]
+#[test]
+fn extended_connection_uses_typed_modes_phys_and_parameter_records() {
+    use hci::vendor::command::gap::{
+        ExtConnectionPhyParams, ExtInitiatingMode, GapExtCreateConnection, InitiatingPhy,
+        InitiatorFilterPolicy,
     };
-    assert_eq!(error.actual(), 0x02);
-    assert_eq!(error.maximum(), 0x05);
+
+    let phy_params = [ExtConnectionPhyParams {
+        scan_interval: 0x0010,
+        scan_window: 0x0008,
+        connection_interval_min: 0x0008,
+        connection_interval_max: 0x0010,
+        max_latency: 0,
+        supervision_timeout: 0x0014,
+        min_ce_length: 0,
+        max_ce_length: 0x0008,
+    }];
+    let peer = hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([0; 6]));
+
+    GapExtCreateConnection::try_new(
+        ExtInitiatingMode::Default,
+        Procedure::DIRECT_CONNECTION_ESTABLISHMENT,
+        AddressType::Public,
+        peer,
+        0xFF,
+        0xFF,
+        InitiatorFilterPolicy::UsePeerAddress,
+        InitiatingPhy::LE_1M,
+        &phy_params,
+    )
+    .unwrap();
+
+    assert!(InitiatingPhy::from_bits(0x08).is_none());
 }
 
 #[cfg(after_fw_0_17_1)]
 #[test]
 fn bitmap_schema_constructor_enforces_sparse_mask_and_cardinality() {
     let phy = [ExtScanPhyParams {
-        scan_type: 0,
+        scan_type: ScanType::Passive,
         scan_interval: 0,
         scan_window: 0,
     }];
 
-    let unknown_bit = match GapExtStartScan::try_new(0, 0, 0, 0, 0, 0, 0, 0x02, &phy[..0]) {
-        Ok(_) => panic!("unsupported PHY bit was accepted"),
-        Err(error) => error,
-    };
-    assert_eq!(unknown_bit.actual(), 0x02);
-    assert_eq!(unknown_bit.maximum(), 0x05);
+    assert!(ScanningPhy::from_bits(0x02).is_none());
 
-    let wrong_count = match GapExtStartScan::try_new(0, 0, 0, 0, 0, 0, 0, 0x05, &phy) {
+    let wrong_count = match GapExtStartScan::try_new(
+        ExtScanMode::Default,
+        Procedure::GENERAL_DISCOVERY,
+        AddressType::Public,
+        false,
+        0,
+        0,
+        ScanningFilterPolicy::BasicUnfiltered,
+        ScanningPhy::LE_1M | ScanningPhy::LE_CODED,
+        &phy,
+    ) {
         Ok(_) => panic!("mismatched PHY record count was accepted"),
         Err(error) => error,
+    };
+    let hci::vendor::command::HciValidationError::Length(wrong_count) = wrong_count else {
+        panic!("unexpected constraint error");
     };
     assert_eq!(wrong_count.actual(), 1);
     assert_eq!(wrong_count.minimum(), 2);

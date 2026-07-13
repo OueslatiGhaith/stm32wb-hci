@@ -2406,6 +2406,7 @@ mod tests {
 
     hci_enum! {
         #[derive(Debug, Eq, PartialEq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         enum SemanticEnumFixture: u8 => 1 {
             First = 0x01,
             Third = 0x03,
@@ -2496,6 +2497,12 @@ mod tests {
             Ok(SemanticFlagsFixture::FIRST | SemanticFlagsFixture::THIRD)
         );
         assert!(SemanticFlagsFixture::from_hci_field(&[0x02]).is_err());
+        assert!(SemanticFlagsFixture::from_bits(0x02).is_none());
+        assert_eq!(
+            SemanticFlagsFixture::from_bits_truncate(0x07),
+            SemanticFlagsFixture::FIRST | SemanticFlagsFixture::THIRD
+        );
+        assert_eq!(!(SemanticFlagsFixture::FIRST), SemanticFlagsFixture::THIRD);
     }
 
     #[test]

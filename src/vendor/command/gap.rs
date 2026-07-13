@@ -13,8 +13,6 @@ pub use crate::types::{
 use crate::vendor::command::BoundedItems;
 use crate::vendor::event::AttributeHandle;
 use bt_hci::param::{AdvHandle, BdAddr, ConnHandle};
-#[cfg(after_fw_0_17_1)]
-use byteorder::{ByteOrder, LittleEndian};
 
 /// Six-digit GAP pass key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -483,9 +481,9 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1A) {
         Params = {
-            scan_type: u8 => 1,
+            scan_type: ScanType => 1,
             scan_window: ScanWindow => 4,
-            filter_policy: u8 => 1,
+            filter_policy: ScanningFilterPolicy => 1,
             own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
         };
@@ -496,10 +494,10 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1B) {
         Params<'a> = {
-            scan_type: u8 => 1,
+            scan_type: ScanType => 1,
             scan_window: ScanWindow => 4,
             own_address_type: AddressType => 1,
-            filter_policy: u8 => 1,
+            filter_policy: ScanningFilterPolicy => 1,
             filter_duplicates: bool => 1,
             white_list: &'a [PeerAddrType] => {
                 kind: counted_items,
@@ -608,10 +606,10 @@ vendor_cmd! {
     GapStartObservationProcedure(cgid = 0x1, cid = 0x22) {
         Params = {
             scan_window: ScanWindow => 4,
-            scan_type: u8 => 1,
+            scan_type: ScanType => 1,
             own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
-            filter_policy: u8 => 1,
+            filter_policy: ScanningFilterPolicy => 1,
         };
         Completion = CommandStatus;
     }
@@ -692,7 +690,7 @@ vendor_cmd! {
             device_type: OobDeviceType => 1,
             address: BdAddrType => 7,
             oob_data_type: OobDataType => 1,
-            oob_data_len: u8 => 1,
+            oob_data_len: OobDataLength => 1,
             oob_data: [u8; 16] => 16,
         };
         Completion = CommandComplete;
@@ -747,9 +745,12 @@ vendor_cmd! {
         Params = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
-            advertising_channel_map: u8 => 1,
+            advertising_channel_map: AdvertisingChannelMap => 1,
             own_address_type: BdAddrType => 7,
             pa_level: PowerAmplifierOutputLevel => 1,
+        };
+        Constraints = {
+            non_empty(advertising_channel_map);
         };
         Completion = CommandComplete;
         Return = ();
@@ -785,7 +786,7 @@ vendor_cmd! {
             adv_handle: AdvHandle => 1,
             adv_event_properties: AdvertisingEvent => 2,
             adv_interval: &'a ExtendedAdvertisingInterval => 8,
-            primary_adv_channel_map: u8 => 1,
+            primary_adv_channel_map: AdvertisingChannelMap => 1,
             own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
             adv_filter_policy: AdvertisingFilterPolicy => 1,
@@ -794,6 +795,9 @@ vendor_cmd! {
             secondary_adv_phy: AdvertisingPhy => 1,
             adv_sid: u8 => 1,
             scan_req_notification_enable: bool => 1,
+        };
+        Constraints = {
+            non_empty(primary_adv_channel_map);
         };
         Completion = CommandComplete;
         Return = ();
@@ -948,7 +952,7 @@ vendor_cmd! {
             adv_event_properties: AdvertisingEvent => 2,
             primary_adv_interval_min: u32 => 4,
             primary_adv_interval_max: u32 => 4,
-            primary_adv_channel_map: u8 => 1,
+            primary_adv_channel_map: AdvertisingChannelMap => 1,
             own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
             adv_filter_policy: AdvertisingFilterPolicy => 1,
@@ -960,6 +964,9 @@ vendor_cmd! {
             scan_req_notification_enable: bool => 1,
             primary_adv_phy_options: u8 => 1,
         };
+        Constraints = {
+            non_empty(primary_adv_channel_map);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -969,14 +976,14 @@ vendor_cmd! {
 vendor_cmd! {
     GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params<'a> = {
-            scan_mode: u8 => 1,
-            procedure: u8 => 1,
+            scan_mode: ExtScanMode => 1,
+            procedure: Procedure => 1,
             own_address_type: AddressType => 1,
-            filter_duplicates: u8 => 1,
+            filter_duplicates: bool => 1,
             duration: u16 => 2,
             period: u16 => 2,
-            scanning_filter_policy: u8 => 1,
-            scanning_phys: u8 => 1,
+            scanning_filter_policy: ScanningFilterPolicy => 1,
+            scanning_phys: ScanningPhy => 1,
             phy_params: &'a [ExtScanPhyParams] => {
                 kind: bitmap_items,
                 bitmap: scanning_phys,
@@ -984,6 +991,16 @@ vendor_cmd! {
                 item: ExtScanPhyParams => 5,
                 max_items: 2,
             },
+        };
+        Constraints = {
+            one_of(procedure, [
+                Procedure::LIMITED_DISCOVERY,
+                Procedure::GENERAL_DISCOVERY,
+                Procedure::GENERAL_CONNECTION_ESTABLISHMENT,
+                Procedure::SELECTIVE_CONNECTION_ESTABLISHMENT,
+                Procedure::OBSERVATION,
+            ]);
+            non_empty(scanning_phys);
         };
         Completion = CommandStatus;
     }
@@ -993,22 +1010,33 @@ vendor_cmd! {
 vendor_cmd! {
     GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params<'a> = {
-            initiating_mode: u8 => 1,
-            procedure: u8 => 1,
+            initiating_mode: ExtInitiatingMode => 1,
+            procedure: Procedure => 1,
             own_address_type: AddressType => 1,
-            peer_address_type: u8 => 1,
-            peer_address: BdAddr => 6,
+            peer_address: BdAddrType => 7,
             advertising_handle: u8 => 1,
             subevent: u8 => 1,
-            initiator_filter_policy: u8 => 1,
-            initiating_phys: u8 => 1,
-            phy_params: &'a [[u8; 16]] => {
+            initiator_filter_policy: InitiatorFilterPolicy => 1,
+            initiating_phys: InitiatingPhy => 1,
+            phy_params: &'a [ExtConnectionPhyParams] => {
                 kind: bitmap_items,
                 bitmap: initiating_phys,
                 mask: 0x07,
-                item: [u8; 16] => 16,
+                item: ExtConnectionPhyParams => 16,
                 max_items: 3,
             },
+        };
+        Constraints = {
+            one_of(procedure, [
+                Procedure::AUTO_CONNECTION_ESTABLISHMENT,
+                Procedure::DIRECT_CONNECTION_ESTABLISHMENT,
+            ]);
+            one_of(own_address_type, [
+                AddressType::Public,
+                AddressType::Random,
+                AddressType::ResolvablePrivate,
+            ]);
+            non_empty(initiating_phys);
         };
         Completion = CommandStatus;
     }
@@ -1279,6 +1307,18 @@ hci_enum! {
 }
 
 hci_enum! {
+    /// Length modes accepted when supplying GAP out-of-band pairing data.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum OobDataLength: u8 => 1 {
+        /// Ask the stack to generate Secure Connections random/confirm data.
+        Generate = 0x00,
+        /// Supply the complete 16-byte out-of-band value.
+        Present = 0x10,
+    }
+}
+
+hci_enum! {
     /// Device whose GAP out-of-band data is being supplied.
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1308,16 +1348,120 @@ hci_enum! {
     }
 }
 
+hci_enum! {
+    /// Type of Link Layer scan performed by GAP discovery procedures.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ScanType: u8 => 1 {
+        /// Listen for advertisements without sending scan requests.
+        Passive = 0x00,
+        /// Send scan requests to scannable advertisers.
+        Active = 0x01,
+    }
+}
+
+hci_enum! {
+    /// Policy used to filter advertising and scan-response packets while scanning.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ScanningFilterPolicy: u8 => 1 {
+        /// Process packets from every advertiser.
+        BasicUnfiltered = 0x00,
+        /// Process packets only from devices in the Filter Accept List.
+        BasicFiltered = 0x01,
+        /// Process all packets, including directed advertisements with a resolvable target.
+        ExtendedUnfiltered = 0x02,
+        /// Apply the Filter Accept List while accepting resolvable directed targets.
+        ExtendedFiltered = 0x03,
+    }
+}
+
+hci_bitflags! {
+    /// Primary advertising channels selected for an advertising procedure.
+    pub struct AdvertisingChannelMap: u8 => 1 {
+        /// Use primary advertising channel 37.
+        const CHANNEL_37 = 0x01;
+        /// Use primary advertising channel 38.
+        const CHANNEL_38 = 0x02;
+        /// Use primary advertising channel 39.
+        const CHANNEL_39 = 0x04;
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_enum! {
+    /// Mode field for the extended GAP scan command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ExtScanMode: u8 => 1 {
+        /// Reserved value required by STM32CubeWB.
+        Default = 0x00,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_bitflags! {
+    /// PHYs on which an extended scan is performed.
+    pub struct ScanningPhy: u8 => 1 {
+        /// Scan advertisements on the LE 1M PHY.
+        const LE_1M = 0x01;
+        /// Scan advertisements on the LE Coded PHY.
+        const LE_CODED = 0x04;
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_enum! {
+    /// Mode field for the extended GAP connection command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ExtInitiatingMode: u8 => 1 {
+        /// Reserved value required by STM32CubeWB.
+        Default = 0x00,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_enum! {
+    /// Selects how an advertiser is chosen during connection initiation.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum InitiatorFilterPolicy: u8 => 1 {
+        /// Connect to the explicitly supplied peer address.
+        UsePeerAddress = 0x00,
+        /// Choose an advertiser from the Filter Accept List.
+        UseFilterAcceptList = 0x01,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_bitflags! {
+    /// PHY-specific parameter records supplied while initiating a connection.
+    pub struct InitiatingPhy: u8 => 1 {
+        /// Scan and provide connection parameters for the LE 1M PHY.
+        const LE_1M = 0x01;
+        /// Provide connection parameters for the LE 2M PHY.
+        const LE_2M = 0x02;
+        /// Scan and provide connection parameters for the LE Coded PHY.
+        const LE_CODED = 0x04;
+    }
+}
+
 /// One record in the extended-scan PHY parameter list.
+#[cfg(after_fw_0_17_1)]
 pub struct ExtScanPhyParams {
-    pub scan_type: u8,
+    /// Passive or active scanning for this PHY.
+    pub scan_type: ScanType,
+    /// Scan interval in 0.625 ms units.
     pub scan_interval: u16,
+    /// Scan window in 0.625 ms units.
     pub scan_window: u16,
 }
 
+#[cfg(after_fw_0_17_1)]
 impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[self.scan_type])?;
+        self.scan_type.write_hci_field(&mut writer)?;
         writer.write_all(&self.scan_interval.to_le_bytes())?;
         writer.write_all(&self.scan_window.to_le_bytes())
     }
@@ -1326,8 +1470,63 @@ impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
         &self,
         mut writer: W,
     ) -> Result<(), W::Error> {
-        writer.write_all(&[self.scan_type]).await?;
+        self.scan_type.write_hci_field_async(&mut writer).await?;
         writer.write_all(&self.scan_interval.to_le_bytes()).await?;
         writer.write_all(&self.scan_window.to_le_bytes()).await
+    }
+}
+
+/// One record in the extended-connection PHY parameter list.
+#[cfg(after_fw_0_17_1)]
+pub struct ExtConnectionPhyParams {
+    /// Scan interval in 0.625 ms units.
+    pub scan_interval: u16,
+    /// Scan window in 0.625 ms units.
+    pub scan_window: u16,
+    /// Minimum connection interval in 1.25 ms units.
+    pub connection_interval_min: u16,
+    /// Maximum connection interval in 1.25 ms units.
+    pub connection_interval_max: u16,
+    /// Maximum connection latency in connection events.
+    pub max_latency: u16,
+    /// Supervision timeout in 10 ms units.
+    pub supervision_timeout: u16,
+    /// Minimum connection-event length in 0.625 ms units.
+    pub min_ce_length: u16,
+    /// Maximum connection-event length in 0.625 ms units.
+    pub max_ce_length: u16,
+}
+
+#[cfg(after_fw_0_17_1)]
+impl crate::vendor::command::HciEncodeField<16> for ExtConnectionPhyParams {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&self.scan_interval.to_le_bytes())?;
+        writer.write_all(&self.scan_window.to_le_bytes())?;
+        writer.write_all(&self.connection_interval_min.to_le_bytes())?;
+        writer.write_all(&self.connection_interval_max.to_le_bytes())?;
+        writer.write_all(&self.max_latency.to_le_bytes())?;
+        writer.write_all(&self.supervision_timeout.to_le_bytes())?;
+        writer.write_all(&self.min_ce_length.to_le_bytes())?;
+        writer.write_all(&self.max_ce_length.to_le_bytes())
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&self.scan_interval.to_le_bytes()).await?;
+        writer.write_all(&self.scan_window.to_le_bytes()).await?;
+        writer
+            .write_all(&self.connection_interval_min.to_le_bytes())
+            .await?;
+        writer
+            .write_all(&self.connection_interval_max.to_le_bytes())
+            .await?;
+        writer.write_all(&self.max_latency.to_le_bytes()).await?;
+        writer
+            .write_all(&self.supervision_timeout.to_le_bytes())
+            .await?;
+        writer.write_all(&self.min_ce_length.to_le_bytes()).await?;
+        writer.write_all(&self.max_ce_length.to_le_bytes()).await
     }
 }

@@ -672,7 +672,7 @@ vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            write_status: u8 => 1,
+            write_status: WriteStatus => 1,
             error_code: u8 => 1,
             value: &'a [u8] => {
                 kind: counted_bytes,
@@ -875,12 +875,39 @@ vendor_cmd! {
         Params = {
             conn_handle: ConnHandle => 2,
             attr_handle: u16 => 2,
-            write_mode: u8 => 1,
+            write_mode: WriteMode => 1,
             val_offset: u16 => 2,
             data_len: u16 => 2,
             data_pointer: u32 => 4,
         };
         Completion = CommandStatus;
+    }
+}
+
+hci_enum! {
+    /// Application decision returned by [`GattWriteResponse`].
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum WriteStatus: u8 => 1 {
+        /// Allow the requested attribute write.
+        Allowed = 0x00,
+        /// Reject the requested attribute write and return its ATT error code.
+        Rejected = 0x01,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_enum! {
+    /// GATT write-with-response procedure used by [`GattWriteWithRespExt`].
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum WriteMode: u8 => 1 {
+        /// Write a characteristic value or descriptor.
+        CharacteristicOrDescriptor = 0x00,
+        /// Write a long characteristic value or descriptor.
+        LongCharacteristicOrDescriptor = 0x01,
+        /// Reliably write a characteristic value.
+        ReliableCharacteristic = 0x02,
     }
 }
 
@@ -1118,7 +1145,7 @@ hci_bitflags! {
         const FIND_INFORMATION_RESPONSE = 0x0000_0008;
         /// [ATT Find By Type Value Response](crate::vendor::event::VendorEvent::AttFindByTypeValueResponse).
         const FIND_BY_TYPE_VALUE_RESPONSE = 0x0000_0010;
-        /// [ATT Find By Type Response](crate::vendor::event::VendorEvent::AttFindByTypeResponse).
+        /// [ATT Read By Type Response](crate::vendor::event::VendorEvent::AttReadByTypeResponse).
         const READ_BY_TYPE_RESPONSE = 0x0000_0020;
         /// [ATT Read Response](crate::vendor::event::VendorEvent::AttReadResponse).
         const READ_RESPONSE = 0x0000_0040;

@@ -140,5 +140,11 @@ macro_rules! hci_bitflags {
                 Self::from_bits(bits).ok_or(bt_hci::FromHciBytesError::InvalidValue)
             }
         }
+
+        impl crate::vendor::command::HciBitmap for $name {
+            fn to_usize(self) -> usize {
+                self.bits() as usize
+            }
+        }
     };
 }

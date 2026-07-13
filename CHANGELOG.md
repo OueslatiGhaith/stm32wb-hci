@@ -31,7 +31,9 @@
   return or Command Status with one unrepresentable in both catalog and Rust metadata.
 - Declare closed HCI enums and bitflags together with their canonical wire representation, and use
   the semantic GAP, GATT, HAL, and extended-advertising types directly in generated command
-  constructors instead of accepting unvalidated integer bytes.
+  constructors instead of accepting unvalidated integer bytes. GAP scan types, scan-filter
+  policies, advertising channel maps, extended PHY selections and modes, and extended GATT write
+  modes are typed as well, with semantic masks retaining the familiar `bitflags` API.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 
