@@ -1,7 +1,5 @@
 //! Vendor-specific HCI commands and types needed for those commands.
 
-extern crate byteorder;
-
 use byteorder::{ByteOrder, LittleEndian};
 
 use crate::vendor::command::BoundedBytes;
@@ -397,7 +395,7 @@ impl ConfigData {
     /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
-    pub fn public_address(addr: crate::BdAddr) -> ConfigDataDiversifierBuilder {
+    pub fn public_address(addr: bt_hci::param::BdAddr) -> ConfigDataDiversifierBuilder {
         let mut data = Self {
             offset: 0,
             length: 6,
@@ -415,7 +413,7 @@ impl ConfigData {
     /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
-    pub fn random_address(addr: crate::BdAddr) -> ConfigDataDiversifierBuilder {
+    pub fn random_address(addr: bt_hci::param::BdAddr) -> ConfigDataDiversifierBuilder {
         let mut data = Self {
             offset: 0x2E,
             length: 6,
@@ -450,7 +448,7 @@ impl ConfigData {
     /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
-    pub fn encryption_root(key: &crate::host::EncryptionKey) -> ConfigDataIdentityRootBuilder {
+    pub fn encryption_root(key: &crate::types::EncryptionKey) -> ConfigDataIdentityRootBuilder {
         let mut data = Self {
             offset: 8,
             length: 16,
@@ -467,7 +465,7 @@ impl ConfigData {
     /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
-    pub fn identity_root(key: &crate::host::EncryptionKey) -> ConfigDataLinkLayerOnlyBuilder {
+    pub fn identity_root(key: &crate::types::EncryptionKey) -> ConfigDataLinkLayerOnlyBuilder {
         let mut data = Self {
             offset: 24,
             length: 16,
@@ -540,7 +538,7 @@ impl ConfigDataEncryptionRootBuilder {
     /// Specify the encryption root and continue building.
     pub fn encryption_root(
         mut self,
-        key: &crate::host::EncryptionKey,
+        key: &crate::types::EncryptionKey,
     ) -> ConfigDataIdentityRootBuilder {
         let len = self.data.length as usize;
         self.data.value_buf[len..16 + len].copy_from_slice(&key.0);
@@ -565,7 +563,7 @@ impl ConfigDataIdentityRootBuilder {
     /// Specify the identity root and continue building.
     pub fn identity_root(
         mut self,
-        key: &crate::host::EncryptionKey,
+        key: &crate::types::EncryptionKey,
     ) -> ConfigDataLinkLayerOnlyBuilder {
         let len = self.data.length as usize;
         self.data.value_buf[len..16 + len].copy_from_slice(&key.0);

@@ -10,11 +10,11 @@ use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::time::Duration;
 
-use crate::host::PeerAddrType;
-pub use crate::types::{ConnectionInterval, ConnectionIntervalError};
+use crate::types::PeerAddrType;
+pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
 use crate::vendor::command::gap::EventFlags;
 pub use crate::vendor::command::{BoundedBytes, BoundedItems};
-pub use crate::{BdAddr, BdAddrType, ConnectionHandle};
+use bt_hci::param::{BdAddr, ConnHandle};
 
 /// Enumeration of vendor-specific status codes.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -97,7 +97,7 @@ pub enum VendorStatus {
 }
 
 impl TryFrom<u8> for VendorStatus {
-    type Error = crate::BadStatusError;
+    type Error = BadVendorStatusError;
 
     fn try_from(value: u8) -> Result<Self, <Self as TryFrom<u8>>::Error> {
         match value {
@@ -133,10 +133,15 @@ impl TryFrom<u8> for VendorStatus {
             0xFF => Ok(VendorStatus::Timeout),
             0xF0 => Ok(VendorStatus::ProfileAlreadyInitialized),
             0xF1 => Ok(VendorStatus::NullParameter),
-            _ => Err(crate::BadStatusError::BadValue(value)),
+            _ => Err(BadVendorStatusError(value)),
         }
     }
 }
+
+/// A byte that does not identify an STM32WB vendor status.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct BadVendorStatusError(pub u8);
 
 impl From<VendorStatus> for u8 {
     fn from(val: VendorStatus) -> Self {
@@ -293,10 +298,29 @@ pub enum VendorError {
     BadFirmwareError(u8),
 }
 
+/// Errors produced while decoding an STM32WB vendor event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Error {
+    /// A buffer did not have the expected length.
+    ///
+    /// The first field is the observed length and the second is the required
+    /// or maximum accepted length, depending on the payload being decoded.
+    BadLength(usize, usize),
+    /// The vendor event contained an invalid or unknown value.
+    Vendor(VendorError),
+}
+
+impl From<VendorError> for Error {
+    fn from(error: VendorError) -> Self {
+        Self::Vendor(error)
+    }
+}
+
 macro_rules! require_len_at_least {
     ($left:expr, $right:expr) => {
         if $left.len() < $right {
-            return Err(crate::event::Error::BadLength($left.len(), $right));
+            return Err(Error::BadLength($left.len(), $right));
         }
     };
 }
@@ -326,47 +350,13 @@ fn first_16<T>(buffer: &[T]) -> &[T] {
 /// ```
 pub trait HciEventField<const N: usize>: Sized {
     /// Decode one exact-width vendor-event field.
-    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, crate::event::Error>;
-}
-
-/// A semantic vendor-event field with a variable wire representation.
-///
-/// `vendor_event!` checks declared semantic-payload bounds during compilation.
-/// A declaration that disagrees with the payload type is therefore rejected:
-///
-/// ```compile_fail
-/// use stm32wb_hci::vendor::event::{
-///     EmptyL2CapData, HciEventPayload,
-/// };
-///
-/// const _: () = ::core::assert!(
-///     <EmptyL2CapData as HciEventPayload>::MAX_LEN == 1,
-/// );
-/// ```
-pub trait HciEventPayload: Sized {
-    /// Smallest encoded representation.
-    const MIN_LEN: usize;
-    /// Largest encoded representation.
-    const MAX_LEN: usize;
-
-    /// Decode one field and return the unconsumed bytes.
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error>;
-}
-
-const fn assert_hci_event_payload_bounds<
-    T: HciEventPayload,
-    const MIN_LEN: usize,
-    const MAX_LEN: usize,
->() {
-    ::core::assert!(MIN_LEN <= MAX_LEN);
-    ::core::assert!(T::MIN_LEN == MIN_LEN);
-    ::core::assert!(T::MAX_LEN == MAX_LEN);
+    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, Error>;
 }
 
 macro_rules! impl_hci_event_integer_field {
     ($ty:ty, $len:literal) => {
         impl HciEventField<$len> for $ty {
-            fn from_hci_event_field(bytes: &[u8; $len]) -> Result<Self, crate::event::Error> {
+            fn from_hci_event_field(bytes: &[u8; $len]) -> Result<Self, Error> {
                 Ok(<$ty>::from_le_bytes(*bytes))
             }
         }
@@ -378,31 +368,29 @@ impl_hci_event_integer_field!(u16, 2);
 impl_hci_event_integer_field!(u32, 4);
 
 impl<const N: usize> HciEventField<N> for [u8; N] {
-    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, Error> {
         Ok(*bytes)
     }
 }
 
 impl HciEventField<1> for bool {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         match bytes[0] {
             0 => Ok(false),
             1 => Ok(true),
-            value => Err(crate::event::Error::Vendor(VendorError::BadBooleanValue(
-                value,
-            ))),
+            value => Err(Error::Vendor(VendorError::BadBooleanValue(value))),
         }
     }
 }
 
-impl HciEventField<2> for ConnectionHandle {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, crate::event::Error> {
+impl HciEventField<2> for ConnHandle {
+    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         Ok(Self(u16::from_le_bytes(*bytes)))
     }
 }
 
 impl HciEventField<2> for AttributeHandle {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         Ok(Self(u16::from_le_bytes(*bytes)))
     }
 }
@@ -410,12 +398,12 @@ impl HciEventField<2> for AttributeHandle {
 fn decode_hci_event_field<T, const N: usize>(
     data: &[u8],
     original_len: usize,
-) -> Result<(T, &[u8]), crate::event::Error>
+) -> Result<(T, &[u8]), Error>
 where
     T: HciEventField<N>,
 {
     if data.len() < N {
-        return Err(crate::event::Error::BadLength(
+        return Err(Error::BadLength(
             original_len,
             original_len - data.len() + N,
         ));
@@ -430,7 +418,7 @@ where
 fn decode_hci_event_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize>(
     data: &[u8],
     original_len: usize,
-) -> Result<(T, &[u8]), crate::event::Error>
+) -> Result<(T, &[u8]), Error>
 where
     T: crate::vendor::command::HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
     C: HciEventField<COUNT_LEN>
@@ -440,10 +428,10 @@ where
     let (count, after_count) = decode_hci_event_field::<C, COUNT_LEN>(data, original_len)?;
     let len = crate::vendor::command::HciCount::to_usize(count);
     if len > MAX_LEN {
-        return Err(crate::event::Error::BadLength(len, MAX_LEN));
+        return Err(Error::BadLength(len, MAX_LEN));
     }
     if after_count.len() < len {
-        return Err(crate::event::Error::BadLength(
+        return Err(Error::BadLength(
             original_len,
             original_len - after_count.len() + len,
         ));
@@ -451,7 +439,7 @@ where
     <T as crate::vendor::command::HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::decode_counted_bytes(
         data,
     )
-    .map_err(|_| crate::event::Error::BadLength(original_len, COUNT_LEN + len))
+    .map_err(|_| Error::BadLength(original_len, COUNT_LEN + len))
 }
 
 fn decode_hci_event_counted_items<
@@ -464,7 +452,7 @@ fn decode_hci_event_counted_items<
 >(
     data: &[u8],
     original_len: usize,
-) -> Result<(T, &[u8]), crate::event::Error>
+) -> Result<(T, &[u8]), Error>
 where
     T: crate::vendor::command::HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
     Item: Copy + crate::vendor::command::HciDecodeField<ITEM_LEN>,
@@ -475,13 +463,13 @@ where
     let (count, after_count) = decode_hci_event_field::<C, COUNT_LEN>(data, original_len)?;
     let count = crate::vendor::command::HciCount::to_usize(count);
     if count > MAX_ITEMS {
-        return Err(crate::event::Error::BadLength(count, MAX_ITEMS));
+        return Err(Error::BadLength(count, MAX_ITEMS));
     }
     let len = count
         .checked_mul(ITEM_LEN)
-        .ok_or(crate::event::Error::BadLength(count, MAX_ITEMS))?;
+        .ok_or(Error::BadLength(count, MAX_ITEMS))?;
     if after_count.len() < len {
-        return Err(crate::event::Error::BadLength(
+        return Err(Error::BadLength(
             original_len,
             original_len - after_count.len() + len,
         ));
@@ -493,13 +481,13 @@ where
         ITEM_LEN,
         MAX_ITEMS,
     >>::decode_counted_items(data)
-    .map_err(|_| crate::event::Error::BadLength(original_len, COUNT_LEN + len))
+    .map_err(|_| Error::BadLength(original_len, COUNT_LEN + len))
 }
 
 #[allow(dead_code)]
 fn decode_hci_event_trailing_bytes<T, const MIN_LEN: usize, const MAX_LEN: usize>(
     data: &[u8],
-) -> Result<(T, &[u8]), crate::event::Error>
+) -> Result<(T, &[u8]), Error>
 where
     T: crate::vendor::command::HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>,
 {
@@ -509,30 +497,12 @@ where
         } else {
             MAX_LEN
         };
-        return Err(crate::event::Error::BadLength(data.len(), expected));
+        return Err(Error::BadLength(data.len(), expected));
     }
     <T as crate::vendor::command::HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>>::decode_trailing_bytes(
         data,
     )
-    .map_err(|_| crate::event::Error::BadLength(data.len(), MAX_LEN))
-}
-
-fn decode_hci_event_payload<T, const MIN_LEN: usize, const MAX_LEN: usize>(
-    data: &[u8],
-) -> Result<(T, &[u8]), crate::event::Error>
-where
-    T: HciEventPayload,
-{
-    if T::MIN_LEN != MIN_LEN || T::MAX_LEN != MAX_LEN {
-        return Err(crate::event::Error::BadLength(T::MAX_LEN, MAX_LEN));
-    }
-    let original_len = data.len();
-    let (value, rest) = T::from_hci_event_payload(data)?;
-    let consumed = original_len - rest.len();
-    if !(MIN_LEN..=MAX_LEN).contains(&consumed) {
-        return Err(crate::event::Error::BadLength(consumed, MAX_LEN));
-    }
-    Ok((value, rest))
+    .map_err(|_| Error::BadLength(data.len(), MAX_LEN))
 }
 
 macro_rules! decode_hci_event_schema_field {
@@ -596,7 +566,15 @@ macro_rules! decode_hci_event_schema_field {
         $data:ident,
         $original_len:expr
     ) => {
-        decode_hci_event_payload::<$ty, $min_len, $max_len>($data)
+        {
+            let original_len = $data.len();
+            let (value, rest) = <$ty>::decode_hci_event_payload($data)?;
+            let consumed = original_len - rest.len();
+            if !($min_len..=$max_len).contains(&consumed) {
+                return Err(Error::BadLength(consumed, $max_len));
+            }
+            Ok::<($ty, &[u8]), Error>((value, rest))
+        }
     };
 }
 
@@ -658,7 +636,10 @@ macro_rules! validate_hci_event_schema_field {
             max_len: $max_len:literal,
         }
     ) => {
-        const _: () = assert_hci_event_payload_bounds::<$ty, $min_len, $max_len>();
+        const _: () = {
+            ::core::assert!($min_len <= $max_len);
+            let _ = <$ty>::decode_hci_event_payload;
+        };
     };
 }
 
@@ -752,7 +733,7 @@ macro_rules! vendor_event_decode_declarative_fields {
                 decode_hci_event_schema_field!($ty, $shape, data, original_len)?;
         )*
         if !data.is_empty() {
-            return Err(crate::event::Error::BadLength(
+            return Err(Error::BadLength(
                 original_len,
                 original_len - data.len(),
             ));
@@ -764,7 +745,7 @@ macro_rules! vendor_event_decode_declarative_fields {
 macro_rules! vendor_event_decode {
     ($variant:ident, $payload:ident, { Payload = (); }) => {{
         if !$payload.is_empty() {
-            return Err(crate::event::Error::BadLength($payload.len(), 0));
+            return Err(Error::BadLength($payload.len(), 0));
         }
         Ok(VendorEvent::$variant)
     }};
@@ -806,7 +787,7 @@ macro_rules! vendor_event {
         )? validate_vendor_event_payload!($body);)*
 
         impl VendorEvent {
-            pub fn new(buffer: &[u8]) -> Result<Self, crate::event::Error> {
+            pub fn new(buffer: &[u8]) -> Result<Self, Error> {
                 require_len_at_least!(buffer, 2);
                 let (event_code, payload) = buffer.split_at(2);
                 let event_code = LittleEndian::read_u16(event_code);
@@ -816,7 +797,7 @@ macro_rules! vendor_event {
                         $(#[cfg($cfg)])?
                         $code => vendor_event_decode!($variant, payload, $body),
                     )*
-                    _ => Err(crate::event::Error::Vendor(VendorError::UnknownEvent(
+                    _ => Err(Error::Vendor(VendorError::UnknownEvent(
                         event_code,
                     ))),
                 }
@@ -886,7 +867,7 @@ vendor_event! {
     /// that a timeout has occurred so that the upper layer can decide to disconnect the link.
     GapPairingComplete(0x0401) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             status: GapPairingStatus => 2,
         };
     }
@@ -894,14 +875,14 @@ vendor_event! {
     /// required for pairing.  When this event is received, the application has to respond with the
     /// `gap_pass_key_response` command.
     GapPassKeyRequest(0x0402) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is generated by the Security manager to the application when the application has
     /// set that authorization is required for reading/writing of attributes. This event will be
     /// generated as soon as the pairing is complete. When this event is received,
     /// `gap_authorization_response` command should be used by the application.
     GapAuthorizationRequest(0x0403) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is generated when the peripheral security request is successfully sent to the
     /// central device.
@@ -936,7 +917,7 @@ vendor_event! {
     ///  The event is sent to the application when the peripheral is unsuccessful in resolving
     /// the resolvable address of the peer device after connecting to it.
     GapAddressNotResolved(0x0408) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is sent only during SC Pairing, when Numeric Comparison
     /// Association model is selected, in order to show the Numeric Value generated,
@@ -946,7 +927,7 @@ vendor_event! {
     /// command.
     GapNumericComparisonValue(0x0409) {
         Payload = {
-            connection_handle: ConnectionHandle => 2,
+            connection_handle: ConnHandle => 2,
             numeric_value: u32 => 4,
         };
     }
@@ -956,7 +937,7 @@ vendor_event! {
     /// action is required to the User.
     GapKeypressNotification(0x040A) {
         Payload = {
-            connection_handle: ConnectionHandle => 2,
+            connection_handle: ConnHandle => 2,
             notification_type: KeypressNotificationType => 1,
         };
     }
@@ -967,7 +948,7 @@ vendor_event! {
     #[cfg(after_fw_0_17_1)]
     GapPairingRequest(0x040B) {
         Payload = {
-            connection_handle: ConnectionHandle => 2,
+            connection_handle: ConnHandle => 2,
             bonded: bool => 1,
             auth_req: u8 => 1,
         };
@@ -978,7 +959,7 @@ vendor_event! {
     /// and CommandReject in Bluetooth Core v4.0 spec.
     L2CapConnectionUpdateResponse(0x0800) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             result: L2CapConnectionUpdateResult => 2,
         };
     }
@@ -986,7 +967,7 @@ vendor_event! {
     /// request within 30 seconds.
     L2CapProcedureTimeout(0x0801) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             _data: EmptyL2CapData => {
                 kind: payload,
                 min_len: 1,
@@ -999,7 +980,7 @@ vendor_event! {
     /// [l2cap_connection_parameter_update_response](crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse).
     L2CapConnectionUpdateRequest(0x0802) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             identifier: u8 => 1,
             l2cap_length: u16 => 2,
             conn_interval: ConnectionInterval => 8,
@@ -1010,7 +991,7 @@ vendor_event! {
     /// Command Reject packet).
     L2CapCommandReject(0x080A) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             identifier: u8 => 1,
             reason: u16 => 2,
             data: BoundedBytes<247> => {
@@ -1025,7 +1006,7 @@ vendor_event! {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocConnect(0x0810) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             spsm: u16 => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
@@ -1038,7 +1019,7 @@ vendor_event! {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocConnectConfirm(0x0811) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
             initial_credits: u16 => 2,
@@ -1055,7 +1036,7 @@ vendor_event! {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocReconfig(0x0812) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
             channel_indices: L2CapChannelIndices<1, 246> => {
@@ -1070,7 +1051,7 @@ vendor_event! {
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocReconfigConfirm(0x0813) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             result: u16 => 2,
         };
     }
@@ -1125,7 +1106,7 @@ vendor_event! {
     /// - reliable write
     GattAttributeModified(0x0C01) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attr_handle: AttributeHandle => 2,
             offset: u16 => 2,
             data: BoundedBytes<245> => {
@@ -1138,12 +1119,12 @@ vendor_event! {
     /// This event is generated when a ATT client procedure completes either with error or
     /// successfully.
     GattProcedureTimeout(0x0C02) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is generated in response to an Exchange MTU request.
     AttExchangeMtuResponse(0x0C03) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             server_rx_mtu: usize => 2,
         };
     }
@@ -1151,7 +1132,7 @@ vendor_event! {
     /// Response in Bluetooth Core v4.0 spec.
     AttFindInformationResponse(0x0C04) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handle_uuid_pairs: HandleUuidPairs => {
                 kind: payload,
                 min_len: 2,
@@ -1162,7 +1143,7 @@ vendor_event! {
     /// This event is generated in response to a Find By Type Value Request.
     AttFindByTypeValueResponse(0x0C05) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handles: BoundedItems<HandleInfoPair, 62> => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -1174,7 +1155,7 @@ vendor_event! {
     /// This event is generated in response to a Read by Type Request.
     AttReadByTypeResponse(0x0C06) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             pairs: HandleValuePairs => {
                 kind: payload,
                 min_len: 2,
@@ -1185,7 +1166,7 @@ vendor_event! {
     /// This event is generated in response to a Read Request.
     AttReadResponse(0x0C07) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             value: BoundedBytes<250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -1198,7 +1179,7 @@ vendor_event! {
     /// 3, section 3.4.4.5 and 3.4.4.6.
     AttReadBlobResponse(0x0C08) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             value: BoundedBytes<250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -1211,7 +1192,7 @@ vendor_event! {
     /// section 3.4.4.7 and 3.4.4.8.
     AttReadMultipleResponse(0x0C09) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             value: BoundedBytes<250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -1223,7 +1204,7 @@ vendor_event! {
     /// v4.1 spec, Vol 3, section 3.4.4.9 and 3.4.4.10.
     AttReadByGroupTypeResponse(0x0C0A) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             groups: AttributeGroups => {
                 kind: payload,
                 min_len: 2,
@@ -1235,7 +1216,7 @@ vendor_event! {
     /// spec, Vol 3, Part F, section 3.4.6.1 and 3.4.6.2
     AttPrepareWriteResponse(0x0C0C) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: usize => 2,
             value: BoundedBytes<246> => {
@@ -1248,12 +1229,12 @@ vendor_event! {
     /// This event is generated in response to an Execute Write Request. See the Bluetooth Core v4.1
     /// spec, Vol 3, Part F, section 3.4.6.3 and 3.4.6.4
     AttExecuteWriteResponse(0x0C0D) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is generated when an indication is received from the server.
     GattIndication(0x0C0E) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: BoundedBytes<248> => {
                 kind: counted_bytes,
@@ -1265,7 +1246,7 @@ vendor_event! {
     /// This event is generated when an notification is received from the server.
     GattNotification(0x0C0F) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: BoundedBytes<248> => {
                 kind: counted_bytes,
@@ -1278,7 +1259,7 @@ vendor_event! {
     /// successfully.
     GattProcedureComplete(0x0C10) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             status: GattProcedureStatus => 1,
         };
     }
@@ -1288,7 +1269,7 @@ vendor_event! {
     /// procedure itself.
     AttErrorResponse(0x0C11) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             request: AttRequest => 1,
             attribute_handle: AttributeHandle => 2,
             error: AttError => 1,
@@ -1304,7 +1285,7 @@ vendor_event! {
     /// UUID), and section 4.8.2 (read using characteristic using UUID).
     GattDiscoverOrReadCharacteristicByUuidResponse(0x0C12) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: BoundedBytes<248> => {
                 kind: counted_bytes,
@@ -1326,7 +1307,7 @@ vendor_event! {
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.5.
     AttWritePermitRequest(0x0C13) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: BoundedBytes<248> => {
                 kind: counted_bytes,
@@ -1345,7 +1326,7 @@ vendor_event! {
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
     AttReadPermitRequest(0x0C14) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: usize => 2,
         };
@@ -1360,7 +1341,7 @@ vendor_event! {
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
     AttReadMultiplePermitRequest(0x0C15) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handles: BoundedItems<AttributeHandle, 125> => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -1375,13 +1356,13 @@ vendor_event! {
     /// application can continue to send notifications by calling `gatt_update_char_value`.
     GattTxPoolAvailable(0x0C16) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             available_buffers: usize => 2,
         };
     }
     /// This event is raised on the server when the client confirms the reception of an indication.
     GattServerConfirmation(0x0C17) {
-        Payload = { conn_handle: ConnectionHandle => 2, };
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is given to the application when a prepare write request is received by the
     /// server from the client. This event will be given to the application only if the event bit
@@ -1394,7 +1375,7 @@ vendor_event! {
     /// application.
     AttPrepareWritePermitRequest(0x0C18) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: usize => 2,
             value: BoundedBytes<246> => {
@@ -1416,7 +1397,7 @@ vendor_event! {
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
     GattMultiNotification(0x0C1A) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             offset: u16 => 2,
             data: BoundedBytes<247> => {
                 kind: counted_bytes,
@@ -1443,7 +1424,7 @@ vendor_event! {
     /// default value.
     GattReadExt(0x0C1D) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             offset: u16 => 2,
             value: BoundedBytes<247> => {
                 kind: counted_bytes,
@@ -1460,7 +1441,7 @@ vendor_event! {
     /// default value.
     GattIndicationExt(0x0C1E) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: BoundedBytes<245> => {
@@ -1478,7 +1459,7 @@ vendor_event! {
     /// default value.
     GattNotificationExt(0x0C1F) {
         Payload = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: BoundedBytes<245> => {
@@ -1584,20 +1565,13 @@ fn to_l2cap_connection_update_accepted_result(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptyL2CapData;
 
-impl HciEventPayload for EmptyL2CapData {
-    const MIN_LEN: usize = 1;
-    // CubeWB allocates the rest of the 253-byte event payload to this
-    // count-prefixed field even though the only valid count is zero.
-    const MAX_LEN: usize = 251;
-
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error> {
+impl EmptyL2CapData {
+    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
         let Some((&count, rest)) = data.split_first() else {
-            return Err(crate::event::Error::BadLength(0, 1));
+            return Err(Error::BadLength(0, 1));
         };
         if count != 0 {
-            return Err(crate::event::Error::Vendor(
-                VendorError::BadL2CapDataLength(count, 0),
-            ));
+            return Err(Error::Vendor(VendorError::BadL2CapDataLength(count, 0)));
         }
         Ok((Self, rest))
     }
@@ -1618,23 +1592,17 @@ impl<const MIN: usize, const MAX: usize> L2CapChannelIndices<MIN, MAX> {
     }
 }
 
-impl<const MIN: usize, const MAX: usize> HciEventPayload for L2CapChannelIndices<MIN, MAX> {
-    const MIN_LEN: usize = MIN + 1;
-    const MAX_LEN: usize = MAX + 1;
-
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error> {
+impl<const MIN: usize, const MAX: usize> L2CapChannelIndices<MIN, MAX> {
+    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
         let Some((&count, data)) = data.split_first() else {
-            return Err(crate::event::Error::BadLength(0, 1));
+            return Err(Error::BadLength(0, 1));
         };
         let len = usize::from(count);
         if !(MIN..=MAX).contains(&len) {
-            return Err(crate::event::Error::BadLength(
-                len,
-                if len < MIN { MIN } else { MAX },
-            ));
+            return Err(Error::BadLength(len, if len < MIN { MIN } else { MAX }));
         }
         if data.len() < len {
-            return Err(crate::event::Error::BadLength(data.len(), len));
+            return Err(Error::BadLength(data.len(), len));
         }
         let (value, rest) = data.split_at(len);
         let mut indices = [0; MAX];
@@ -1784,7 +1752,7 @@ pub enum GapProcedureKind {
 }
 
 impl HciEventField<1> for GapProcedureKind {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         match bytes[0] {
             0x01 => Ok(Self::LimitedDiscovery),
             0x02 => Ok(Self::GeneralDiscovery),
@@ -1794,23 +1762,21 @@ impl HciEventField<1> for GapProcedureKind {
             0x20 => Ok(Self::SelectiveConnectionEstablishment),
             0x40 => Ok(Self::DirectConnectionEstablishment),
             0x80 => Ok(Self::Observation),
-            value => Err(crate::event::Error::Vendor(VendorError::BadGapProcedure(
-                value,
-            ))),
+            value => Err(Error::Vendor(VendorError::BadGapProcedure(value))),
         }
     }
 }
 
 impl GapProcedureComplete {
     /// Converts the declarative discriminator and data field to the legacy combined value.
-    pub fn legacy_procedure(&self) -> Result<GapProcedure, crate::event::Error> {
+    pub fn legacy_procedure(&self) -> Result<GapProcedure, Error> {
         Ok(match self.procedure {
             GapProcedureKind::LimitedDiscovery => GapProcedure::LimitedDiscovery,
             GapProcedureKind::GeneralDiscovery => GapProcedure::GeneralDiscovery,
             GapProcedureKind::NameDiscovery => {
                 let data = self.data.as_slice();
                 if data.len() > MAX_NAME_LEN {
-                    return Err(crate::event::Error::BadLength(data.len(), MAX_NAME_LEN));
+                    return Err(Error::BadLength(data.len(), MAX_NAME_LEN));
                 }
                 let mut name = NameBuffer([0; MAX_NAME_LEN]);
                 name.0[..data.len()].copy_from_slice(data);
@@ -1951,21 +1917,18 @@ pub enum HandleUuidPairs {
     Format128(usize, [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT]),
 }
 
-impl HciEventPayload for HandleUuidPairs {
-    const MIN_LEN: usize = 2;
-    const MAX_LEN: usize = 251;
-
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error> {
+impl HandleUuidPairs {
+    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
         if data.len() < 2 {
-            return Err(crate::event::Error::BadLength(data.len(), 2));
+            return Err(Error::BadLength(data.len(), 2));
         }
         let format = data[0];
         let len = usize::from(data[1]);
         if len > 249 {
-            return Err(crate::event::Error::BadLength(len, 249));
+            return Err(Error::BadLength(len, 249));
         }
         if data.len() < 2 + len {
-            return Err(crate::event::Error::BadLength(data.len(), 2 + len));
+            return Err(Error::BadLength(data.len(), 2 + len));
         }
         let (pairs, rest) = data[2..].split_at(len);
         let value = match format {
@@ -1973,7 +1936,7 @@ impl HciEventPayload for HandleUuidPairs {
             2 => to_handle_uuid128_pairs(pairs),
             value => Err(VendorError::BadAttFindInformationResponseFormat(value)),
         }
-        .map_err(crate::event::Error::Vendor)?;
+        .map_err(Error::Vendor)?;
         Ok((value, rest))
     }
 }
@@ -2166,23 +2129,18 @@ pub struct HandleValuePairs {
     value_len: usize,
 }
 
-impl HciEventPayload for HandleValuePairs {
-    const MIN_LEN: usize = 2;
-    const MAX_LEN: usize = 251;
-
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error> {
+impl HandleValuePairs {
+    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
         if data.len() < 2 {
-            return Err(crate::event::Error::BadLength(data.len(), 2));
+            return Err(Error::BadLength(data.len(), 2));
         }
         let pair_len = usize::from(data[0]);
         let len = usize::from(data[1]);
         if len > 249 || data.len() < 2 + len {
-            return Err(crate::event::Error::BadLength(data.len(), 2 + len));
+            return Err(Error::BadLength(data.len(), 2 + len));
         }
         if pair_len < 2 || !len.is_multiple_of(pair_len) {
-            return Err(crate::event::Error::Vendor(
-                VendorError::AttReadByTypeResponsePartial,
-            ));
+            return Err(Error::Vendor(VendorError::AttReadByTypeResponsePartial));
         }
         let (records, rest) = data[2..].split_at(len);
         let mut value = [0; 249];
@@ -2282,21 +2240,18 @@ pub struct AttributeGroups {
     group_len: usize,
 }
 
-impl HciEventPayload for AttributeGroups {
-    const MIN_LEN: usize = 2;
-    const MAX_LEN: usize = 251;
-
-    fn from_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), crate::event::Error> {
+impl AttributeGroups {
+    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
         if data.len() < 2 {
-            return Err(crate::event::Error::BadLength(data.len(), 2));
+            return Err(Error::BadLength(data.len(), 2));
         }
         let group_len = usize::from(data[0]);
         let len = usize::from(data[1]);
         if len > 249 || data.len() < 2 + len {
-            return Err(crate::event::Error::BadLength(data.len(), 2 + len));
+            return Err(Error::BadLength(data.len(), 2 + len));
         }
         if group_len < 4 || !len.is_multiple_of(group_len) {
-            return Err(crate::event::Error::Vendor(
+            return Err(Error::Vendor(
                 VendorError::AttReadByGroupTypeResponsePartial,
             ));
         }
@@ -2413,15 +2368,13 @@ pub enum GattProcedureStatus {
 }
 
 impl TryFrom<u8> for GattProcedureStatus {
-    type Error = crate::event::Error;
+    type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x00 => Ok(GattProcedureStatus::Success),
             0x41 => Ok(GattProcedureStatus::Failed),
-            _ => Err(crate::event::Error::Vendor(
-                VendorError::BadGattProcedureStatus(value),
-            )),
+            _ => Err(Error::Vendor(VendorError::BadGattProcedureStatus(value))),
         }
     }
 }
@@ -2755,7 +2708,7 @@ impl From<u8> for KeypressNotificationType {
 }
 
 impl HciEventField<1> for KeypressNotificationType {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         Ok(bytes[0].into())
     }
 }
@@ -2772,13 +2725,13 @@ pub enum EabState {
 }
 
 impl TryFrom<u8> for EabState {
-    type Error = crate::event::Error;
+    type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x00 => Ok(EabState::AttBearerCreated),
             0x01 => Ok(EabState::AttBearerTerminated),
-            err => Err(crate::event::Error::Vendor(VendorError::BadEabState(err))),
+            err => Err(Error::Vendor(VendorError::BadEabState(err))),
         }
     }
 }
@@ -2796,7 +2749,7 @@ pub enum RadioEvent {
 }
 
 impl TryFrom<u8> for RadioEvent {
-    type Error = crate::event::Error;
+    type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -2807,7 +2760,7 @@ impl TryFrom<u8> for RadioEvent {
             0x05 => Ok(RadioEvent::CentralConnection),
             0x06 => Ok(RadioEvent::TxTestMode),
             0x07 => Ok(RadioEvent::RxTestMode),
-            x => Err(crate::event::Error::Vendor(VendorError::BadRadioEvent(x))),
+            x => Err(Error::Vendor(VendorError::BadRadioEvent(x))),
         }
     }
 }
@@ -2833,7 +2786,7 @@ pub enum FirmwareError {
 }
 
 impl TryFrom<u8> for FirmwareError {
-    type Error = crate::event::Error;
+    type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -2844,9 +2797,7 @@ impl TryFrom<u8> for FirmwareError {
             0x05 => Ok(FirmwareError::COCAlreadyAssignedDCID),
             0x06 => Ok(FirmwareError::SmpUnexpectedLTKRequest),
             0x07 => Ok(FirmwareError::GattBearerNotAllocated),
-            x => Err(crate::event::Error::Vendor(VendorError::BadFirmwareError(
-                x,
-            ))),
+            x => Err(Error::Vendor(VendorError::BadFirmwareError(x))),
         }
     }
 }
@@ -2858,93 +2809,91 @@ impl HalFirmwareError {
 }
 
 impl HciEventField<2> for usize {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         Ok(usize::from(u16::from_le_bytes(*bytes)))
     }
 }
 
 impl HciEventField<1> for FirmwareKind {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
-        bytes[0].try_into().map_err(crate::event::Error::Vendor)
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
+        bytes[0].try_into().map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<1> for RadioEvent {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         bytes[0].try_into()
     }
 }
 
 impl HciEventField<7> for PeerAddrType {
-    fn from_hci_event_field(bytes: &[u8; 7]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 7]) -> Result<Self, Error> {
         let address = BdAddr(bytes[1..].try_into().expect("six-byte address"));
         match bytes[0] {
             0x00 | 0x02 => Ok(Self::PublicDeviceAddress(address)),
             0x01 => Ok(Self::RandomDeviceAddress(address)),
             0x03 => Ok(Self::RandomIdentityAddress(address)),
-            value => Err(crate::event::Error::Vendor(VendorError::BadBdAddrType(
-                value,
-            ))),
+            value => Err(Error::Vendor(VendorError::BadBdAddrType(value))),
         }
     }
 }
 
 impl HciEventField<1> for FirmwareError {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         bytes[0].try_into()
     }
 }
 
 impl HciEventField<2> for GapPairingStatus {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, crate::event::Error> {
-        to_gap_pairing_status(bytes[0], bytes[1].try_into()).map_err(crate::event::Error::Vendor)
+    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
+        to_gap_pairing_status(bytes[0], bytes[1].try_into()).map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<1> for GapProcedureStatus {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
-        bytes[0].try_into().map_err(crate::event::Error::Vendor)
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
+        bytes[0].try_into().map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<2> for L2CapConnectionUpdateResult {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         to_l2cap_connection_update_accepted_result(u16::from_le_bytes(*bytes))
-            .map_err(crate::event::Error::Vendor)
+            .map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<8> for ConnectionInterval {
-    fn from_hci_event_field(bytes: &[u8; 8]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 8]) -> Result<Self, Error> {
         Self::from_bytes(bytes)
             .map_err(VendorError::BadConnectionInterval)
-            .map_err(crate::event::Error::Vendor)
+            .map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<1> for GattProcedureStatus {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         bytes[0].try_into()
     }
 }
 
 impl HciEventField<1> for AttRequest {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
-        bytes[0].try_into().map_err(crate::event::Error::Vendor)
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
+        bytes[0].try_into().map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<1> for AttError {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         bytes[0]
             .try_into()
             .map_err(VendorError::BadAttError)
-            .map_err(crate::event::Error::Vendor)
+            .map_err(Error::Vendor)
     }
 }
 
 impl HciEventField<1> for EabState {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, crate::event::Error> {
+    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
         bytes[0].try_into()
     }
 }
@@ -2976,7 +2925,7 @@ mod tests {
         let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01];
         let err = VendorEvent::new(&bytes).expect_err("must reject short payload");
 
-        assert!(matches!(err, crate::event::Error::BadLength(_, _)));
+        assert!(matches!(err, Error::BadLength(_, _)));
     }
 
     #[cfg(not(after_fw_0_17_1))]
@@ -2988,7 +2937,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            crate::event::Error::Vendor(VendorError::UnknownEvent(0x040B))
+            Error::Vendor(VendorError::UnknownEvent(0x040B))
         ));
     }
 
@@ -3014,7 +2963,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            crate::event::Error::Vendor(VendorError::UnknownEvent(0x0C1B))
+            Error::Vendor(VendorError::UnknownEvent(0x0C1B))
         ));
     }
 
@@ -3038,14 +2987,14 @@ mod tests {
     fn fixed_event_rejects_trailing_payload_bytes() {
         let bytes = [0x02, 0x0C, 0x23, 0x01, 0xFF];
         let error = VendorEvent::new(&bytes).expect_err("fixed payload must be exact");
-        assert_eq!(error, crate::event::Error::BadLength(3, 2));
+        assert_eq!(error, Error::BadLength(3, 2));
     }
 
     #[test]
     fn counted_event_rejects_a_truncated_value() {
         let bytes = [0x07, 0x0C, 0x23, 0x01, 0x02, 0xAA];
         let error = VendorEvent::new(&bytes).expect_err("count requires two value bytes");
-        assert_eq!(error, crate::event::Error::BadLength(4, 5));
+        assert_eq!(error, Error::BadLength(4, 5));
     }
 
     #[test]
@@ -3056,7 +3005,7 @@ mod tests {
             63,   // handle-pair count; the declaration allows at most 62
         ];
         let error = VendorEvent::new(&bytes).expect_err("count exceeds the schema maximum");
-        assert_eq!(error, crate::event::Error::BadLength(63, 62));
+        assert_eq!(error, Error::BadLength(63, 62));
     }
 
     #[test]
@@ -3086,11 +3035,11 @@ mod tests {
             0x00, // channel count
         ];
         let error = VendorEvent::new(&bytes).expect_err("at least one channel is required");
-        assert_eq!(error, crate::event::Error::BadLength(0, 1));
+        assert_eq!(error, Error::BadLength(0, 1));
 
         bytes[8] = 247;
         let error = VendorEvent::new(&bytes).expect_err("at most 246 channels are allowed");
-        assert_eq!(error, crate::event::Error::BadLength(247, 246));
+        assert_eq!(error, Error::BadLength(247, 246));
     }
 
     #[test]
@@ -3101,10 +3050,7 @@ mod tests {
             0x01, // the timeout event requires an empty data list
         ];
         let error = VendorEvent::new(&bytes).expect_err("timeout data count must be zero");
-        assert_eq!(
-            error,
-            crate::event::Error::Vendor(VendorError::BadL2CapDataLength(1, 0))
-        );
+        assert_eq!(error, Error::Vendor(VendorError::BadL2CapDataLength(1, 0)));
     }
 
     #[test]
@@ -3133,7 +3079,7 @@ mod tests {
             0x07, // only one channel index
         ];
         let error = VendorEvent::new(&bytes).expect_err("count and trailing list disagree");
-        assert_eq!(error, crate::event::Error::BadLength(1, 2));
+        assert_eq!(error, Error::BadLength(1, 2));
     }
 
     #[test]
@@ -3144,7 +3090,7 @@ mod tests {
         ));
         assert_eq!(
             VendorEvent::new(&[0x05, 0x04, 0x23, 0x01]).unwrap_err(),
-            crate::event::Error::BadLength(2, 0)
+            Error::BadLength(2, 0)
         );
     }
 
@@ -3154,7 +3100,7 @@ mod tests {
         let error = VendorEvent::new(&bytes).expect_err("one-byte records have no handle");
         assert_eq!(
             error,
-            crate::event::Error::Vendor(VendorError::AttReadByTypeResponsePartial)
+            Error::Vendor(VendorError::AttReadByTypeResponsePartial)
         );
     }
 
@@ -3164,7 +3110,7 @@ mod tests {
         let error = VendorEvent::new(&bytes).expect_err("group record needs two handles");
         assert_eq!(
             error,
-            crate::event::Error::Vendor(VendorError::AttReadByGroupTypeResponsePartial)
+            Error::Vendor(VendorError::AttReadByGroupTypeResponsePartial)
         );
     }
 }

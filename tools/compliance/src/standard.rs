@@ -4,7 +4,7 @@
 //! crate delegates most of that surface to the direct `bt-hci` dependency. The
 //! dependency must be public (`pub use bt_hci`) before it can count as crate
 //! coverage. A small number of STM32WB commands not yet present upstream live
-//! in `src/host` and are discovered alongside it.
+//! in `src/standard.rs` and are discovered alongside it.
 
 use std::env;
 use std::fs;
@@ -48,16 +48,11 @@ pub(crate) fn load_standard_provider_coverage(
 
     // `bt-hci` does not currently define a handful of STM32WB-supported LE
     // commands. These are public raw command descriptors in the crate itself.
-    for path in [
-        crate_dir.join("src/host/mod.rs"),
-        crate_dir.join("src/host/extended.rs"),
-    ] {
-        coverage.commands.extend(load_local_command_macros(
-            &path,
-            firmware,
-            CoverageOrigin::StandardHciExtension,
-        )?);
-    }
+    coverage.commands.extend(load_local_command_macros(
+        &crate_dir.join("src/standard.rs"),
+        firmware,
+        CoverageOrigin::StandardHciExtension,
+    )?);
 
     sort_and_deduplicate(&mut coverage.commands);
     sort_and_deduplicate(&mut coverage.events);

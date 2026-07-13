@@ -1,4 +1,4 @@
-//! STM32WB standard-LE commands not yet provided by the `bt-hci` dependency.
+//! Standard LE commands supported by STM32WB but not yet provided by `bt-hci`.
 //!
 //! These command descriptors deliberately stay close to the Bluetooth HCI
 //! wire definition. They are public raw command types: execute a synchronous
@@ -7,6 +7,27 @@
 //! types re-exported as [`crate::bt_hci`].
 
 use bt_hci::cmd::cmd;
+
+cmd! {
+    /// LE Receiver Test command.
+    ///
+    /// The parameter is the receive-channel index.
+    LeReceiverTest(LE, 0x001D) {
+        Params = [u8; 1];
+        Return = ();
+    }
+}
+
+cmd! {
+    /// LE Transmitter Test command.
+    ///
+    /// Parameters are the transmit-channel index, test-data length, and
+    /// payload pattern.
+    LeTransmitterTest(LE, 0x001E) {
+        Params = [u8; 3];
+        Return = ();
+    }
+}
 
 cmd! {
     /// LE Read Local P-256 Public Key command.

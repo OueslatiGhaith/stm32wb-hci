@@ -1,9 +1,8 @@
 //! GATT commands and types needed for those commands.
 
-use crate::{
-    ConnectionHandle,
-    vendor::{command::BoundedBytes, event::AttributeHandle},
-};
+use bt_hci::param::ConnHandle;
+
+use crate::vendor::{command::BoundedBytes, event::AttributeHandle};
 
 /// Maximum characteristic-descriptor value length accepted by
 /// [`GattAddCharacteristicDescriptor`].
@@ -256,7 +255,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattExchageConfiguration(cgid = 0x2, cid = 0x0B) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
         };
         Completion = CommandStatus;
     }
@@ -265,7 +264,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattFindInformationRequest(cgid = 0x2, cid = 0x0C) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
         };
@@ -276,7 +275,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattFindByTypeValueRequest(cgid = 0x2, cid = 0x0D) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: u16 => 2,
@@ -293,7 +292,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadByTypeRequest(cgid = 0x2, cid = 0x0E) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
@@ -320,7 +319,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadByGroupTypeRequest(cgid = 0x2, cid = 0x0F) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
@@ -347,7 +346,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattPrepareWriteRequest(cgid = 0x2, cid = 0x10) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: &'a [u8] => {
@@ -363,7 +362,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattExecuteWriteRequest(cgid = 0x2, cid = 0x11) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             execute: bool => 1,
         };
         Completion = CommandStatus;
@@ -373,7 +372,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDiscoverAllPrimaryServices(cgid = 0x2, cid = 0x12) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
         };
         Completion = CommandStatus;
     }
@@ -382,7 +381,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDiscoverPrimaryServicesByUUID(cgid = 0x2, cid = 0x13) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             uuid: &'a Uuid => {
                 kind: tagged,
                 tag: u8 => 1,
@@ -407,7 +406,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattFindIncludedServices(cgid = 0x2, cid = 0x14) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             service_handle_start: AttributeHandle => 2,
             service_handle_end: AttributeHandle => 2,
         };
@@ -418,7 +417,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDiscoverAllCharacteristicsOfService(cgid = 0x2, cid = 0x15) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
         };
@@ -429,7 +428,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDiscoverCharacteristicsByUUID(cgid = 0x2, cid = 0x16) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
@@ -456,7 +455,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDiscoverAllCharacteristicDescriptors(cgid = 0x2, cid = 0x17) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle_start: AttributeHandle => 2,
             characteristic_handle_end: AttributeHandle => 2,
         };
@@ -467,7 +466,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadCharacteristicValue(cgid = 0x2, cid = 0x18) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
         };
         Completion = CommandStatus;
@@ -477,7 +476,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadCharacteristicUsingUUID(cgid = 0x2, cid = 0x19) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
@@ -504,7 +503,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadLongCharacteristicValue(cgid = 0x2, cid = 0x1A) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute: AttributeHandle => 2,
             offset: u16 => 2,
         };
@@ -515,7 +514,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadMultipleCharacteristicValues(cgid = 0x2, cid = 0x1B) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handles: &'a [AttributeHandle] => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -530,7 +529,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteCharacteristicValue(cgid = 0x2, cid = 0x1C) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
@@ -545,7 +544,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteLongCharacteristicValue(cgid = 0x2, cid = 0x1D) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: &'a [u8] => {
@@ -561,7 +560,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteCharacteristicValueReliably(cgid = 0x2, cid = 0x1E) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: &'a [u8] => {
@@ -577,7 +576,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(cgid = 0x2, cid = 0x1F) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             descriptor_handle: AttributeHandle => 2,
             offset: u16 => 2,
             value: &'a [u8] => {
@@ -593,7 +592,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadLongCharacteristicDescriptor(cgid = 0x2, cid = 0x20) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute: AttributeHandle => 2,
             offset: u16 => 2,
         };
@@ -604,7 +603,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteCharacteristicDescriptor(cgid = 0x2, cid = 0x21) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             descriptor_handle: AttributeHandle => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
@@ -619,7 +618,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadCharacteristicDescriptor(cgid = 0x2, cid = 0x22) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             descriptor_handle: AttributeHandle => 2,
         };
         Completion = CommandStatus;
@@ -629,7 +628,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteWithoutResponse(cgid = 0x2, cid = 0x23) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
@@ -645,7 +644,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattSignedWriteWithoutResponse(cgid = 0x2, cid = 0x24) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
@@ -661,7 +660,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattConfirmIndication(cgid = 0x2, cid = 0x25) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
         };
         Completion = CommandComplete;
         Return = ();
@@ -671,7 +670,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteResponse(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             write_status: u8 => 1,
             error_code: u8 => 1,
@@ -689,7 +688,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattAllowRead(cgid = 0x2, cid = 0x27) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
         };
         Completion = CommandComplete;
         Return = ();
@@ -796,7 +795,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattDenyRead(cgid = 0x2, cid = 0x2D) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             error_code: u8 => 1,
         };
         Completion = CommandComplete;
@@ -827,7 +826,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattSendMultipleNotification(cgid = 0x2, cid = 0x31) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handles: &'a [AttributeHandle] => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -843,7 +842,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattReadMultipleVarCharValue(cgid = 0x2, cid = 0x32) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             handles: &'a [AttributeHandle] => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -859,7 +858,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attr_handle: u16 => 2,
             signed_mode: bool => 1,
             data_len: u16 => 2,
@@ -874,7 +873,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             attr_handle: u16 => 2,
             write_mode: u8 => 1,
             val_offset: u16 => 2,

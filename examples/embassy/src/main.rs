@@ -4,7 +4,13 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
-use bt_hci::cmd::SyncCmd;
+use bt_hci::{
+    ControllerToHostPacket,
+    cmd::{SyncCmd, controller_baseband::Reset},
+    controller::Controller as _,
+    event::EventKind,
+    param::BdAddr,
+};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -13,14 +19,13 @@ use embassy_stm32::{
     ipcc::{Config as IpccConfig, ReceiveInterruptHandler, TransmitInterruptHandler},
     rcc::WPAN_DEFAULT,
 };
-use stm32wb_hci::{
-    BdAddr,
-    host::{HostHci, uart::UartHci},
-    vendor::command::{
+use stm32wb_hci::vendor::{
+    command::{
         gap::{CmdGapInit, Role},
         gatt::GattInit,
         hal::HalWriteConfigData,
     },
+    event::VendorEvent,
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -87,17 +92,24 @@ async fn main(spawner: Spawner) {
 
     join(
         async {
+            let mut packet_buffer = [0; 260];
             loop {
-                let pkt = ble.read_packet().await;
-
-                defmt::info!("pkt: {}", pkt);
+                match ble.read(&mut packet_buffer).await {
+                    Ok(ControllerToHostPacket::Event(event)) if event.kind == EventKind::Vendor => {
+                        match VendorEvent::new(event.data) {
+                            Ok(event) => defmt::info!("vendor event: {}", event),
+                            Err(error) => defmt::error!("invalid vendor event: {}", error),
+                        }
+                    }
+                    Ok(packet) => defmt::info!("packet: {}", packet),
+                    Err(_) => defmt::error!("failed to read HCI packet"),
+                }
             }
         },
         async {
             defmt::info!("hci: reset");
-            // From this point `ble` implements the bt-hci controller traits. All commands after
-            // this line are normal stm32wb-hci host/vendor commands, not transport code.
-            let response = ble.reset().await;
+            // Standard commands come from bt-hci; STM32WB commands come from stm32wb-hci.
+            let response = Reset::new().exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: write config data");

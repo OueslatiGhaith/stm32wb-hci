@@ -1,7 +1,8 @@
 //! L2Cap-specific commands and types needed for those commands.
 
+use bt_hci::param::ConnHandle;
+
 use crate::{
-    ConnectionHandle,
     types::{ConnectionInterval, ExpectedConnectionLength},
     vendor::command::BoundedBytes,
 };
@@ -9,7 +10,7 @@ use crate::{
 vendor_cmd! {
     L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             conn_interval: ConnectionInterval => 8,
         };
         Completion = CommandStatus;
@@ -19,7 +20,7 @@ vendor_cmd! {
 vendor_cmd! {
     L2ConnectionParameterUpdateResponse(cgid = 0x3, cid = 0x02) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             conn_interval: ConnectionInterval => 8,
             expected_connection_length_range: ExpectedConnectionLength => 4,
             identifier: u8 => 1,
@@ -33,7 +34,7 @@ vendor_cmd! {
 vendor_cmd! {
     L2CocConnect(cgid = 0x3, cid = 0x08) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             spsm: u16 => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
@@ -48,7 +49,7 @@ vendor_cmd! {
 vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
             initial_credits: u16 => 2,
@@ -68,7 +69,7 @@ vendor_cmd! {
 vendor_cmd! {
     L2CocReconfig(cgid = 0x3, cid = 0x0A) {
         Params<'a> = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             mtu: u16 => 2,
             mps: u16 => 2,
             channel_indices: &'a [u8] => {
@@ -85,7 +86,7 @@ vendor_cmd! {
 vendor_cmd! {
     L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
         Params = {
-            conn_handle: ConnectionHandle => 2,
+            conn_handle: ConnHandle => 2,
             result: u16 => 2,
         };
         Completion = CommandComplete;

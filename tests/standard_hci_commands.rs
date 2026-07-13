@@ -4,10 +4,10 @@ mod vendor;
 
 use hci::bt_hci::cmd::{AsyncCmd, SyncCmd};
 #[cfg(any(feature = "fw_0_17_0", feature = "fw_0_17_1"))]
-use hci::host::LeGenerateDhkeyV2;
-use hci::host::{
-    LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadPeerResolvableAddress, LeReceiverTestV2,
-    LeTransmitterTestV2,
+use hci::standard::LeGenerateDhkeyV2;
+use hci::standard::{
+    LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadPeerResolvableAddress, LeReceiverTest,
+    LeReceiverTestV2, LeTransmitterTest, LeTransmitterTestV2,
 };
 use vendor::RecordingSink;
 
@@ -55,6 +55,17 @@ async fn v2_test_commands_use_their_v2_ocfs() {
         .exec(&transmitter)
         .await;
     assert_eq!(transmitter.written_data(), [1, 0x34, 0x20, 4, 1, 2, 3, 4]);
+}
+
+#[tokio::test]
+async fn v1_test_commands_use_their_v1_ocfs() {
+    let receiver = RecordingSink::new();
+    let _ = LeReceiverTest::new([1]).exec(&receiver).await;
+    assert_eq!(receiver.written_data(), [1, 0x1D, 0x20, 1, 1]);
+
+    let transmitter = RecordingSink::new();
+    let _ = LeTransmitterTest::new([1, 2, 3]).exec(&transmitter).await;
+    assert_eq!(transmitter.written_data(), [1, 0x1E, 0x20, 3, 1, 2, 3]);
 }
 
 #[cfg(any(feature = "fw_0_17_0", feature = "fw_0_17_1"))]

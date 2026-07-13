@@ -86,37 +86,53 @@ event `0x9200`—come exclusively from the checked-in policy; library defaults d
 ## Usage
 
 This crate works with controllers that implement `bt_hci::controller::Controller` and the
-proprietary ST HCI specification. Standard helpers such as `stm32wb_hci::host::HostHci` remain
-controller extension traits. Vendor commands are generated command types: construct one, then call
+proprietary ST HCI specification. Standard commands and events come directly from the public
+`bt_hci` re-export. Vendor commands are generated command types: construct one, then call
 `SyncCmd::exec` for a Command Complete command or `AsyncCmd::exec` for a Command Status command.
-The adapter executes these types through `ControllerCmdSync` and `ControllerCmdAsync`.
+The adapter executes both standard and vendor types through `ControllerCmdSync` and
+`ControllerCmdAsync`.
 
-The `read_packet` function may have to be polled for commands to complete. A channel or other
-methods may be used to accomplish this so that `read_packet` is never in a state where it is not
-polled.
+The controller's `read` method may have to be polled for commands to complete. A channel or other
+method may be used so that packet reads remain active while commands execute.
 
 ```rust
-    use bt_hci::cmd::SyncCmd;
-    use stm32wb_hci::vendor::command::{
-        gap::{CmdGapInit, Role},
-        gatt::GattInit,
-        hal::HalWriteConfigData,
+    use bt_hci::{
+        ControllerToHostPacket,
+        cmd::{SyncCmd, controller_baseband::Reset},
+        controller::Controller as _,
+        event::EventKind,
+        param::BdAddr,
+    };
+    use stm32wb_hci::vendor::{
+        command::{
+            gap::{CmdGapInit, Role},
+            gatt::GattInit,
+            hal::HalWriteConfigData,
+        },
+        event::VendorEvent,
     };
 
     let ble = ControllerAdapter::new(ble);
 
     join(
         async {
+            let mut packet_buffer = [0; 260];
             loop {
-                let pkt = ble.read_packet().await;
-
-                defmt::info!("pkt: {}", pkt);
+                match ble.read(&mut packet_buffer).await {
+                    Ok(ControllerToHostPacket::Event(event))
+                        if event.kind == EventKind::Vendor =>
+                    {
+                        let event = VendorEvent::new(event.data)
+                            .expect("valid STM32WB vendor event");
+                        defmt::info!("vendor event: {}", event);
+                    }
+                    Ok(packet) => defmt::info!("packet: {}", packet),
+                    Err(_) => defmt::error!("failed to read HCI packet"),
+                }
             }
         },
         async {
-            // From this point `ble` implements the bt-hci controller traits. All commands after
-            // this line are normal stm32wb-hci host/vendor commands, not transport code.
-            let response = ble.reset().await;
+            let response = Reset::new().exec(&ble).await;
             defmt::info!("{}", response);
 
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);

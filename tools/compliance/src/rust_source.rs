@@ -1627,7 +1627,7 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        conn_handle: ConnectionHandle => 2,
+                        conn_handle: ConnHandle => 2,
                         handles: &'a [AttributeHandle] => {
                             kind: counted_items,
                             count: u8 => 1,

@@ -2,7 +2,7 @@ use core::time::Duration;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::AdvertisingHandle;
+use bt_hci::param::AdvHandle;
 
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
@@ -159,7 +159,7 @@ pub enum AdvertisingPhy {
 /// Advertising set
 pub struct AdvSet {
     /// Used to identify an advertising set
-    pub handle: AdvertisingHandle,
+    pub handle: AdvHandle,
     /// Duration of advertising set.
     ///
     /// Values:

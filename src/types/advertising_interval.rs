@@ -150,8 +150,7 @@ pub enum AdvertisingIntervalError {
     NoRange,
 }
 
-/// The advertising type is used in the
-/// [`AdvertisingParameters`](crate::host::AdvertisingParameters) to determine the packet type that
+/// The advertising type is used in the advertising parameters to determine the packet type that
 /// is used for advertising when advertising is enabled.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]

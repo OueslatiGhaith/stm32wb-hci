@@ -66,7 +66,7 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
 
 #[test]
 fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
-    let address = hci::BdAddrType::Public(hci::BdAddr([0; 6]));
+    let address = hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([0; 6]));
     let pass_key = PassKey::try_new(999_999).unwrap();
 
     assert!(GapSetLimitedDiscoverable::try_new(0, 0x30, 0x20, 0, 0, &[], &[], 0, 0).is_err());
@@ -82,11 +82,11 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         GapSetAuthenticationRequirement::try_new(false, false, 0, false, 7, 16, true, pass_key, 2,)
             .is_err()
     );
-    let _ = GapPassKeyResponse::new(hci::ConnectionHandle(1), pass_key);
+    let _ = GapPassKeyResponse::new(hci::bt_hci::param::ConnHandle(1), pass_key);
     assert!(GapSetNonConnectable::try_new(0, 0).is_err());
     assert!(GapSetUnidirectedConnectable::try_new(0x20, 0x30, 0, 1).is_err());
     let _ = GapTerminate::new(
-        hci::ConnectionHandle(1),
+        hci::bt_hci::param::ConnHandle(1),
         TerminationReason::AuthenticationFailure,
     );
     assert!(GapTerminateProcedure::try_new(0).is_err());
@@ -110,7 +110,7 @@ async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
 
     let sink = RecordingSink::new();
     let sets = [AdvSet {
-        handle: hci::AdvertisingHandle(2),
+        handle: hci::bt_hci::param::AdvHandle(2),
         duration: 0x1234,
         max_extended_adv_events: 5,
     }];
@@ -131,7 +131,7 @@ async fn declarative_gap_set_oob_data_includes_type_and_length() {
     let sink = RecordingSink::new();
     GapSetOobData::new(
         1,
-        hci::BdAddrType::Public(hci::BdAddr([1, 2, 3, 4, 5, 6])),
+        hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([1, 2, 3, 4, 5, 6])),
         1,
         16,
         [0xAA; 16],
@@ -152,7 +152,7 @@ async fn declarative_gap_set_oob_data_includes_type_and_length() {
 #[tokio::test]
 async fn declarative_gap_pairing_request_includes_force_rebond() {
     let sink = RecordingSink::new();
-    GapSendPairingRequest::new(hci::ConnectionHandle(0x1234), true)
+    GapSendPairingRequest::new(hci::bt_hci::param::ConnHandle(0x1234), true)
         .exec(&sink)
         .await
         .unwrap();
@@ -163,7 +163,9 @@ async fn declarative_gap_pairing_request_includes_force_rebond() {
 #[tokio::test]
 async fn declarative_gap_add_devices_to_list_counts_complete_records() {
     let sink = RecordingSink::new();
-    let entries = [hci::BdAddrType::Public(hci::BdAddr([1, 2, 3, 4, 5, 6]))];
+    let entries = [hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr(
+        [1, 2, 3, 4, 5, 6],
+    ))];
 
     GapAddDevicesToList::try_new(&entries, 0x04)
         .unwrap()
@@ -381,7 +383,7 @@ async fn declarative_gap_init_matches_cubewb() {
 async fn declarative_gap_command_status_matches_cubewb() {
     let sink = RecordingSink::new();
 
-    GapPeripheralSecurityRequest::new(hci::ConnectionHandle(0x0123))
+    GapPeripheralSecurityRequest::new(hci::bt_hci::param::ConnHandle(0x0123))
         .exec(&sink)
         .await
         .unwrap();
@@ -521,9 +523,9 @@ fn declarative_bounded_items_reject_excessive_truncated_and_invalid_records() {
         Err(FromHciBytesError::InvalidSize)
     ));
 
-    type Addresses = BoundedItems<hci::BdAddrType, 1>;
+    type Addresses = BoundedItems<hci::types::BdAddrType, 1>;
     assert!(matches!(
-        decode_declarative_counted_items::<Addresses, hci::BdAddrType, u8, 1, 7, 1>(&[
+        decode_declarative_counted_items::<Addresses, hci::types::BdAddrType, u8, 1, 7, 1>(&[
             1, 0x02, 0, 0, 0, 0, 0, 0,
         ]),
         Err(FromHciBytesError::InvalidValue)
@@ -545,8 +547,8 @@ fn declarative_bonded_devices_payload_decodes_counted_addresses() {
     assert_eq!(
         devices.bonded_addresses(),
         [
-            hci::BdAddrType::Public(hci::BdAddr([1, 2, 3, 4, 5, 6])),
-            hci::BdAddrType::Random(hci::BdAddr([7, 8, 9, 10, 11, 12])),
+            hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([1, 2, 3, 4, 5, 6])),
+            hci::types::BdAddrType::Random(hci::bt_hci::param::BdAddr([7, 8, 9, 10, 11, 12])),
         ]
     );
 }
@@ -580,7 +582,7 @@ async fn gatt_read_multiple_variable_value_uses_command_status_envelope() {
     let sink = RecordingSink::new();
 
     GattReadMultipleVarCharValue::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         &[AttributeHandle(0x4567), AttributeHandle(0x89AB)],
     )
     .unwrap()
@@ -600,7 +602,8 @@ async fn gatt_read_multiple_variable_value_uses_command_status_envelope() {
 fn declarative_counted_items_reject_oversized_input() {
     let handles = [AttributeHandle(0); 127];
 
-    let result = GattReadMultipleVarCharValue::try_new(hci::ConnectionHandle(0x0123), &handles);
+    let result =
+        GattReadMultipleVarCharValue::try_new(hci::bt_hci::param::ConnHandle(0x0123), &handles);
 
     assert!(result.is_err());
 }
@@ -610,7 +613,7 @@ async fn declarative_tagged_uuid16_matches_cubewb() {
     let sink = RecordingSink::new();
 
     let uuid = Uuid::Uuid16(0x4567);
-    GattDiscoverPrimaryServicesByUUID::try_new(hci::ConnectionHandle(0x0123), &uuid)
+    GattDiscoverPrimaryServicesByUUID::try_new(hci::bt_hci::param::ConnHandle(0x0123), &uuid)
         .unwrap()
         .exec(&sink)
         .await
@@ -631,7 +634,7 @@ async fn declarative_tagged_uuid128_matches_cubewb() {
     ];
 
     let uuid = Uuid::Uuid128(uuid);
-    GattDiscoverPrimaryServicesByUUID::try_new(hci::ConnectionHandle(0x0123), &uuid)
+    GattDiscoverPrimaryServicesByUUID::try_new(hci::bt_hci::param::ConnHandle(0x0123), &uuid)
         .unwrap()
         .exec(&sink)
         .await
@@ -652,7 +655,7 @@ async fn inline_uuid_shape_drives_characteristic_procedures() {
 
     let uuid = Uuid::Uuid16(0xCDEF);
     GattDiscoverCharacteristicsByUUID::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         &uuid,
@@ -675,7 +678,7 @@ async fn inline_uuid_shape_drives_characteristic_procedures() {
     ];
     let uuid = Uuid::Uuid128(uuid);
     GattReadCharacteristicUsingUUID::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         &uuid,
@@ -792,7 +795,7 @@ async fn inline_uuid_shape_drives_read_by_type_commands() {
 
     let sink = RecordingSink::new();
     GattReadByTypeRequest::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         &uuid,
@@ -810,7 +813,7 @@ async fn inline_uuid_shape_drives_read_by_type_commands() {
 
     let sink = RecordingSink::new();
     GattReadByGroupTypeRequest::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         &uuid,
@@ -831,7 +834,7 @@ async fn inline_uuid_shape_drives_read_by_type_commands() {
 async fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value() {
     let sink = RecordingSink::new();
     GattFindByTypeValueRequest::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         0xCDEF,
@@ -854,7 +857,7 @@ async fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value() {
 fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
     let oversized_value = [0; 247];
     let result = GattFindByTypeValueRequest::try_new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
         0xCDEF,
@@ -1003,7 +1006,7 @@ fn bitmap_schema_constructor_enforces_sparse_mask_and_cardinality() {
 async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
-        hci::ConnectionHandle(0x0123),
+        hci::bt_hci::param::ConnHandle(0x0123),
         0x4567,
         0x0089,
         0xABCD,
@@ -1025,11 +1028,16 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
 #[tokio::test]
 async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
     let sink = RecordingSink::new();
-    L2CocReconfig::try_new(hci::ConnectionHandle(0x0123), 0x4567, 0x0089, &[0xAA, 0xBB])
-        .unwrap()
-        .exec(&sink)
-        .await
-        .unwrap();
+    L2CocReconfig::try_new(
+        hci::bt_hci::param::ConnHandle(0x0123),
+        0x4567,
+        0x0089,
+        &[0xAA, 0xBB],
+    )
+    .unwrap()
+    .exec(&sink)
+    .await
+    .unwrap();
 
     assert_eq!(
         sink.written_data(),
@@ -1056,6 +1064,6 @@ fn declarative_l2cap_rejects_lengths_beyond_the_wire_bounds() {
     let reconfig = [0; 247];
     let tx = [0; 253];
 
-    assert!(L2CocReconfig::try_new(hci::ConnectionHandle(0), 0, 0, &reconfig).is_err());
+    assert!(L2CocReconfig::try_new(hci::bt_hci::param::ConnHandle(0), 0, 0, &reconfig).is_err());
     assert!(L2CocTxData::try_new(0, &tx).is_err());
 }

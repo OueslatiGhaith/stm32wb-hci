@@ -171,19 +171,19 @@ macro_rules! impl_hci_newtype_field {
     };
 }
 
-impl_hci_newtype_field!(crate::ConnectionHandle, u16, 2);
-impl_hci_newtype_field!(crate::AdvertisingHandle, u8, 1);
-impl_hci_newtype_field!(crate::BdAddr, [u8; 6], 6);
+impl_hci_newtype_field!(bt_hci::param::ConnHandle, u16, 2);
+impl_hci_newtype_field!(bt_hci::param::AdvHandle, u8, 1);
+impl_hci_newtype_field!(bt_hci::param::BdAddr, [u8; 6], 6);
 impl_hci_newtype_field!(crate::vendor::event::AttributeHandle, u16, 2);
 
-impl HciEncodeField<7> for crate::BdAddrType {
+impl HciEncodeField<7> for crate::types::BdAddrType {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         match self {
-            crate::BdAddrType::Public(address) => {
+            crate::types::BdAddrType::Public(address) => {
                 writer.write_all(&[0])?;
                 writer.write_all(&address.0)
             }
-            crate::BdAddrType::Random(address) => {
+            crate::types::BdAddrType::Random(address) => {
                 writer.write_all(&[1])?;
                 writer.write_all(&address.0)
             }
@@ -195,11 +195,11 @@ impl HciEncodeField<7> for crate::BdAddrType {
         mut writer: W,
     ) -> Result<(), W::Error> {
         match self {
-            crate::BdAddrType::Public(address) => {
+            crate::types::BdAddrType::Public(address) => {
                 writer.write_all(&[0]).await?;
                 writer.write_all(&address.0).await
             }
-            crate::BdAddrType::Random(address) => {
+            crate::types::BdAddrType::Random(address) => {
                 writer.write_all(&[1]).await?;
                 writer.write_all(&address.0).await
             }
@@ -207,11 +207,11 @@ impl HciEncodeField<7> for crate::BdAddrType {
     }
 }
 
-impl HciDecodeField<7> for crate::BdAddrType {
+impl HciDecodeField<7> for crate::types::BdAddrType {
     fn from_hci_field(bytes: &[u8; 7]) -> Result<Self, bt_hci::FromHciBytesError> {
         let mut address = [0; 6];
         address.copy_from_slice(&bytes[1..]);
-        crate::to_bd_addr_type(bytes[0], crate::BdAddr(address))
+        crate::types::to_bd_addr_type(bytes[0], bt_hci::param::BdAddr(address))
             .map_err(|_| bt_hci::FromHciBytesError::InvalidValue)
     }
 }
@@ -547,18 +547,6 @@ pub struct BoundedBytes<const MAX_LEN: usize> {
 }
 
 impl<const MAX_LEN: usize> BoundedBytes<MAX_LEN> {
-    pub(crate) fn try_from_slice(value: &[u8]) -> Result<Self, HciLengthError> {
-        if value.len() > MAX_LEN {
-            return Err(HciLengthError::new(value.len(), 0, MAX_LEN));
-        }
-        let mut bytes = [0; MAX_LEN];
-        bytes[..value.len()].copy_from_slice(value);
-        Ok(Self {
-            bytes,
-            len: value.len(),
-        })
-    }
-
     /// Returns only the bytes present on the wire.
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len]
@@ -1979,7 +1967,7 @@ macro_rules! declarative_variable_command {
 /// vendor_cmd! {
 ///     GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
 ///         Params = {
-///             conn_handle: ConnectionHandle => 2,
+///             conn_handle: ConnHandle => 2,
 ///         };
 ///         Completion = CommandStatus;
 ///     }
@@ -2029,7 +2017,7 @@ macro_rules! declarative_variable_command {
 /// vendor_cmd! {
 ///     GattReadMultiple(cgid = 0x2, cid = 0x32) {
 ///         Params<'a> = {
-///             conn_handle: ConnectionHandle => 2,
+///             conn_handle: ConnHandle => 2,
 ///             handles: &'a [AttributeHandle] => {
 ///                 kind: counted_items,
 ///                 count: u8 => 1,
