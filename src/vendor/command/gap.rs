@@ -22,7 +22,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
 vendor_cmd! {
-    GapSetNonDiscoverable(GAP_SET_NONDISCOVERABLE) {
+    GapSetNonDiscoverable(cgid = 0x1, cid = 0x01) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -30,7 +30,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetLimitedDiscoverable(GAP_SET_LIMITED_DISCOVERABLE) {
+    GapSetLimitedDiscoverable(cgid = 0x1, cid = 0x02) {
         Params<'a> = {
             advertising_type: u8 => 1,
             advertising_interval_min: u16 => 2,
@@ -55,7 +55,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetDiscoverable(GAP_SET_DISCOVERABLE) {
+    GapSetDiscoverable(cgid = 0x1, cid = 0x03) {
         Params<'a> = {
             advertising_type: u8 => 1,
             advertising_interval_min: u16 => 2,
@@ -81,7 +81,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetDirectConnectable(GAP_SET_DIRECT_CONNECTABLE) {
+    GapSetDirectConnectable(cgid = 0x1, cid = 0x04) {
         Params = {
             own_address_type: u8 => 1,
             advertising_type: u8 => 1,
@@ -95,7 +95,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetIoCapability(GAP_SET_IO_CAPABILITY) {
+    GapSetIoCapability(cgid = 0x1, cid = 0x05) {
         Params = {
             io_capability: IoCapability => 1,
         };
@@ -105,7 +105,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetAuthenticationRequirement(GAP_SET_AUTHENTICATION_REQUIREMENT) {
+    GapSetAuthenticationRequirement(cgid = 0x1, cid = 0x06) {
         Params = {
             bonding_required: bool => 1,
             mitm_protection_required: bool => 1,
@@ -123,7 +123,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetAuthorizationRequirement(GAP_SET_AUTHORIZATION_REQUIREMENT) {
+    GapSetAuthorizationRequirement(cgid = 0x1, cid = 0x07) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             authorization_required: bool => 1,
@@ -134,7 +134,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapPassKeyResponse(GAP_PASS_KEY_RESPONSE) {
+    GapPassKeyResponse(cgid = 0x1, cid = 0x08) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             pin: u32 => 4,
@@ -145,7 +145,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAuthorizationResponse(GAP_AUTHORIZATION_RESPONSE) {
+    GapAuthorizationResponse(cgid = 0x1, cid = 0x09) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             authorization: u8 => 1,
@@ -158,7 +158,7 @@ vendor_cmd! {
 // TODO: verify these return parameters
 
 vendor_cmd! {
-    CmdGapInit(GAP_INIT) {
+    CmdGapInit(cgid = 0x1, cid = 0x0A) {
         Params = {
             role: Role => 1,
             privacy_enabled: bool => 1,
@@ -174,7 +174,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetNonConnectable(GAP_SET_NONCONNECTABLE) {
+    GapSetNonConnectable(cgid = 0x1, cid = 0x0B) {
         Params = {
             advertising_type: u8 => 1,
             address_type: u8 => 1,
@@ -185,7 +185,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetUnidirectedConnectable(GAP_SET_UNDIRECTED_CONNECTABLE) {
+    GapSetUnidirectedConnectable(cgid = 0x1, cid = 0x0C) {
         Params = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
@@ -198,7 +198,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
+    GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
         Params = {
             conn_handle: ConnectionHandle => 2,
         };
@@ -207,7 +207,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapUpdateAdvertisingData(GAP_UPDATE_ADVERTISING_DATA) {
+    GapUpdateAdvertisingData(cgid = 0x1, cid = 0x0E) {
         Params<'a> = {
             data: &'a [u8] => {
                 kind: counted_bytes,
@@ -221,7 +221,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapDeleteAdType(GAP_DELETE_AD_TYPE) {
+    GapDeleteAdType(cgid = 0x1, cid = 0x0F) {
         Params = {
             ad_type: u8 => 1,
         };
@@ -231,7 +231,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapGetSecurityLevel(GAP_GET_SECURITY_LEVEL) {
+    GapGetSecurityLevel(cgid = 0x1, cid = 0x10) {
         Params = {
             conn_handle: ConnectionHandle => 2,
         };
@@ -244,7 +244,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetEventMask(GAP_SET_EVENT_MASK) {
+    GapSetEventMask(cgid = 0x1, cid = 0x11) {
         Params = {
             flags: u16 => 2,
         };
@@ -254,7 +254,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapConfigureWhitelist(GAP_CONFIGURE_WHITE_LIST) {
+    GapConfigureWhitelist(cgid = 0x1, cid = 0x12) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -262,7 +262,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapTerminate(GAP_TERMINATE) {
+    GapTerminate(cgid = 0x1, cid = 0x13) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             reason: u8 => 1,
@@ -272,7 +272,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapClearSecurityDatabase(GAP_CLEAR_SECURITY_DATABASE) {
+    GapClearSecurityDatabase(cgid = 0x1, cid = 0x14) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -280,7 +280,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAllowRebond(GAP_ALLOW_REBOND) {
+    GapAllowRebond(cgid = 0x1, cid = 0x15) {
         Params = {
             conn_handle: ConnectionHandle => 2,
         };
@@ -290,7 +290,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartLimitedDiscoveryProcedure(GAP_START_LIMITED_DISCOVERY_PROCEDURE) {
+    GapStartLimitedDiscoveryProcedure(cgid = 0x1, cid = 0x16) {
         Params = {
             scan_interval: u16 => 2,
             scan_window: u16 => 2,
@@ -302,7 +302,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartGeneralDiscoveryProcedure(GAP_START_GENERAL_DISCOVERY_PROCEDURE) {
+    GapStartGeneralDiscoveryProcedure(cgid = 0x1, cid = 0x17) {
         Params = {
             scan_interval: u16 => 2,
             scan_window: u16 => 2,
@@ -314,7 +314,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartAutoConnectionEstablishmentProcedure(GAP_START_AUTO_CONNECTION_ESTABLISHMENT) {
+    GapStartAutoConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x19) {
         Params<'a> = {
             scan_interval: u16 => 2,
             scan_window: u16 => 2,
@@ -337,7 +337,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartGeneralConnectionEstablishmentProcedure(GAP_START_GENERAL_CONNECTION_ESTABLISHMENT) {
+    GapStartGeneralConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1A) {
         Params = {
             scan_type: u8 => 1,
             scan_interval: u16 => 2,
@@ -351,7 +351,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartSelectiveConnectionEstablishmentProcedure(GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT) {
+    GapStartSelectiveConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1B) {
         Params<'a> = {
             scan_type: u8 => 1,
             scan_interval: u16 => 2,
@@ -371,7 +371,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapCreateConnection(GAP_CREATE_CONNECTION) {
+    GapCreateConnection(cgid = 0x1, cid = 0x1C) {
         Params = {
             scan_interval: u16 => 2,
             scan_window: u16 => 2,
@@ -389,7 +389,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapTerminateProcedure(GAP_TERMINATE_PROCEDURE) {
+    GapTerminateProcedure(cgid = 0x1, cid = 0x1D) {
         Params = {
             procedure: u8 => 1,
         };
@@ -399,7 +399,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartConnectionUpdate(GAP_START_CONNECTION_UPDATE) {
+    GapStartConnectionUpdate(cgid = 0x1, cid = 0x1E) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             conn_interval_min: u16 => 2,
@@ -414,7 +414,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSendPairingRequest(GAP_SEND_PAIRING_REQUEST) {
+    GapSendPairingRequest(cgid = 0x1, cid = 0x1F) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             force_rebond: bool => 1,
@@ -424,7 +424,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    CmdGapResolvePrivateAddress(GAP_RESOLVE_PRIVATE_ADDRESS) {
+    CmdGapResolvePrivateAddress(cgid = 0x1, cid = 0x20) {
         Params = {
             address: BdAddr => 6,
         };
@@ -436,7 +436,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetBroadcastMode(GAP_SET_BROADCAST_MODE) {
+    GapSetBroadcastMode(cgid = 0x1, cid = 0x21) {
         Params<'a> = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
@@ -460,7 +460,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapStartObservationProcedure(GAP_START_OBSERVATION_PROCEDURE) {
+    GapStartObservationProcedure(cgid = 0x1, cid = 0x22) {
         Params = {
             scan_interval: u16 => 2,
             scan_window: u16 => 2,
@@ -474,7 +474,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapGetBondedDevices(GAP_GET_BONDED_DEVICES) {
+    GapGetBondedDevices(cgid = 0x1, cid = 0x23) {
         Params = ();
         Completion = CommandComplete;
         Return = GapBondedDevices {
@@ -498,7 +498,7 @@ impl GapBondedDevices {
 }
 
 vendor_cmd! {
-    GapIsDeviceBonded(GAP_IS_DEVICE_BONDED) {
+    GapIsDeviceBonded(cgid = 0x1, cid = 0x24) {
         Params = {
             address: PeerAddrType => 7,
         };
@@ -508,7 +508,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapConfirmNumericComparisonValue(GAP_NUMERIC_COMPARISON_VALUE_YES_NO) {
+    GapConfirmNumericComparisonValue(cgid = 0x1, cid = 0x25) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             confirm_yes_no: bool => 1,
@@ -519,7 +519,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapPasskeyInput(GAP_PASSKEY_INPUT) {
+    GapPasskeyInput(cgid = 0x1, cid = 0x26) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             input_type: u8 => 1,
@@ -529,7 +529,7 @@ vendor_cmd! {
     }
 }
 vendor_cmd! {
-    GapGetOobData(GAP_GET_OOB_DATA) {
+    GapGetOobData(cgid = 0x1, cid = 0x27) {
         Params = {
             oob_data_type: u8 => 1,
         };
@@ -545,7 +545,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapSetOobData(GAP_SET_OOB_DATA) {
+    GapSetOobData(cgid = 0x1, cid = 0x28) {
         Params = {
             device_type: u8 => 1,
             address: BdAddrType => 7,
@@ -559,7 +559,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAddDevicesToResolvingList(GAP_ADD_DEVICES_TO_RESOLVING_LIST) {
+    GapAddDevicesToResolvingList(cgid = 0x1, cid = 0x29) {
         Params<'a> = {
             whitelist_identities: &'a [PeerAddrType] => {
                 kind: counted_items,
@@ -575,7 +575,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapRemoveBondedDevice(GAP_REMOVE_BONDED_DEVICE) {
+    GapRemoveBondedDevice(cgid = 0x1, cid = 0x2A) {
         Params = {
             address: BdAddrType => 7,
         };
@@ -585,7 +585,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAddDevicesToList(GAP_ADD_DEVICES_TO_LIST) {
+    GapAddDevicesToList(cgid = 0x1, cid = 0x2B) {
         Params<'a> = {
             list_entries: &'a [BdAddrType] => {
                 kind: counted_items,
@@ -601,7 +601,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdditionalBeaconStart(GAP_ADDITIONAL_BEACON_START) {
+    GapAdditionalBeaconStart(cgid = 0x1, cid = 0x30) {
         Params = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
@@ -615,7 +615,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdditionalBeaconStop(GAP_ADDITIONAL_BEACON_STOP) {
+    GapAdditionalBeaconStop(cgid = 0x1, cid = 0x31) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -623,7 +623,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdditionalBeaconSetData(GAP_ADDITIONAL_BEACON_SET_DATA) {
+    GapAdditionalBeaconSetData(cgid = 0x1, cid = 0x32) {
         Params<'a> = {
             advertising_data: &'a [u8] => {
                 kind: trailing_bytes,
@@ -637,7 +637,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvSetConfig(GAP_ADV_SET_CONFIGURATION) {
+    GapAdvSetConfig(cgid = 0x1, cid = 0x40) {
         Params<'a> = {
             adv_mode: u8 => 1,
             adv_handle: AdvertisingHandle => 1,
@@ -659,7 +659,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvSetEnable(GAP_ADV_SET_ENABLE) {
+    GapAdvSetEnable(cgid = 0x1, cid = 0x41) {
         Params<'a> = {
             enable: bool => 1,
             adv_set: &'a [AdvSet] => {
@@ -675,7 +675,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvSetAdvertisingData(GAP_ADV_SET_ADV_DATA) {
+    GapAdvSetAdvertisingData(cgid = 0x1, cid = 0x42) {
         Params<'a> = {
             adv_handle: AdvertisingHandle => 1,
             operation: u8 => 1,
@@ -692,7 +692,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvSetScanResponseData(GAP_ADV_SET_SCAN_RESPONSE_DATA) {
+    GapAdvSetScanResponseData(cgid = 0x1, cid = 0x43) {
         Params<'a> = {
             adv_handle: AdvertisingHandle => 1,
             operation: u8 => 1,
@@ -709,7 +709,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvRemoveSet(GAP_ADV_REMOVE_SET) {
+    GapAdvRemoveSet(cgid = 0x1, cid = 0x44) {
         Params = {
             handle: AdvertisingHandle => 1,
         };
@@ -719,7 +719,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
+    GapAdvClearSets(cgid = 0x1, cid = 0x45) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -727,7 +727,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    GapAdvSetRandomAddress(GAP_ADV_SET_RANDOM_ADDRESS) {
+    GapAdvSetRandomAddress(cgid = 0x1, cid = 0x46) {
         Params = {
             handle: AdvertisingHandle => 1,
             address: BdAddr => 6,
@@ -739,7 +739,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapPairingRequestReply(GAP_PAIRING_REQUEST_REPLY) {
+    GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             accept: bool => 1,
@@ -751,7 +751,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapAdvSetPeriodicParameters(GAP_ADV_SET_PERIODIC_PARAMETERS) {
+    GapAdvSetPeriodicParameters(cgid = 0x1, cid = 0x47) {
         Params = {
             advertising_handle: AdvertisingHandle => 1,
             periodic_adv_interval_min: u16 => 2,
@@ -770,7 +770,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapAdvSetPeriodicData(GAP_ADV_SET_PERIODIC_DATA) {
+    GapAdvSetPeriodicData(cgid = 0x1, cid = 0x48) {
         Params<'a> = {
             advertising_handle: AdvertisingHandle => 1,
             operation: u8 => 1,
@@ -787,7 +787,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapAdvSetPeriodicEnable(GAP_ADV_SET_PERIODIC_ENABLE) {
+    GapAdvSetPeriodicEnable(cgid = 0x1, cid = 0x49) {
         Params = {
             enable: u8 => 1,
             handle: AdvertisingHandle => 1,
@@ -799,7 +799,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapAdvSetConfigurationV2(GAP_ADV_SET_CONFIGURATION_V2) {
+    GapAdvSetConfigurationV2(cgid = 0x1, cid = 0x4D) {
         Params = {
             adv_mode: u8 => 1,
             adv_handle: AdvertisingHandle => 1,
@@ -825,7 +825,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapExtStartScan(GAP_EXT_START_SCAN) {
+    GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params<'a> = {
             scan_mode: u8 => 1,
             procedure: u8 => 1,
@@ -849,7 +849,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    GapExtCreateConnection(GAP_EXT_CREATE_CONNECTION) {
+    GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params<'a> = {
             initiating_mode: u8 => 1,
             procedure: u8 => 1,

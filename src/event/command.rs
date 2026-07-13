@@ -9,13 +9,14 @@
 //! For the return parameters of the commands, see the description of each command in sections 7.1 -
 //! 7.6 of the same part of the spec.
 
-use crate::vendor::opcode::VENDOR_OGF;
 use crate::{ConnectionHandle, Status};
 use bt_hci::AsHciBytes;
 use bt_hci::param::{CmdMask, LeFeatureMask, LmpFeatureMask};
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
+
+pub(crate) const VENDOR_OGF: u16 = 0x3F;
 
 /// The [Command Complete](super::Event::CommandComplete) event is used by the Controller for most
 /// commands to transmit return status of a command and the other event parameters that are

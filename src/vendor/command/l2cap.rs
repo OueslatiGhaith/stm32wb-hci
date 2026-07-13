@@ -7,7 +7,7 @@ use crate::{
 };
 
 vendor_cmd! {
-    L2ConnectionParameterUpdateRequest(L2CAP_CONN_PARAM_UPDATE_REQ) {
+    L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             conn_interval: ConnectionInterval => 8,
@@ -17,7 +17,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2ConnectionParameterUpdateResponse(L2CAP_CONN_PARAM_UPDATE_RESP) {
+    L2ConnectionParameterUpdateResponse(cgid = 0x3, cid = 0x02) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             conn_interval: ConnectionInterval => 8,
@@ -31,7 +31,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocConnect(L2CAP_COC_CONNECT) {
+    L2CocConnect(cgid = 0x3, cid = 0x08) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             spsm: u16 => 2,
@@ -46,7 +46,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocConnectConfirm(L2CAP_COC_CONNECT_CONFIRM) {
+    L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             mtu: u16 => 2,
@@ -66,7 +66,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocReconfig(L2CAP_COC_RECONFIG) {
+    L2CocReconfig(cgid = 0x3, cid = 0x0A) {
         Params<'a> = {
             conn_handle: ConnectionHandle => 2,
             mtu: u16 => 2,
@@ -83,7 +83,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocReconfigConfirm(L2CAP_COC_RECONFIG_CONFIRM) {
+    L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
         Params = {
             conn_handle: ConnectionHandle => 2,
             result: u16 => 2,
@@ -94,7 +94,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocDisconnect(L2CAP_COC_DISCONNECT) {
+    L2CocDisconnect(cgid = 0x3, cid = 0x0C) {
         Params = {
             channel_index: u8 => 1,
         };
@@ -104,7 +104,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocFlowControl(L2CAP_COC_FLOW_CONTROL) {
+    L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
         Params = {
             channel_index: u8 => 1,
             credits: u16 => 2,
@@ -115,7 +115,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    L2CocTxData(L2CAP_COC_TX_DATA) {
+    L2CocTxData(cgid = 0x3, cid = 0x0E) {
         Params<'a> = {
             channel_index: u8 => 1,
             data: &'a [u8] => {

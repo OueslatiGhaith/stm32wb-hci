@@ -8,6 +8,14 @@
 
 use bt_hci::WriteHci;
 
+/// Build the ten-bit vendor OCF from STM32's three-bit command-group ID and
+/// seven-bit command ID.
+const fn vendor_ocf(cgid: u16, cid: u16) -> u16 {
+    ::core::assert!(cgid <= 0b111, "vendor command-group ID exceeds three bits");
+    ::core::assert!(cid <= 0b111_1111, "vendor command ID exceeds seven bits");
+    (cgid << 7) | cid
+}
+
 /// A value with an exact, canonical representation in an HCI request.
 ///
 /// `N` is part of the trait so a declarative command field whose schema says
@@ -1733,7 +1741,7 @@ macro_rules! declarative_return {
 
 macro_rules! declarative_command {
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $len:literal,)*
         }
         Return = $ret:ty;
@@ -1750,6 +1758,13 @@ macro_rules! declarative_command {
         );
 
         impl $cmd {
+            /// STM32 vendor command-group ID.
+            pub const CGID: u16 = $cgid;
+            /// Command ID within [`Self::CGID`].
+            pub const CID: u16 = $cid;
+            /// Vendor-specific Opcode Command Field.
+            pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
+
             #[allow(clippy::too_many_arguments)]
             #[allow(missing_docs)]
             pub fn new($($field: $ty),*) -> Self {
@@ -1762,7 +1777,7 @@ macro_rules! declarative_command {
         impl ::bt_hci::cmd::Cmd for $cmd {
             const OPCODE: ::bt_hci::cmd::Opcode = ::bt_hci::cmd::Opcode::new(
                 ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
-                crate::vendor::opcode::$opcode.ocf(),
+                Self::OCF,
             );
             type Params = crate::vendor::command::DeclarativeParams<
                 declarative_field_list_type!($($ty => $len,)*)
@@ -1815,7 +1830,7 @@ macro_rules! declarative_command {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $len:literal,)*
         }
         CommandStatus;
@@ -1830,6 +1845,13 @@ macro_rules! declarative_command {
         );
 
         impl $cmd {
+            /// STM32 vendor command-group ID.
+            pub const CGID: u16 = $cgid;
+            /// Command ID within [`Self::CGID`].
+            pub const CID: u16 = $cid;
+            /// Vendor-specific Opcode Command Field.
+            pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
+
             #[allow(clippy::too_many_arguments)]
             #[allow(missing_docs)]
             pub fn new($($field: $ty),*) -> Self {
@@ -1842,7 +1864,7 @@ macro_rules! declarative_command {
         impl ::bt_hci::cmd::Cmd for $cmd {
             const OPCODE: ::bt_hci::cmd::Opcode = ::bt_hci::cmd::Opcode::new(
                 ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
-                crate::vendor::opcode::$opcode.ocf(),
+                Self::OCF,
             );
             type Params = crate::vendor::command::DeclarativeParams<
                 declarative_field_list_type!($($ty => $len,)*)
@@ -1886,7 +1908,7 @@ macro_rules! declarative_command {
 
 macro_rules! declarative_variable_command {
     (
-        $cmd:ident<$life:lifetime>($opcode:ident) {
+        $cmd:ident<$life:lifetime>(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $shape:tt,)*
         }
         Return = $ret:ty;
@@ -1903,6 +1925,13 @@ macro_rules! declarative_variable_command {
         );
 
         impl<$life> $cmd<$life> {
+            /// STM32 vendor command-group ID.
+            pub const CGID: u16 = $cgid;
+            /// Command ID within [`Self::CGID`].
+            pub const CID: u16 = $cid;
+            /// Vendor-specific Opcode Command Field.
+            pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
+
             #[allow(clippy::too_many_arguments)]
             #[allow(missing_docs)]
             pub fn try_new(
@@ -1926,7 +1955,7 @@ macro_rules! declarative_variable_command {
         impl<$life> ::bt_hci::cmd::Cmd for $cmd<$life> {
             const OPCODE: ::bt_hci::cmd::Opcode = ::bt_hci::cmd::Opcode::new(
                 ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
-                crate::vendor::opcode::$opcode.ocf(),
+                Self::OCF,
             );
             type Params = crate::vendor::command::DeclarativeParams<
                 declarative_schema_list_type!($($ty => $shape,)*)
@@ -1979,7 +2008,7 @@ macro_rules! declarative_variable_command {
         }
     };
     (
-        $cmd:ident<$life:lifetime>($opcode:ident) {
+        $cmd:ident<$life:lifetime>(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $shape:tt,)*
         }
         CommandStatus;
@@ -1994,6 +2023,13 @@ macro_rules! declarative_variable_command {
         );
 
         impl<$life> $cmd<$life> {
+            /// STM32 vendor command-group ID.
+            pub const CGID: u16 = $cgid;
+            /// Command ID within [`Self::CGID`].
+            pub const CID: u16 = $cid;
+            /// Vendor-specific Opcode Command Field.
+            pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
+
             #[allow(clippy::too_many_arguments)]
             #[allow(missing_docs)]
             pub fn try_new(
@@ -2017,7 +2053,7 @@ macro_rules! declarative_variable_command {
         impl<$life> ::bt_hci::cmd::Cmd for $cmd<$life> {
             const OPCODE: ::bt_hci::cmd::Opcode = ::bt_hci::cmd::Opcode::new(
                 ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
-                crate::vendor::opcode::$opcode.ocf(),
+                Self::OCF,
             );
             type Params = crate::vendor::command::DeclarativeParams<
                 declarative_schema_list_type!($($ty => $shape,)*)
@@ -2062,6 +2098,11 @@ macro_rules! declarative_variable_command {
 /// Declares a vendor command's request fields, completion mechanism, and
 /// command-complete payload.
 ///
+/// The declaration owns its STM32 command-group ID (`cgid`) and command ID
+/// (`cid`). The macro rejects values wider than three and seven bits,
+/// respectively, and exposes the derived `CGID`, `CID`, and `OCF` constants on
+/// the generated command type.
+///
 /// Fixed-width fields use `field: Type => N`. The expansion requires
 /// [`HciEncodeField<N>`](HciEncodeField) for request fields and
 /// [`HciDecodeField<N>`](HciDecodeField) for return fields. The declared widths
@@ -2071,7 +2112,7 @@ macro_rules! declarative_variable_command {
 ///
 /// ```rust,ignore
 /// vendor_cmd! {
-///     GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
+///     GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
 ///         Params = {
 ///             conn_handle: ConnectionHandle => 2,
 ///         };
@@ -2085,7 +2126,7 @@ macro_rules! declarative_variable_command {
 ///
 /// ```rust,ignore
 /// vendor_cmd! {
-///     GapSetIoCapability(GAP_SET_IO_CAPABILITY) {
+///     GapSetIoCapability(cgid = 0x1, cid = 0x05) {
 ///         Params = {
 ///             io_capability: IoCapability => 1,
 ///         };
@@ -2100,7 +2141,7 @@ macro_rules! declarative_variable_command {
 ///
 /// ```rust,ignore
 /// vendor_cmd! {
-///     CmdGapInit(GAP_INIT) {
+///     CmdGapInit(cgid = 0x1, cid = 0x0A) {
 ///         Params = {
 ///             role: Role => 1,
 ///             privacy_enabled: bool => 1,
@@ -2121,7 +2162,7 @@ macro_rules! declarative_variable_command {
 ///
 /// ```rust,ignore
 /// vendor_cmd! {
-///     GattReadMultiple(GATT_READ_MULTIPLE_VAR_CHAR_VALUE) {
+///     GattReadMultiple(cgid = 0x2, cid = 0x32) {
 ///         Params<'a> = {
 ///             conn_handle: ConnectionHandle => 2,
 ///             handles: &'a [AttributeHandle] => {
@@ -2220,14 +2261,14 @@ macro_rules! declarative_variable_command {
 /// allocation-free while the return value owns the initialized wire data.
 macro_rules! vendor_cmd {
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = ();
             Completion = CommandComplete;
             Return = ();
         }
     ) => {
         declarative_command! {
-            $cmd($opcode) {}
+            $cmd(cgid = $cgid, cid = $cid) {}
             Return = ();
             ReturnLen = 0;
         }
@@ -2238,13 +2279,13 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = ();
             Completion = CommandStatus;
         }
     ) => {
         declarative_command! {
-            $cmd($opcode) {}
+            $cmd(cgid = $cgid, cid = $cid) {}
             CommandStatus;
         }
         impl Default for $cmd {
@@ -2254,7 +2295,7 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = ();
             Completion = CommandComplete;
             Return = $ret:ident {
@@ -2268,7 +2309,7 @@ macro_rules! vendor_cmd {
             }
         }
         declarative_command! {
-            $cmd($opcode) {}
+            $cmd(cgid = $cgid, cid = $cid) {}
             Return = $ret;
             ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
         }
@@ -2279,7 +2320,7 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = {
                 $($field:ident: $ty:ty => $len:literal,)*
             };
@@ -2288,7 +2329,7 @@ macro_rules! vendor_cmd {
         }
     ) => {
         declarative_command! {
-            $cmd($opcode) {
+            $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
             Return = ();
@@ -2296,7 +2337,7 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = {
                 $($field:ident: $ty:ty => $len:literal,)*
             };
@@ -2304,14 +2345,14 @@ macro_rules! vendor_cmd {
         }
     ) => {
         declarative_command! {
-            $cmd($opcode) {
+            $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
             CommandStatus;
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = {
                 $($field:ident: $ty:ty => $len:literal,)*
             };
@@ -2327,7 +2368,7 @@ macro_rules! vendor_cmd {
             }
         }
         declarative_command! {
-            $cmd($opcode) {
+            $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
             Return = $ret;
@@ -2335,7 +2376,7 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params<$life:lifetime> = {
                 $($field:ident: $ty:ty => $shape:tt,)*
             };
@@ -2344,7 +2385,7 @@ macro_rules! vendor_cmd {
         }
     ) => {
         declarative_variable_command! {
-            $cmd<$life>($opcode) {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
             Return = ();
@@ -2352,7 +2393,7 @@ macro_rules! vendor_cmd {
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params<$life:lifetime> = {
                 $($field:ident: $ty:ty => $shape:tt,)*
             };
@@ -2360,14 +2401,14 @@ macro_rules! vendor_cmd {
         }
     ) => {
         declarative_variable_command! {
-            $cmd<$life>($opcode) {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
             CommandStatus;
         }
     };
     (
-        $cmd:ident($opcode:ident) {
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params<$life:lifetime> = {
                 $($field:ident: $ty:ty => $shape:tt,)*
             };
@@ -2383,7 +2424,7 @@ macro_rules! vendor_cmd {
             }
         }
         declarative_variable_command! {
-            $cmd<$life>($opcode) {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
             Return = $ret;
@@ -2415,7 +2456,7 @@ mod tests {
     }
 
     vendor_cmd! {
-        AggregateLengthFixture(GAP_UPDATE_ADVERTISING_DATA) {
+        AggregateLengthFixture(cgid = 0x1, cid = 0x0E) {
             Params<'a> = {
                 prefix: u8 => 1,
                 first: &'a [u8] => {
@@ -2502,6 +2543,16 @@ mod tests {
         };
         assert_eq!(error.actual(), 256);
         assert_eq!(error.maximum(), 255);
+    }
+
+    #[test]
+    fn command_ids_are_derived_from_the_declaration() {
+        use bt_hci::cmd::Cmd;
+
+        assert_eq!(AggregateLengthFixture::CGID, 0x1);
+        assert_eq!(AggregateLengthFixture::CID, 0x0E);
+        assert_eq!(AggregateLengthFixture::OCF, 0x008E);
+        assert_eq!(<AggregateLengthFixture<'_> as Cmd>::OPCODE.to_raw(), 0xFC8E);
     }
 }
 

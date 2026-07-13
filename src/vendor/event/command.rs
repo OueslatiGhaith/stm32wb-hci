@@ -64,10 +64,6 @@ pub enum VendorReturnParameters {
     HalSetTxPowerLevel(crate::Status),
 
     /// Status returned by the
-    /// HAL Device Standby command.
-    #[cfg(after_fw_0_17_1)]
-    HalDeviceStandby(crate::Status),
-
     /// Parameters returned by the
     /// [HAL Get Tx Test Packet Count](crate::vendor::command::hal::HalGetTxTestPacketCount) command.
     HalGetTxTestPacketCount(HalTxTestPacketCount),
@@ -453,315 +449,322 @@ impl VendorReturnParameters {
     pub(crate) fn new(bytes: &[u8]) -> Result<Self, crate::event::Error> {
         check_len_at_least(bytes, 3)?;
 
-        match crate::Opcode(LittleEndian::read_u16(&bytes[1..])) {
-            crate::vendor::opcode::HAL_GET_FIRMWARE_REVISION => {
+        let opcode = crate::Opcode(LittleEndian::read_u16(&bytes[1..]));
+        if opcode.ogf() != crate::event::command::VENDOR_OGF {
+            return Err(crate::event::Error::UnknownOpcode(opcode));
+        }
+
+        match opcode.ocf() {
+            crate::vendor::command::hal::HalGetFirmwareRevision::OCF => {
                 Ok(VendorReturnParameters::HalGetFirmwareRevision(
                     to_hal_firmware_revision(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::HAL_WRITE_CONFIG_DATA => Ok(
+            crate::vendor::command::hal::HalWriteConfigData::OCF => Ok(
                 VendorReturnParameters::HalWriteConfigData(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_READ_CONFIG_DATA => Ok(
+            crate::vendor::command::hal::HalReadConfigData::OCF => Ok(
                 VendorReturnParameters::HalReadConfigData(to_hal_config_data(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_SET_TX_POWER_LEVEL => Ok(
+            crate::vendor::command::hal::HalSetTxPowerLevel::OCF => Ok(
                 VendorReturnParameters::HalSetTxPowerLevel(to_status(&bytes[3..])?),
             ),
-            #[cfg(after_fw_0_17_1)]
-            crate::vendor::opcode::HAL_DEVICE_STANDBY => Ok(
-                VendorReturnParameters::HalDeviceStandby(to_status(&bytes[3..])?),
-            ),
-            crate::vendor::opcode::HAL_TX_TEST_PACKET_COUNT => {
+            crate::vendor::command::hal::HalGetTxTestPacketCount::OCF => {
                 Ok(VendorReturnParameters::HalGetTxTestPacketCount(
                     to_hal_tx_test_packet_count(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::HAL_START_TONE => Ok(VendorReturnParameters::HalStartTone(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::HAL_STOP_TONE => {
+            crate::vendor::command::hal::HalStartTone::OCF => Ok(
+                VendorReturnParameters::HalStartTone(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::hal::HalStopTone::OCF => {
                 Ok(VendorReturnParameters::HalStopTone(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::HAL_GET_LINK_STATUS => Ok(
+            crate::vendor::command::hal::HalGetLinkStatus::OCF => Ok(
                 VendorReturnParameters::HalGetLinkStatus(to_hal_link_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_GET_ANCHOR_PERIOD => Ok(
+            crate::vendor::command::hal::HalGetAnchorPeriod::OCF => Ok(
                 VendorReturnParameters::HalGetAnchorPeriod(to_hal_anchor_period(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_GET_PM_DEBUG_INFO => Ok(
+            crate::vendor::command::hal::HalGetPmDebugInfo::OCF => Ok(
                 VendorReturnParameters::HalGetPmDebugInfo(to_hal_pm_debug_info(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_SET_RADIO_ACTIVITY_MASK => Ok(
+            crate::vendor::command::hal::HalSetRadioActivityMask::OCF => Ok(
                 VendorReturnParameters::HalSetRadioActivityMask(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_SET_EVENT_MASK => Ok(
+            crate::vendor::command::hal::HalSetEventMask::OCF => Ok(
                 VendorReturnParameters::HalSetEventMask(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_SET_PERIPHERAL_LATENCY => Ok(
+            crate::vendor::command::hal::HalSetPeripheralLatency::OCF => Ok(
                 VendorReturnParameters::HalSetPeripheralLatency(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_READ_RSSI => Ok(VendorReturnParameters::HalReadRssi(
-                decode_status_prefixed::<HalRssi>(&bytes[3..], 1)?.value,
-            )),
-            crate::vendor::opcode::HAL_READ_RADIO_REG => {
+            crate::vendor::command::hal::HalReadRssi::OCF => {
+                Ok(VendorReturnParameters::HalReadRssi(
+                    decode_status_prefixed::<HalRssi>(&bytes[3..], 1)?.value,
+                ))
+            }
+            crate::vendor::command::hal::HalReadRadioReg::OCF => {
                 Ok(VendorReturnParameters::HalReadRadioReg({
                     require_len!(&bytes[3..], 1);
                     bytes[3]
                 }))
             }
-            crate::vendor::opcode::HAL_WRITE_RADIO_REG => Ok(
+            crate::vendor::command::hal::HalWriteRadioReg::OCF => Ok(
                 VendorReturnParameters::HalWriteRadioReg(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_READ_RAW_RSSI => Ok(VendorReturnParameters::HalReadRawRssi(
-                decode_status_prefixed::<HalRawRssi>(&bytes[3..], 3)?.value,
-            )),
-            crate::vendor::opcode::HAL_RX_START => {
+            crate::vendor::command::hal::HalReadRawRssi::OCF => {
+                Ok(VendorReturnParameters::HalReadRawRssi(
+                    decode_status_prefixed::<HalRawRssi>(&bytes[3..], 3)?.value,
+                ))
+            }
+            crate::vendor::command::hal::HalRxStart::OCF => {
                 Ok(VendorReturnParameters::HalRxStart(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::HAL_RX_STOP => {
+            crate::vendor::command::hal::HalRxStop::OCF => {
                 Ok(VendorReturnParameters::HalRxStop(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::HAL_STACK_RESET => Ok(VendorReturnParameters::HalStackReset(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GAP_SET_NONDISCOVERABLE => Ok(
+            crate::vendor::command::hal::HalStackReset::OCF => Ok(
+                VendorReturnParameters::HalStackReset(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::gap::GapSetNonDiscoverable::OCF => Ok(
                 VendorReturnParameters::GapSetNonDiscoverable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_DISCOVERABLE => Ok(
+            crate::vendor::command::gap::GapSetDiscoverable::OCF => Ok(
                 VendorReturnParameters::GapSetDiscoverable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_DIRECT_CONNECTABLE => Ok(
+            crate::vendor::command::gap::GapSetDirectConnectable::OCF => Ok(
                 VendorReturnParameters::GapSetDirectConnectable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_IO_CAPABILITY => Ok(
+            crate::vendor::command::gap::GapSetIoCapability::OCF => Ok(
                 VendorReturnParameters::GapSetIoCapability(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_AUTHENTICATION_REQUIREMENT => Ok(
+            crate::vendor::command::gap::GapSetAuthenticationRequirement::OCF => Ok(
                 VendorReturnParameters::GapSetAuthenticationRequirement(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_AUTHORIZATION_REQUIREMENT => Ok(
+            crate::vendor::command::gap::GapSetAuthorizationRequirement::OCF => Ok(
                 VendorReturnParameters::GapSetAuthorizationRequirement(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_PASS_KEY_RESPONSE => Ok(
+            crate::vendor::command::gap::GapPassKeyResponse::OCF => Ok(
                 VendorReturnParameters::GapPassKeyResponse(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_AUTHORIZATION_RESPONSE => Ok(
+            crate::vendor::command::gap::GapAuthorizationResponse::OCF => Ok(
                 VendorReturnParameters::GapAuthorizationResponse(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_INIT => {
+            crate::vendor::command::gap::CmdGapInit::OCF => {
                 Ok(VendorReturnParameters::GapInit(to_gap_init(&bytes[3..])?))
             }
-            crate::vendor::opcode::GAP_SET_NONCONNECTABLE => Ok(
+            crate::vendor::command::gap::GapSetNonConnectable::OCF => Ok(
                 VendorReturnParameters::GapSetNonConnectable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_UNDIRECTED_CONNECTABLE => Ok(
+            crate::vendor::command::gap::GapSetUnidirectedConnectable::OCF => Ok(
                 VendorReturnParameters::GapSetUndirectedConnectable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_UPDATE_ADVERTISING_DATA => Ok(
+            crate::vendor::command::gap::GapUpdateAdvertisingData::OCF => Ok(
                 VendorReturnParameters::GapUpdateAdvertisingData(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_DELETE_AD_TYPE => Ok(
+            crate::vendor::command::gap::GapDeleteAdType::OCF => Ok(
                 VendorReturnParameters::GapDeleteAdType(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_GET_SECURITY_LEVEL => Ok(
+            crate::vendor::command::gap::GapGetSecurityLevel::OCF => Ok(
                 VendorReturnParameters::GapGetSecurityLevel(to_gap_security_level(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_EVENT_MASK => Ok(
+            crate::vendor::command::gap::GapSetEventMask::OCF => Ok(
                 VendorReturnParameters::GapSetEventMask(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_CONFIGURE_WHITE_LIST => Ok(
+            crate::vendor::command::gap::GapConfigureWhitelist::OCF => Ok(
                 VendorReturnParameters::GapConfigureWhiteList(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_CLEAR_SECURITY_DATABASE => Ok(
+            crate::vendor::command::gap::GapClearSecurityDatabase::OCF => Ok(
                 VendorReturnParameters::GapClearSecurityDatabase(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ALLOW_REBOND => Ok(VendorReturnParameters::GapAllowRebond(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GAP_TERMINATE_PROCEDURE => Ok(
+            crate::vendor::command::gap::GapAllowRebond::OCF => Ok(
+                VendorReturnParameters::GapAllowRebond(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::gap::GapTerminateProcedure::OCF => Ok(
                 VendorReturnParameters::GapTerminateProcedure(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_RESOLVE_PRIVATE_ADDRESS => {
+            crate::vendor::command::gap::CmdGapResolvePrivateAddress::OCF => {
                 Ok(VendorReturnParameters::GapResolvePrivateAddress(
                     to_gap_resolve_private_address(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::GAP_GET_BONDED_DEVICES => Ok(
+            crate::vendor::command::gap::GapGetBondedDevices::OCF => Ok(
                 VendorReturnParameters::GapGetBondedDevices(to_gap_bonded_devices(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_BROADCAST_MODE => Ok(
+            crate::vendor::command::gap::GapSetBroadcastMode::OCF => Ok(
                 VendorReturnParameters::GapSetBroadcastMode(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_START_OBSERVATION_PROCEDURE => Ok(
+            crate::vendor::command::gap::GapStartObservationProcedure::OCF => Ok(
                 VendorReturnParameters::GapStartObservationProcedure(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_IS_DEVICE_BONDED => Ok(
+            crate::vendor::command::gap::GapIsDeviceBonded::OCF => Ok(
                 VendorReturnParameters::GapIsDeviceBonded(to_status(&bytes[3..])?),
             ),
             #[cfg(after_fw_0_17_1)]
-            crate::vendor::opcode::GAP_PAIRING_REQUEST_REPLY => Ok(
+            crate::vendor::command::gap::GapPairingRequestReply::OCF => Ok(
                 VendorReturnParameters::GapPairingRequestReply(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_GET_OOB_DATA => Ok(VendorReturnParameters::GapGetOobData({
-                require_len!(bytes, 26 - 1 - 3);
+            crate::vendor::command::gap::GapGetOobData::OCF => {
+                Ok(VendorReturnParameters::GapGetOobData({
+                    require_len!(bytes, 26 - 1 - 3);
 
-                (to_status(&bytes[3..4])?, bytes[4..].try_into().unwrap())
-            })),
-            crate::vendor::opcode::GAP_PASSKEY_INPUT => Ok(
+                    (to_status(&bytes[3..4])?, bytes[4..].try_into().unwrap())
+                }))
+            }
+            crate::vendor::command::gap::GapPasskeyInput::OCF => Ok(
                 VendorReturnParameters::GapPasskeyInput(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_SET_OOB_DATA => Ok(VendorReturnParameters::GapSetOobData(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GAP_ADD_DEVICES_TO_RESOLVING_LIST => Ok(
+            crate::vendor::command::gap::GapSetOobData::OCF => Ok(
+                VendorReturnParameters::GapSetOobData(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::gap::GapAddDevicesToResolvingList::OCF => Ok(
                 VendorReturnParameters::GapAddDevicesToResolvingList(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_REMOVE_BONDED_DEVICE => Ok(
+            crate::vendor::command::gap::GapRemoveBondedDevice::OCF => Ok(
                 VendorReturnParameters::GapRemoveBondedDevice(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADD_DEVICES_TO_LIST => Ok(
+            crate::vendor::command::gap::GapAddDevicesToList::OCF => Ok(
                 VendorReturnParameters::GapAddDevicesToList(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_START => Ok(
+            crate::vendor::command::gap::GapAdditionalBeaconStart::OCF => Ok(
                 VendorReturnParameters::GapAdditionalBeaconStart(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_STOP => Ok(
+            crate::vendor::command::gap::GapAdditionalBeaconStop::OCF => Ok(
                 VendorReturnParameters::GapAdditionalBeaconStop(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADDITIONAL_BEACON_SET_DATA => Ok(
+            crate::vendor::command::gap::GapAdditionalBeaconSetData::OCF => Ok(
                 VendorReturnParameters::GapAdditionalBeaconSetData(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_SET_CONFIGURATION => Ok(
+            crate::vendor::command::gap::GapAdvSetConfig::OCF => Ok(
                 VendorReturnParameters::GapAdvSetConfiguration(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_SET_ENABLE => Ok(
+            crate::vendor::command::gap::GapAdvSetEnable::OCF => Ok(
                 VendorReturnParameters::GapAdvSetEnable(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_SET_ADV_DATA => Ok(
+            crate::vendor::command::gap::GapAdvSetAdvertisingData::OCF => Ok(
                 VendorReturnParameters::GapAdvSetAdvertisingData(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_SET_SCAN_RESPONSE_DATA => Ok(
+            crate::vendor::command::gap::GapAdvSetScanResponseData::OCF => Ok(
                 VendorReturnParameters::GapAdvSetScanResponseData(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_REMOVE_SET => Ok(
+            crate::vendor::command::gap::GapAdvRemoveSet::OCF => Ok(
                 VendorReturnParameters::GapAdvRemoveSet(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_CLEAR_SETS => Ok(
+            crate::vendor::command::gap::GapAdvClearSets::OCF => Ok(
                 VendorReturnParameters::GapAdvClearSets(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GAP_ADV_SET_RANDOM_ADDRESS => Ok(
+            crate::vendor::command::gap::GapAdvSetRandomAddress::OCF => Ok(
                 VendorReturnParameters::GapAdvSetRandomAddress(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_INIT => {
+            crate::vendor::command::gatt::GattInit::OCF => {
                 Ok(VendorReturnParameters::GattInit(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::GATT_ADD_SERVICE => Ok(VendorReturnParameters::GattAddService(
-                to_gatt_service(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GATT_INCLUDE_SERVICE => Ok(
+            crate::vendor::command::gatt::GattAddService::OCF => Ok(
+                VendorReturnParameters::GattAddService(to_gatt_service(&bytes[3..])?),
+            ),
+            crate::vendor::command::gatt::GattIncludeService::OCF => Ok(
                 VendorReturnParameters::GattIncludeService(to_gatt_service(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_ADD_CHARACTERISTIC => Ok(
+            crate::vendor::command::gatt::GattAddCharacteristic::OCF => Ok(
                 VendorReturnParameters::GattAddCharacteristic(to_gatt_characteristic(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_ADD_CHARACTERISTIC_DESCRIPTOR => {
+            crate::vendor::command::gatt::GattAddCharacteristicDescriptor::OCF => {
                 Ok(VendorReturnParameters::GattAddCharacteristicDescriptor(
                     to_gatt_characteristic_descriptor(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::GATT_UPDATE_CHARACTERISTIC_VALUE => Ok(
+            crate::vendor::command::gatt::GattUpdateCharacteristicValue::OCF => Ok(
                 VendorReturnParameters::GattUpdateCharacteristicValue(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_DELETE_CHARACTERISTIC => Ok(
+            crate::vendor::command::gatt::GattDeleteCharacterisitic::OCF => Ok(
                 VendorReturnParameters::GattDeleteCharacteristic(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_DELETE_SERVICE => Ok(
+            crate::vendor::command::gatt::GattDeleteService::OCF => Ok(
                 VendorReturnParameters::GattDeleteService(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_DELETE_INCLUDED_SERVICE => Ok(
+            crate::vendor::command::gatt::GattDeleteIncludedService::OCF => Ok(
                 VendorReturnParameters::GattDeleteIncludedService(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_SET_EVENT_MASK => Ok(
+            crate::vendor::command::gatt::GattSetEventMask::OCF => Ok(
                 VendorReturnParameters::GattSetEventMask(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_WRITE_WITHOUT_RESPONSE => Ok(
+            crate::vendor::command::gatt::GattWriteWithoutResponse::OCF => Ok(
                 VendorReturnParameters::GattWriteWithoutResponse(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_SIGNED_WRITE_WITHOUT_RESPONSE => Ok(
+            crate::vendor::command::gatt::GattSignedWriteWithoutResponse::OCF => Ok(
                 VendorReturnParameters::GattSignedWriteWithoutResponse(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_CONFIRM_INDICATION => Ok(
+            crate::vendor::command::gatt::GattConfirmIndication::OCF => Ok(
                 VendorReturnParameters::GattConfirmIndication(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_WRITE_RESPONSE => Ok(
+            crate::vendor::command::gatt::GattWriteResponse::OCF => Ok(
                 VendorReturnParameters::GattWriteResponse(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_ALLOW_READ => Ok(VendorReturnParameters::GattAllowRead(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GATT_SET_SECURITY_PERMISSION => Ok(
+            crate::vendor::command::gatt::GattAllowRead::OCF => Ok(
+                VendorReturnParameters::GattAllowRead(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::gatt::GattSetSecurityPermission::OCF => Ok(
                 VendorReturnParameters::GattSetSecurityPermission(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_SET_DESCRIPTOR_VALUE => Ok(
+            crate::vendor::command::gatt::GattSetDescriptorValue::OCF => Ok(
                 VendorReturnParameters::GattSetDescriptorValue(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_READ_HANDLE_VALUE => Ok(
+            crate::vendor::command::gatt::GattReadHandleValue::OCF => Ok(
                 VendorReturnParameters::GattReadHandleValue(to_gatt_handle_value(&bytes[3..])?),
             ),
             #[cfg(after_fw_0_17_1)]
-            crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET => {
+            crate::vendor::command::gatt::GattReadHandleValueOffset::OCF => {
                 Ok(VendorReturnParameters::GattReadHandleValueOffset(
                     to_gatt_handle_value(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::GATT_UPDATE_LONG_CHARACTERISTIC_VALUE => Ok(
+            crate::vendor::command::gatt::GattUpdateLongCharacteristicValue::OCF => Ok(
                 VendorReturnParameters::GattUpdateLongCharacteristicValue(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_DENY_READ => Ok(VendorReturnParameters::GattDenyRead(
-                to_status(&bytes[3..])?,
-            )),
-            crate::vendor::opcode::GATT_SET_ACCESS_PERMISSION => Ok(
+            crate::vendor::command::gatt::GattDenyRead::OCF => Ok(
+                VendorReturnParameters::GattDenyRead(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::command::gatt::GattSetAccessPermission::OCF => Ok(
                 VendorReturnParameters::GattSetAccessPermission(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_STORE_DB => {
+            crate::vendor::command::gatt::GattStoreDatabase::OCF => {
                 Ok(VendorReturnParameters::GattStoreDb(to_status(&bytes[3..])?))
             }
-            crate::vendor::opcode::GATT_SEND_MULT_NOTIFICATION => Ok(
+            crate::vendor::command::gatt::GattSendMultipleNotification::OCF => Ok(
                 VendorReturnParameters::GattSendMultipleNotification(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::GATT_READ_MULTIPLE_VAR_CHAR_VALUE => Ok(
+            crate::vendor::command::gatt::GattReadMultipleVarCharValue::OCF => Ok(
                 VendorReturnParameters::GattReadMultipleVarCharValue(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_CONN_PARAM_UPDATE_RESP => Ok(
+            crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse::OCF => Ok(
                 VendorReturnParameters::L2CapConnectionParameterUpdateResponse(to_status(
                     &bytes[3..],
                 )?),
             ),
-            crate::vendor::opcode::L2CAP_COC_CONNECT => Ok(
+            crate::vendor::command::l2cap::L2CocConnect::OCF => Ok(
                 VendorReturnParameters::L2CapCocConnect(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM => {
+            crate::vendor::command::l2cap::L2CocConnectConfirm::OCF => {
                 Ok(VendorReturnParameters::L2CapCocConnectConfirm(
                     to_l2cap_coc_connect_confirm_response(&bytes[3..])?,
                 ))
             }
-            crate::vendor::opcode::L2CAP_COC_RECONFIG => Ok(
+            crate::vendor::command::l2cap::L2CocReconfig::OCF => Ok(
                 VendorReturnParameters::L2CapCocReconfig(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_RECONFIG_CONFIRM => Ok(
+            crate::vendor::command::l2cap::L2CocReconfigConfirm::OCF => Ok(
                 VendorReturnParameters::L2CapCocReconfigConfirm(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_DISCONNECT => Ok(
+            crate::vendor::command::l2cap::L2CocDisconnect::OCF => Ok(
                 VendorReturnParameters::L2CapCocDisconnect(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_FLOW_CONTROL => Ok(
+            crate::vendor::command::l2cap::L2CocFlowControl::OCF => Ok(
                 VendorReturnParameters::L2CapCocFlowControl(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_TX_DATA => Ok(VendorReturnParameters::L2CapCocTxData(
-                to_status(&bytes[3..])?,
-            )),
-            other => Err(crate::event::Error::UnknownOpcode(other)),
+            crate::vendor::command::l2cap::L2CocTxData::OCF => Ok(
+                VendorReturnParameters::L2CapCocTxData(to_status(&bytes[3..])?),
+            ),
+            _ => Err(crate::event::Error::UnknownOpcode(opcode)),
         }
     }
 }

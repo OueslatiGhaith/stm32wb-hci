@@ -61,7 +61,7 @@ pub(crate) struct EventMetadata {
 #[derive(Clone, Debug)]
 struct DescriptorDefinition {
     name: String,
-    opcode: String,
+    code: u16,
     params_empty: bool,
     declares_return: bool,
     response_len: Option<usize>,
@@ -95,10 +95,6 @@ pub(crate) fn load_crate_coverage(
     crate_dir: &Path,
     firmware: FirmwareVersion,
 ) -> Result<CrateCoverage, String> {
-    let opcode_path = crate_dir.join("src/vendor/opcode.rs");
-    let opcode_file = read_rust_file(&opcode_path)?;
-    let opcode_constants = parse_vendor_opcode_constants(&opcode_file, firmware, &opcode_path)?;
-
     let command_root = crate_dir.join("src/vendor/command/mod.rs");
     let command_root_file = read_rust_file(&command_root)?;
     let mut command_sources = Vec::new();
@@ -113,8 +109,7 @@ pub(crate) fn load_crate_coverage(
     )?;
 
     let payloads = collect_payloads(&command_sources, firmware)?;
-    let descriptors =
-        collect_descriptors(&command_sources, &opcode_constants, &payloads, firmware)?;
+    let descriptors = collect_descriptors(&command_sources, &payloads, firmware)?;
     let active_commands = descriptor_coverage(&descriptors);
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
@@ -310,56 +305,6 @@ fn module_path_override(module: &ItemMod) -> Result<Option<String>, String> {
     Ok(Some(path.value()))
 }
 
-fn parse_vendor_opcode_constants(
-    file: &File,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<BTreeMap<String, u16>, String> {
-    let mut constants = BTreeMap::new();
-    let active = attrs_active(&file.attrs, firmware, path)?;
-    if !active {
-        return Err(format!(
-            "{}: opcode source is disabled for selected firmware {firmware}",
-            path.display()
-        ));
-    }
-
-    for item in &file.items {
-        let Item::Macro(item) = item else {
-            continue;
-        };
-        if !is_macro_named(&item.mac.path, "vendor_opcodes")
-            || !attrs_active(&item.attrs, firmware, path)?
-        {
-            continue;
-        }
-
-        let definitions =
-            syn::parse2::<VendorOpcodeInvocation>(item.mac.tokens.clone()).map_err(|error| {
-                format!(
-                    "{}: unsupported vendor_opcodes! declaration: {error}",
-                    path.display()
-                )
-            })?;
-        for (name, code) in definitions.constants {
-            if constants.insert(name.clone(), code).is_some() {
-                return Err(format!(
-                    "{}: duplicate vendor opcode constant `{name}`",
-                    path.display()
-                ));
-            }
-        }
-    }
-
-    if constants.is_empty() {
-        return Err(format!(
-            "{}: no active vendor_opcodes! invocation was found",
-            path.display()
-        ));
-    }
-    Ok(constants)
-}
-
 fn collect_payloads(
     sources: &[SourceUnit],
     firmware: FirmwareVersion,
@@ -407,11 +352,11 @@ fn collect_payloads(
 
 fn collect_descriptors(
     sources: &[SourceUnit],
-    opcode_constants: &BTreeMap<String, u16>,
     payloads: &BTreeMap<String, PayloadMetadata>,
     firmware: FirmwareVersion,
 ) -> Result<BTreeMap<String, DescriptorMetadata>, String> {
-    let mut descriptors = BTreeMap::new();
+    let mut descriptors = BTreeMap::<String, DescriptorMetadata>::new();
+    let mut codes = BTreeMap::<u16, DescriptorMetadata>::new();
 
     for source in sources {
         if !source.active {
@@ -428,20 +373,9 @@ fn collect_descriptors(
             }
 
             let definition = parse_vendor_descriptor_with_payloads(item, &source.path, payloads)?;
-            let code = opcode_constants
-                .get(&definition.opcode)
-                .copied()
-                .ok_or_else(|| {
-                    format!(
-                        "{}: descriptor `{}` references unknown opcode constant `{}`",
-                        source.path.display(),
-                        definition.name,
-                        definition.opcode
-                    )
-                })?;
             let metadata = DescriptorMetadata {
                 name: definition.name.clone(),
-                code,
+                code: definition.code,
                 params_empty: definition.params_empty,
                 declares_return: definition.declares_return,
                 response_len: definition.response_len,
@@ -449,7 +383,7 @@ fn collect_descriptors(
                 location: source.path.clone(),
             };
 
-            if let Some(previous) = descriptors.insert(definition.name.clone(), metadata.clone()) {
+            if let Some(previous) = descriptors.get(&definition.name) {
                 return Err(format!(
                     "{}: descriptor `{}` is active more than once (also declared in {})",
                     source.path.display(),
@@ -457,6 +391,16 @@ fn collect_descriptors(
                     previous.location.display()
                 ));
             }
+            if let Some(previous) = codes.insert(definition.code, metadata.clone()) {
+                return Err(format!(
+                    "{}: descriptors `{}` and `{}` both declare active vendor OCF 0x{:03X}",
+                    source.path.display(),
+                    previous.name,
+                    definition.name,
+                    definition.code,
+                ));
+            }
+            descriptors.insert(definition.name, metadata);
         }
     }
 
@@ -619,7 +563,7 @@ fn parse_descriptor_definition(
 
     Ok(DescriptorDefinition {
         name: invocation.name.to_string(),
-        opcode: invocation.opcode.to_string(),
+        code: (invocation.cgid << 7) | invocation.cid,
         params_empty,
         declares_return,
         response_len,
@@ -1466,59 +1410,6 @@ fn cfg_path_name(path: &SynPath) -> String {
         .join("::")
 }
 
-struct VendorOpcodeInvocation {
-    constants: Vec<(String, u16)>,
-}
-
-impl Parse for VendorOpcodeInvocation {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut constants = Vec::new();
-        while !input.is_empty() {
-            let group = input.parse::<syn::Ident>()?;
-            input.parse::<syn::Token![=]>()?;
-            let group_id = input.parse::<LitInt>()?;
-            input.parse::<syn::Token![;]>()?;
-            let group_id = parse_u16_literal(&group_id).map_err(|error| {
-                syn::Error::new_spanned(&group_id, format!("invalid command group ID: {error}"))
-            })?;
-            if group_id > 0b111 {
-                return Err(syn::Error::new_spanned(
-                    group,
-                    "vendor command group ID must fit in three bits",
-                ));
-            }
-
-            let content;
-            syn::braced!(content in input);
-            while !content.is_empty() {
-                let visibility = content.parse::<syn::Visibility>()?;
-                if !matches!(visibility, syn::Visibility::Public(_)) {
-                    return Err(syn::Error::new_spanned(
-                        visibility,
-                        "vendor opcode constants must be public",
-                    ));
-                }
-                content.parse::<syn::Token![const]>()?;
-                let name = content.parse::<syn::Ident>()?;
-                content.parse::<syn::Token![=]>()?;
-                let command_id = content.parse::<LitInt>()?;
-                content.parse::<syn::Token![;]>()?;
-                let command_id = parse_u16_literal(&command_id).map_err(|error| {
-                    syn::Error::new_spanned(&command_id, format!("invalid command ID: {error}"))
-                })?;
-                if command_id > 0b111_1111 {
-                    return Err(syn::Error::new_spanned(
-                        name,
-                        "vendor command ID must fit in seven bits",
-                    ));
-                }
-                constants.push((name.to_string(), (group_id << 7) | command_id));
-            }
-        }
-        Ok(Self { constants })
-    }
-}
-
 struct VendorPayloadInvocation {
     name: String,
     min_len: usize,
@@ -1654,7 +1545,8 @@ impl Parse for VendorPayloadInvocation {
 
 struct VendorCommandInvocation {
     name: syn::Ident,
-    opcode: syn::Ident,
+    cgid: u16,
+    cid: u16,
     body: TokenStream,
 }
 
@@ -1663,9 +1555,39 @@ impl Parse for VendorCommandInvocation {
         let name = input.parse::<syn::Ident>()?;
         let arguments;
         syn::parenthesized!(arguments in input);
-        let opcode = arguments.parse::<syn::Ident>()?;
+        let cgid_label = arguments.parse::<syn::Ident>()?;
+        if cgid_label != "cgid" {
+            return Err(syn::Error::new_spanned(cgid_label, "expected `cgid`"));
+        }
+        arguments.parse::<syn::Token![=]>()?;
+        let cgid_literal = arguments.parse::<LitInt>()?;
+        let cgid = parse_u16_literal(&cgid_literal).map_err(|error| {
+            syn::Error::new_spanned(&cgid_literal, format!("invalid command group ID: {error}"))
+        })?;
+        if cgid > 0b111 {
+            return Err(syn::Error::new_spanned(
+                cgid_literal,
+                "vendor command group ID must fit in three bits",
+            ));
+        }
+        arguments.parse::<syn::Token![,]>()?;
+        let cid_label = arguments.parse::<syn::Ident>()?;
+        if cid_label != "cid" {
+            return Err(syn::Error::new_spanned(cid_label, "expected `cid`"));
+        }
+        arguments.parse::<syn::Token![=]>()?;
+        let cid_literal = arguments.parse::<LitInt>()?;
+        let cid = parse_u16_literal(&cid_literal).map_err(|error| {
+            syn::Error::new_spanned(&cid_literal, format!("invalid command ID: {error}"))
+        })?;
+        if cid > 0b111_1111 {
+            return Err(syn::Error::new_spanned(
+                cid_literal,
+                "vendor command ID must fit in seven bits",
+            ));
+        }
         if !arguments.is_empty() {
-            return Err(arguments.error("vendor_cmd! accepts exactly one opcode identifier"));
+            return Err(arguments.error("unexpected tokens after vendor command IDs"));
         }
         let body;
         syn::braced!(body in input);
@@ -1673,7 +1595,12 @@ impl Parse for VendorCommandInvocation {
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after vendor_cmd! body"));
         }
-        Ok(Self { name, opcode, body })
+        Ok(Self {
+            name,
+            cgid,
+            cid,
+            body,
+        })
     }
 }
 
@@ -1728,15 +1655,9 @@ mod tests {
             active: true,
             file: syn::parse_file(source).unwrap(),
         };
-        let opcodes = BTreeMap::from([
-            ("OLDER".to_owned(), 0x001),
-            ("NEWER".to_owned(), 0x002),
-            ("CURRENT".to_owned(), 0x003),
-        ]);
         let payloads = collect_payloads(std::slice::from_ref(&unit), firmware).unwrap();
         let descriptors =
-            collect_descriptors(std::slice::from_ref(&unit), &opcodes, &payloads, firmware)
-                .unwrap();
+            collect_descriptors(std::slice::from_ref(&unit), &payloads, firmware).unwrap();
         let commands = descriptor_coverage(&descriptors);
         (commands, descriptors)
     }
@@ -1756,7 +1677,7 @@ mod tests {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params = ();
                     Completion = CommandComplete;
                     Return = Result { value: [u8; 8] => 8, };
@@ -1768,6 +1689,7 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
+        assert_eq!(descriptor.code, 0x0003);
         assert!(descriptor.params_empty);
         assert!(descriptor.declares_return);
         assert_eq!(descriptor.response_len, Some(9));
@@ -1779,7 +1701,7 @@ mod tests {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params = {
                         role: Role => 1,
                         enabled: bool => 1,
@@ -1811,7 +1733,7 @@ mod tests {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params = { procedure: u8 => 1, };
                     Completion = CommandStatus;
                 }
@@ -1833,7 +1755,7 @@ mod tests {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         conn_handle: ConnectionHandle => 2,
                         handles: &'a [AttributeHandle] => {
@@ -1872,7 +1794,7 @@ mod tests {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params = { offset: u8 => 1, };
                     Completion = CommandComplete;
                     Return = Result {
@@ -1898,7 +1820,7 @@ mod tests {
     fn rejects_fields_after_trailing_bytes() {
         let source = r#"
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         value: &'a [u8] => {
                             kind: trailing_bytes,
@@ -1920,11 +1842,52 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_or_legacy_command_ids() {
+        for (source, expected) in [
+            (
+                "vendor_cmd! { Current(cgid = 0x8, cid = 0x01) {} }",
+                "command group ID must fit in three bits",
+            ),
+            (
+                "vendor_cmd! { Current(cgid = 0x1, cid = 0x80) {} }",
+                "command ID must fit in seven bits",
+            ),
+            ("vendor_cmd! { Current(CURRENT) {} }", "expected `cgid`"),
+        ] {
+            let file = syn::parse_file(source).unwrap();
+            let Item::Macro(item) = &file.items[0] else {
+                panic!("expected vendor_cmd! macro item");
+            };
+            let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let unit = SourceUnit {
+            path: PathBuf::from("fixture.rs"),
+            active: true,
+            file: syn::parse_file(
+                r#"
+                    vendor_cmd! { First(cgid = 0x1, cid = 0x02) { Params = (); Completion = CommandStatus; } }
+                    vendor_cmd! { Second(cgid = 0x1, cid = 0x02) { Params = (); Completion = CommandStatus; } }
+                "#,
+            )
+            .unwrap(),
+        };
+        let error = collect_descriptors(
+            std::slice::from_ref(&unit),
+            &BTreeMap::new(),
+            version(0, 17, 0),
+        )
+        .unwrap_err();
+        assert!(error.contains("both declare active vendor OCF 0x082"));
+    }
+
+    #[test]
     fn parses_tagged_and_bitmap_selected_request_shapes() {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         scanning_phys: u8 => 1,
                         phy_params: &'a [Phy] => {
@@ -1980,7 +1943,7 @@ mod tests {
                 {payload}
                 pub trait Commands {{ async fn command(&self); }}
                 vendor_cmd! {{
-                    Current(CURRENT) {{
+                    Current(cgid = 0x0, cid = 0x03) {{
                         Params<'a> = {{
                             uuid: &'a Uuid => {{
                                 kind: payload,
@@ -2009,7 +1972,7 @@ mod tests {
             r#"
                 {payload}
                 vendor_cmd! {{
-                    Current(CURRENT) {{
+                    Current(cgid = 0x0, cid = 0x03) {{
                         Params<'a> = {{
                             uuid: &'a Uuid => {{
                                 kind: payload,
@@ -2029,13 +1992,8 @@ mod tests {
         };
         let firmware = version(0, 17, 0);
         let payloads = collect_payloads(std::slice::from_ref(&unit), firmware).unwrap();
-        let error = collect_descriptors(
-            std::slice::from_ref(&unit),
-            &BTreeMap::from([("CURRENT".to_owned(), 0x003)]),
-            &payloads,
-            firmware,
-        )
-        .unwrap_err();
+        let error =
+            collect_descriptors(std::slice::from_ref(&unit), &payloads, firmware).unwrap_err();
         assert!(error.contains("declares payload `Uuid` as 3..=16"));
         assert!(error.contains("defines 3..=17"));
     }
@@ -2044,7 +2002,7 @@ mod tests {
     fn rejects_incorrect_tagged_range_and_bitmap_cardinality() {
         let bad_tagged = r#"
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         uuid: &'a Uuid => {
                             kind: tagged,
@@ -2076,7 +2034,7 @@ mod tests {
 
         let bad_bitmap = r#"
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         scanning_phys: u8 => 1,
                         phy_params: &'a [Phy] => {
@@ -2103,7 +2061,7 @@ mod tests {
     fn rejects_tagged_payload_field_not_bound_by_pattern() {
         let source = r#"
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
                         uuid: &'a Uuid => {
                             kind: tagged,
@@ -2134,7 +2092,7 @@ mod tests {
     fn rejects_return_on_explicit_command_status() {
         let source = r#"
             vendor_cmd! {
-                Current(CURRENT) {
+                Current(cgid = 0x0, cid = 0x03) {
                     Params = ();
                     Completion = CommandStatus;
                     Return = ();
@@ -2151,9 +2109,10 @@ mod tests {
 
     #[test]
     fn rejects_legacy_completion_inference_and_return_buffers() {
-        let missing_completion =
-            syn::parse_file(r#"vendor_cmd! { Current(CURRENT) { Params = (); Return = (); } }"#)
-                .unwrap();
+        let missing_completion = syn::parse_file(
+            r#"vendor_cmd! { Current(cgid = 0x0, cid = 0x03) { Params = (); Return = (); } }"#,
+        )
+        .unwrap();
         let Item::Macro(item) = &missing_completion.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
@@ -2163,7 +2122,7 @@ mod tests {
         let return_buffer = syn::parse_file(
             r#"
                 vendor_cmd! {
-                    Current(CURRENT) {
+                    Current(cgid = 0x0, cid = 0x03) {
                         Params = ();
                         Completion = CommandComplete;
                         Return = ReturnBuffer<9>;
@@ -2244,12 +2203,20 @@ mod tests {
     }
 
     #[test]
+    fn loads_unique_command_ids_for_every_declared_firmware() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for firmware in FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
+            load_crate_coverage(&crate_dir, firmware).unwrap();
+        }
+    }
+
+    #[test]
     fn selects_commands_from_descriptor_cfg() {
         let source = r#"
-            vendor_cmd! { Current(CURRENT) { Params = (); Completion = CommandStatus; } }
+            vendor_cmd! { Current(cgid = 0x0, cid = 0x03) { Params = (); Completion = CommandStatus; } }
             #[cfg(after_fw_0_17_1)]
             vendor_cmd! {
-                Retained(OLDER) {
+                Retained(cgid = 0x0, cid = 0x01) {
                     Params = ();
                     Completion = CommandStatus;
                 }
@@ -2261,15 +2228,9 @@ mod tests {
             active: true,
             file: syn::parse_file(source).unwrap(),
         };
-        let opcodes = BTreeMap::from([("OLDER".to_owned(), 0x001), ("CURRENT".to_owned(), 0x003)]);
         let firmware = version(0, 17, 0);
-        let descriptors = collect_descriptors(
-            std::slice::from_ref(&unit),
-            &opcodes,
-            &BTreeMap::new(),
-            firmware,
-        )
-        .unwrap();
+        let descriptors =
+            collect_descriptors(std::slice::from_ref(&unit), &BTreeMap::new(), firmware).unwrap();
         let active = descriptor_coverage(&descriptors);
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].name, "Current");
@@ -2278,7 +2239,6 @@ mod tests {
 
         let future = collect_descriptors(
             std::slice::from_ref(&unit),
-            &opcodes,
             &BTreeMap::new(),
             version(0, 18, 0),
         )

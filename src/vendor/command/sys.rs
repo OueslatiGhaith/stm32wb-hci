@@ -81,7 +81,7 @@ impl<T> From<bt_hci::cmd::Error<T>> for Error {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    SysReset(SYS_RESET) {
+    SysReset(cgid = 0x6, cid = 0x00) {
         Params = {
             mode: SysResetMode => 1,
             options: u32 => 4,
@@ -93,7 +93,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    SysGetInformation(SYS_GET_INFORMATION) {
+    SysGetInformation(cgid = 0x6, cid = 0x01) {
         Params = ();
         Completion = CommandComplete;
         Return = SysGetInformationReturn {
@@ -106,7 +106,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    SysWriteConfigData(SYS_WRITE_CONFIG_DATA) {
+    SysWriteConfigData(cgid = 0x6, cid = 0x02) {
         Params<'a> = {
             offset: u8 => 1,
             data: &'a [u8] => {
@@ -122,7 +122,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    SysReadConfigData(SYS_READ_CONFIG_DATA) {
+    SysReadConfigData(cgid = 0x6, cid = 0x03) {
         Params = {
             offset: u8 => 1,
         };

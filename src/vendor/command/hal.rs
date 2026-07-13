@@ -58,7 +58,7 @@ impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
 }
 
 vendor_cmd! {
-    HalGetFirmwareRevision(HAL_GET_FIRMWARE_REVISION) {
+    HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
         Params = ();
         Completion = CommandComplete;
         Return = HalFirmwareRevision {
@@ -68,7 +68,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalWriteConfigData(HAL_WRITE_CONFIG_DATA) {
+    HalWriteConfigData(cgid = 0x0, cid = 0x0C) {
         Params<'a> = {
             offset: u8 => 1,
             value: &'a [u8] => {
@@ -83,7 +83,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalReadConfigData(HAL_READ_CONFIG_DATA) {
+    HalReadConfigData(cgid = 0x0, cid = 0x0D) {
         Params = {
             param: ConfigParameter => 1,
         };
@@ -99,7 +99,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalSetTxPowerLevel(HAL_SET_TX_POWER_LEVEL) {
+    HalSetTxPowerLevel(cgid = 0x0, cid = 0x0F) {
         Params = {
             high_power_mode: bool => 1,
             power_level: PowerLevel => 1,
@@ -110,7 +110,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalGetTxTestPacketCount(HAL_TX_TEST_PACKET_COUNT) {
+    HalGetTxTestPacketCount(cgid = 0x0, cid = 0x14) {
         Params = ();
         Completion = CommandComplete;
         Return = HalTxTestPacketCount {
@@ -120,7 +120,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalStartTone(HAL_START_TONE) {
+    HalStartTone(cgid = 0x0, cid = 0x15) {
         Params = {
             channel: u8 => 1,
             freq_offset: u8 => 1,
@@ -131,7 +131,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalStopTone(HAL_STOP_TONE) {
+    HalStopTone(cgid = 0x0, cid = 0x16) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -139,7 +139,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalGetLinkStatus(HAL_GET_LINK_STATUS) {
+    HalGetLinkStatus(cgid = 0x0, cid = 0x17) {
         Params = ();
         Completion = CommandComplete;
         Return = HalLinkStatusRaw {
@@ -150,7 +150,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalSetRadioActivityMask(HAL_SET_RADIO_ACTIVITY_MASK) {
+    HalSetRadioActivityMask(cgid = 0x0, cid = 0x18) {
         Params = {
             mask: RadioActivityFlags => 2,
         };
@@ -160,7 +160,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalGetAnchorPeriod(HAL_GET_ANCHOR_PERIOD) {
+    HalGetAnchorPeriod(cgid = 0x0, cid = 0x19) {
         Params = ();
         Completion = CommandComplete;
         Return = HalAnchorPeriodRaw {
@@ -171,7 +171,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalSetEventMask(HAL_SET_EVENT_MASK) {
+    HalSetEventMask(cgid = 0x0, cid = 0x1A) {
         Params = {
             mask: HalEventFlags => 4,
         };
@@ -181,7 +181,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalGetPmDebugInfo(HAL_GET_PM_DEBUG_INFO) {
+    HalGetPmDebugInfo(cgid = 0x0, cid = 0x1C) {
         Params = ();
         Completion = CommandComplete;
         Return = HalPmDebugInfo {
@@ -193,7 +193,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalSetPeripheralLatency(HAL_SET_PERIPHERAL_LATENCY) {
+    HalSetPeripheralLatency(cgid = 0x0, cid = 0x20) {
         Params = {
             enabled: bool => 1,
         };
@@ -203,7 +203,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalReadRssi(HAL_READ_RSSI) {
+    HalReadRssi(cgid = 0x0, cid = 0x22) {
         Params = ();
         Completion = CommandComplete;
         Return = HalRssi {
@@ -213,7 +213,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalReadRadioReg(HAL_READ_RADIO_REG) {
+    HalReadRadioReg(cgid = 0x0, cid = 0x30) {
         Params = {
             address: u8 => 1,
         };
@@ -225,7 +225,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalWriteRadioReg(HAL_WRITE_RADIO_REG) {
+    HalWriteRadioReg(cgid = 0x0, cid = 0x31) {
         Params = {
             address: u8 => 1,
             value: u8 => 1,
@@ -236,7 +236,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalReadRawRssi(HAL_READ_RAW_RSSI) {
+    HalReadRawRssi(cgid = 0x0, cid = 0x32) {
         Params = ();
         Completion = CommandComplete;
         Return = HalRawRssi {
@@ -246,7 +246,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalRxStart(HAL_RX_START) {
+    HalRxStart(cgid = 0x0, cid = 0x33) {
         Params = {
             rf_channel: u8 => 1,
         };
@@ -256,7 +256,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalRxStop(HAL_RX_STOP) {
+    HalRxStop(cgid = 0x0, cid = 0x34) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -264,7 +264,7 @@ vendor_cmd! {
 }
 
 vendor_cmd! {
-    HalStackReset(HAL_STACK_RESET) {
+    HalStackReset(cgid = 0x0, cid = 0x3B) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
@@ -273,7 +273,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    HalGetLinkStatusV2(HAL_GET_LINK_STATUS_V2) {
+    HalGetLinkStatusV2(cgid = 0x0, cid = 0x1B) {
         Params = ();
         Completion = CommandComplete;
         Return = HalLinkStatusV2Raw {
@@ -285,7 +285,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    HalSetSyncEventConfig(HAL_SET_SYNC_EVENT_CONFIG) {
+    HalSetSyncEventConfig(cgid = 0x0, cid = 0x21) {
         Params = {
             group_id: u8 => 1,
             enable_sync: bool => 1,
@@ -299,7 +299,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    HalContinuousTxStart(HAL_CONTINUOUS_TX_START) {
+    HalContinuousTxStart(cgid = 0x0, cid = 0x2E) {
         Params = {
             rf_channel: u8 => 1,
             phy: ContinuousTxPhy => 1,
@@ -312,7 +312,7 @@ vendor_cmd! {
 
 #[cfg(after_fw_0_17_1)]
 vendor_cmd! {
-    HalEadEncryptDecrypt(HAL_EAD_ENCRYPT_DECRYPT) {
+    HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {
             mode: EadMode => 1,
             key: &'a [u8; 16] => 16,
