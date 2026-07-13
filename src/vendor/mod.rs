@@ -7,26 +7,3 @@ pub mod opcode;
 /// specify vendor specifi extensions for STM32WB family
 pub use crate::host::uart::CommandHeader;
 pub use event::VendorError;
-
-/// master trait that encompasses all commands
-pub trait UartController:
-    command::gap::GapCommands
-    + command::gatt::GattCommands
-    + command::hal::HalCommands
-    + command::l2cap::L2capCommands
-    + command::sys::SysCommands
-    + crate::host::HostHci
-    + crate::host::uart::UartHci
-{
-}
-
-impl<T> UartController for T where
-    T: command::gap::GapCommands
-        + command::gatt::GattCommands
-        + command::hal::HalCommands
-        + command::l2cap::L2capCommands
-        + command::sys::SysCommands
-        + crate::host::HostHci
-        + crate::host::uart::UartHci
-{
-}

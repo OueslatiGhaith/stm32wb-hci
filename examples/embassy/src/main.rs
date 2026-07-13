@@ -4,6 +4,7 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
+use bt_hci::cmd::SyncCmd;
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -15,7 +16,11 @@ use embassy_stm32::{
 use stm32wb_hci::{
     BdAddr,
     host::{HostHci, uart::UartHci},
-    vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
+    vendor::command::{
+        gap::{CmdGapInit, Role},
+        gatt::GattInit,
+        hal::HalWriteConfigData,
+    },
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -90,33 +95,33 @@ async fn main(spawner: Spawner) {
         },
         async {
             defmt::info!("hci: reset");
-            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
+            // From this point `ble` implements the bt-hci controller traits. All commands after
+            // this line are normal stm32wb-hci host/vendor commands, not transport code.
             let response = ble.reset().await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: write config data");
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let response = ble
-                .write_config_data(
-                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
-                        .build(),
-                )
-                .await;
+            let command = match HalWriteConfigData::try_new(0, &public_address.0) {
+                Ok(command) => command,
+                Err(error) => {
+                    defmt::error!(
+                        "invalid config command length: actual={}, maximum={}",
+                        error.actual(),
+                        error.maximum()
+                    );
+                    return;
+                }
+            };
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gatt");
-            let response = ble.init_gatt().await;
+            let response = GattInit::new().exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gap");
-            let response = ble
-                .init_gap(
-                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-                    false,
-                    8,
-                )
-                .await;
+            let response = CmdGapInit::new(Role::PERIPHERAL, false, 8).exec(&ble).await;
             defmt::info!("{}", response);
 
             info!("BLE HCI ready");

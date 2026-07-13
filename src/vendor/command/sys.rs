@@ -4,33 +4,8 @@
 use crate::vendor::command::BoundedBytes;
 #[cfg(after_fw_0_17_1)]
 use crate::{BadStatusError, Status};
-#[cfg(after_fw_0_17_1)]
-use bt_hci::{cmd::SyncCmd, controller::ControllerCmdSync};
-
-/// System-level commands.
-pub trait SysCommands {
-    /// These ACI general commands first appear in STM32CubeWB v1.24.0.  The
-    /// descriptor types remain compiled below so blanket controller bounds do
-    /// not change shape, but the public API must not be exposed for the older
-    /// wireless firmware releases supported by this crate.
-    #[cfg(after_fw_0_17_1)]
-    /// Reset the BLE stack.
-    async fn sys_reset(&self, mode: SysResetMode, options: u32) -> Result<(), Error>;
-
-    /// Read local ACI information.
-    #[cfg(after_fw_0_17_1)]
-    async fn get_information(&self) -> Result<SysInformation, Error>;
-
-    /// Write a value to the configure data structure.
-    #[cfg(after_fw_0_17_1)]
-    async fn sys_write_config_data(&self, offset: u8, data: &[u8]) -> Result<(), Error>;
-
-    /// Read a value from the configure data structure.
-    #[cfg(after_fw_0_17_1)]
-    async fn sys_read_config_data(&self, offset: u8) -> Result<SysConfigData, Error>;
-}
-
-/// Mode for [sys_reset](SysCommands::sys_reset).
+#[cfg_attr(after_fw_0_17_1, doc = "Mode for [sys_reset](SysReset).")]
+#[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `sys_reset`.")]
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -54,7 +29,7 @@ impl crate::vendor::command::HciEncodeField<1> for SysResetMode {
     }
 }
 
-/// Return value for [get_information](SysCommands::get_information).
+/// Return value for [get_information](SysGetInformation).
 #[cfg(after_fw_0_17_1)]
 pub struct SysInformation {
     /// BLE stack version (8 bytes).
@@ -65,7 +40,7 @@ pub struct SysInformation {
     pub debug_info: [u8; 12],
 }
 
-/// Return value for [sys_read_config_data](SysCommands::sys_read_config_data).
+/// Return value for [sys_read_config_data](SysReadConfigData).
 #[cfg(after_fw_0_17_1)]
 pub struct SysConfigData {
     /// Raw config data bytes.
@@ -159,52 +134,5 @@ vendor_cmd! {
                 max_len: 32,
             },
         };
-    }
-}
-
-#[cfg(after_fw_0_17_1)]
-impl<T> SysCommands for T
-where
-    T: ControllerCmdSync<SysReset>
-        + ControllerCmdSync<SysGetInformation>
-        + for<'t> ControllerCmdSync<SysWriteConfigData<'t>>
-        + ControllerCmdSync<SysReadConfigData>,
-{
-    async fn sys_reset(&self, mode: SysResetMode, options: u32) -> Result<(), Error> {
-        SysReset::new(mode, options)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn get_information(&self) -> Result<SysInformation, Error> {
-        let info = SysGetInformation::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        Ok(SysInformation {
-            version: info.version,
-            options: info.options,
-            debug_info: info.debug_info,
-        })
-    }
-
-    async fn sys_write_config_data(&self, offset: u8, data: &[u8]) -> Result<(), Error> {
-        SysWriteConfigData::try_new(offset, data)?
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn sys_read_config_data(&self, offset: u8) -> Result<SysConfigData, Error> {
-        let value = SysReadConfigData::new(offset)
-            .exec(self)
-            .await
-            .map_err(Error::from)?
-            .data;
-        let len = value.as_slice().len();
-        let mut data = [0; 32];
-        data[..len].copy_from_slice(value.as_slice());
-        Ok(SysConfigData { data, len })
     }
 }

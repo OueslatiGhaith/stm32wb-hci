@@ -2,7 +2,7 @@
 //!
 //! This crate provides host-side command helpers, event parsers, and ST vendor-specific extensions
 //! for the STM32WB wireless coprocessor. It builds on [`bt-hci`] for command transport and packet
-//! framing, while this crate supplies the STM32WB-focused command traits and parameter types.
+//! framing, while this crate supplies declarative STM32WB command types, events, and wire types.
 //!
 //! # Controller model
 //!
@@ -11,11 +11,11 @@
 //! [`bt_hci::controller::ControllerCmdSync`] and [`bt_hci::controller::ControllerCmdAsync`]
 //! implementations for command execution.
 //!
-//! The host command traits in [`host`] and [`vendor::command`] are implemented for any controller
-//! type that satisfies those [`bt-hci`] command-execution traits. In practice this means application
-//! code can call methods such as [`host::HostHci::reset`] or
-//! [`vendor::command::gap::GapCommands::init_gap`] directly on a transport adapter once it implements
-//! the [`bt-hci`] controller traits.
+//! The host command traits in [`host`] are implemented for any controller type that satisfies those
+//! [`bt-hci`] command-execution traits. Vendor commands are represented by generated types under
+//! [`vendor::command`]. Construct the command and execute it through
+//! [`bt_hci::cmd::SyncCmd::exec`] for Command Complete commands or
+//! [`bt_hci::cmd::AsyncCmd::exec`] for Command Status commands.
 //!
 //! Event reads are exposed separately through [`host::uart::UartHci::read_packet`], which is
 //! implemented for types that implement [`bt_hci::controller::Controller`].
@@ -67,8 +67,8 @@ use core::fmt::Debug;
 ///
 /// This trait is retained for code written against earlier versions of this crate. New transport
 /// adapters should usually implement [`bt_hci::controller::Controller`] instead. The current
-/// command traits, including [`host::HostHci`] and the traits under [`vendor::command`], are
-/// implemented in terms of [`bt_hci::controller::ControllerCmdSync`] and
+/// host command helpers in [`host`] and generated vendor command types under [`vendor::command`]
+/// execute through [`bt_hci::controller::ControllerCmdSync`] and
 /// [`bt_hci::controller::ControllerCmdAsync`].
 pub trait Controller {
     /// Writes the bytes to the controller, in a single transaction if possible. All of `header`

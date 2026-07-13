@@ -1,8 +1,8 @@
 //! Packet-oriented HCI helpers for transports that include the packet indicator byte.
 //!
 //! [`UartHci`] is implemented for any [`bt_hci::controller::Controller`]. It complements the
-//! command traits in [`crate::host`] and [`crate::vendor::command`] by providing a polling entry
-//! point for controller-to-host packets.
+//! command traits in [`crate::host`] and generated vendor command types in
+//! [`crate::vendor::command`] by providing a polling entry point for controller-to-host packets.
 
 use crate::event::{Error as EventError, Event};
 use bt_hci::{ControllerToHostPacket, controller::Controller};

@@ -278,13 +278,13 @@ pub enum VendorError {
     /// event: The packet ends with a partial attribute handle.
     AttReadMultiplePermitRequestPartial,
 
-    /// For the [HAL Read Config Data](crate::vendor::command::hal::HalCommands::read_config_data) command complete
+    /// For the [HAL Read Config Data](crate::vendor::command::hal::HalReadConfigData) command complete
     /// [event](crate::vendor::event::command::VendorReturnParameters::HalReadConfigData): The returned value has a length that
     /// does not correspond to a requested parameter. Known lengths are 1, 2, 6, or 16. Includes the
     /// number of bytes returned.
     BadConfigParameterLength(usize),
 
-    /// For the [HAL Get Link Status](crate::vendor::command::hal::HalCommands::get_link_status) command complete
+    /// For the [HAL Get Link Status](crate::vendor::command::hal::HalGetLinkStatus) command complete
     /// [event](crate::vendor::event::command::VendorReturnParameters::HalGetLinkStatus): One of the bytes representing a link
     /// state does not represent a known link state. Returns the unknown value.
     UnknownLinkState(u8),
@@ -298,12 +298,12 @@ pub enum VendorError {
     /// a mode byte and a level byte instead.
     BadPassKeyRequirement(u8),
 
-    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapCommands::get_bonded_devices) command complete
+    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapGetBondedDevices) command complete
     /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): the packat was not long enough to
     /// contain the number of addresses it claimed to contain.
     PartialBondedDeviceAddress,
 
-    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapCommands::get_bonded_devices) command complete
+    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapGetBondedDevices) command complete
     /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): one of the address type bytes was
     /// invalid. Includes the invalid byte.
     BadBdAddrType(u8),
@@ -862,7 +862,7 @@ vendor_event! {
     /// Information provided includes type of radio activity and absolute time in system ticks when a
     /// radio acitivity is scheduled, if any. The application can use this information to schedule user
     /// activities synchronous to selected radio activities. A command
-    /// [Set Radio Activity Mask](crate::vendor::command::hal::HalCommands::set_radio_activity_mask) is
+    /// [Set Radio Activity Mask](crate::vendor::command::hal::HalSetRadioActivityMask) is
     /// provided to enable radio activity events of user interests, by default no events are enabled.
     ///
     /// The user should take into account that enabling radio events in an application with intense
@@ -967,7 +967,7 @@ vendor_event! {
     /// Association model is selected, in order to show the Numeric Value generated,
     /// and to ask for Confirmation to the User. When this event is received, the
     /// application has to respond with the
-    /// [numeric_comparison_value_confirm_yes_no](super::command::gap::GapCommands::numeric_comparison_value_confirm_yes_no)
+    /// [numeric_comparison_value_confirm_yes_no](super::command::gap::GapConfirmNumericComparisonValue)
     /// command.
     GapNumericComparisonValue(0x0409) {
         Payload = {
@@ -1021,7 +1021,7 @@ vendor_event! {
     }
     /// The event is given by the L2CAP layer when a connection update request is received from the
     /// peripheral. The application has to respond by calling
-    /// [l2cap_connection_parameter_update_response](crate::vendor::command::l2cap::L2capCommands::connection_parameter_update_response).
+    /// [l2cap_connection_parameter_update_response](crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse).
     L2CapConnectionUpdateRequest(0x0802) {
         Payload = {
             conn_handle: ConnectionHandle => 2,
@@ -1135,7 +1135,7 @@ vendor_event! {
             },
         };
     }
-    /// Each time the [L2CAO COC Tx Data](crate::vendor::command::l2cap::L2capCommands::coc_tx_data) command
+    /// Each time the [L2CAO COC Tx Data](crate::vendor::command::l2cap::L2CocTxData) command
     /// raises the error code [Insufficient Resources](VendorStatus::InsufficientResources) (0x64), this event
     /// is generated as soon as there is a free buffer available for sending K-frames.
     L2CapCocTxPoolAvailable(0x0817) {
@@ -1364,7 +1364,7 @@ vendor_event! {
     /// by the server from the client. This event will be given to the application only if the event
     /// bit for this event generation is set when the characteristic was added. On receiving this
     /// event, the application can update the value of the handle if it desires and when done it has
-    /// to use the [`allow_read`](crate::vendor::command::gatt::GattCommands::allow_read) command to indicate to the
+    /// to use the [`allow_read`](crate::vendor::command::gatt::GattAllowRead) command to indicate to the
     /// stack that it can send the response to the client.
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
@@ -1379,7 +1379,7 @@ vendor_event! {
     /// is received by the server from the client. This event will be given to the application only
     /// if the event bit for this event generation is set when the characteristic was added.  On
     /// receiving this event, the application can update the values of the handles if it desires and
-    /// when done it has to send the [`allow_read`](crate::vendor::command::gatt::GattCommands::allow_read) command to
+    /// when done it has to send the [`allow_read`](crate::vendor::command::gatt::GattAllowRead) command to
     /// indicate to the stack that it can send the response to the client.
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
@@ -1458,7 +1458,7 @@ vendor_event! {
     GattNotificationComplete(0x0C1B) {
         Payload = { attr_handle: AttributeHandle => 2, };
     }
-    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattSetEventMask),
     /// this event is generated instead of [ATT Read Response](VendorEvent::AttReadResponse) /
     /// [ATT Read Blob Response](VendorEvent::AttReadBlobResponse) /
     /// [ATT Read Multiple Response](VendorEvent::AttReadMultipleResponse).
@@ -1477,7 +1477,7 @@ vendor_event! {
             },
         };
     }
-    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattSetEventMask),
     /// this event is generated instead of [GATT Indication](VendorEvent::GattIndication) event.
     ///
     /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when
@@ -1495,7 +1495,7 @@ vendor_event! {
             },
         };
     }
-    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattCommands::set_event_mask),
+    /// When it is enabled with [set_event_mast](crate::vendor::command::gatt::GattSetEventMask),
     /// this event is generated instead of [GATT Notification](VendorEvent::GattNotification) event.
     ///
     /// This event should be used instead of `ACI_GATT_INDICATION_EVENT` when

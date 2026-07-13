@@ -48,18 +48,18 @@ use crate::vendor::command::hal::{HalRawRssi, HalRssi};
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VendorReturnParameters {
     /// Parameters returned by the
-    /// [HAL Get Firmware Revision](crate::vendor::command::hal::HalCommands::get_firmware_revision) command.
+    /// [HAL Get Firmware Revision](crate::vendor::command::hal::HalGetFirmwareRevision) command.
     HalGetFirmwareRevision(HalFirmwareRevision),
 
-    /// Status returned by the [HAL Write Config Data](crate::vendor::command::hal::HalCommands::write_config_data)
+    /// Status returned by the [HAL Write Config Data](crate::vendor::command::hal::HalWriteConfigData)
     /// command.
     HalWriteConfigData(crate::Status),
 
-    /// Parameters returned by the [HAL Read Config Data](crate::vendor::command::hal::HalCommands::read_config_data)
+    /// Parameters returned by the [HAL Read Config Data](crate::vendor::command::hal::HalReadConfigData)
     /// command.
     HalReadConfigData(HalConfigData),
 
-    /// Status returned by the [HAL Set Tx Power Level](crate::vendor::command::hal::HalCommands::set_tx_power_level)
+    /// Status returned by the [HAL Set Tx Power Level](crate::vendor::command::hal::HalSetTxPowerLevel)
     /// command.
     HalSetTxPowerLevel(crate::Status),
 
@@ -69,312 +69,312 @@ pub enum VendorReturnParameters {
     HalDeviceStandby(crate::Status),
 
     /// Parameters returned by the
-    /// [HAL Get Tx Test Packet Count](crate::vendor::command::hal::HalCommands::get_tx_test_packet_count) command.
+    /// [HAL Get Tx Test Packet Count](crate::vendor::command::hal::HalGetTxTestPacketCount) command.
     HalGetTxTestPacketCount(HalTxTestPacketCount),
 
-    /// Status returned by the [HAL Start Tone](crate::vendor::command::hal::HalCommands::start_tone) command.
+    /// Status returned by the [HAL Start Tone](crate::vendor::command::hal::HalStartTone) command.
     HalStartTone(crate::Status),
 
-    /// Status returned by the [HAL Stop Tone](crate::vendor::command::hal::HalCommands::stop_tone) command.
+    /// Status returned by the [HAL Stop Tone](crate::vendor::command::hal::HalStopTone) command.
     HalStopTone(crate::Status),
 
-    /// Status returned by the [HAL Get Link Status](crate::vendor::command::hal::HalCommands::get_link_status) command.
+    /// Status returned by the [HAL Get Link Status](crate::vendor::command::hal::HalGetLinkStatus) command.
     HalGetLinkStatus(HalLinkStatus),
 
-    /// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalCommands::get_anchor_period)
+    /// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalGetAnchorPeriod)
     /// command.
     HalGetAnchorPeriod(HalAnchorPeriod),
 
-    /// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
+    /// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalGetPmDebugInfo)
     /// command.
     HalGetPmDebugInfo(HalPmDebugInfo),
 
     /// Status returned by the
-    /// [HAL Set Radio Activity Mask](crate::vendor::command::hal::HalCommands::set_radio_activity_mask)
+    /// [HAL Set Radio Activity Mask](crate::vendor::command::hal::HalSetRadioActivityMask)
     /// command.
     HalSetRadioActivityMask(crate::Status),
 
     /// Status returned by the
-    /// [HAL Set Event Mask](crate::vendor::command::hal::HalCommands::set_event_mask) command.
+    /// [HAL Set Event Mask](crate::vendor::command::hal::HalSetEventMask) command.
     HalSetEventMask(crate::Status),
 
     /// Status returned by the
-    /// [HAL Set Peripheral Latency](crate::vendor::command::hal::HalCommands::set_peripheral_latency)
+    /// [HAL Set Peripheral Latency](crate::vendor::command::hal::HalSetPeripheralLatency)
     /// command.
     HalSetPeripheralLatency(crate::Status),
 
-    /// Parameters returned by the [HAL Read RSSI](crate::vendor::command::hal::HalCommands::read_rssi)
+    /// Parameters returned by the [HAL Read RSSI](crate::vendor::command::hal::HalReadRssi)
     /// command.
     HalReadRssi(u8),
 
-    /// Parameters returned by the [HAL Read Radio Register](crate::vendor::command::hal::HalCommands::read_radio_reg)
+    /// Parameters returned by the [HAL Read Radio Register](crate::vendor::command::hal::HalReadRadioReg)
     /// command.
     HalReadRadioReg(u8),
 
-    /// Status returned by the [HAL Write Radio Register](crate::vendor::command::hal::HalCommands::write_radio_reg)
+    /// Status returned by the [HAL Write Radio Register](crate::vendor::command::hal::HalWriteRadioReg)
     /// command.
     HalWriteRadioReg(crate::Status),
 
-    /// Parameters returned by the [HAL Read Raw RSSI](crate::vendor::command::hal::HalCommands::read_raw_rssi)
+    /// Parameters returned by the [HAL Read Raw RSSI](crate::vendor::command::hal::HalReadRawRssi)
     /// command.
     HalReadRawRssi([u8; 3]),
 
-    /// Status returned by the [HAL RX Start](crate::vendor::command::hal::HalCommands::rx_start) command.
+    /// Status returned by the [HAL RX Start](crate::vendor::command::hal::HalRxStart) command.
     HalRxStart(crate::Status),
 
-    /// Status returned by the [HAL RX Stop](crate::vendor::command::hal::HalCommands::rx_stop) command.
+    /// Status returned by the [HAL RX Stop](crate::vendor::command::hal::HalRxStop) command.
     HalRxStop(crate::Status),
 
-    /// Status returned by the [HAL Stack Reset](crate::vendor::command::hal::HalCommands::stack_reset) command.
+    /// Status returned by the [HAL Stack Reset](crate::vendor::command::hal::HalStackReset) command.
     HalStackReset(crate::Status),
 
     /// Status returned by the
-    /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapCommands::gap_set_nondiscoverable)
+    /// [GAP Set Non-Discoverable](crate::vendor::command::gap::GapSetNonDiscoverable)
     /// command.
     GapSetNonDiscoverable(crate::Status),
 
     /// Status returned by the
-    /// [GAP Set Discoverable](crate::vendor::command::gap::GapCommands::set_discoverable)
+    /// [GAP Set Discoverable](crate::vendor::command::gap::GapSetDiscoverable)
     /// command.
     GapSetDiscoverable(crate::Status),
 
     /// Status returned by the
-    /// [GAP Set Direct Connectable](crate::vendor::command::gap::GapCommands::set_direct_connectable) command.
+    /// [GAP Set Direct Connectable](crate::vendor::command::gap::GapSetDirectConnectable) command.
     GapSetDirectConnectable(crate::Status),
 
-    /// Status returned by the [GAP Set IO Capability](crate::vendor::command::gap::GapCommands::set_io_capability)
+    /// Status returned by the [GAP Set IO Capability](crate::vendor::command::gap::GapSetIoCapability)
     /// command.
     GapSetIoCapability(crate::Status),
 
     /// Status returned by the
-    /// [GAP Set Authentication Requirement](crate::vendor::command::gap::GapCommands::set_authentication_requirement) command.
+    /// [GAP Set Authentication Requirement](crate::vendor::command::gap::GapSetAuthenticationRequirement) command.
     GapSetAuthenticationRequirement(crate::Status),
 
     /// Status returned by the
-    /// [GAP Set Authorization Requirement](crate::vendor::command::gap::GapCommands::set_authorization_requirement) command.
+    /// [GAP Set Authorization Requirement](crate::vendor::command::gap::GapSetAuthorizationRequirement) command.
     GapSetAuthorizationRequirement(crate::Status),
 
     /// Status returned by the
-    /// [GAP Pass Key Response](crate::vendor::command::gap::GapCommands::pass_key_response)
+    /// [GAP Pass Key Response](crate::vendor::command::gap::GapPassKeyResponse)
     /// command.
     GapPassKeyResponse(crate::Status),
 
     /// Status returned by the
-    /// [GAP Authorization Response](crate::vendor::command::gap::GapCommands::authorization_response) command.
+    /// [GAP Authorization Response](crate::vendor::command::gap::GapAuthorizationResponse) command.
     GapAuthorizationResponse(crate::Status),
 
-    /// Parameters returned by the [GAP Init](crate::vendor::command::gap::GapCommands::init) command.
+    /// Parameters returned by the [GAP Init](crate::vendor::command::gap::CmdGapInit) command.
     GapInit(GapInit),
 
     /// Parameters returned by the
-    /// [GAP Set Non-Connectable](crate::vendor::command::gap::GapCommands::set_nonconnectable) command.
+    /// [GAP Set Non-Connectable](crate::vendor::command::gap::GapSetNonConnectable) command.
     GapSetNonConnectable(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Set Undirected Connectable](crate::vendor::command::gap::GapCommands::set_undirected_connectable) command.
+    /// [GAP Set Undirected Connectable](crate::vendor::command::gap::GapSetUnidirectedConnectable) command.
     GapSetUndirectedConnectable(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Update Advertising Data](crate::vendor::command::gap::GapCommands::update_advertising_data) command.
+    /// [GAP Update Advertising Data](crate::vendor::command::gap::GapUpdateAdvertisingData) command.
     GapUpdateAdvertisingData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Delete AD Type](crate::vendor::command::gap::GapCommands::delete_ad_type)
+    /// [GAP Delete AD Type](crate::vendor::command::gap::GapDeleteAdType)
     /// command.
     GapDeleteAdType(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Get Security Level](crate::vendor::command::gap::GapCommands::get_security_level) command.
+    /// [GAP Get Security Level](crate::vendor::command::gap::GapGetSecurityLevel) command.
     GapGetSecurityLevel(GapSecurityLevel),
 
     /// Parameters returned by the
-    /// [GAP Set Event Mask](crate::vendor::command::gap::GapCommands::set_event_mask)
+    /// [GAP Set Event Mask](crate::vendor::command::gap::GapSetEventMask)
     /// command.
     GapSetEventMask(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Configure White List](crate::vendor::command::gap::GapCommands::configure_white_list) command.
+    /// [GAP Configure White List](crate::vendor::command::gap::GapConfigureWhitelist) command.
     GapConfigureWhiteList(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Clear Security Database](crate::vendor::command::gap::GapCommands::clear_security_database) command.
+    /// [GAP Clear Security Database](crate::vendor::command::gap::GapClearSecurityDatabase) command.
     GapClearSecurityDatabase(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Allow Rebond](crate::vendor::command::gap::GapCommands::allow_rebond) command.
+    /// [GAP Allow Rebond](crate::vendor::command::gap::GapAllowRebond) command.
     GapAllowRebond(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Terminate Procedure](crate::vendor::command::gap::GapCommands::terminate_gap_procedure) command.
+    /// [GAP Terminate Procedure](crate::vendor::command::gap::GapTerminateProcedure) command.
     GapTerminateProcedure(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Resolve Private Address](crate::vendor::command::gap::GapCommands::resolve_private_address) command.
+    /// [GAP Resolve Private Address](crate::vendor::command::gap::CmdGapResolvePrivateAddress) command.
     GapResolvePrivateAddress(GapResolvePrivateAddress),
 
     /// Parameters returned by the
-    /// [GAP Get Bonded Devices](crate::vendor::command::gap::GapCommands::get_bonded_devices) command.
+    /// [GAP Get Bonded Devices](crate::vendor::command::gap::GapGetBondedDevices) command.
     GapGetBondedDevices(GapBondedDevices),
 
     /// Parameters returned by the
-    /// [GAP Set Broadcast Mode](crate::vendor::command::gap::GapCommands::set_broadcast_mode) command.
+    /// [GAP Set Broadcast Mode](crate::vendor::command::gap::GapSetBroadcastMode) command.
     GapSetBroadcastMode(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Start Observation Procedure](crate::vendor::command::gap::GapCommands::start_observation_procedure) command.
+    /// [GAP Start Observation Procedure](crate::vendor::command::gap::GapStartObservationProcedure) command.
     GapStartObservationProcedure(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Is Device Bonded](crate::vendor::command::gap::GapCommands::is_device_bonded)
+    /// [GAP Is Device Bonded](crate::vendor::command::gap::GapIsDeviceBonded)
     /// command.
     GapIsDeviceBonded(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Pairing Request Reply](crate::vendor::command::gap::GapCommands::pairing_request_reply)
+    /// [GAP Pairing Request Reply](crate::vendor::command::gap::GapPairingRequestReply)
     /// command.
     #[cfg(after_fw_0_17_1)]
     GapPairingRequestReply(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Get OOB Data](crate::vendor::command::gap::GapCommands::get_oob_data) command.
+    /// [GAP Get OOB Data](crate::vendor::command::gap::GapGetOobData) command.
     GapGetOobData((crate::Status, [u8; 26])),
 
     /// Parameters returned by the
-    /// [GAP Passkey Input](crate::vendor::command::gap::GapCommands::passkey_input) command.
+    /// [GAP Passkey Input](crate::vendor::command::gap::GapPasskeyInput) command.
     GapPasskeyInput(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Set OOB Data](crate::vendor::command::gap::GapCommands::set_oob_data) command.
+    /// [GAP Set OOB Data](crate::vendor::command::gap::GapSetOobData) command.
     GapSetOobData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Add Devices To Resolving List](crate::vendor::command::gap::GapCommands::add_devices_to_resolving_list)
+    /// [GAP Add Devices To Resolving List](crate::vendor::command::gap::GapAddDevicesToResolvingList)
     /// command.
     GapAddDevicesToResolvingList(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Remove Bonded Device](crate::vendor::command::gap::GapCommands::remove_bonded_device)
+    /// [GAP Remove Bonded Device](crate::vendor::command::gap::GapRemoveBondedDevice)
     /// command.
     GapRemoveBondedDevice(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Add Devices To List](crate::vendor::command::gap::GapCommands::add_devices_to_list) command.
+    /// [GAP Add Devices To List](crate::vendor::command::gap::GapAddDevicesToList) command.
     GapAddDevicesToList(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Additional Beacon Start](crate::vendor::command::gap::GapCommands::additional_beacon_start)
+    /// [GAP Additional Beacon Start](crate::vendor::command::gap::GapAdditionalBeaconStart)
     /// command.
     GapAdditionalBeaconStart(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Additional Beacon Stop](crate::vendor::command::gap::GapCommands::additional_beacon_stop)
+    /// [GAP Additional Beacon Stop](crate::vendor::command::gap::GapAdditionalBeaconStop)
     /// command.
     GapAdditionalBeaconStop(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Additional Beacon Set Data](crate::vendor::command::gap::GapCommands::additonal_beacon_set_data)
+    /// [GAP Additional Beacon Set Data](crate::vendor::command::gap::GapAdditionalBeaconSetData)
     /// command.
     GapAdditionalBeaconSetData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Configuration](crate::vendor::command::gap::GapCommands::adv_set_config)
+    /// [GAP Adv Set Configuration](crate::vendor::command::gap::GapAdvSetConfig)
     /// command.
     GapAdvSetConfiguration(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Enable](crate::vendor::command::gap::GapCommands::adv_set_enable) command.
+    /// [GAP Adv Set Enable](crate::vendor::command::gap::GapAdvSetEnable) command.
     GapAdvSetEnable(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Advertising Data](crate::vendor::command::gap::GapCommands::adv_set_advertising_data)
+    /// [GAP Adv Set Advertising Data](crate::vendor::command::gap::GapAdvSetAdvertisingData)
     /// command.
     GapAdvSetAdvertisingData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Scan Response Data](crate::vendor::command::gap::GapCommands::adv_set_scan_response_data)
+    /// [GAP Adv Set Scan Response Data](crate::vendor::command::gap::GapAdvSetScanResponseData)
     /// command.
     GapAdvSetScanResponseData(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Remove Set](crate::vendor::command::gap::GapCommands::adv_remove_set) command.
+    /// [GAP Adv Remove Set](crate::vendor::command::gap::GapAdvRemoveSet) command.
     GapAdvRemoveSet(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Clear Sets](crate::vendor::command::gap::GapCommands::adv_clear_sets) command.
+    /// [GAP Adv Clear Sets](crate::vendor::command::gap::GapAdvClearSets) command.
     GapAdvClearSets(crate::Status),
 
     /// Parameters returned by the
-    /// [GAP Adv Set Random Address](crate::vendor::command::gap::GapCommands::adv_set_random_address)
+    /// [GAP Adv Set Random Address](crate::vendor::command::gap::GapAdvSetRandomAddress)
     /// command.
     GapAdvSetRandomAddress(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Init](crate::vendor::command::gatt::GattCommands::init) command.
+    /// [GATT Init](crate::vendor::command::gatt::GattInit) command.
     GattInit(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Add Service](crate::vendor::command::gatt::GattCommands::add_service) command.
+    /// [GATT Add Service](crate::vendor::command::gatt::GattAddService) command.
     GattAddService(GattService),
 
     /// Parameters returned by the
-    /// [GATT Include Service](crate::vendor::command::gatt::GattCommands::include_service)
+    /// [GATT Include Service](crate::vendor::command::gatt::GattIncludeService)
     /// command.
     GattIncludeService(GattService),
 
     /// Parameters returned by the
-    /// [GATT Add Characteristic](crate::vendor::command::gatt::GattCommands::add_characteristic) command.
+    /// [GATT Add Characteristic](crate::vendor::command::gatt::GattAddCharacteristic) command.
     GattAddCharacteristic(GattCharacteristic),
 
     /// Parameters returned by the
-    /// [GATT Add Characteristic Descriptor](crate::vendor::command::gatt::GattCommands::add_characteristic_descriptor) command.
+    /// [GATT Add Characteristic Descriptor](crate::vendor::command::gatt::GattAddCharacteristicDescriptor) command.
     GattAddCharacteristicDescriptor(GattCharacteristicDescriptor),
 
     /// Parameters returned by the
-    /// [GATT Update Characteristic Value](crate::vendor::command::gatt::GattCommands::update_characteristic_value) command.
+    /// [GATT Update Characteristic Value](crate::vendor::command::gatt::GattUpdateCharacteristicValue) command.
     GattUpdateCharacteristicValue(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Delete Characteristic](crate::vendor::command::gatt::GattCommands::delete_characteristic) command.
+    /// [GATT Delete Characteristic](crate::vendor::command::gatt::GattDeleteCharacterisitic) command.
     GattDeleteCharacteristic(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Delete Service](crate::vendor::command::gatt::GattCommands::delete_service)
+    /// [GATT Delete Service](crate::vendor::command::gatt::GattDeleteService)
     /// command.
     GattDeleteService(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Delete Included Service](crate::vendor::command::gatt::GattCommands::delete_included_service) command.
+    /// [GATT Delete Included Service](crate::vendor::command::gatt::GattDeleteIncludedService) command.
     GattDeleteIncludedService(crate::Status),
 
-    /// Parameters returned by the [GATT Set Event Mask](crate::vendor::command::gatt::GattCommands::set_event_mask)
+    /// Parameters returned by the [GATT Set Event Mask](crate::vendor::command::gatt::GattSetEventMask)
     /// command.
     GattSetEventMask(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Write Without Response](crate::vendor::command::gatt::GattCommands::write_without_response) command.
+    /// [GATT Write Without Response](crate::vendor::command::gatt::GattWriteWithoutResponse) command.
     GattWriteWithoutResponse(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Signed Write Without Response](crate::vendor::command::gatt::GattCommands::signed_write_without_response) command.
+    /// [GATT Signed Write Without Response](crate::vendor::command::gatt::GattSignedWriteWithoutResponse) command.
     GattSignedWriteWithoutResponse(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Confirm Indication](crate::vendor::command::gatt::GattCommands::confirm_indication) command.
+    /// [GATT Confirm Indication](crate::vendor::command::gatt::GattConfirmIndication) command.
     GattConfirmIndication(crate::Status),
 
-    /// Parameters returned by the [GATT Write Response](crate::vendor::command::gatt::GattCommands::write_response)
+    /// Parameters returned by the [GATT Write Response](crate::vendor::command::gatt::GattWriteResponse)
     /// command.
     GattWriteResponse(crate::Status),
 
-    /// Parameters returned by the [GATT Allow Read](crate::vendor::command::gatt::GattCommands::allow_read) command.
+    /// Parameters returned by the [GATT Allow Read](crate::vendor::command::gatt::GattAllowRead) command.
     GattAllowRead(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Set Security Permission](crate::vendor::command::gatt::GattCommands::set_security_permission) command.
+    /// [GATT Set Security Permission](crate::vendor::command::gatt::GattSetSecurityPermission) command.
     GattSetSecurityPermission(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Set Descriptor Value](crate::vendor::command::gatt::GattCommands::set_descriptor_value) command.
+    /// [GATT Set Descriptor Value](crate::vendor::command::gatt::GattSetDescriptorValue) command.
     GattSetDescriptorValue(crate::Status),
 
     /// Parameters returned by the
@@ -382,70 +382,70 @@ pub enum VendorReturnParameters {
     GattReadHandleValue(GattHandleValue),
 
     /// Parameters returned by the
-    /// [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value_offset) command.
+    /// [GATT Read Handle Value](crate::vendor::command::gatt::GattReadHandleValueOffset) command.
     #[cfg(after_fw_0_17_1)]
     GattReadHandleValueOffset(GattHandleValue),
 
     /// Parameters returned by the
-    /// [GATT Update Long Characteristic Value](crate::vendor::command::gatt::GattCommands::update_characteristic_value_ext) command.
+    /// [GATT Update Long Characteristic Value](crate::vendor::command::gatt::GattUpdateLongCharacteristicValue) command.
     GattUpdateLongCharacteristicValue(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Deny Read](crate::vendor::command::gatt::GattCommands::deny_read) command.
+    /// [GATT Deny Read](crate::vendor::command::gatt::GattDenyRead) command.
     GattDenyRead(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Set Access Permission](crate::vendor::command::gatt::GattCommands::set_access_permission)
+    /// [GATT Set Access Permission](crate::vendor::command::gatt::GattSetAccessPermission)
     /// command.
     GattSetAccessPermission(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Store DB](crate::vendor::command::gatt::GattCommands::store_database)
+    /// [GATT Store DB](crate::vendor::command::gatt::GattStoreDatabase)
     GattStoreDb(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Send Multiple Notification](crate::vendor::command::gatt::GattCommands::send_multiple_notification)
+    /// [GATT Send Multiple Notification](crate::vendor::command::gatt::GattSendMultipleNotification)
     /// command.
     GattSendMultipleNotification(crate::Status),
 
     /// Parameters returned by the
-    /// [GATT Read Multiple Variable Characteristic Value](crate::vendor::command::gatt::GattCommands::read_multiple_variable_characteristic_value)
+    /// [GATT Read Multiple Variable Characteristic Value](crate::vendor::command::gatt::GattReadMultipleVarCharValue)
     /// command.
     GattReadMultipleVarCharValue(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP Connection Parameter Update Response](crate::vendor::command::l2cap::L2capCommands::connection_parameter_update_response) command.
+    /// [L2CAP Connection Parameter Update Response](crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse) command.
     L2CapConnectionParameterUpdateResponse(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP COC Connect](crate::vendor::command::l2cap::L2capCommands::coc_connect) command.
+    /// [L2CAP COC Connect](crate::vendor::command::l2cap::L2CocConnect) command.
     L2CapCocConnect(crate::Status),
 
     /// Parameters returned by the
-    /// [L2CAP COC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm)
+    /// [L2CAP COC Connect Confirm](crate::vendor::command::l2cap::L2CocConnectConfirm)
     /// command.
     L2CapCocConnectConfirm(L2CapCocConnectConfirmResponse),
 
     /// Status returned by the
-    /// [L2CAP COC Reconfig](crate::vendor::command::l2cap::L2capCommands::coc_reconfig) command.
+    /// [L2CAP COC Reconfig](crate::vendor::command::l2cap::L2CocReconfig) command.
     L2CapCocReconfig(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP COC Reconfig Confirm](crate::vendor::command::l2cap::L2capCommands::coc_reconfig_confirm)
+    /// [L2CAP COC Reconfig Confirm](crate::vendor::command::l2cap::L2CocReconfigConfirm)
     /// command.
     L2CapCocReconfigConfirm(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP COC Disconnect](crate::vendor::command::l2cap::L2capCommands::coc_disconnect) command.
+    /// [L2CAP COC Disconnect](crate::vendor::command::l2cap::L2CocDisconnect) command.
     L2CapCocDisconnect(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP COC Flow Control](crate::vendor::command::l2cap::L2capCommands::coc_flow_control)
+    /// [L2CAP COC Flow Control](crate::vendor::command::l2cap::L2CocFlowControl)
     /// command.
     L2CapCocFlowControl(crate::Status),
 
     /// Status returned by the
-    /// [L2CAP COC TX Data](crate::vendor::command::l2cap::L2capCommands::coc_tx_data) command.
+    /// [L2CAP COC TX Data](crate::vendor::command::l2cap::L2CocTxData) command.
     L2CapCocTxData(crate::Status),
 }
 
@@ -803,7 +803,7 @@ impl TryFrom<&[u8]> for HalFirmwareRevision {
     }
 }
 
-/// Parameters returned by the [HAL Read Config Data](crate::vendor::command::hal::HalCommands::read_config_data)
+/// Parameters returned by the [HAL Read Config Data](crate::vendor::command::hal::HalReadConfigData)
 /// command.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -820,7 +820,7 @@ pub struct HalConfigData {
 }
 
 /// Potential values that can be fetched by
-/// [HAL Read Config Data](crate::vendor::command::hal::HalCommands::read_config_data).
+/// [HAL Read Config Data](crate::vendor::command::hal::HalReadConfigData).
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HalConfigParameter {
@@ -900,7 +900,7 @@ impl TryFrom<&[u8]> for HalTxTestPacketCount {
     }
 }
 
-/// Parameters returned by the [HAL Get Link Status](crate::vendor::command::hal::HalCommands::get_link_status) command.
+/// Parameters returned by the [HAL Get Link Status](crate::vendor::command::hal::HalGetLinkStatus) command.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HalLinkStatus {
@@ -989,7 +989,7 @@ impl TryFrom<&[u8]> for HalLinkStatus {
     }
 }
 
-/// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalCommands::get_anchor_period)
+/// Parameters returned by the [HAL Get Anchor Period](crate::vendor::command::hal::HalGetAnchorPeriod)
 /// command.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1050,7 +1050,7 @@ impl TryFrom<&[u8]> for GapInit {
     }
 }
 
-/// Parameters returned by the [GAP Get Security Level](crate::vendor::command::gap::GapCommands::get_security_level)
+/// Parameters returned by the [GAP Get Security Level](crate::vendor::command::gap::GapGetSecurityLevel)
 /// command.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1106,7 +1106,7 @@ fn to_gap_security_level(bytes: &[u8]) -> Result<GapSecurityLevel, crate::event:
 }
 
 /// Parameters returned by the
-/// [GAP Resolve Private Address](crate::vendor::command::gap::GapCommands::resolve_private_address) command.
+/// [GAP Resolve Private Address](crate::vendor::command::gap::CmdGapResolvePrivateAddress) command.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapResolvePrivateAddress {
@@ -1285,7 +1285,7 @@ impl TryFrom<&[u8]> for GattHandleValue {
 }
 
 /// Parameters returned by the
-/// [L2CAP CoC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm)
+/// [L2CAP CoC Connect Confirm](crate::vendor::command::l2cap::L2CocConnectConfirm)
 /// command.
 ///
 /// CubeWB returns the number of created channels followed by exactly that many

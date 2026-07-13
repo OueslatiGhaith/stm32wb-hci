@@ -86,15 +86,23 @@ event `0x9200`—come exclusively from the checked-in policy; library defaults d
 ## Usage
 
 This crate works with controllers that implement `bt_hci::controller::Controller` and the
-proprietary ST HCI specification. Command traits such as `stm32wb_hci::host::HostHci` and the
-vendor command traits are implemented for adapters that can execute the relevant `bt-hci` command
-types through `ControllerCmdSync` and `ControllerCmdAsync`.
+proprietary ST HCI specification. Standard helpers such as `stm32wb_hci::host::HostHci` remain
+controller extension traits. Vendor commands are generated command types: construct one, then call
+`SyncCmd::exec` for a Command Complete command or `AsyncCmd::exec` for a Command Status command.
+The adapter executes these types through `ControllerCmdSync` and `ControllerCmdAsync`.
 
 The `read_packet` function may have to be polled for commands to complete. A channel or other
 methods may be used to accomplish this so that `read_packet` is never in a state where it is not
 polled.
 
 ```rust
+    use bt_hci::cmd::SyncCmd;
+    use stm32wb_hci::vendor::command::{
+        gap::{CmdGapInit, Role},
+        gatt::GattInit,
+        hal::HalWriteConfigData,
+    };
+
     let ble = ControllerAdapter::new(ble);
 
     join(
@@ -112,23 +120,16 @@ polled.
             defmt::info!("{}", response);
 
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let response = ble
-                .write_config_data(
-                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
-                        .build(),
-                )
-                .await;
+            let command = HalWriteConfigData::try_new(0, &public_address.0)
+                .expect("a public address fits the command payload");
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
-            let response = ble.init_gatt().await;
+            let response = GattInit::new().exec(&ble).await;
             defmt::info!("{}", response);
 
-            let response = ble
-                .init_gap(
-                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-                    false,
-                    8,
-                )
+            let response = CmdGapInit::new(Role::PERIPHERAL, false, 8)
+                .exec(&ble)
                 .await;
             defmt::info!("{}", response);
 

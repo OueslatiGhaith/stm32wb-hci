@@ -2,17 +2,13 @@
 
 extern crate byteorder;
 
-use bt_hci::{cmd::SyncCmd, controller::ControllerCmdSync};
 use byteorder::{ByteOrder, LittleEndian};
 
 use crate::{
     BadStatusError, Status,
     vendor::{
         command::BoundedBytes,
-        event::command::{
-            ClientStatus, HalAnchorPeriod, HalConfigData, HalConfigParameter, HalLinkStatus,
-            LinkState,
-        },
+        event::command::{HalConfigData, HalConfigParameter},
     },
 };
 
@@ -59,219 +55,6 @@ impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
             LittleEndian::read_u16(&bytes[index * 2..index * 2 + 2])
         }))
     }
-}
-
-/// Vendor-specific HCI commands.
-pub trait HalCommands {
-    /// This command is intended to retrieve the firmware revision number.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a
-    /// [command complete](crate::event::command::CommandComplete) event.
-    ///
-    /// The STM32WB generated API calls this a build number and returns it as
-    /// a 16-bit value. It remains widened to `u64` here for source
-    /// compatibility with the pre-feature-gating API.
-    async fn get_firmware_revision(&self) -> Result<u64, Error>;
-
-    /// This command writes a value to a low level configure data structure. It is useful to setup
-    /// directly some low level parameters for the system in the runtime.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn write_config_data(&self, config: &ConfigData) -> Result<(), Error>;
-
-    /// This command requests the value in the low level configure data structure.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error>;
-
-    /// This command sets the TX power level of the BlueNRG-MS.
-    ///
-    /// When the system starts up or reboots, the default TX power level will be used, which is the
-    /// maximum value of [6 dBm](PowerLevel::Plus6dBm). Once this command is given, the output power
-    /// will be changed instantly, regardless if there is Bluetooth communication going on or
-    /// not. For example, for debugging purpose, the BlueNRG-MS can be set to advertise all the
-    /// time. And use this command to observe the signal strength changing.
-    ///
-    /// The system will keep the last received TX power level from the command, i.e. the 2nd
-    /// command overwrites the previous TX power level. The new TX power level remains until
-    /// another Set TX Power command, or the system reboots.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn set_tx_power_level(&self, level: PowerLevel) -> Result<(), Error>;
-
-    /// Retrieve the number of packets sent in the last TX direct test.
-    ///
-    /// During the Direct Test mode, in the TX tests, the number of packets sent in the test is not
-    /// returned when executing the Direct Test End command. This command implements this feature.
-    ///
-    /// If the Direct TX test is started, a 16-bit counter will be used to count how many packets
-    /// have been transmitted. After the Direct Test End, this command can be used to check how many
-    /// packets were sent during the Direct TX test.
-    ///
-    /// The counter starts from 0 and counts upwards. As would be the case if 16-bits are all used,
-    /// the counter wraps back and starts from 0 again. The counter is not cleared until the next
-    /// Direct TX test starts.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn get_tx_test_packet_count(&self) -> Result<HalTxTestPacketCount, Error>;
-
-    /// This command starts a carrier frequency, i.e. a tone, on a specific channel.
-    ///
-    /// The frequency sine wave at the specific channel may be used for debugging purpose only. The
-    /// channel ID is a parameter from 0 to 39 for the 40 BLE channels, e.g. 0 for 2.402 GHz, 1 for
-    /// 2.404 GHz etc.
-    ///
-    /// This command should not be used when normal Bluetooth activities are ongoing.
-    /// The tone should be stopped by [`stop_tone`](HalCommands::stop_tone) command.
-    ///
-    /// # Errors
-    ///
-    /// - [InvalidChannel](Error::InvalidChannel) if the channel is greater than 39.
-    /// - Underlying communication errors
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn start_tone(&self, channel: u8, freq_offset: u8) -> Result<(), Error>;
-
-    /// Stops the previously started by the [`start_tone`](HalCommands::start_tone) command.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn stop_tone(&self) -> Result<(), Error>;
-
-    /// This command is intended to return the Link Layer Status and Connection Handles.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn get_link_status(&self) -> Result<HalLinkStatus, Error>;
-
-    /// This command sets the bitmask associated to
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
-    ///
-    /// Only the radio activities enabled in the mask will be reported to the application by the
-    /// [End of Radio Activity](crate::vendor::event::VendorEvent::HalEndOfRadioActivity) event.
-    async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error>;
-
-    /// This command is intended to retrieve information about the current Anchor Interval and
-    /// allocable timing slots.
-    ///
-    /// # Errors
-    ///
-    /// Only underlying communication errors are reported.
-    ///
-    /// # Generated events
-    ///
-    /// The controller will generate a [command complete](crate::event::command::CommandComplete) event.
-    async fn get_anchor_period(&self) -> Result<HalAnchorPeriod, Error>;
-
-    /// This command is used to enable/disable the generation of HAL events.
-    ///
-    /// If the bit in the [HAL Event Mask](HalEventFlags) is set to one, then the event associated with
-    /// that will be enabled.
-    async fn set_event_mask(&self, mask: HalEventFlags) -> Result<(), Error>;
-
-    /// This command is used to retreive Tx, Rx, and total buffer count allocated for ACL packets.
-    async fn get_pm_debug_info(&self) -> Result<HalPmDebugInfo, Error>;
-
-    /// This command is used to disable/enable the Peripheral latencyy feature during a connection.
-    ///
-    /// Note that, by default, the Peripheral latency is enabled at connection time.
-    async fn set_peripheral_latency(&self, enabled: bool) -> Result<(), Error>;
-
-    /// This command returns the value of the RSSI.
-    async fn read_rssi(&self) -> Result<u8, Error>;
-
-    /// This command reads a register value from the RF module
-    async fn read_radio_reg(&self, address: u8) -> Result<u8, Error>;
-
-    /// This command writes a register value to the RF module.
-    async fn write_radio_reg(&self, address: u8, value: u8) -> Result<(), Error>;
-
-    /// This command returns the three raw RSSI bytes reported by the
-    /// STM32WB firmware.
-    async fn read_raw_rssi(&self) -> Result<[u8; 3], Error>;
-
-    /// This command does set up the RF to listen to a specific RF Channel.
-    ///
-    /// `rf_channel`: BLE Channel Id, from 0x00 to 0x27 meaning `(2.402 + 0.002 * 0xXX) GHz`.
-    /// The device will continously emit 0s, meaning that the tone will be at the channel center
-    /// frequency minus the maximum frequency deviation (250 KHz).
-    async fn rx_start(&self, rf_channel: u8) -> Result<(), Error>;
-
-    /// This command stops a previous [HAL Rx Start](HalCommands::rx_start) command
-    async fn rx_stop(&self) -> Result<(), Error>;
-
-    /// This command is equivalent to [HCI Reset](crate::host::HostHci::reset) but ensures
-    /// the sleep mode is entered immediately after its completion.
-    async fn stack_reset(&self) -> Result<(), Error>;
-
-    #[cfg(after_fw_0_17_1)]
-    /// Returns the status of BLE links (up to 20 links plus 2 ISO streams).
-    async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error>;
-
-    #[cfg(after_fw_0_17_1)]
-    /// Configure ACI_HAL_SYNC_EVENT.
-    async fn set_sync_event_config(
-        &self,
-        group_id: u8,
-        enable_sync: bool,
-        enable_cb_trigger: bool,
-        trigger_source: SyncTriggerSource,
-    ) -> Result<(), Error>;
-
-    #[cfg(after_fw_0_17_1)]
-    /// Start continuous transmit test mode.
-    async fn continuous_tx_start(
-        &self,
-        rf_channel: u8,
-        phy: ContinuousTxPhy,
-        pattern: ContinuousTxPattern,
-    ) -> Result<(), Error>;
-
-    #[cfg(after_fw_0_17_1)]
-    /// Encrypt or decrypt data using the Encrypted Advertising Data scheme.
-    async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error>;
 }
 
 vendor_cmd! {
@@ -551,258 +334,6 @@ vendor_cmd! {
     }
 }
 
-cfg_command_bounds! {
-    HalFirmwareCommands,
-    after_fw_0_17_1,
-    ControllerCmdSync<HalGetLinkStatusV2>
-        + ControllerCmdSync<HalSetSyncEventConfig>
-        + ControllerCmdSync<HalContinuousTxStart>
-        + for<'t> ControllerCmdSync<HalEadEncryptDecrypt<'t>>
-}
-
-impl<T> HalCommands for T
-where
-    T: ControllerCmdSync<HalGetFirmwareRevision>
-        + for<'t> ControllerCmdSync<HalWriteConfigData<'t>>
-        + ControllerCmdSync<HalReadConfigData>
-        + ControllerCmdSync<HalSetTxPowerLevel>
-        + ControllerCmdSync<HalGetTxTestPacketCount>
-        + ControllerCmdSync<HalStartTone>
-        + ControllerCmdSync<HalStopTone>
-        + ControllerCmdSync<HalGetLinkStatus>
-        + ControllerCmdSync<HalSetRadioActivityMask>
-        + ControllerCmdSync<HalGetAnchorPeriod>
-        + ControllerCmdSync<HalSetEventMask>
-        + ControllerCmdSync<HalGetPmDebugInfo>
-        + ControllerCmdSync<HalSetPeripheralLatency>
-        + ControllerCmdSync<HalReadRssi>
-        + ControllerCmdSync<HalReadRawRssi>
-        + ControllerCmdSync<HalReadRadioReg>
-        + ControllerCmdSync<HalWriteRadioReg>
-        + ControllerCmdSync<HalRxStart>
-        + ControllerCmdSync<HalRxStop>
-        + ControllerCmdSync<HalStackReset>
-        + HalFirmwareCommands,
-{
-    async fn get_firmware_revision(&self) -> Result<u64, Error> {
-        let revision = HalGetFirmwareRevision::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        Ok(u64::from(revision.revision))
-    }
-
-    async fn write_config_data(&self, config: &ConfigData) -> Result<(), Error> {
-        let value = &config.value_buf[..usize::from(config.length)];
-        HalWriteConfigData::try_new(config.offset, value)?
-            .exec(self)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error> {
-        let value = HalReadConfigData::new(param)
-            .exec(self)
-            .await
-            .map_err(Error::from)?
-            .value;
-        value.try_into()
-    }
-
-    async fn set_tx_power_level(&self, level: PowerLevel) -> Result<(), Error> {
-        // High power mode is deprecated and ignored on STM32WB.
-        HalSetTxPowerLevel::new(false, level)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn get_tx_test_packet_count(&self) -> Result<HalTxTestPacketCount, Error> {
-        HalGetTxTestPacketCount::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn start_tone(&self, channel: u8, freq_offset: u8) -> Result<(), Error> {
-        const MAX_CHANNEL: u8 = 39;
-        if channel > MAX_CHANNEL {
-            return Err(Error::InvalidChannel(channel));
-        }
-
-        HalStartTone::new(channel, freq_offset)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn stop_tone(&self) -> Result<(), Error> {
-        HalStopTone::new().exec(self).await.map_err(|e| e.into())
-    }
-
-    async fn get_link_status(&self) -> Result<HalLinkStatus, Error> {
-        let raw = HalGetLinkStatus::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        let mut clients = [ClientStatus {
-            state: LinkState::Idle,
-            conn_handle: crate::ConnectionHandle(0),
-        }; 8];
-        for (index, client) in clients.iter_mut().enumerate() {
-            client.state = raw.link_status[index]
-                .try_into()
-                .map_err(crate::event::Error::Vendor)?;
-            client.conn_handle = crate::ConnectionHandle(raw.link_connection_handles[index]);
-        }
-        Ok(HalLinkStatus { clients })
-    }
-
-    async fn get_anchor_period(&self) -> Result<HalAnchorPeriod, Error> {
-        let raw = HalGetAnchorPeriod::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        Ok(HalAnchorPeriod {
-            anchor_interval: core::time::Duration::from_micros(
-                625 * u64::from(raw.anchor_interval),
-            ),
-            max_slot: core::time::Duration::from_micros(625 * u64::from(raw.max_slot)),
-        })
-    }
-
-    async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error> {
-        HalSetRadioActivityMask::new(mask)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn set_event_mask(&self, mask: HalEventFlags) -> Result<(), Error> {
-        HalSetEventMask::new(mask)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn get_pm_debug_info(&self) -> Result<HalPmDebugInfo, Error> {
-        HalGetPmDebugInfo::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)
-    }
-
-    async fn set_peripheral_latency(&self, enabled: bool) -> Result<(), Error> {
-        HalSetPeripheralLatency::new(enabled)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn read_rssi(&self) -> Result<u8, Error> {
-        Ok(HalReadRssi::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?
-            .value)
-    }
-
-    async fn read_radio_reg(&self, address: u8) -> Result<u8, Error> {
-        Ok(HalReadRadioReg::new(address)
-            .exec(self)
-            .await
-            .map_err(Error::from)?
-            .value)
-    }
-
-    async fn write_radio_reg(&self, address: u8, value: u8) -> Result<(), Error> {
-        HalWriteRadioReg::new(address, value)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn read_raw_rssi(&self) -> Result<[u8; 3], Error> {
-        let rssi = HalReadRawRssi::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        Ok(rssi.value)
-    }
-
-    async fn rx_start(&self, rf_channel: u8) -> Result<(), Error> {
-        HalRxStart::new(rf_channel)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    async fn rx_stop(&self) -> Result<(), Error> {
-        HalRxStop::new().exec(self).await.map_err(|e| e.into())
-    }
-
-    async fn stack_reset(&self) -> Result<(), Error> {
-        HalStackReset::new().exec(self).await.map_err(|e| e.into())
-    }
-
-    #[cfg(after_fw_0_17_1)]
-    async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error> {
-        let raw = HalGetLinkStatusV2::new()
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        Ok(HalLinkStatusV2 {
-            link_status: raw.link_status,
-            link_connection_handles: raw.link_connection_handles,
-        })
-    }
-
-    #[cfg(after_fw_0_17_1)]
-    async fn set_sync_event_config(
-        &self,
-        group_id: u8,
-        enable_sync: bool,
-        enable_cb_trigger: bool,
-        trigger_source: SyncTriggerSource,
-    ) -> Result<(), Error> {
-        HalSetSyncEventConfig::new(group_id, enable_sync, enable_cb_trigger, trigger_source)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    #[cfg(after_fw_0_17_1)]
-    async fn continuous_tx_start(
-        &self,
-        rf_channel: u8,
-        phy: ContinuousTxPhy,
-        pattern: ContinuousTxPattern,
-    ) -> Result<(), Error> {
-        HalContinuousTxStart::new(rf_channel, phy, pattern)
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
-    }
-
-    #[cfg(after_fw_0_17_1)]
-    async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error> {
-        let data = params.data.get(..params.data_len).ok_or_else(|| {
-            crate::vendor::command::HciLengthError::new(params.data_len, 0, params.data.len())
-        })?;
-        let result = HalEadEncryptDecrypt::try_new(params.mode, &params.key, &params.iv, data)?
-            .exec(self)
-            .await
-            .map_err(Error::from)?;
-        let out_len = result.data.as_slice().len();
-        let mut data = [0u8; 248];
-        data[..out_len].copy_from_slice(result.data.as_slice());
-        Ok(HalEadResult {
-            data,
-            data_len: out_len,
-        })
-    }
-}
-
 /// Potential errors from parameter validation.
 ///
 /// Before some commands are sent to the controller, the parameters are validated. This type
@@ -811,7 +342,7 @@ where
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
-    /// For the [Start Tone](HalCommands::start_tone) command, the channel was greater than the maximum
+    /// For the [Start Tone](HalStartTone) command, the channel was greater than the maximum
     /// allowed channel (39). The invalid channel is returned.
     InvalidChannel(u8),
 
@@ -912,7 +443,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn public_address(addr: crate::BdAddr) -> ConfigDataDiversifierBuilder {
@@ -930,7 +461,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn random_address(addr: crate::BdAddr) -> ConfigDataDiversifierBuilder {
@@ -948,7 +479,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn diversifier(d: u16) -> ConfigDataEncryptionRootBuilder {
@@ -965,7 +496,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn encryption_root(key: &crate::host::EncryptionKey) -> ConfigDataIdentityRootBuilder {
@@ -982,7 +513,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn identity_root(key: &crate::host::EncryptionKey) -> ConfigDataLinkLayerOnlyBuilder {
@@ -998,7 +529,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn link_layer_only(ll_only: bool) -> ConfigDataRoleBuilder {
@@ -1014,7 +545,7 @@ impl ConfigData {
     /// Builder for [ConfigData].
     ///
     /// The controller allows us to write any _contiguous_ portion of the [ConfigData] structure in
-    /// [`write_config_data`](HalCommands::write_config_data).  The builder associated functions allow
+    /// [`write_config_data`](HalWriteConfigData).  The builder associated functions allow
     /// us to start with any field, and the returned builder allows only either chaining the next
     /// field or building the structure to write.
     pub fn role(role: Role) -> ConfigDataCompleteBuilder {
@@ -1178,7 +709,7 @@ pub enum Role {
 }
 
 /// Configuration parameters that are readable by the
-/// [`read_config_data`](HalCommands::read_config_data) command.
+/// [`read_config_data`](HalReadConfigData) command.
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1422,7 +953,7 @@ impl crate::vendor::command::HciEncodeField<4> for HalEventFlags {
 }
 
 #[cfg(after_fw_0_17_1)]
-/// Return value for [get_link_status_v2](HalCommands::get_link_status_v2).
+/// Return value for [get_link_status_v2](HalGetLinkStatusV2).
 pub struct HalLinkStatusV2 {
     /// Link statuses for up to 20 links + 2 ISO streams.
     pub link_status: [u8; 22],
@@ -1430,7 +961,14 @@ pub struct HalLinkStatusV2 {
     pub link_connection_handles: [u16; 22],
 }
 
-/// Trigger source for [set_sync_event_config](HalCommands::set_sync_event_config).
+#[cfg_attr(
+    after_fw_0_17_1,
+    doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
+)]
+#[cfg_attr(
+    not(after_fw_0_17_1),
+    doc = "Trigger source for `set_sync_event_config`."
+)]
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1439,7 +977,11 @@ pub enum SyncTriggerSource {
     Big = 0x01,
 }
 
-/// PHY for [continuous_tx_start](HalCommands::continuous_tx_start).
+#[cfg_attr(
+    after_fw_0_17_1,
+    doc = "PHY for [continuous_tx_start](HalContinuousTxStart)."
+)]
+#[cfg_attr(not(after_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1448,7 +990,11 @@ pub enum ContinuousTxPhy {
     Le2M = 0x02,
 }
 
-/// Data pattern for [continuous_tx_start](HalCommands::continuous_tx_start).
+#[cfg_attr(
+    after_fw_0_17_1,
+    doc = "Data pattern for [continuous_tx_start](HalContinuousTxStart)."
+)]
+#[cfg_attr(not(after_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1463,7 +1009,11 @@ pub enum ContinuousTxPattern {
     Alternating0101 = 0x07,
 }
 
-/// Mode for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+#[cfg_attr(
+    after_fw_0_17_1,
+    doc = "Mode for [ead_encrypt_decrypt](HalEadEncryptDecrypt)."
+)]
+#[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
 #[repr(u8)]
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1498,7 +1048,7 @@ impl_u8_hci_field!(ContinuousTxPattern);
 impl_u8_hci_field!(EadMode);
 
 #[cfg(after_fw_0_17_1)]
-/// Parameters for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+/// Parameters for [ead_encrypt_decrypt](HalEadEncryptDecrypt).
 pub struct EadParams {
     /// EAD operation mode.
     pub mode: EadMode,
@@ -1513,7 +1063,7 @@ pub struct EadParams {
 }
 
 #[cfg(after_fw_0_17_1)]
-/// Return value for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
+/// Return value for [ead_encrypt_decrypt](HalEadEncryptDecrypt).
 pub struct HalEadResult {
     /// Result data.
     pub data: [u8; 248],

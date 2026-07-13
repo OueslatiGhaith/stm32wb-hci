@@ -1,3 +1,11 @@
+//! Declarative STM32WB vendor commands and their wire-format support.
+//!
+//! Each `vendor_cmd!` declaration generates a public command type in its
+//! protocol module. Construct that type with `new` (fixed-size parameters) or
+//! `try_new` (variable-size parameters), then execute it through
+//! [`bt_hci::cmd::SyncCmd::exec`] or [`bt_hci::cmd::AsyncCmd::exec`] according
+//! to the command's declared completion mechanism.
+
 use bt_hci::WriteHci;
 
 /// A value with an exact, canonical representation in an HCI request.
@@ -2381,33 +2389,6 @@ macro_rules! vendor_cmd {
             Return = $ret;
             ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
         }
-    };
-}
-
-/// Adds controller bounds only when a firmware cfg is active.
-///
-/// This keeps the legacy controller extension traits compatible with command
-/// descriptors whose generated types are themselves cfg-gated.
-macro_rules! cfg_command_bounds {
-    (
-        $trait:ident,
-        $cfg:meta,
-        $($bounds:tt)+
-    ) => {
-        #[cfg($cfg)]
-        trait $trait: $($bounds)+ {}
-
-        #[cfg($cfg)]
-        impl<T> $trait for T
-        where
-            T: $($bounds)+,
-        {}
-
-        #[cfg(not($cfg))]
-        trait $trait {}
-
-        #[cfg(not($cfg))]
-        impl<T> $trait for T {}
     };
 }
 
