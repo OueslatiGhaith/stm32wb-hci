@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 2;
+pub const CATALOG_SCHEMA_VERSION: u16 = 3;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -53,6 +53,7 @@ pub enum CompletionExpectation {
 pub enum RequestLayout {
     Empty,
     Fixed(u32),
+    Variable { minimum: u32, maximum: u32 },
     Formula(String),
     Expression(String),
 }
@@ -274,7 +275,10 @@ mod tests {
                 ocf: 1,
                 opcode: None,
                 completion: CompletionExpectation::CommandStatus,
-                request: RequestLayout::Fixed(3),
+                request: RequestLayout::Variable {
+                    minimum: 3,
+                    maximum: 255,
+                },
                 response: ResponseLayout::None,
             },
         ]);
@@ -295,8 +299,11 @@ mod tests {
         assert_eq!(
             value["commands"][0]["request"],
             serde_json::json!({
-                "kind": "fixed",
-                "value": 3,
+                "kind": "variable",
+                "value": {
+                    "minimum": 3,
+                    "maximum": 255,
+                },
             })
         );
         assert_eq!(

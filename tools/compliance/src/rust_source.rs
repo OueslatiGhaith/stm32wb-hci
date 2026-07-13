@@ -545,8 +545,22 @@ fn parse_params_shape(
                 path.display()
             ));
         }
+        if fields.min_len > usize::from(u8::MAX) {
+            return Err(format!(
+                "{}: descriptor `{descriptor}` has a {}-byte minimum Params envelope, exceeding the HCI 255-byte parameter limit",
+                path.display(),
+                fields.min_len,
+            ));
+        }
         return Ok(ParsedParamsShape {
-            envelope: fields.envelope(),
+            envelope: if fields.min_len == fields.total_len {
+                WireEnvelope::fixed(fields.total_len)
+            } else {
+                // `vendor_cmd!` rejects an aggregate encoded request above the
+                // one-byte HCI parameter-length limit, even when the sum of
+                // independent field capacities is larger.
+                WireEnvelope::bounded(fields.min_len, fields.total_len.min(usize::from(u8::MAX)))
+            },
             names: fields.names,
         });
     }
@@ -2020,6 +2034,14 @@ mod tests {
             .unwrap();
         assert_eq!(update.request, WireEnvelope::bounded(1, 32));
         assert_eq!(update.response, Some(WireEnvelope::fixed(0)));
+
+        let discoverable = coverage
+            .descriptor_metadata
+            .get("GapSetLimitedDiscoverable")
+            .unwrap();
+        // Independent field capacities exceed one HCI command, but the
+        // generated constructor rejects aggregate payloads above 255 bytes.
+        assert_eq!(discoverable.request, WireEnvelope::bounded(13, 255));
 
         let read = coverage
             .descriptor_metadata

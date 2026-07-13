@@ -15,6 +15,47 @@ use crate::catalog::{
 use crate::envelope::WireEnvelope;
 use crate::rust_source::{CrateCoverage, DescriptorMetadata, EventMetadata};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnvelopeRelation {
+    /// The generated declaration proves the complete envelope.
+    Exact,
+    /// A capacity-shaped event must preserve the generated maximum, while its
+    /// Rust schema may enforce a stricter semantic minimum.
+    EventCapacity,
+    /// A generated request declaration proves the complete safe capacity. A
+    /// Rust API may intentionally expose a subset of that capacity.
+    RequestCapacity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EnvelopeExpectation {
+    envelope: WireEnvelope,
+    relation: EnvelopeRelation,
+}
+
+impl EnvelopeExpectation {
+    const fn exact(envelope: WireEnvelope) -> Self {
+        Self {
+            envelope,
+            relation: EnvelopeRelation::Exact,
+        }
+    }
+
+    const fn event_capacity(envelope: WireEnvelope) -> Self {
+        Self {
+            envelope,
+            relation: EnvelopeRelation::EventCapacity,
+        }
+    }
+
+    const fn request_capacity(envelope: WireEnvelope) -> Self {
+        Self {
+            envelope,
+            relation: EnvelopeRelation::RequestCapacity,
+        }
+    }
+}
+
 /// A definite incompatibility between a generated vendor C wire declaration
 /// and its active Rust command or event declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,10 +260,15 @@ fn compare_completion(
     }
 }
 
-fn request_envelope(layout: &RequestLayout) -> Result<WireEnvelope, String> {
+fn request_envelope(layout: &RequestLayout) -> Result<EnvelopeExpectation, String> {
     match layout {
-        RequestLayout::Empty => Ok(WireEnvelope::fixed(0)),
-        RequestLayout::Fixed(length) => Ok(WireEnvelope::fixed(*length as usize)),
+        RequestLayout::Empty => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(0))),
+        RequestLayout::Fixed(length) => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(
+            *length as usize,
+        ))),
+        RequestLayout::Variable { minimum, maximum } => Ok(EnvelopeExpectation::request_capacity(
+            WireEnvelope::bounded(*minimum as usize, *maximum as usize),
+        )),
         RequestLayout::Formula(formula) => Err(format!(
             "CubeWB request payload length uses unresolved formula `{formula}`"
         )),
@@ -232,13 +278,13 @@ fn request_envelope(layout: &RequestLayout) -> Result<WireEnvelope, String> {
     }
 }
 
-fn response_envelope(layout: &ResponseLayout) -> Result<WireEnvelope, String> {
+fn response_envelope(layout: &ResponseLayout) -> Result<EnvelopeExpectation, String> {
     match layout {
         // CubeWB's rlen includes the transport status byte. `Return` does not.
-        ResponseLayout::Status => Ok(WireEnvelope::fixed(0)),
+        ResponseLayout::Status => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(0))),
         ResponseLayout::Fixed(length) => length
             .checked_sub(1)
-            .map(|length| WireEnvelope::fixed(length as usize))
+            .map(|length| EnvelopeExpectation::exact(WireEnvelope::fixed(length as usize)))
             .ok_or_else(|| {
                 "CubeWB command-complete response length is zero and cannot contain status"
                     .to_owned()
@@ -255,11 +301,16 @@ fn response_envelope(layout: &ResponseLayout) -> Result<WireEnvelope, String> {
     }
 }
 
-fn event_payload_envelope(layout: &EventPayloadLayout) -> Result<WireEnvelope, String> {
+fn event_payload_envelope(layout: &EventPayloadLayout) -> Result<EnvelopeExpectation, String> {
     match layout {
-        EventPayloadLayout::Fixed(length) => Ok(WireEnvelope::fixed(*length as usize)),
+        EventPayloadLayout::Fixed(length) => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(
+            *length as usize,
+        ))),
         EventPayloadLayout::Variable { minimum, maximum } => {
-            Ok(WireEnvelope::bounded(*minimum as usize, *maximum as usize))
+            Ok(EnvelopeExpectation::event_capacity(WireEnvelope::bounded(
+                *minimum as usize,
+                *maximum as usize,
+            )))
         }
         EventPayloadLayout::CStruct(type_name) => Err(format!(
             "CubeWB event payload uses unresolved packed C structure `{type_name}`"
@@ -271,7 +322,7 @@ fn compare_envelope(
     code: u16,
     name: &str,
     label: &str,
-    expected: Result<WireEnvelope, String>,
+    expected: Result<EnvelopeExpectation, String>,
     actual: WireEnvelope,
     report: &mut WireReport,
 ) {
@@ -288,23 +339,33 @@ fn compare_envelope(
     };
 
     report.checked += 1;
-    // A variable CubeWB layout comes from a capacity-sized packed C
-    // structure. Its minimum is only the fixed prefix proven by the C type;
-    // the Rust declaration may add a stricter semantic minimum (for example,
-    // requiring at least one counted item). The capacity must still match.
-    let compatible = if expected.is_fixed() {
-        actual == expected
-    } else {
-        !actual.is_fixed()
-            && actual.minimum >= expected.minimum
-            && actual.minimum <= expected.maximum
-            && actual.maximum == expected.maximum
+    let compatible = match expected.relation {
+        EnvelopeRelation::Exact => actual == expected.envelope,
+        EnvelopeRelation::EventCapacity => {
+            // The C type proves only its fixed prefix. Rust may add a stricter
+            // semantic minimum, such as requiring one counted item, but must
+            // accept the complete generated event capacity.
+            !actual.is_fixed()
+                && actual.minimum >= expected.envelope.minimum
+                && actual.minimum <= expected.envelope.maximum
+                && actual.maximum == expected.envelope.maximum
+        }
+        EnvelopeRelation::RequestCapacity => {
+            // The C wrapper's command buffer proves a safe outer capacity,
+            // while public parameter constraints can intentionally be
+            // narrower. The entire Rust envelope must fit within that proof.
+            actual.minimum >= expected.envelope.minimum
+                && actual.maximum <= expected.envelope.maximum
+        }
     };
     if !compatible {
         report.differences.push(WireDifference {
             code,
             command: name.to_owned(),
-            issue: format!("CubeWB {label} envelope is {expected}, but Rust declares {actual}"),
+            issue: format!(
+                "CubeWB {label} envelope is {}, but Rust declares {actual}",
+                expected.envelope
+            ),
         });
     }
 }
@@ -654,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn compares_fixed_request_envelopes_and_exposes_unresolved_formulas() {
+    fn compares_fixed_and_variable_requests() {
         let wrong = fixture_descriptor(
             "Wrong",
             0x006,
@@ -680,19 +741,82 @@ mod tests {
             fixture_command(
                 0x007,
                 CompletionExpectation::CommandStatus,
-                RequestLayout::Formula("1 + value_len".to_owned()),
+                RequestLayout::Variable {
+                    minimum: 1,
+                    maximum: 32,
+                },
                 ResponseLayout::None,
             ),
         ];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
 
-        assert_eq!(report.checked, 1);
+        assert_eq!(report.checked, 2);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("is 3 bytes"));
         assert!(report.differences[0].issue.contains("declares 2 bytes"));
+        assert!(report.unavailable.is_empty());
+    }
+
+    #[test]
+    fn unresolved_formulas_remain_unavailable() {
+        let descriptor = fixture_descriptor(
+            "Formula",
+            0x008,
+            CompletionExpectation::CommandStatus,
+            WireEnvelope::bounded(1, 17),
+            None,
+        );
+        let coverage = fixture_coverage(vec![descriptor], &["Formula"]);
+        let commands = vec![fixture_command(
+            0x008,
+            CompletionExpectation::CommandStatus,
+            RequestLayout::Formula("custom(value_len)".to_owned()),
+            ResponseLayout::None,
+        )];
+
+        let report = compare_vendor_wire(&commands, &[], &coverage);
+
+        assert_eq!(report.checked, 0);
+        assert!(report.differences.is_empty());
         assert_eq!(report.unavailable.len(), 1);
         assert!(report.unavailable[0].reason.contains("unresolved formula"));
+    }
+
+    #[test]
+    fn request_capacity_requires_the_rust_envelope_to_be_contained() {
+        let expected = Ok(EnvelopeExpectation::request_capacity(
+            WireEnvelope::bounded(2, 255),
+        ));
+
+        let mut report = WireReport::default();
+        compare_envelope(
+            1,
+            "Contained",
+            "request payload",
+            expected.clone(),
+            WireEnvelope::bounded(2, 48),
+            &mut report,
+        );
+        assert!(report.differences.is_empty());
+
+        compare_envelope(
+            2,
+            "MissingPrefix",
+            "request payload",
+            expected.clone(),
+            WireEnvelope::bounded(1, 48),
+            &mut report,
+        );
+        compare_envelope(
+            3,
+            "TooLarge",
+            "request payload",
+            expected,
+            WireEnvelope::bounded(2, 256),
+            &mut report,
+        );
+        assert_eq!(report.differences.len(), 2);
     }
 
     #[test]

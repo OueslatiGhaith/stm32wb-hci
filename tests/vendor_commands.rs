@@ -6,8 +6,8 @@ use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use hci::vendor::{
     command::{
         gap::{
-            CmdGapInit, GapAddDevicesToList, GapAdditionalBeaconStart, GapAdvSetEnable,
-            GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
+            CmdGapInit, GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdditionalBeaconStart,
+            GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
             GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
             GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetIoCapability,
             GapSetLimitedDiscoverable, GapSetNonConnectable, GapSetNonDiscoverable, GapSetOobData,
@@ -62,6 +62,21 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     let result = GapSetDiscoverable::try_new(0, 0, 0, 0, 0, &name, &[0], 0, 0);
 
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn additional_beacon_data_includes_its_cubewb_length_prefix() {
+    let sink = RecordingSink::new();
+    GapAdditionalBeaconSetData::try_new(&[0xAA, 0xBB])
+        .unwrap()
+        .exec(&sink)
+        .await
+        .unwrap();
+
+    assert_eq!(sink.written_data(), [1, 0xB2, 0xFC, 3, 2, 0xAA, 0xBB]);
+
+    let too_large = [0; 255];
+    assert!(GapAdditionalBeaconSetData::try_new(&too_large).is_err());
 }
 
 #[test]

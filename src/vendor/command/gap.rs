@@ -755,9 +755,9 @@ vendor_cmd! {
     GapAdditionalBeaconSetData(cgid = 0x1, cid = 0x32) {
         Params<'a> = {
             advertising_data: &'a [u8] => {
-                kind: trailing_bytes,
-                min_len: 0,
-                max_len: 255,
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 254,
             },
         };
         Completion = CommandComplete;

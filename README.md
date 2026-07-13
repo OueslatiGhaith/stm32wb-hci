@@ -78,11 +78,12 @@ are all included in the active API inventory. It compares:
   plus Command Complete versus Command Status completion. Command returns are normalized without
   the transport status byte, matching the declarative `Return` schema.
 
-CubeWB request-length formulas and response structures whose capacities depend on
-`BLE_EVT_MAX_PARAM_LEN` are reported as `wire unavailable` rather than guessed. This keeps
-`--deny` meaningful while making the remaining expression-normalization work explicit. All
-transport-only exceptions—including the coprocessor-ready event `0x9200`—come exclusively from
-the checked-in policy; library defaults do not hide them.
+CubeWB request-length formulas are normalized from their generated C parameter types, local
+branches, packed `sizeof` types, and the 255-byte HCI limit. Unsupported
+expressions and response structures whose capacities depend on `BLE_EVT_MAX_PARAM_LEN` are
+reported as `wire unavailable` rather than guessed. This keeps `--deny` meaningful while making
+the remaining work explicit. All transport-only exceptions—including the coprocessor-ready event
+`0x9200`—come exclusively from the checked-in policy; library defaults do not hide them.
 
 ## Usage
 

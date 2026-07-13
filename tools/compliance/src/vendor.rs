@@ -1,6 +1,6 @@
 //! Reading the generated STM32CubeWB protocol catalog without modifying its checkout.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -24,11 +24,20 @@ const TYPES_SOURCE: &str = "ble_types.h";
 pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogSchema, String> {
     verify_tag(cube_dir, tag)?;
 
+    let types_path = format!("{AUTO_SOURCE_DIR}/{TYPES_SOURCE}");
+    let types_source = git_show(cube_dir, tag, &types_path)?;
+    let request_types = RequestTypeEvidence::from_source(&types_source);
+
     let mut catalog = CatalogSchema::new(CatalogFamily::Stm32Wb, tag);
     for file in command_source_files(cube_dir, tag)? {
         let path = format!("{AUTO_SOURCE_DIR}/{file}");
         let source = git_show(cube_dir, tag, &path)?;
-        let commands = extract_command_metadata(&source, &file, CommandScope::VendorAci)?;
+        let commands = extract_command_metadata_with_evidence(
+            &source,
+            &file,
+            CommandScope::VendorAci,
+            &request_types,
+        )?;
         catalog.commands.extend(commands);
     }
 
@@ -39,10 +48,11 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
 
     let standard_path = format!("{AUTO_SOURCE_DIR}/{STANDARD_HCI_SOURCE}");
     let standard_source = git_show(cube_dir, tag, &standard_path)?;
-    let standard_commands = extract_command_metadata(
+    let standard_commands = extract_command_metadata_with_evidence(
         &standard_source,
         STANDARD_HCI_SOURCE,
         CommandScope::StandardHci,
+        &request_types,
     )?;
     catalog.commands.extend(standard_commands);
 
@@ -57,8 +67,6 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     // fixed layouts from the tag's own `ble_types.h`; unknown or capacity-sized
     // layouts deliberately stay as `CStruct` for the wire checker to report as
     // unavailable rather than guessed.
-    let types_path = format!("{AUTO_SOURCE_DIR}/{TYPES_SOURCE}");
-    let types_source = git_show(cube_dir, tag, &types_path)?;
     resolve_packed_response_layouts(&mut catalog.commands, &types_source);
     resolve_packed_event_layouts(&mut catalog.events, &types_source);
 
@@ -220,6 +228,16 @@ fn declarator_has_pointer(node: Node<'_>) -> bool {
             .is_some_and(declarator_has_pointer)
 }
 
+fn declarator_is_scalar(node: Node<'_>) -> bool {
+    match node.kind() {
+        "identifier" | "field_identifier" => true,
+        "pointer_declarator" | "array_declarator" | "function_declarator" => false,
+        _ => node
+            .child_by_field_name("declarator")
+            .is_some_and(declarator_is_scalar),
+    }
+}
+
 fn field_expression_is(node: Node<'_>, source: &str, receiver: &str, field: &str) -> bool {
     node.kind() == "field_expression"
         && node
@@ -262,10 +280,25 @@ fn assignment_integer(body: Node<'_>, source: &str, member: &str) -> Option<u16>
 /// Extract generated command functions from `function_definition` AST nodes.
 /// This is deliberately structural: a local `tBleStatus status`, a comment,
 /// or a string literal can no longer be mistaken for a command declaration.
+#[cfg(test)]
 pub(crate) fn extract_command_metadata(
     source: &str,
     source_name: &str,
     scope: CommandScope,
+) -> Result<Vec<CatalogCommand>, String> {
+    extract_command_metadata_with_evidence(
+        source,
+        source_name,
+        scope,
+        &RequestTypeEvidence::default(),
+    )
+}
+
+fn extract_command_metadata_with_evidence(
+    source: &str,
+    source_name: &str,
+    scope: CommandScope,
+    request_types: &RequestTypeEvidence,
 ) -> Result<Vec<CatalogCommand>, String> {
     let tree = parse_c_tree(source, source_name)?;
     let mut functions = Vec::new();
@@ -319,7 +352,7 @@ pub(crate) fn extract_command_metadata(
             ocf,
             opcode,
             completion: completion_expectation(body, source),
-            request: request_layout(body, source),
+            request: request_layout(declarator, body, source, request_types),
             response: response_layout(body, source),
         });
     }
@@ -486,53 +519,372 @@ fn completion_expectation(body: Node<'_>, source: &str) -> CompletionExpectation
     }
 }
 
-fn index_input_terms(body: Node<'_>, source: &str) -> Vec<String> {
+fn index_input_terms<'tree>(
+    body: Node<'tree>,
+    source: &str,
+    before: usize,
+) -> Vec<(Node<'tree>, Node<'tree>)> {
     let mut assignments = Vec::new();
     collect_nodes(body, "assignment_expression", &mut assignments);
     assignments
         .into_iter()
         .filter_map(|assignment| {
+            if assignment.end_byte() > before {
+                return None;
+            }
             let operator = assignment.child_by_field_name("operator")?;
             let left = assignment.child_by_field_name("left")?;
             (node_text(operator, source) == "+="
                 && left.kind() == "identifier"
                 && node_text(left, source) == "index_input")
-                .then(|| assignment.child_by_field_name("right"))
+                .then(|| {
+                    assignment
+                        .child_by_field_name("right")
+                        .map(|right| (assignment, right))
+                })
                 .flatten()
-                .map(|right| node_text(right, source).trim().to_owned())
         })
         .collect()
 }
 
-fn request_layout(body: Node<'_>, source: &str) -> RequestLayout {
+fn nested_in_dynamic_control_flow(mut node: Node<'_>, body: Node<'_>) -> bool {
+    while let Some(parent) = node.parent() {
+        if parent == body {
+            return false;
+        }
+        if matches!(
+            parent.kind(),
+            "if_statement"
+                | "switch_statement"
+                | "case_statement"
+                | "for_statement"
+                | "while_statement"
+                | "do_statement"
+        ) {
+            return true;
+        }
+        node = parent;
+    }
+    true
+}
+
+fn nested_in_case_statement(mut node: Node<'_>, body: Node<'_>) -> bool {
+    while let Some(parent) = node.parent() {
+        if parent == body {
+            return false;
+        }
+        if parent.kind() == "case_statement" {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
+/// Attainable non-negative values within the one-octet HCI command payload.
+/// Retaining the set preserves strides such as `18 + 7 * count`, whose
+/// greatest valid value is 249 rather than 255.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequestValues(BTreeSet<usize>);
+
+impl RequestValues {
+    fn exact(value: usize) -> Option<Self> {
+        (value <= usize::from(u8::MAX)).then(|| Self(BTreeSet::from([value])))
+    }
+
+    fn unsigned() -> Self {
+        Self((0..=usize::from(u8::MAX)).collect())
+    }
+
+    fn combine(self, other: Self, operation: impl Fn(usize, usize) -> Option<usize>) -> Self {
+        let mut values = BTreeSet::new();
+        for left in self.0 {
+            for &right in &other.0 {
+                if let Some(value) = operation(left, right)
+                    && value <= usize::from(u8::MAX)
+                {
+                    values.insert(value);
+                }
+            }
+        }
+        Self(values)
+    }
+
+    fn add(self, other: Self) -> Self {
+        self.combine(other, usize::checked_add)
+    }
+
+    fn union(mut self, other: Self) -> Self {
+        self.0.extend(other.0);
+        self
+    }
+
+    fn envelope(&self) -> Option<(usize, usize)> {
+        Some((*self.0.first()?, *self.0.last()?))
+    }
+}
+
+struct RequestExpressionContext<'a, 'tree> {
+    function_declarator: Node<'tree>,
+    body: Node<'tree>,
+    source: &'a str,
+    before: usize,
+    types: &'a RequestTypeEvidence,
+}
+
+fn request_layout(
+    function_declarator: Node<'_>,
+    body: Node<'_>,
+    source: &str,
+    types: &RequestTypeEvidence,
+) -> RequestLayout {
     let Some(value) = assignment_value(body, source, "rq", "clen") else {
         return RequestLayout::Empty;
     };
     let value_text = node_text(value, source).trim();
-    if let Some((size, _)) = parse_c_integer(value_text, 0) {
+    if let Some((size, end)) = parse_c_integer(value_text, 0)
+        && value_text[end..].trim().is_empty()
+    {
         return RequestLayout::Fixed(u32::from(size));
     }
-    if value_text == "index_input" {
-        let terms = index_input_terms(body, source);
-        let mut total = 0usize;
-        let mut dynamic = false;
-        for term in &terms {
-            if let Some((size, end)) = parse_c_integer(term, 0)
-                && term[end..].trim().is_empty()
-            {
-                total += usize::from(size);
-            } else {
-                dynamic = true;
-            }
+    if expression_identifier(value)
+        .is_some_and(|identifier| node_text(identifier, source).trim() == "index_input")
+    {
+        let terms = index_input_terms(body, source, value.start_byte());
+        let formula = terms
+            .iter()
+            .map(|(_, term)| node_text(*term, source).trim())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        // Summing terms from both sides of a conditional would manufacture a
+        // length that the generated wrapper never emits. Keep such control
+        // flow explicit until it has a dedicated evaluator.
+        if terms.is_empty()
+            || terms
+                .iter()
+                .any(|(assignment, _)| nested_in_dynamic_control_flow(*assignment, body))
+        {
+            return RequestLayout::Formula(formula);
         }
-        if !terms.is_empty() && !dynamic {
-            return u32::try_from(total)
-                .map(RequestLayout::Fixed)
-                .unwrap_or_else(|_| RequestLayout::Formula(terms.join(" + ")));
-        }
-        return RequestLayout::Formula(terms.join(" + "));
+        let context = RequestExpressionContext {
+            function_declarator,
+            body,
+            source,
+            before: value.start_byte(),
+            types,
+        };
+        let mut resolving = BTreeSet::new();
+        let total = terms.iter().try_fold(
+            RequestValues::exact(0).expect("zero fits in an HCI payload"),
+            |total, (_, term)| {
+                Some(total.add(request_expression_values(*term, &context, &mut resolving)?))
+            },
+        );
+        let Some(total) = total else {
+            return RequestLayout::Formula(formula);
+        };
+        let Some((minimum, maximum)) = total.envelope() else {
+            return RequestLayout::Formula(formula);
+        };
+        let (Ok(minimum), Ok(maximum)) = (u32::try_from(minimum), u32::try_from(maximum)) else {
+            return RequestLayout::Formula(formula);
+        };
+        return if minimum == maximum {
+            RequestLayout::Fixed(maximum)
+        } else {
+            RequestLayout::Variable { minimum, maximum }
+        };
     }
     RequestLayout::Expression(value_text.to_owned())
+}
+
+fn request_expression_values(
+    node: Node<'_>,
+    context: &RequestExpressionContext<'_, '_>,
+    resolving: &mut BTreeSet<String>,
+) -> Option<RequestValues> {
+    match node.kind() {
+        "number_literal" => {
+            let text = node_text(node, context.source).trim();
+            let (value, end) = parse_c_integer(text, 0)?;
+            text[end..]
+                .trim()
+                .is_empty()
+                .then(|| RequestValues::exact(usize::from(value)))
+                .flatten()
+        }
+        "identifier" => {
+            request_identifier_interval(node_text(node, context.source), context, resolving)
+        }
+        "parenthesized_expression" | "cast_expression" => node
+            .child_by_field_name("value")
+            .or_else(|| node.named_child(0))
+            .and_then(|inner| request_expression_values(inner, context, resolving)),
+        "sizeof_expression" => {
+            // Tree-sitter parses a typedef name as a value identifier when
+            // this generated `.c` file is read without its included headers.
+            // Accept either grammar shape, then resolve only names whose size
+            // is independently proven by the packed type catalog.
+            let subject = node
+                .child_by_field_name("type")
+                .or_else(|| node.child_by_field_name("value"))?;
+            let type_name = node_text(subject, context.source)
+                .trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim();
+            primitive_c_size(type_name)
+                .or_else(|| context.types.fixed_sizes.get(type_name).copied().flatten())
+                .and_then(RequestValues::exact)
+        }
+        "binary_expression" => {
+            let left =
+                request_expression_values(node.child_by_field_name("left")?, context, resolving)?;
+            let right =
+                request_expression_values(node.child_by_field_name("right")?, context, resolving)?;
+            match node_text(node.child_by_field_name("operator")?, context.source) {
+                "+" => Some(left.combine(right, usize::checked_add)),
+                "*" => Some(left.combine(right, usize::checked_mul)),
+                // Truncating a u16 input to the HCI-sized domain is sound for
+                // monotone addition and multiplication. Subtraction and
+                // division could make an input above 255 relevant again, so
+                // those expressions deliberately remain unresolved.
+                _ => None,
+            }
+        }
+        "conditional_expression" => {
+            let consequence = request_expression_values(
+                node.child_by_field_name("consequence")?,
+                context,
+                resolving,
+            )?;
+            let alternative = request_expression_values(
+                node.child_by_field_name("alternative")?,
+                context,
+                resolving,
+            )?;
+            Some(consequence.union(alternative))
+        }
+        _ => None,
+    }
+}
+
+fn request_identifier_interval(
+    identifier: &str,
+    context: &RequestExpressionContext<'_, '_>,
+    resolving: &mut BTreeSet<String>,
+) -> Option<RequestValues> {
+    match identifier.trim() {
+        "BLE_CMD_MAX_PARAM_LEN" | "BLE_EVT_MAX_PARAM_LEN" => {
+            return RequestValues::exact(usize::from(u8::MAX));
+        }
+        _ => {}
+    }
+    let identifier = identifier.trim().to_owned();
+    if !resolving.insert(identifier.clone()) {
+        return None;
+    }
+
+    let mut initializers = Vec::new();
+    collect_nodes(context.body, "init_declarator", &mut initializers);
+    let initializer_values = initializers
+        .into_iter()
+        .filter_map(|declaration| {
+            (declaration.end_byte() <= context.before
+                && declarator_identifier(declaration.child_by_field_name("declarator")?)
+                    .is_some_and(|name| node_text(name, context.source) == identifier))
+            .then(|| declaration.child_by_field_name("value"))
+            .flatten()
+        })
+        .collect::<Vec<_>>();
+    let initialized = match initializer_values.as_slice() {
+        [] => Some(None),
+        [value] => request_expression_values(*value, context, resolving).map(Some),
+        _ => None,
+    };
+
+    let mut assignments = Vec::new();
+    collect_nodes(context.body, "assignment_expression", &mut assignments);
+    let assignment_values = assignments
+        .into_iter()
+        .filter(|assignment| assignment.end_byte() <= context.before)
+        .filter_map(|assignment| {
+            let operator = assignment.child_by_field_name("operator")?;
+            let left = assignment.child_by_field_name("left")?;
+            (node_text(operator, context.source) == "="
+                && left.kind() == "identifier"
+                && node_text(left, context.source) == identifier)
+                .then(|| {
+                    assignment
+                        .child_by_field_name("right")
+                        .map(|right| (assignment, right))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let assignments_have_supported_flow = assignment_values.iter().all(|(assignment, _)| {
+        !nested_in_dynamic_control_flow(*assignment, context.body)
+            || nested_in_case_statement(*assignment, context.body)
+    }) && (assignment_values.len() <= 1
+        || assignment_values
+            .iter()
+            .all(|(assignment, _)| nested_in_case_statement(*assignment, context.body)));
+    let assigned = if assignments_have_supported_flow {
+        assignment_values
+            .into_iter()
+            .try_fold(None::<RequestValues>, |values, (_, expression)| {
+                let value = request_expression_values(expression, context, resolving)?;
+                Some(Some(match values {
+                    Some(values) => values.union(value),
+                    None => value,
+                }))
+            })
+    } else {
+        None
+    };
+    // Once an initialized local is subsequently reassigned, determining its
+    // final value requires control-flow analysis. Do not silently prefer the
+    // initializer and understate the generated request envelope.
+    let result = match (initialized, assigned) {
+        (Some(Some(value)), Some(None)) | (Some(None), Some(Some(value))) => Some(value),
+        (Some(None), Some(None)) => function_parameter_interval(&identifier, context),
+        (Some(Some(_)), Some(Some(_))) | (None, _) | (_, None) => None,
+    };
+
+    resolving.remove(&identifier);
+    result
+}
+
+fn function_parameter_interval(
+    identifier: &str,
+    context: &RequestExpressionContext<'_, '_>,
+) -> Option<RequestValues> {
+    let mut parameters = Vec::new();
+    collect_nodes(
+        context.function_declarator,
+        "parameter_declaration",
+        &mut parameters,
+    );
+    parameters.into_iter().find_map(|parameter| {
+        let declarator = parameter.child_by_field_name("declarator")?;
+        let name = declarator_identifier(declarator)?;
+        if node_text(name, context.source) != identifier {
+            return None;
+        }
+        if !declarator_is_scalar(declarator) {
+            return None;
+        }
+        let type_name = node_text(parameter.child_by_field_name("type")?, context.source).trim();
+        match type_name {
+            // Values above 255 cannot contribute to a valid non-negative HCI
+            // command-length formula, so both widths have the same bounded
+            // attainable set here.
+            "uint8_t" | "unsigned char" | "uint16_t" | "unsigned short" => {
+                Some(RequestValues::unsigned())
+            }
+            _ => None,
+        }
+    })
 }
 
 fn expression_identifier(node: Node<'_>) -> Option<Node<'_>> {
@@ -653,6 +1005,19 @@ struct PackedEnvelopeField {
 struct PackedEnvelopeDefinition {
     name: String,
     fields: Option<Vec<PackedEnvelopeField>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RequestTypeEvidence {
+    fixed_sizes: BTreeMap<String, Option<usize>>,
+}
+
+impl RequestTypeEvidence {
+    fn from_source(source: &str) -> Self {
+        Self {
+            fixed_sizes: parse_packed_struct_sizes(source),
+        }
+    }
 }
 
 fn parse_packed_struct_envelopes(source: &str) -> BTreeMap<String, Option<PackedEnvelope>> {
@@ -888,7 +1253,10 @@ impl CapacityExpressionParser<'_> {
                 .ok();
         }
         let identifier = self.identifier()?;
-        if identifier == "BLE_EVT_MAX_PARAM_LEN" {
+        if matches!(
+            identifier,
+            "BLE_EVT_MAX_PARAM_LEN" | "BLE_CMD_MAX_PARAM_LEN"
+        ) {
             return Some(255);
         }
         if identifier != "sizeof" {
@@ -1169,6 +1537,283 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "aci_fixture");
         assert_eq!(commands[0].ocf, 0x81);
+    }
+
+    #[test]
+    fn resolves_counted_byte_request_envelope_from_ast_and_packed_capacity() {
+        let types = r#"
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Offset;
+                uint8_t Length;
+                uint8_t Value[BLE_CMD_MAX_PARAM_LEN - 2];
+            } fixture_cp0;
+        "#;
+        let source = r#"
+            tBleStatus aci_fixture(uint8_t Offset, uint8_t Length, const uint8_t *Value)
+            {
+                struct hci_request rq;
+                uint8_t cmd_buffer[BLE_CMD_MAX_PARAM_LEN];
+                fixture_cp0 *cp0 = (fixture_cp0 *)(cmd_buffer);
+                int index_input = 0;
+                cp0->Offset = Offset;
+                index_input += 1;
+                cp0->Length = Length;
+                index_input += 1;
+                Osal_MemCpy((void *)&cp0->Value, (const void *)Value, Length);
+                index_input += Length;
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+            }
+        "#;
+
+        let commands = extract_command_metadata_with_evidence(
+            source,
+            "fixture.c",
+            CommandScope::VendorAci,
+            &RequestTypeEvidence::from_source(types),
+        )
+        .unwrap();
+        assert_eq!(
+            commands[0].request,
+            RequestLayout::Variable {
+                minimum: 2,
+                maximum: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_counted_item_capacity_with_sizeof_without_rounding_up() {
+        let types = r#"
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Address_Type;
+                uint8_t Address[6];
+            } Item_t;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Count;
+                Item_t Items[(BLE_CMD_MAX_PARAM_LEN - 2) / sizeof(Item_t)];
+            } fixture_cp0;
+        "#;
+        let source = r#"
+            tBleStatus aci_fixture(uint8_t Count, const Item_t *Items, uint8_t Mode)
+            {
+                struct hci_request rq;
+                uint8_t cmd_buffer[BLE_CMD_MAX_PARAM_LEN];
+                fixture_cp0 *cp0 = (fixture_cp0 *)(cmd_buffer);
+                int index_input = 0;
+                cp0->Count = Count;
+                index_input += 1;
+                Osal_MemCpy((void *)&cp0->Items, (const void *)Items,
+                            Count * (sizeof(Item_t)));
+                index_input += Count * (sizeof(Item_t));
+                index_input += 1;
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+            }
+        "#;
+
+        let commands = extract_command_metadata_with_evidence(
+            source,
+            "fixture.c",
+            CommandScope::VendorAci,
+            &RequestTypeEvidence::from_source(types),
+        )
+        .unwrap();
+        assert_eq!(
+            commands[0].request,
+            RequestLayout::Variable {
+                minimum: 2,
+                maximum: 254,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_ternary_and_switch_selected_request_widths() {
+        let source = r#"
+            tBleStatus aci_ternary(uint8_t UUID_Type)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                int uuid_size = (UUID_Type == 2) ? 16 : 2;
+                index_input += 1;
+                index_input += uuid_size;
+                index_input += 1;
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_switch(uint8_t UUID_Type)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                uint8_t size;
+                switch (UUID_Type) {
+                    case 1: size = 2; break;
+                    case 2: size = 16; break;
+                    default: return 1;
+                }
+                index_input += 2;
+                index_input += size;
+                rq.ocf = 0x082;
+                rq.clen = index_input;
+            }
+        "#;
+
+        let commands =
+            extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
+        assert_eq!(
+            commands[0].request,
+            RequestLayout::Variable {
+                minimum: 4,
+                maximum: 18,
+            }
+        );
+        assert_eq!(
+            commands[1].request,
+            RequestLayout::Variable {
+                minimum: 4,
+                maximum: 18,
+            }
+        );
+    }
+
+    #[test]
+    fn caps_multiple_variable_request_fields_at_the_hci_envelope() {
+        let source = r#"
+            tBleStatus aci_fixture(uint8_t First_Length, uint8_t Second_Length)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                index_input += 13;
+                index_input += First_Length;
+                index_input += Second_Length;
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+                index_input += 99;
+            }
+        "#;
+
+        let commands =
+            extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
+        assert_eq!(
+            commands[0].request,
+            RequestLayout::Variable {
+                minimum: 13,
+                maximum: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_an_unsupported_request_term_as_a_formula() {
+        let source = r#"
+            tBleStatus aci_fixture(const uint8_t *Value)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                index_input += encoded_size(Value);
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+            }
+        "#;
+
+        let commands =
+            extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
+        assert_eq!(
+            commands[0].request,
+            RequestLayout::Formula("encoded_size(Value)".to_owned())
+        );
+    }
+
+    #[test]
+    fn request_formula_resolution_fails_closed_for_ambiguous_inputs() {
+        let source = r#"
+            tBleStatus aci_pointer(const uint8_t *Length)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                index_input += Length;
+                rq.ocf = 0x081;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_subtract(uint16_t Length)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                index_input += Length - 1;
+                rq.ocf = 0x082;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_branched(uint8_t Extended)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                if (Extended) {
+                    index_input += 2;
+                } else {
+                    index_input += 1;
+                }
+                rq.ocf = 0x083;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_reassigned(uint8_t Extended)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                int size = 2;
+                if (Extended) {
+                    size = 16;
+                }
+                index_input += size;
+                rq.ocf = 0x084;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_sequential(void)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                int size;
+                size = 2;
+                size = 16;
+                index_input += size;
+                rq.ocf = 0x085;
+                rq.clen = index_input;
+            }
+
+            tBleStatus aci_partial_switch(uint8_t Type)
+            {
+                struct hci_request rq;
+                int index_input = 0;
+                int size;
+                switch (Type) {
+                    case 1: size = 2; break;
+                    case 2: size = encoded_size(Type); break;
+                    default: return 1;
+                }
+                index_input += size;
+                rq.ocf = 0x086;
+                rq.clen = index_input;
+            }
+        "#;
+
+        let commands =
+            extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
+
+        assert_eq!(commands.len(), 6);
+        assert!(
+            commands
+                .iter()
+                .all(|command| matches!(command.request, RequestLayout::Formula(_)))
+        );
     }
 
     #[test]

@@ -9,12 +9,15 @@
 - Extend compliance coverage to CubeWB standard HCI commands/events via the public `bt-hci`
   provider, and normalize vendor command requests, command returns, and event payloads into shared
   wire envelopes validated against the tagged C sources.
+- Resolve generated CubeWB request-length formulas into bounded wire envelopes from their C
+  parameter domains, branch-selected widths, and packed `sizeof` types.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 
 ### 🐛 Bug Fixes
 
 - Correct vendor opcode wiring for HAL link status and peripheral latency, and add missing HAL write-radio-register and GATT read-handle-value commands.
+- Correct GAP Additional Beacon Set Data to encode its required one-byte data-length prefix.
 - Correct the STM32WB command wire layouts for firmware build number, raw RSSI, GAP security
   level, GAP filter-accept-list configuration, and GATT Read Multiple Variable Characteristic
   Value; raw RSSI now preserves all three returned bytes and GAP security level exposes the
