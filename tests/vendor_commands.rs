@@ -8,16 +8,17 @@ use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::{
     command::{
         gap::{
-            AddDeviceToListMode, AddressType, AdvertisingChannelMap, CmdGapInit,
+            AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle, CmdGapInit,
             GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdditionalBeaconStart,
-            GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
-            GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
-            GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
-            GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable,
-            GapSetNonDiscoverable, GapSetOobData, GapSetUnidirectedConnectable, GapTerminate,
-            GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataLength,
-            OobDataType, OobDeviceType, PassKey, PowerAmplifierOutputLevel, Procedure, Role,
-            ScanType, ScanningFilterPolicy, SecureConnectionSupport, TerminationReason,
+            GapAdvSetConfig, GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices,
+            GapPassKeyResponse, GapPeripheralSecurityRequest, GapSendPairingRequest,
+            GapSetAuthenticationRequirement, GapSetBroadcastMode, GapSetDirectConnectable,
+            GapSetDiscoverable, GapSetEventMask, GapSetIoCapability, GapSetLimitedDiscoverable,
+            GapSetNonConnectable, GapSetNonDiscoverable, GapSetOobData,
+            GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
+            GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
+            PassKey, PowerAmplifierOutputLevel, Procedure, Role, ScanType, ScanningFilterPolicy,
+            SecureConnectionSupport, TerminationReason,
         },
         gatt::{
             AccessPermission, CharacteristicEvent, CharacteristicPermission,
@@ -147,6 +148,34 @@ async fn gatt_write_response_uses_a_closed_write_status() {
     assert!(
         <WriteStatus as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x02]).is_err()
     );
+    assert!(
+        GattWriteResponse::try_new(
+            hci::bt_hci::param::ConnHandle(1),
+            AttributeHandle(2),
+            WriteStatus::Allowed,
+            1,
+            &[],
+        )
+        .is_err()
+    );
+    assert!(
+        GattWriteResponse::try_new(
+            hci::bt_hci::param::ConnHandle(1),
+            AttributeHandle(2),
+            WriteStatus::Rejected,
+            0,
+            &[],
+        )
+        .is_err()
+    );
+    GattWriteResponse::try_new(
+        hci::bt_hci::param::ConnHandle(1),
+        AttributeHandle(2),
+        WriteStatus::Allowed,
+        0,
+        &[],
+    )
+    .unwrap();
 }
 
 #[tokio::test]
@@ -213,6 +242,72 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         )
         .is_err()
     );
+    GapSetLimitedDiscoverable::try_new(
+        AdvertisingType::ConnectableUndirected,
+        0,
+        0,
+        AddressType::Public,
+        AdvertisingFilterPolicy::AllowConnectionAndScan,
+        &[],
+        &[],
+        0xFFFF,
+        0xFFFF,
+    )
+    .unwrap();
+    GapSetLimitedDiscoverable::try_new(
+        AdvertisingType::ConnectableUndirected,
+        0,
+        0,
+        AddressType::Public,
+        AdvertisingFilterPolicy::AllowConnectionAndScan,
+        &[],
+        &[],
+        0xFFFF,
+        0x0006,
+    )
+    .unwrap();
+    assert!(
+        GapSetLimitedDiscoverable::try_new(
+            AdvertisingType::ConnectableUndirected,
+            0,
+            0x20,
+            AddressType::Public,
+            AdvertisingFilterPolicy::AllowConnectionAndScan,
+            &[],
+            &[],
+            0,
+            0,
+        )
+        .is_err()
+    );
+    assert!(
+        GapSetLimitedDiscoverable::try_new(
+            AdvertisingType::ConnectableUndirected,
+            0x20,
+            0x30,
+            AddressType::Public,
+            AdvertisingFilterPolicy::AllowConnectionAndScan,
+            &[],
+            &[],
+            0x0007,
+            0x0006,
+        )
+        .is_err()
+    );
+    assert!(
+        GapSetLimitedDiscoverable::try_new(
+            AdvertisingType::ConnectableUndirected,
+            0x20,
+            0x30,
+            AddressType::Public,
+            AdvertisingFilterPolicy::AllowConnectionAndScan,
+            &[],
+            &[],
+            0x0005,
+            0x0006,
+        )
+        .is_err()
+    );
     assert!(
         GapSetDiscoverable::try_new(
             AdvertisingType::ConnectableDirectedHighDutyCycle,
@@ -237,6 +332,34 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         )
         .is_err()
     );
+    GapSetDirectConnectable::try_new(
+        AddressType::Public,
+        AdvertisingType::ConnectableDirectedHighDutyCycle,
+        address,
+        0x0006,
+        0x0006,
+    )
+    .unwrap();
+    assert!(
+        GapSetDirectConnectable::try_new(
+            AddressType::Public,
+            AdvertisingType::ConnectableDirectedLowDutyCycle,
+            address,
+            0x0006,
+            0x0006,
+        )
+        .is_err()
+    );
+    assert!(
+        GapSetDirectConnectable::try_new(
+            AddressType::Public,
+            AdvertisingType::ConnectableDirectedHighDutyCycle,
+            address,
+            0x0020,
+            0x0020,
+        )
+        .is_err()
+    );
     assert!(
         GapSetDirectConnectable::try_new(
             AddressType::Public,
@@ -255,6 +378,34 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
             false,
             16,
             7,
+            true,
+            pass_key,
+            AddressType::Public,
+        )
+        .is_err()
+    );
+    assert!(
+        GapSetAuthenticationRequirement::try_new(
+            false,
+            false,
+            SecureConnectionSupport::NotSupported,
+            false,
+            6,
+            16,
+            true,
+            pass_key,
+            AddressType::Public,
+        )
+        .is_err()
+    );
+    assert!(
+        GapSetAuthenticationRequirement::try_new(
+            false,
+            false,
+            SecureConnectionSupport::NotSupported,
+            false,
+            7,
+            17,
             true,
             pass_key,
             AddressType::Public,
@@ -349,17 +500,93 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
     )
     .unwrap();
+    assert!(
+        GapAdditionalBeaconStart::try_new(
+            0x001F,
+            0x0020,
+            AdvertisingChannelMap::CHANNEL_37,
+            address,
+            PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
+        )
+        .is_err()
+    );
+    assert!(
+        GapAdditionalBeaconStart::try_new(
+            0x0030,
+            0x0020,
+            AdvertisingChannelMap::CHANNEL_37,
+            address,
+            PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
+        )
+        .is_err()
+    );
     assert!(AdvertisingChannelMap::from_bits(0x08).is_none());
     assert!(ToneChannel::try_new(40).is_err());
+}
+
+#[tokio::test]
+async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
+    use core::time::Duration;
+    use hci::types::extended_advertisement::{
+        AdvertisingEvent, AdvertisingMode, AdvertisingPhy, ExtendedAdvertisingInterval,
+    };
+
+    let interval = ExtendedAdvertisingInterval::with_range(
+        Duration::from_millis(20),
+        Duration::from_millis(30),
+    )
+    .unwrap();
+    let address = hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr([0; 6]));
+    let make = |power, sid| {
+        GapAdvSetConfig::try_new(
+            AdvertisingMode::empty(),
+            AdvertisingHandle::try_new(0).unwrap(),
+            AdvertisingEvent::CONNECTABLE,
+            &interval,
+            AdvertisingChannelMap::CHANNEL_37,
+            AddressType::Public,
+            address,
+            AdvertisingFilterPolicy::AllowConnectionAndScan,
+            power,
+            0,
+            AdvertisingPhy::Le1M,
+            sid,
+            false,
+        )
+    };
+
+    assert!(make(-128, 0).is_err());
+    assert!(make(21, 0).is_err());
+    assert!(make(0, 16).is_err());
+
+    let sink = RecordingSink::new();
+    make(-127, 15).unwrap().exec(&sink).await.unwrap();
+    assert_eq!(sink.written_data()[26], 0x81);
 }
 
 #[tokio::test]
 async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
     use hci::types::extended_advertisement::AdvSet;
 
+    let handle = AdvertisingHandle::try_new(0xEF).unwrap();
+    assert_eq!(handle.value(), 0xEF);
+    assert_eq!(u8::from(handle), 0xEF);
+    let error = AdvertisingHandle::try_new(0xF0).unwrap_err();
+    assert_eq!(error.actual(), 0xF0);
+    assert_eq!(error.minimum(), 0x00);
+    assert_eq!(error.maximum(), 0xEF);
+    assert!(
+        <AdvertisingHandle as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0xEF])
+            .is_ok()
+    );
+    assert!(
+        <AdvertisingHandle as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0xF0])
+            .is_err()
+    );
+
     let sink = RecordingSink::new();
     let sets = [AdvSet {
-        handle: hci::bt_hci::param::AdvHandle(2),
+        handle,
         duration: 0x1234,
         max_extended_adv_events: 5,
     }];
@@ -371,7 +598,7 @@ async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
         .unwrap();
     assert_eq!(
         sink.written_data(),
-        [1, 0xC1, 0xFC, 6, 1, 1, 2, 0x34, 0x12, 5]
+        [1, 0xC1, 0xFC, 6, 1, 1, 0xEF, 0x34, 0x12, 5]
     );
 }
 
@@ -999,7 +1226,7 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
         CharacteristicProperty::READ | CharacteristicProperty::WRITE,
         CharacteristicPermission::ENCRYPTED_READ,
         CharacteristicEvent::CONFIRM_READ,
-        EncryptionKeySize::with_value(16).unwrap(),
+        EncryptionKeySize::try_new(16).unwrap(),
         true,
     )
     .unwrap()
@@ -1028,7 +1255,7 @@ async fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
         DescriptorPermission::ENCRYPTED,
         AccessPermission::READ_WRITE,
         CharacteristicEvent::ATTRIBUTE_WRITE,
-        EncryptionKeySize::with_value(7).unwrap(),
+        EncryptionKeySize::try_new(7).unwrap(),
         false,
     )
     .unwrap()
@@ -1131,7 +1358,7 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         DescriptorPermission::empty(),
         AccessPermission::READ,
         CharacteristicEvent::empty(),
-        EncryptionKeySize::with_value(7).unwrap(),
+        EncryptionKeySize::try_new(7).unwrap(),
         false,
     );
     assert!(result.is_err());
@@ -1146,14 +1373,21 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         DescriptorPermission::empty(),
         AccessPermission::READ,
         CharacteristicEvent::empty(),
-        EncryptionKeySize::with_value(7).unwrap(),
+        EncryptionKeySize::try_new(7).unwrap(),
         false,
     );
     assert!(result.is_err());
 
     assert!(DescriptorValueMaxLength::try_new(228).is_err());
-    assert!(EncryptionKeySize::with_value(6).is_err());
-    assert!(EncryptionKeySize::with_value(17).is_err());
+    let minimum_key_size = EncryptionKeySize::try_new(7).unwrap();
+    assert_eq!(minimum_key_size.value(), 7u8);
+    assert_eq!(u8::from(minimum_key_size), 7);
+    assert!(EncryptionKeySize::try_new(6).is_err());
+    assert!(EncryptionKeySize::try_new(17).is_err());
+    assert!(
+        <EncryptionKeySize as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[6])
+            .is_err()
+    );
 }
 
 #[test]

@@ -4,41 +4,12 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use crate::vendor::command::BoundedBytes;
 
-/// Bluetooth RF channel accepted by [`HalStartTone`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ToneChannel(u8);
-
-impl ToneChannel {
-    /// Create a channel in the controller's accepted `0..=39` range.
-    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
-        if value <= 39 {
-            Ok(Self(value))
-        } else {
-            Err(crate::vendor::command::HciValueError::new(
-                value as u64,
-                0,
-                39,
-            ))
-        }
-    }
-
-    /// Raw RF channel number.
-    pub const fn value(self) -> u8 {
-        self.0
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<1> for ToneChannel {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[self.0])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[self.0]).await
+hci_ranged! {
+    /// Bluetooth RF channel accepted by [`HalStartTone`].
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct ToneChannel: u8 => 1 {
+        minimum: 0,
+        maximum: 39,
     }
 }
 

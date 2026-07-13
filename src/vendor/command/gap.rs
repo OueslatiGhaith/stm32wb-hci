@@ -2,6 +2,7 @@
 
 pub use crate::types::BdAddrType;
 use crate::types::PeerAddrType;
+pub use crate::types::extended_advertisement::AdvertisingHandle;
 use crate::types::extended_advertisement::{
     AdvSet, AdvertisingEvent, AdvertisingMode, AdvertisingOperation, AdvertisingPhy,
     ExtendedAdvertisingInterval,
@@ -12,43 +13,14 @@ pub use crate::types::{
 };
 use crate::vendor::command::BoundedItems;
 use crate::vendor::event::AttributeHandle;
-use bt_hci::param::{AdvHandle, BdAddr, ConnHandle};
+use bt_hci::param::{BdAddr, ConnHandle};
 
-/// Six-digit GAP pass key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PassKey(u32);
-
-impl PassKey {
-    /// Create a pass key in the controller's accepted `0..=999_999` range.
-    pub const fn try_new(value: u32) -> Result<Self, crate::vendor::command::HciValueError> {
-        if value <= 999_999 {
-            Ok(Self(value))
-        } else {
-            Err(crate::vendor::command::HciValueError::new(
-                value as u64,
-                0,
-                999_999,
-            ))
-        }
-    }
-
-    /// Numeric pass-key value.
-    pub const fn value(self) -> u32 {
-        self.0
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<4> for PassKey {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&self.0.to_le_bytes())
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&self.0.to_le_bytes()).await
+hci_ranged! {
+    /// Six-digit GAP pass key.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PassKey: u32 => 4 {
+        minimum: 0,
+        maximum: 999_999,
     }
 }
 
@@ -69,41 +41,12 @@ impl crate::vendor::command::HciEncodeField<4> for ScanWindow {
     }
 }
 
-/// Power-amplifier output level accepted by the additional-beacon command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PowerAmplifierOutputLevel(u8);
-
-impl PowerAmplifierOutputLevel {
-    /// Create an output level in the controller's accepted `0..=0x23` range.
-    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
-        if value <= 0x23 {
-            Ok(Self(value))
-        } else {
-            Err(crate::vendor::command::HciValueError::new(
-                value as u64,
-                0,
-                0x23,
-            ))
-        }
-    }
-
-    /// Raw controller level.
-    pub const fn value(self) -> u8 {
-        self.0
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<1> for PowerAmplifierOutputLevel {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[self.0])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[self.0]).await
+hci_ranged! {
+    /// Power-amplifier output level accepted by the additional-beacon command.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PowerAmplifierOutputLevel: u8 => 1 {
+        minimum: 0,
+        maximum: 0x23,
     }
 }
 
@@ -157,8 +100,13 @@ vendor_cmd! {
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
             ]);
+            one_of_or_range(advertising_interval_min, [0], 0x0020, 0x4000);
+            one_of_or_range(advertising_interval_max, [0], 0x0020, 0x4000);
+            paired_value(advertising_interval_min, advertising_interval_max, 0);
             ordered(advertising_interval_min, advertising_interval_max);
-            ordered(conn_interval_min, conn_interval_max);
+            one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
+            one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
+            ordered_when_in_range(conn_interval_min, conn_interval_max, 0x0006, 0x0C80);
         };
         Completion = CommandStatus;
     }
@@ -191,8 +139,13 @@ vendor_cmd! {
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
             ]);
+            one_of_or_range(advertising_interval_min, [0], 0x0020, 0x4000);
+            one_of_or_range(advertising_interval_max, [0], 0x0020, 0x4000);
+            paired_value(advertising_interval_min, advertising_interval_max, 0);
             ordered(advertising_interval_min, advertising_interval_max);
-            ordered(conn_interval_min, conn_interval_max);
+            one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
+            one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
+            ordered_when_in_range(conn_interval_min, conn_interval_max, 0x0006, 0x0C80);
         };
         Completion = CommandComplete;
         Return = ();
@@ -213,8 +166,32 @@ vendor_cmd! {
                 AdvertisingType::ConnectableDirectedHighDutyCycle,
                 AdvertisingType::ConnectableDirectedLowDutyCycle,
             ]);
-            range(advertising_interval_min, 0x0020, 0x4000);
-            range(advertising_interval_max, 0x0020, 0x4000);
+            implies_eq(
+                advertising_type,
+                AdvertisingType::ConnectableDirectedHighDutyCycle,
+                advertising_interval_min,
+                0x0006
+            );
+            implies_eq(
+                advertising_type,
+                AdvertisingType::ConnectableDirectedHighDutyCycle,
+                advertising_interval_max,
+                0x0006
+            );
+            implies_range(
+                advertising_type,
+                AdvertisingType::ConnectableDirectedLowDutyCycle,
+                advertising_interval_min,
+                0x0020,
+                0x4000
+            );
+            implies_range(
+                advertising_type,
+                AdvertisingType::ConnectableDirectedLowDutyCycle,
+                advertising_interval_max,
+                0x0020,
+                0x4000
+            );
             ordered(advertising_interval_min, advertising_interval_max);
         };
         Completion = CommandComplete;
@@ -246,6 +223,8 @@ vendor_cmd! {
             identity_address_type: AddressType => 1,
         };
         Constraints = {
+            range(encryption_key_size_min, 7, 16);
+            range(encryption_key_size_max, 7, 16);
             ordered(encryption_key_size_min, encryption_key_size_max);
             one_of(identity_address_type, [AddressType::Public, AddressType::Random]);
         };
@@ -750,6 +729,9 @@ vendor_cmd! {
             pa_level: PowerAmplifierOutputLevel => 1,
         };
         Constraints = {
+            range(advertising_interval_min, 0x0020, 0x4000);
+            range(advertising_interval_max, 0x0020, 0x4000);
+            ordered(advertising_interval_min, advertising_interval_max);
             non_empty(advertising_channel_map);
         };
         Completion = CommandComplete;
@@ -783,14 +765,14 @@ vendor_cmd! {
     GapAdvSetConfig(cgid = 0x1, cid = 0x40) {
         Params<'a> = {
             adv_mode: AdvertisingMode => 1,
-            adv_handle: AdvHandle => 1,
+            adv_handle: AdvertisingHandle => 1,
             adv_event_properties: AdvertisingEvent => 2,
             adv_interval: &'a ExtendedAdvertisingInterval => 8,
             primary_adv_channel_map: AdvertisingChannelMap => 1,
             own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
             adv_filter_policy: AdvertisingFilterPolicy => 1,
-            adv_tx_power: u8 => 1,
+            adv_tx_power: i8 => 1,
             secondary_adv_max_skip: u8 => 1,
             secondary_adv_phy: AdvertisingPhy => 1,
             adv_sid: u8 => 1,
@@ -798,6 +780,8 @@ vendor_cmd! {
         };
         Constraints = {
             non_empty(primary_adv_channel_map);
+            range(adv_tx_power, -127, 20);
+            range(adv_sid, 0, 0x0F);
         };
         Completion = CommandComplete;
         Return = ();
@@ -823,7 +807,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetAdvertisingData(cgid = 0x1, cid = 0x42) {
         Params<'a> = {
-            adv_handle: AdvHandle => 1,
+            adv_handle: AdvertisingHandle => 1,
             operation: AdvertisingOperation => 1,
             fragment_preference: bool => 1,
             data: &'a [u8] => {
@@ -840,7 +824,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetScanResponseData(cgid = 0x1, cid = 0x43) {
         Params<'a> = {
-            adv_handle: AdvHandle => 1,
+            adv_handle: AdvertisingHandle => 1,
             operation: AdvertisingOperation => 1,
             fragment_preference: bool => 1,
             data: &'a [u8] => {
@@ -857,7 +841,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvRemoveSet(cgid = 0x1, cid = 0x44) {
         Params = {
-            handle: AdvHandle => 1,
+            handle: AdvertisingHandle => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -875,7 +859,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetRandomAddress(cgid = 0x1, cid = 0x46) {
         Params = {
-            handle: AdvHandle => 1,
+            handle: AdvertisingHandle => 1,
             address: BdAddr => 6,
         };
         Completion = CommandComplete;
@@ -899,7 +883,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetPeriodicParameters(cgid = 0x1, cid = 0x47) {
         Params = {
-            advertising_handle: AdvHandle => 1,
+            advertising_handle: AdvertisingHandle => 1,
             periodic_adv_interval_min: u16 => 2,
             periodic_adv_interval_max: u16 => 2,
             periodic_adv_properties: u16 => 2,
@@ -918,7 +902,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetPeriodicData(cgid = 0x1, cid = 0x48) {
         Params<'a> = {
-            advertising_handle: AdvHandle => 1,
+            advertising_handle: AdvertisingHandle => 1,
             operation: AdvertisingOperation => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
@@ -936,7 +920,7 @@ vendor_cmd! {
     GapAdvSetPeriodicEnable(cgid = 0x1, cid = 0x49) {
         Params = {
             enable: u8 => 1,
-            handle: AdvHandle => 1,
+            handle: AdvertisingHandle => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -948,7 +932,7 @@ vendor_cmd! {
     GapAdvSetConfigurationV2(cgid = 0x1, cid = 0x4D) {
         Params = {
             adv_mode: AdvertisingMode => 1,
-            adv_handle: AdvHandle => 1,
+            adv_handle: AdvertisingHandle => 1,
             adv_event_properties: AdvertisingEvent => 2,
             primary_adv_interval_min: u32 => 4,
             primary_adv_interval_max: u32 => 4,
@@ -956,7 +940,7 @@ vendor_cmd! {
             own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
             adv_filter_policy: AdvertisingFilterPolicy => 1,
-            adv_tx_power: u8 => 1,
+            adv_tx_power: i8 => 1,
             primary_adv_phy: AdvertisingPhy => 1,
             secondary_adv_max_skip: u8 => 1,
             secondary_adv_phy: AdvertisingPhy => 1,
@@ -965,7 +949,12 @@ vendor_cmd! {
             primary_adv_phy_options: u8 => 1,
         };
         Constraints = {
+            range(primary_adv_interval_min, 0x0000_0020, 0x00FF_FFFF);
+            range(primary_adv_interval_max, 0x0000_0020, 0x00FF_FFFF);
+            ordered(primary_adv_interval_min, primary_adv_interval_max);
             non_empty(primary_adv_channel_map);
+            range(adv_tx_power, -127, 20);
+            range(adv_sid, 0, 0x0F);
         };
         Completion = CommandComplete;
         Return = ();

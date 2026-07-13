@@ -36,6 +36,14 @@
   modes are typed as well, with semantic masks retaining the familiar `bitflags` API.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
+- Extend command declarations with sentinel-or-range, paired-sentinel, and conditional equality
+  and range constraints, and enforce the documented GAP interval/key-size/extended-advertising
+  domains and GATT write-response status/error relationship before bytes reach the controller.
+- Add a declarative ranged-scalar wire type, use a validated `AdvertisingHandle` throughout
+  extended-advertising commands and nested advertising-set records, and replace the hand-written
+  pass-key, PA-level, descriptor-length, tone-channel, and encryption-key-size
+  validation/serialization wrappers. Ranged scalars consistently use `try_new` and expose their
+  underlying wire scalar through `value`.
 
 ### 🐛 Bug Fixes
 

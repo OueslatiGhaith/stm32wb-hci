@@ -691,6 +691,14 @@ impl Parse for DeclarativeConstraints {
                 fields.insert(arguments.parse::<syn::Ident>()?.to_string());
                 arguments.parse::<syn::Token![,]>()?;
                 fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+            } else if kind == "ordered_when_in_range" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
             } else if kind == "range" {
                 fields.insert(arguments.parse::<syn::Ident>()?.to_string());
                 arguments.parse::<syn::Token![,]>()?;
@@ -706,6 +714,45 @@ impl Parse for DeclarativeConstraints {
                 if values.is_empty() {
                     return Err(allowed.error("one_of must declare at least one allowed value"));
                 }
+            } else if kind == "one_of_or_range" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                let allowed;
+                syn::bracketed!(allowed in arguments);
+                let values = Punctuated::<Expr, syn::Token![,]>::parse_terminated(&allowed)?;
+                if values.is_empty() {
+                    return Err(
+                        allowed.error("one_of_or_range must declare at least one allowed value")
+                    );
+                }
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+            } else if kind == "paired_value" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+            } else if kind == "implies_eq" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+            } else if kind == "implies_range" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
             } else if kind == "non_empty" {
                 fields.insert(arguments.parse::<syn::Ident>()?.to_string());
             } else {
@@ -1818,6 +1865,11 @@ mod tests {
                         ordered(minimum, maximum);
                         range(minimum, 0x20, 0x4000);
                         one_of(mode, [0x00, 0x02]);
+                        one_of_or_range(maximum, [0], 0x20, 0x4000);
+                        paired_value(minimum, maximum, 0);
+                        ordered_when_in_range(minimum, maximum, 0x20, 0x4000);
+                        implies_eq(mode, 0x00, maximum, 0);
+                        implies_range(mode, 0x02, maximum, 0x20, 0x4000);
                         len_at_most(data, mode);
                     };
                     Completion = CommandStatus;

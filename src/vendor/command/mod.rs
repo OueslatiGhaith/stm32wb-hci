@@ -172,7 +172,6 @@ macro_rules! impl_hci_newtype_field {
 }
 
 impl_hci_newtype_field!(bt_hci::param::ConnHandle, u16, 2);
-impl_hci_newtype_field!(bt_hci::param::AdvHandle, u8, 1);
 impl_hci_newtype_field!(bt_hci::param::BdAddr, [u8; 6], 6);
 impl_hci_newtype_field!(crate::vendor::event::AttributeHandle, u16, 2);
 
@@ -1443,6 +1442,35 @@ macro_rules! declarative_constraint_checks {
     };
     (
         $command:ident;
+        ordered_when_in_range(
+            $minimum:ident,
+            $maximum:ident,
+            $range_minimum:expr,
+            $range_maximum:expr
+        );
+        $($rest:tt)*
+    ) => {
+        if (($range_minimum)..=($range_maximum)).contains(&$minimum)
+            && (($range_minimum)..=($range_maximum)).contains(&$maximum)
+            && $minimum > $maximum
+        {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($minimum),
+                    " <= ",
+                    stringify!($maximum),
+                    " when both are in ",
+                    stringify!($range_minimum),
+                    "..=",
+                    stringify!($range_maximum),
+                ),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
         range($field:ident, $minimum:expr, $maximum:expr);
         $($rest:tt)*
     ) => {
@@ -1469,6 +1497,115 @@ macro_rules! declarative_constraint_checks {
             return Err(crate::vendor::command::HciConstraintError::new(
                 stringify!($command),
                 concat!(stringify!($field), " in ", stringify!([$($allowed),+])),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        one_of_or_range(
+            $field:ident,
+            [$($allowed:expr),+ $(,)?],
+            $minimum:expr,
+            $maximum:expr
+        );
+        $($rest:tt)*
+    ) => {
+        if ![$($allowed),+].contains(&$field)
+            && !(($minimum)..=($maximum)).contains(&$field)
+        {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($field),
+                    " in ",
+                    stringify!([$($allowed),+]),
+                    " or ",
+                    stringify!($minimum),
+                    " <= ",
+                    stringify!($field),
+                    " <= ",
+                    stringify!($maximum),
+                ),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        paired_value($left:ident, $right:ident, $value:expr);
+        $($rest:tt)*
+    ) => {
+        match $value {
+            ref value => {
+                if (&$left == value) != (&$right == value) {
+                    return Err(crate::vendor::command::HciConstraintError::new(
+                        stringify!($command),
+                        concat!(
+                            stringify!($left),
+                            " and ",
+                            stringify!($right),
+                            " are both ",
+                            stringify!($value),
+                            " or neither is",
+                        ),
+                    ));
+                }
+            }
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        implies_eq(
+            $selector:ident,
+            $selected:expr,
+            $field:ident,
+            $required:expr
+        );
+        $($rest:tt)*
+    ) => {
+        if $selector == $selected && $field != $required {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($selector),
+                    " == ",
+                    stringify!($selected),
+                    " implies ",
+                    stringify!($field),
+                    " == ",
+                    stringify!($required),
+                ),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        implies_range(
+            $selector:ident,
+            $selected:expr,
+            $field:ident,
+            $minimum:expr,
+            $maximum:expr
+        );
+        $($rest:tt)*
+    ) => {
+        if $selector == $selected && !(($minimum)..=($maximum)).contains(&$field) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($selector),
+                    " == ",
+                    stringify!($selected),
+                    " implies ",
+                    stringify!($minimum),
+                    " <= ",
+                    stringify!($field),
+                    " <= ",
+                    stringify!($maximum),
+                ),
             ));
         }
         declarative_constraint_checks!($command; $($rest)*);
@@ -1954,6 +2091,11 @@ macro_rules! declarative_variable_command {
 ///         Constraints = {
 ///             ordered(minimum, maximum);
 ///             one_of(mode, [0x00, 0x02]);
+///             one_of_or_range(minimum, [0], 0x20, 0x4000);
+///             paired_value(minimum, maximum, 0);
+///             ordered_when_in_range(minimum, maximum, 0x20, 0x4000);
+///             implies_eq(mode, 0x00, maximum, 0);
+///             implies_range(mode, 0x02, maximum, 0x20, 0x4000);
 ///         };
 ///         Completion = CommandComplete;
 ///         Return = ();

@@ -70,6 +70,101 @@ macro_rules! hci_enum {
     };
 }
 
+/// Declare a bounded unsigned scalar and its exact-width HCI wire encoding.
+///
+/// The scalar can only be constructed or decoded when its value is within the
+/// declared inclusive range. This keeps intrinsic protocol domains in their
+/// semantic types while command-specific relationships remain in `vendor_cmd!`.
+macro_rules! hci_ranged {
+    (
+        $(#[$struct_attr:meta])*
+        $vis:vis struct $name:ident : $repr:ty => $len:literal {
+            minimum: $minimum:expr,
+            maximum: $maximum:expr $(,)?
+        }
+    ) => {
+        $(#[$struct_attr])*
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        $vis struct $name($repr);
+
+        impl $name {
+            /// Smallest accepted value.
+            pub const MINIMUM: $repr = $minimum;
+
+            /// Largest accepted value.
+            pub const MAXIMUM: $repr = $maximum;
+
+            /// Construct a value within the declared inclusive range.
+            pub const fn try_new(
+                value: $repr,
+            ) -> Result<Self, crate::vendor::command::HciValueError> {
+                if value >= Self::MINIMUM && value <= Self::MAXIMUM {
+                    Ok(Self(value))
+                } else {
+                    Err(crate::vendor::command::HciValueError::new(
+                        value as u64,
+                        Self::MINIMUM as u64,
+                        Self::MAXIMUM as u64,
+                    ))
+                }
+            }
+
+            /// Return the underlying wire value.
+            pub const fn value(self) -> $repr {
+                self.0
+            }
+        }
+
+        impl TryFrom<$repr> for $name {
+            type Error = crate::vendor::command::HciValueError;
+
+            fn try_from(value: $repr) -> Result<Self, Self::Error> {
+                Self::try_new(value)
+            }
+        }
+
+        impl From<$name> for $repr {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+
+        impl crate::vendor::command::HciEncodeField<$len> for $name {
+            fn write_hci_field<W: embedded_io::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field(
+                    &self.0,
+                    writer,
+                )
+            }
+
+            async fn write_hci_field_async<W: embedded_io_async::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field_async(
+                    &self.0,
+                    writer,
+                )
+                .await
+            }
+        }
+
+        impl crate::vendor::command::HciDecodeField<$len> for $name {
+            fn from_hci_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, bt_hci::FromHciBytesError> {
+                let value =
+                    <$repr as crate::vendor::command::HciDecodeField<$len>>::from_hci_field(bytes)?;
+                Self::try_new(value).map_err(|_| bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+    };
+}
+
 /// Declare HCI bitflags once while retaining `defmt`'s compact formatter.
 ///
 /// The ordinary backend receives explicit standard derives because bitflags 2

@@ -4,51 +4,22 @@ use bt_hci::param::ConnHandle;
 
 use crate::vendor::{command::BoundedBytes, event::AttributeHandle};
 
-/// Maximum characteristic-descriptor value length accepted by
-/// [`GattAddCharacteristicDescriptor`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct DescriptorValueMaxLength(u8);
-
-impl DescriptorValueMaxLength {
-    /// Create a maximum length that keeps the largest UUID form within one HCI
-    /// command packet.
-    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
-        if value <= 227 {
-            Ok(Self(value))
-        } else {
-            Err(crate::vendor::command::HciValueError::new(
-                value as u64,
-                0,
-                227,
-            ))
-        }
-    }
-
-    /// Maximum descriptor value length in bytes.
-    pub const fn value(self) -> u8 {
-        self.0
+hci_ranged! {
+    /// Maximum characteristic-descriptor value length accepted by
+    /// [`GattAddCharacteristicDescriptor`].
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct DescriptorValueMaxLength: u8 => 1 {
+        minimum: 0,
+        maximum: 227,
     }
 }
 
 impl From<DescriptorValueMaxLength> for usize {
     fn from(value: DescriptorValueMaxLength) -> Self {
-        usize::from(value.0)
+        usize::from(value.value())
     }
 }
 
-impl crate::vendor::command::HciEncodeField<1> for DescriptorValueMaxLength {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[self.0])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[self.0]).await
-    }
-}
 vendor_cmd! {
     GattInit(cgid = 0x2, cid = 0x01) {
         Params = ();
@@ -680,6 +651,10 @@ vendor_cmd! {
                 max_len: 248,
             },
         };
+        Constraints = {
+            implies_eq(write_status, WriteStatus::Allowed, error_code, 0);
+            implies_range(write_status, WriteStatus::Rejected, error_code, 1, u8::MAX);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -1022,59 +997,13 @@ hci_bitflags! {
     }
 }
 
-/// Encryption key size, in bytes.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct EncryptionKeySize(u8);
-
-impl EncryptionKeySize {
-    /// Validate the size as a valid encryption key size. Valid range is 7 to 16, inclusive.
-    ///
-    /// # Errors
-    ///
-    /// - [TooShort](EncryptionKeySizeError::TooShort) if the provided size is less than 7.
-    /// - [TooLong](EncryptionKeySizeError::TooLong) if the provided size is greater than 16.
-    pub fn with_value(sz: usize) -> Result<Self, EncryptionKeySizeError> {
-        const MIN: usize = 7;
-        const MAX: usize = 16;
-
-        if sz < MIN {
-            return Err(EncryptionKeySizeError::TooShort);
-        }
-
-        if sz > MAX {
-            return Err(EncryptionKeySizeError::TooLong);
-        }
-
-        Ok(Self(sz as u8))
+hci_ranged! {
+    /// Encryption key size, in bytes.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct EncryptionKeySize: u8 => 1 {
+        minimum: 7,
+        maximum: 16,
     }
-
-    /// Retrieve the key size.
-    pub fn value(&self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<1> for EncryptionKeySize {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[self.0])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[self.0]).await
-    }
-}
-
-/// Errors that can occur when creating an [`EncryptionKeySize`].
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum EncryptionKeySizeError {
-    /// The provided size was less than the minimum allowed size.
-    TooShort,
-    /// The provided size was greater than the maximum allowed size.
-    TooLong,
 }
 
 /// Common characteristic descriptor UUIDs.

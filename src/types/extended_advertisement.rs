@@ -2,13 +2,20 @@ use core::time::Duration;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use bt_hci::param::AdvHandle;
-
 hci_bitflags! {
     /// Extended advertising modes
     pub struct AdvertisingMode: u8 => 1 {
         /// Use specific random address
         const SPECIFIC = 0x01;
+    }
+}
+
+hci_ranged! {
+    /// Advertising-set handle accepted by STM32WB extended-advertising commands.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct AdvertisingHandle: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0xEF,
     }
 }
 
@@ -131,7 +138,7 @@ hci_enum! {
 /// Advertising set
 pub struct AdvSet {
     /// Used to identify an advertising set
-    pub handle: AdvHandle,
+    pub handle: AdvertisingHandle,
     /// Duration of advertising set.
     ///
     /// Values:
@@ -150,7 +157,7 @@ pub struct AdvSet {
 
 impl AdvSet {
     pub(crate) fn copy_into_slice(&self, bytes: &mut [u8]) {
-        bytes[0] = self.handle.0;
+        bytes[0] = self.handle.value();
         LittleEndian::write_u16(&mut bytes[1..], self.duration);
         bytes[3] = self.max_extended_adv_events;
     }
