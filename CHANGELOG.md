@@ -17,6 +17,8 @@
   events absent from CubeWB's generated catalog.
 - Treat unavailable wire evidence as a compliance failure, locking in the zero-unavailable
   baseline for CI.
+- Collapse unresolved catalog formulas and expressions into one fail-closed representation, and
+  derive fixed request-type evidence from the shared packed-envelope parser.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 

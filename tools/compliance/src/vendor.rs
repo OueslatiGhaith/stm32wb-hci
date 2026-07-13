@@ -512,8 +512,8 @@ fn completion_expectation(body: Node<'_>, source: &str) -> CompletionExpectation
             Some(0x0e) => CompletionExpectation::CommandComplete,
             Some(0x0f) => CompletionExpectation::CommandStatus,
             Some(value) if value <= u16::from(u8::MAX) => CompletionExpectation::Event(value as u8),
-            Some(value) => CompletionExpectation::Expression(format!("0x{value:04X}")),
-            None => CompletionExpectation::Expression(node_text(value, source).trim().to_owned()),
+            Some(value) => CompletionExpectation::Unresolved(format!("0x{value:04X}")),
+            None => CompletionExpectation::Unresolved(node_text(value, source).trim().to_owned()),
         },
     }
 }
@@ -663,7 +663,7 @@ fn request_layout(
                 .iter()
                 .any(|(assignment, _)| nested_in_dynamic_control_flow(*assignment, body))
         {
-            return RequestLayout::Formula(formula);
+            return RequestLayout::Unresolved(formula);
         }
         let context = RequestExpressionContext {
             function_declarator,
@@ -680,13 +680,13 @@ fn request_layout(
             },
         );
         let Some(total) = total else {
-            return RequestLayout::Formula(formula);
+            return RequestLayout::Unresolved(formula);
         };
         let Some((minimum, maximum)) = total.envelope() else {
-            return RequestLayout::Formula(formula);
+            return RequestLayout::Unresolved(formula);
         };
         let (Ok(minimum), Ok(maximum)) = (u32::try_from(minimum), u32::try_from(maximum)) else {
-            return RequestLayout::Formula(formula);
+            return RequestLayout::Unresolved(formula);
         };
         return if minimum == maximum {
             RequestLayout::Fixed(maximum)
@@ -694,7 +694,7 @@ fn request_layout(
             RequestLayout::Variable { minimum, maximum }
         };
     }
-    RequestLayout::Expression(value_text.to_owned())
+    RequestLayout::Unresolved(value_text.to_owned())
 }
 
 fn request_expression_values(
@@ -936,7 +936,7 @@ fn response_layout(body: Node<'_>, source: &str) -> ResponseLayout {
     {
         return ResponseLayout::CStruct(type_name);
     }
-    ResponseLayout::Expression(value_text.to_owned())
+    ResponseLayout::Unresolved(value_text.to_owned())
 }
 
 /// Convert `sizeof(resp)` response layouts into fixed or bounded byte counts
@@ -1019,9 +1019,16 @@ struct RequestTypeEvidence {
 
 impl RequestTypeEvidence {
     fn from_source(source: &str) -> Self {
-        Self {
-            fixed_sizes: parse_packed_struct_sizes(source),
-        }
+        let fixed_sizes = parse_packed_struct_envelopes(source)
+            .into_iter()
+            .map(|(name, layout)| {
+                let size = layout.and_then(|layout| {
+                    (!layout.variable && layout.minimum == layout.maximum).then_some(layout.maximum)
+                });
+                (name, size)
+            })
+            .collect();
+        Self { fixed_sizes }
     }
 }
 
@@ -1304,155 +1311,6 @@ impl CapacityExpressionParser<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PackedField {
-    type_name: String,
-    count: usize,
-}
-
-#[derive(Clone, Debug)]
-struct PackedStructDefinition {
-    name: String,
-    fields: Option<Vec<PackedField>>,
-}
-
-/// Returns `Some(size)` for a fixed packed structure and `None` for a
-/// variable/unknown structure. `__PACKED_STRUCT` is a preprocessor macro, not
-/// valid standalone C grammar, so it is replaced with a same-width `struct`
-/// token solely for parsing. The original offsets remain valid and the marker
-/// still distinguishes packed layouts from ordinary ABI-dependent structs.
-fn parse_packed_struct_sizes(source: &str) -> BTreeMap<String, Option<usize>> {
-    const PACKED_MARKER: &str = "__PACKED_STRUCT";
-    const PARSABLE_MARKER: &str = "struct         ";
-    debug_assert_eq!(PACKED_MARKER.len(), PARSABLE_MARKER.len());
-
-    let normalized = source.replace(PACKED_MARKER, PARSABLE_MARKER);
-    let Ok(tree) = parse_c_tree(&normalized, TYPES_SOURCE) else {
-        return BTreeMap::new();
-    };
-
-    let mut type_definitions = Vec::new();
-    collect_nodes(tree.root_node(), "type_definition", &mut type_definitions);
-    let definitions = type_definitions
-        .into_iter()
-        .filter_map(|definition| {
-            // `normalized` has the same byte length as `source`, so a node
-            // range can safely identify the original macro declaration.
-            node_text(definition, source)
-                .contains(PACKED_MARKER)
-                .then_some(())?;
-            if definition.has_error() {
-                return None;
-            }
-            let type_node = definition.child_by_field_name("type")?;
-            if type_node.kind() != "struct_specifier" {
-                return None;
-            }
-            let body = type_node.child_by_field_name("body")?;
-            let mut cursor = definition.walk();
-            let name = definition
-                .children_by_field_name("declarator", &mut cursor)
-                .find_map(declarator_identifier)
-                .map(|name| node_text(name, &normalized).to_owned())?;
-            Some(PackedStructDefinition {
-                name,
-                fields: packed_struct_fields(body, &normalized),
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let mut layouts = definitions
-        .iter()
-        .map(|definition| (definition.name.clone(), None))
-        .collect::<BTreeMap<_, Option<usize>>>();
-
-    // Iterate so a packed structure can refer to another declaration that
-    // appears later in the generated header. Any unresolved cycle or unknown
-    // field remains `None`, which is intentionally fail-closed.
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for definition in &definitions {
-            let Some(fields) = &definition.fields else {
-                continue;
-            };
-            let Some(size) = packed_struct_size(fields, &layouts) else {
-                continue;
-            };
-            if layouts.get(&definition.name) != Some(&Some(size)) {
-                layouts.insert(definition.name.clone(), Some(size));
-                changed = true;
-            }
-        }
-    }
-    layouts
-}
-
-fn packed_struct_fields(body: Node<'_>, source: &str) -> Option<Vec<PackedField>> {
-    let mut fields = Vec::new();
-    let mut cursor = body.walk();
-    for declaration in body.named_children(&mut cursor) {
-        if declaration.kind() == "comment" {
-            continue;
-        }
-        if declaration.kind() != "field_declaration" {
-            // Conditional preprocessing or any non-field construct means the
-            // generated layout cannot be proven from this source alone.
-            return None;
-        }
-        let type_node = declaration.child_by_field_name("type")?;
-        let type_name = node_text(type_node, source).trim().to_owned();
-        let mut declarator_cursor = declaration.walk();
-        let declarators = declaration
-            .children_by_field_name("declarator", &mut declarator_cursor)
-            .collect::<Vec<_>>();
-        if declarators.is_empty() {
-            return None;
-        }
-        for declarator in declarators {
-            fields.push(PackedField {
-                type_name: type_name.clone(),
-                count: packed_field_count(declarator, source)?,
-            });
-        }
-    }
-    Some(fields)
-}
-
-fn packed_field_count(declarator: Node<'_>, source: &str) -> Option<usize> {
-    match declarator.kind() {
-        "identifier" | "field_identifier" => Some(1),
-        "pointer_declarator" | "abstract_pointer_declarator" => None,
-        "array_declarator" => {
-            let size = declarator.child_by_field_name("size")?;
-            let size_text = node_text(size, source).trim();
-            let (count, end) = parse_c_integer(size_text, 0)?;
-            if !size_text[end..].trim().is_empty() {
-                return None;
-            }
-            let element =
-                packed_field_count(declarator.child_by_field_name("declarator")?, source)?;
-            element.checked_mul(usize::from(count))
-        }
-        _ => declarator
-            .child_by_field_name("declarator")
-            .and_then(|inner| packed_field_count(inner, source)),
-    }
-}
-
-fn packed_struct_size(
-    fields: &[PackedField],
-    known: &BTreeMap<String, Option<usize>>,
-) -> Option<usize> {
-    let mut size = 0usize;
-    for field in fields {
-        let element_size = primitive_c_size(&field.type_name)
-            .or_else(|| known.get(&field.type_name).copied().flatten())?;
-        size = size.checked_add(element_size.checked_mul(field.count)?)?;
-    }
-    Some(size)
-}
-
 fn primitive_c_size(base: &str) -> Option<usize> {
     match base.trim() {
         "uint8_t" | "int8_t" | "char" | "unsigned char" | "signed char" => Some(1),
@@ -1715,7 +1573,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_an_unsupported_request_term_as_a_formula() {
+    fn preserves_an_unsupported_request_term_as_unresolved() {
         let source = r#"
             tBleStatus aci_fixture(const uint8_t *Value)
             {
@@ -1731,12 +1589,12 @@ mod tests {
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
         assert_eq!(
             commands[0].request,
-            RequestLayout::Formula("encoded_size(Value)".to_owned())
+            RequestLayout::Unresolved("encoded_size(Value)".to_owned())
         );
     }
 
     #[test]
-    fn request_formula_resolution_fails_closed_for_ambiguous_inputs() {
+    fn request_resolution_fails_closed_for_ambiguous_inputs() {
         let source = r#"
             tBleStatus aci_pointer(const uint8_t *Length)
             {
@@ -1817,7 +1675,7 @@ mod tests {
         assert!(
             commands
                 .iter()
-                .all(|command| matches!(command.request, RequestLayout::Formula(_)))
+                .all(|command| matches!(command.request, RequestLayout::Unresolved(_)))
         );
     }
 
@@ -1986,10 +1844,10 @@ mod tests {
                 uint8_t Channel_Index_List[(BLE_EVT_MAX_PARAM_LEN - 3) - 2];
             } l2cap_rp0;
         "#;
-        let layouts = parse_packed_struct_sizes(types);
-        assert_eq!(layouts.get("nested_rp0"), Some(&Some(2)));
-        assert_eq!(layouts.get("fixed_rp0"), Some(&Some(7)));
-        assert_eq!(layouts.get("capacity_rp0"), Some(&None));
+        let evidence = RequestTypeEvidence::from_source(types);
+        assert_eq!(evidence.fixed_sizes.get("nested_rp0"), Some(&Some(2)));
+        assert_eq!(evidence.fixed_sizes.get("fixed_rp0"), Some(&Some(7)));
+        assert_eq!(evidence.fixed_sizes.get("capacity_rp0"), Some(&None));
 
         let command = |ocf, type_name: &str| CatalogCommand {
             scope: CommandScope::VendorAci,
@@ -2056,8 +1914,8 @@ mod tests {
             } active_rp0;
         "#;
 
-        let layouts = parse_packed_struct_sizes(types);
-        assert_eq!(layouts.get("active_rp0"), Some(&Some(3)));
+        let evidence = RequestTypeEvidence::from_source(types);
+        assert_eq!(evidence.fixed_sizes.get("active_rp0"), Some(&Some(3)));
     }
 
     #[test]

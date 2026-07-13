@@ -287,7 +287,7 @@ fn compare_completion(
                 "CubeWB waits for event 0x{event:02X}; this checker only models Command Complete and Command Status"
             ),
         ),
-        CompletionExpectation::Expression(expression) => unavailable(
+        CompletionExpectation::Unresolved(expression) => unavailable(
             report,
             descriptor,
             format!("CubeWB completion event uses unsupported expression `{expression}`"),
@@ -304,11 +304,8 @@ fn request_envelope(layout: &RequestLayout) -> Result<EnvelopeExpectation, Strin
         RequestLayout::Variable { minimum, maximum } => Ok(EnvelopeExpectation::request_capacity(
             WireEnvelope::bounded(*minimum as usize, *maximum as usize),
         )),
-        RequestLayout::Formula(formula) => Err(format!(
-            "CubeWB request payload length uses unresolved formula `{formula}`"
-        )),
-        RequestLayout::Expression(expression) => Err(format!(
-            "CubeWB request payload length uses unsupported expression `{expression}`"
+        RequestLayout::Unresolved(expression) => Err(format!(
+            "CubeWB request payload length uses unresolved source expression `{expression}`"
         )),
     }
 }
@@ -340,7 +337,7 @@ fn response_envelope(layout: &ResponseLayout) -> Result<EnvelopeExpectation, Str
         ResponseLayout::CStruct(type_name) => Err(format!(
             "CubeWB command return uses unresolved packed C structure `{type_name}`"
         )),
-        ResponseLayout::Expression(expression) => Err(format!(
+        ResponseLayout::Unresolved(expression) => Err(format!(
             "CubeWB command return length uses unsupported expression `{expression}`"
         )),
         ResponseLayout::None => {
@@ -903,19 +900,19 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_formulas_remain_unavailable() {
+    fn unresolved_requests_remain_unavailable() {
         let descriptor = fixture_descriptor(
-            "Formula",
+            "Unresolved",
             0x008,
             CompletionExpectation::CommandStatus,
             WireEnvelope::bounded(1, 17),
             None,
         );
-        let coverage = fixture_coverage(vec![descriptor], &["Formula"]);
+        let coverage = fixture_coverage(vec![descriptor], &["Unresolved"]);
         let commands = vec![fixture_command(
             0x008,
             CompletionExpectation::CommandStatus,
-            RequestLayout::Formula("custom(value_len)".to_owned()),
+            RequestLayout::Unresolved("custom(value_len)".to_owned()),
             ResponseLayout::None,
         )];
 
@@ -924,7 +921,61 @@ mod tests {
         assert_eq!(report.checked, 0);
         assert!(report.differences.is_empty());
         assert_eq!(report.unavailable.len(), 1);
-        assert!(report.unavailable[0].reason.contains("unresolved formula"));
+        assert!(
+            report.unavailable[0]
+                .reason
+                .contains("unresolved source expression")
+        );
+    }
+
+    #[test]
+    fn unresolved_completions_remain_unavailable() {
+        let descriptor = fixture_descriptor(
+            "UnresolvedCompletion",
+            0x009,
+            CompletionExpectation::CommandStatus,
+            WireEnvelope::fixed(0),
+            None,
+        );
+        let coverage = fixture_coverage(vec![descriptor], &["UnresolvedCompletion"]);
+        let commands = vec![fixture_command(
+            0x009,
+            CompletionExpectation::Unresolved("HCI_VENDOR_EVENT".to_owned()),
+            RequestLayout::Empty,
+            ResponseLayout::None,
+        )];
+
+        let report = compare_vendor_wire(&commands, &[], &coverage);
+
+        assert_eq!(report.checked, 1);
+        assert!(report.differences.is_empty());
+        assert_eq!(report.unavailable.len(), 1);
+        assert!(report.unavailable[0].reason.contains("HCI_VENDOR_EVENT"));
+    }
+
+    #[test]
+    fn unresolved_responses_remain_unavailable() {
+        let descriptor = fixture_descriptor(
+            "UnresolvedResponse",
+            0x00a,
+            CompletionExpectation::CommandComplete,
+            WireEnvelope::fixed(0),
+            Some(WireEnvelope::fixed(1)),
+        );
+        let coverage = fixture_coverage(vec![descriptor], &["UnresolvedResponse"]);
+        let commands = vec![fixture_command(
+            0x00a,
+            CompletionExpectation::CommandComplete,
+            RequestLayout::Empty,
+            ResponseLayout::Unresolved("computed_rlen".to_owned()),
+        )];
+
+        let report = compare_vendor_wire(&commands, &[], &coverage);
+
+        assert_eq!(report.checked, 1);
+        assert!(report.differences.is_empty());
+        assert_eq!(report.unavailable.len(), 1);
+        assert!(report.unavailable[0].reason.contains("computed_rlen"));
     }
 
     #[test]

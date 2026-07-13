@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 4;
+pub const CATALOG_SCHEMA_VERSION: u16 = 5;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -43,8 +43,8 @@ pub enum CompletionExpectation {
     CommandComplete,
     CommandStatus,
     Event(u8),
-    /// Source expression which cannot yet become a stable wire claim.
-    Expression(String),
+    /// Source value which cannot yet become a stable completion claim.
+    Unresolved(String),
 }
 
 /// Shape of the generated request payload.
@@ -53,9 +53,12 @@ pub enum CompletionExpectation {
 pub enum RequestLayout {
     Empty,
     Fixed(u32),
-    Variable { minimum: u32, maximum: u32 },
-    Formula(String),
-    Expression(String),
+    Variable {
+        minimum: u32,
+        maximum: u32,
+    },
+    /// Source expression which cannot yet become a stable wire envelope.
+    Unresolved(String),
 }
 
 /// Shape of the generated command-complete payload.
@@ -65,9 +68,13 @@ pub enum ResponseLayout {
     None,
     Status,
     Fixed(u32),
-    Variable { minimum: u32, maximum: u32 },
+    Variable {
+        minimum: u32,
+        maximum: u32,
+    },
     CStruct(String),
-    Expression(String),
+    /// Source expression which cannot yet become a stable wire envelope.
+    Unresolved(String),
 }
 
 /// Shape of a generated event payload after the two-byte vendor event code.
@@ -323,6 +330,13 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<CatalogSchema>(value).unwrap(),
             schema
+        );
+        assert_eq!(
+            serde_json::to_value(RequestLayout::Unresolved("computed_size".to_owned())).unwrap(),
+            serde_json::json!({
+                "kind": "unresolved",
+                "value": "computed_size",
+            })
         );
 
         let mut unsupported = serde_json::to_value(&schema).unwrap();

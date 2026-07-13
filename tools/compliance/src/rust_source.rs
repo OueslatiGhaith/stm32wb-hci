@@ -505,7 +505,7 @@ fn parse_descriptor_definition(
             ));
         }
         CompletionExpectation::CommandStatus => None,
-        CompletionExpectation::Event(_) | CompletionExpectation::Expression(_) => {
+        CompletionExpectation::Event(_) | CompletionExpectation::Unresolved(_) => {
             unreachable!("vendor_cmd! parser accepts only CommandComplete or CommandStatus")
         }
     };
