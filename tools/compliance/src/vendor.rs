@@ -1268,10 +1268,10 @@ mod tests {
             const hci_event_table_t hci_vs_event_table[] = { { 0x0400U, vendor } };
         "#;
         let ordinary =
-            extract_event_table(&source, "hci_event_table", EventScope::StandardHci).unwrap();
-        let le = extract_event_table(&source, "hci_le_event_table", EventScope::LeMeta).unwrap();
+            extract_event_table(source, "hci_event_table", EventScope::StandardHci).unwrap();
+        let le = extract_event_table(source, "hci_le_event_table", EventScope::LeMeta).unwrap();
         let vendor =
-            extract_event_table(&source, "hci_vs_event_table", EventScope::VendorAci).unwrap();
+            extract_event_table(source, "hci_vs_event_table", EventScope::VendorAci).unwrap();
         assert_eq!(ordinary[0].code, 0x05);
         assert_eq!(le[0].code, 0x01);
         assert_eq!(vendor[0].code, 0x0400);

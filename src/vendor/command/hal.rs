@@ -4,40 +4,43 @@ extern crate byteorder;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::{
-    BadStatusError, Status,
-    vendor::{
-        command::BoundedBytes,
-        event::command::{HalConfigData, HalConfigParameter},
-    },
-};
+use crate::vendor::command::BoundedBytes;
 
-impl TryFrom<BoundedBytes<16>> for HalConfigData {
-    type Error = Error;
+/// Bluetooth RF channel accepted by [`HalStartTone`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ToneChannel(u8);
 
-    fn try_from(value: BoundedBytes<16>) -> Result<Self, Self::Error> {
-        let bytes = value.as_slice();
-        let value = match bytes.len() {
-            1 => HalConfigParameter::Byte(bytes[0]),
-            2 => HalConfigParameter::Diversifier(LittleEndian::read_u16(bytes)),
-            6 => {
-                let mut address = [0; 6];
-                address.copy_from_slice(bytes);
-                HalConfigParameter::PublicAddress(crate::BdAddr(address))
-            }
-            16 => {
-                let mut key = [0; 16];
-                key.copy_from_slice(bytes);
-                HalConfigParameter::EncryptionKey(crate::host::EncryptionKey(key))
-            }
-            other => {
-                return Err(crate::event::Error::Vendor(
-                    crate::vendor::event::VendorError::BadConfigParameterLength(other),
-                )
-                .into());
-            }
-        };
-        Ok(Self { value })
+impl ToneChannel {
+    /// Create a channel in the controller's accepted `0..=39` range.
+    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
+        if value <= 39 {
+            Ok(Self(value))
+        } else {
+            Err(crate::vendor::command::HciValueError::new(
+                value as u64,
+                0,
+                39,
+            ))
+        }
+    }
+
+    /// Raw RF channel number.
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<1> for ToneChannel {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[self.0])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[self.0]).await
     }
 }
 
@@ -122,7 +125,7 @@ vendor_cmd! {
 vendor_cmd! {
     HalStartTone(cgid = 0x0, cid = 0x15) {
         Params = {
-            channel: u8 => 1,
+            channel: ToneChannel => 1,
             freq_offset: u8 => 1,
         };
         Completion = CommandComplete;
@@ -331,58 +334,6 @@ vendor_cmd! {
                 max_len: 237,
             },
         };
-    }
-}
-
-/// Potential errors from parameter validation.
-///
-/// Before some commands are sent to the controller, the parameters are validated. This type
-/// enumerates the potential validation errors. Must be specialized on the types of communication
-/// errors.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// For the [Start Tone](HalStartTone) command, the channel was greater than the maximum
-    /// allowed channel (39). The invalid channel is returned.
-    InvalidChannel(u8),
-
-    /// Event Parsing Error
-    ParseError(crate::event::Error),
-
-    /// A variable-length parameter exceeds the command's wire bounds.
-    InvalidParameterLength(crate::vendor::command::HciLengthError),
-
-    /// An error occurred during execution of the command
-    HciError(Status),
-
-    /// An error occurred during execution of the command
-    UnknownHciError(u8),
-
-    /// An internal error occurred during execution of the controller. This is a bug.
-    IoError,
-}
-
-impl From<crate::vendor::command::HciLengthError> for Error {
-    fn from(error: crate::vendor::command::HciLengthError) -> Self {
-        Self::InvalidParameterLength(error)
-    }
-}
-
-impl<T> From<bt_hci::cmd::Error<T>> for Error {
-    fn from(err: bt_hci::cmd::Error<T>) -> Self {
-        match err {
-            bt_hci::cmd::Error::Io(_) => Self::IoError,
-            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
-                Ok(status) => Self::HciError(status),
-                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
-            },
-        }
-    }
-}
-
-impl From<crate::event::Error> for Error {
-    fn from(e: crate::event::Error) -> Self {
-        Self::ParseError(e)
     }
 }
 
@@ -952,15 +903,6 @@ impl crate::vendor::command::HciEncodeField<4> for HalEventFlags {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
-/// Return value for [get_link_status_v2](HalGetLinkStatusV2).
-pub struct HalLinkStatusV2 {
-    /// Link statuses for up to 20 links + 2 ISO streams.
-    pub link_status: [u8; 22],
-    /// Connection handles for each link (0 if not connected).
-    pub link_connection_handles: [u16; 22],
-}
-
 #[cfg_attr(
     after_fw_0_17_1,
     doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
@@ -1046,27 +988,3 @@ impl_u8_hci_field!(SyncTriggerSource);
 impl_u8_hci_field!(ContinuousTxPhy);
 impl_u8_hci_field!(ContinuousTxPattern);
 impl_u8_hci_field!(EadMode);
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [ead_encrypt_decrypt](HalEadEncryptDecrypt).
-pub struct EadParams {
-    /// EAD operation mode.
-    pub mode: EadMode,
-    /// Session key (16 bytes, little-endian).
-    pub key: [u8; 16],
-    /// Initialization vector (8 bytes, little-endian).
-    pub iv: [u8; 8],
-    /// Input data (up to 248 bytes).
-    pub data: [u8; 248],
-    /// Length of valid data in `data`.
-    pub data_len: usize,
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Return value for [ead_encrypt_decrypt](HalEadEncryptDecrypt).
-pub struct HalEadResult {
-    /// Result data.
-    pub data: [u8; 248],
-    /// Length of valid data in `data`.
-    pub data_len: usize,
-}

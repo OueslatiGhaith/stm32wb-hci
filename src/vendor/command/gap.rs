@@ -2,24 +2,136 @@
 
 extern crate byteorder;
 
+use crate::host::PeerAddrType;
 pub use crate::host::{AdvertisingFilterPolicy, AdvertisingType, OwnAddressType};
-use crate::types::extended_advertisement::{
-    AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
-};
+use crate::types::extended_advertisement::{AdvSet, ExtendedAdvertisingInterval};
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
 use crate::vendor::command::BoundedItems;
-#[cfg(after_fw_0_17_1)]
-use crate::vendor::command::HciLengthError;
 use crate::vendor::event::AttributeHandle;
-use crate::{AdvertisingHandle, BadStatusError, ConnectionHandle, Status};
+use crate::{AdvertisingHandle, ConnectionHandle};
 pub use crate::{BdAddr, BdAddrType};
-use crate::{
-    host::{Channels, PeerAddrType, ScanFilterPolicy, ScanType},
-    types::extended_advertisement::AdvertisingMode,
-};
 #[cfg(after_fw_0_17_1)]
 use byteorder::{ByteOrder, LittleEndian};
-use core::time::Duration;
+
+/// Six-digit GAP pass key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PassKey(u32);
+
+impl PassKey {
+    /// Create a pass key in the controller's accepted `0..=999_999` range.
+    pub const fn try_new(value: u32) -> Result<Self, crate::vendor::command::HciValueError> {
+        if value <= 999_999 {
+            Ok(Self(value))
+        } else {
+            Err(crate::vendor::command::HciValueError::new(
+                value as u64,
+                0,
+                999_999,
+            ))
+        }
+    }
+
+    /// Numeric pass-key value.
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<4> for PassKey {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&self.0.to_le_bytes())
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&self.0.to_le_bytes()).await
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<4> for ScanWindow {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
+    }
+}
+
+/// Power-amplifier output level accepted by the additional-beacon command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PowerAmplifierOutputLevel(u8);
+
+impl PowerAmplifierOutputLevel {
+    /// Create an output level in the controller's accepted `0..=0x23` range.
+    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
+        if value <= 0x23 {
+            Ok(Self(value))
+        } else {
+            Err(crate::vendor::command::HciValueError::new(
+                value as u64,
+                0,
+                0x23,
+            ))
+        }
+    }
+
+    /// Raw controller level.
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<1> for PowerAmplifierOutputLevel {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[self.0])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[self.0]).await
+    }
+}
+
+/// Reasons accepted by [`GapTerminate`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TerminationReason {
+    AuthenticationFailure = 0x05,
+    RemoteUser = 0x13,
+    RemoteLowResources = 0x14,
+    RemotePowerOff = 0x15,
+    UnsupportedRemoteFeature = 0x1A,
+    PairingWithUnitKeyNotSupported = 0x29,
+    UnacceptableConnectionParameters = 0x3B,
+}
+
+impl crate::vendor::command::HciEncodeField<1> for TerminationReason {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8]).await
+    }
+}
 
 vendor_cmd! {
     GapSetNonDiscoverable(cgid = 0x1, cid = 0x01) {
@@ -50,6 +162,11 @@ vendor_cmd! {
             conn_interval_min: u16 => 2,
             conn_interval_max: u16 => 2,
         };
+        Constraints = {
+            one_of(advertising_type, [0x00, 0x02, 0x03]);
+            ordered(advertising_interval_min, advertising_interval_max);
+            ordered(conn_interval_min, conn_interval_max);
+        };
         Completion = CommandStatus;
     }
 }
@@ -75,6 +192,11 @@ vendor_cmd! {
             conn_interval_min: u16 => 2,
             conn_interval_max: u16 => 2,
         };
+        Constraints = {
+            one_of(advertising_type, [0x00, 0x02, 0x03]);
+            ordered(advertising_interval_min, advertising_interval_max);
+            ordered(conn_interval_min, conn_interval_max);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -88,6 +210,12 @@ vendor_cmd! {
             initiator_address: BdAddrType => 7,
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
+        };
+        Constraints = {
+            one_of(advertising_type, [0x01, 0x04]);
+            range(advertising_interval_min, 0x0020, 0x4000);
+            range(advertising_interval_max, 0x0020, 0x4000);
+            ordered(advertising_interval_min, advertising_interval_max);
         };
         Completion = CommandComplete;
         Return = ();
@@ -114,8 +242,12 @@ vendor_cmd! {
             encryption_key_size_min: u8 => 1,
             encryption_key_size_max: u8 => 1,
             pass_key_required: bool => 1,
-            fixed_pin: u32 => 4,
+            fixed_pin: PassKey => 4,
             identity_address_type: u8 => 1,
+        };
+        Constraints = {
+            ordered(encryption_key_size_min, encryption_key_size_max);
+            one_of(identity_address_type, [0x00, 0x01]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -137,7 +269,7 @@ vendor_cmd! {
     GapPassKeyResponse(cgid = 0x1, cid = 0x08) {
         Params = {
             conn_handle: ConnectionHandle => 2,
-            pin: u32 => 4,
+            pin: PassKey => 4,
         };
         Completion = CommandComplete;
         Return = ();
@@ -179,6 +311,9 @@ vendor_cmd! {
             advertising_type: u8 => 1,
             address_type: u8 => 1,
         };
+        Constraints = {
+            one_of(advertising_type, [0x02, 0x03]);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -191,6 +326,12 @@ vendor_cmd! {
             advertising_interval_max: u16 => 2,
             own_address_type: u8 => 1,
             filter_policy: u8 => 1,
+        };
+        Constraints = {
+            range(advertising_interval_min, 0x0020, 0x4000);
+            range(advertising_interval_max, 0x0020, 0x4000);
+            ordered(advertising_interval_min, advertising_interval_max);
+            one_of(filter_policy, [0x00, 0x03]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -265,7 +406,7 @@ vendor_cmd! {
     GapTerminate(cgid = 0x1, cid = 0x13) {
         Params = {
             conn_handle: ConnectionHandle => 2,
-            reason: u8 => 1,
+            reason: TerminationReason => 1,
         };
         Completion = CommandStatus;
     }
@@ -292,8 +433,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(cgid = 0x1, cid = 0x16) {
         Params = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             own_address_type: u8 => 1,
             filter_duplicates: bool => 1,
         };
@@ -304,8 +444,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(cgid = 0x1, cid = 0x17) {
         Params = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             own_address_type: u8 => 1,
             filter_duplicates: bool => 1,
         };
@@ -316,15 +455,10 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x19) {
         Params<'a> = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             own_address_type: u8 => 1,
-            conn_interval_min: u16 => 2,
-            conn_interval_max: u16 => 2,
-            conn_latency: u16 => 2,
-            supervision_timeout: u16 => 2,
-            expected_connection_length_min: u16 => 2,
-            expected_connection_length_max: u16 => 2,
+            conn_interval: ConnectionInterval => 8,
+            expected_connection_length: ExpectedConnectionLength => 4,
             white_list: &'a [PeerAddrType] => {
                 kind: counted_items,
                 count: u8 => 1,
@@ -340,8 +474,7 @@ vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1A) {
         Params = {
             scan_type: u8 => 1,
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             filter_policy: u8 => 1,
             own_address_type: u8 => 1,
             filter_duplicates: bool => 1,
@@ -354,8 +487,7 @@ vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1B) {
         Params<'a> = {
             scan_type: u8 => 1,
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             own_address_type: u8 => 1,
             filter_policy: u8 => 1,
             filter_duplicates: bool => 1,
@@ -373,16 +505,11 @@ vendor_cmd! {
 vendor_cmd! {
     GapCreateConnection(cgid = 0x1, cid = 0x1C) {
         Params = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             peer_address: PeerAddrType => 7,
             own_address_type: u8 => 1,
-            conn_interval_min: u16 => 2,
-            conn_interval_max: u16 => 2,
-            conn_latency: u16 => 2,
-            supervision_timeout: u16 => 2,
-            expected_connection_length_min: u16 => 2,
-            expected_connection_length_max: u16 => 2,
+            conn_interval: ConnectionInterval => 8,
+            expected_connection_length: ExpectedConnectionLength => 4,
         };
         Completion = CommandStatus;
     }
@@ -393,6 +520,9 @@ vendor_cmd! {
         Params = {
             procedure: u8 => 1,
         };
+        Constraints = {
+            range(procedure, 1, u8::MAX);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -402,12 +532,8 @@ vendor_cmd! {
     GapStartConnectionUpdate(cgid = 0x1, cid = 0x1E) {
         Params = {
             conn_handle: ConnectionHandle => 2,
-            conn_interval_min: u16 => 2,
-            conn_interval_max: u16 => 2,
-            conn_latency: u16 => 2,
-            supervision_timeout: u16 => 2,
-            expected_connection_length_min: u16 => 2,
-            expected_connection_length_max: u16 => 2,
+            conn_interval: ConnectionInterval => 8,
+            expected_connection_length: ExpectedConnectionLength => 4,
         };
         Completion = CommandStatus;
     }
@@ -454,6 +580,12 @@ vendor_cmd! {
                 max_items: 35,
             },
         };
+        Constraints = {
+            range(advertising_interval_min, 0x0020, 0x4000);
+            range(advertising_interval_max, 0x0020, 0x4000);
+            ordered(advertising_interval_min, advertising_interval_max);
+            one_of(advertising_type, [0x02, 0x03]);
+        };
         Completion = CommandComplete;
         Return = ();
     }
@@ -462,8 +594,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapStartObservationProcedure(cgid = 0x1, cid = 0x22) {
         Params = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
             scan_type: u8 => 1,
             own_address_type: u8 => 1,
             filter_duplicates: bool => 1,
@@ -607,7 +738,7 @@ vendor_cmd! {
             advertising_interval_max: u16 => 2,
             advertising_channel_map: u8 => 1,
             own_address_type: BdAddrType => 7,
-            pa_level: u8 => 1,
+            pa_level: PowerAmplifierOutputLevel => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -872,111 +1003,6 @@ vendor_cmd! {
     }
 }
 
-/// Potential errors from parameter validation.
-///
-/// Before some commands are sent to the controller, the parameters are validated. This type
-/// enumerates the potential validation errors. Must be specialized on the types of communication
-/// errors.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// For the [GAP Set Limited Discoverable](GapSetLimitedDiscoverable) and
-    /// [GAP Set Discoverable](GapSetDiscoverable) commands, the connection
-    /// interval is inverted (the min is greater than the max).  Return the provided min as the
-    /// first element, max as the second.
-    BadConnectionInterval(Duration, Duration),
-
-    /// For the [GAP Set Limited Discoverable](GapSetLimitedDiscoverable) and
-    /// [GAP Set Broadcast Mode](GapSetBroadcastMode) commands, the advertising
-    /// type is disallowed.  Returns the invalid advertising type.
-    BadAdvertisingType(crate::types::AdvertisingType),
-
-    /// For the [GAP Set Limited Discoverable](GapSetLimitedDiscoverable)
-    /// command, the advertising interval is inverted (that is, the max is less than the
-    /// min). Includes the provided range.
-    BadAdvertisingInterval(Duration, Duration),
-
-    /// For the [GAP Set Authentication Requirement](GapSetAuthenticationRequirement)
-    /// command, the encryption key size range is inverted (the max is less than the min). Includes the provided range.
-    BadEncryptionKeySizeRange(u8, u8),
-
-    /// For the [GAP Set Authentication Requirement](GapSetAuthenticationRequirement)
-    /// command, the address type must be either Public or Random
-    BadAddressType(AddressType),
-
-    BadPowerAmplifierLevel(u8),
-
-    /// For the [GAP Set Authentication Requirement](GapSetAuthenticationRequirement) and
-    /// [GAP Pass Key Response](GapPassKeyResponse) commands, the provided fixed pin is out of
-    /// range (must be less than or equal to 999999).  Includes the provided PIN.
-    BadFixedPin(u32),
-
-    /// For the [GAP Set Undirected Connectable](GapSetUnidirectedConnectable) command, the
-    /// advertising filter policy is not one of the allowed values. Only
-    /// [AllowConnectionAndScan](crate::host::AdvertisingFilterPolicy::AllowConnectionAndScan) and
-    /// [WhiteListConnectionAndScan](crate::host::AdvertisingFilterPolicy::WhiteListConnectionAndScan) are
-    /// allowed.
-    BadAdvertisingFilterPolicy(crate::host::AdvertisingFilterPolicy),
-
-    /// For the [GAP Update Advertising Data](GapUpdateAdvertisingData) and
-    /// [GAP Set Broadcast Mode](GapSetBroadcastMode) commands, the advertising data
-    /// is too long. It must be 31 bytes or less. The length of the provided data is returned.
-    BadAdvertisingDataLength(usize),
-
-    /// For extended scanning, the PHY bitmap selects an unsupported bit, or
-    /// the number of per-PHY records differs from the selected-bit count.
-    #[cfg(after_fw_0_17_1)]
-    BadExtendedScanParameters(HciLengthError),
-
-    /// For the [GAP Terminate](GapTerminate) command, the termination reason was
-    /// not one of the allowed reason. The reason is returned.
-    BadTerminationReason(crate::Status),
-
-    /// For the [GAP Start Auto Connection Establishment](GapStartAutoConnectionEstablishmentProcedure) or
-    /// [GAP Start Selective Connection Establishment](GapStartSelectiveConnectionEstablishmentProcedure) commands, the
-    /// provided [white list](AutoConnectionEstablishmentParameters::white_list) has more than 33
-    /// or 35 entries, respectively, which would cause the command to be longer than 255 bytes.
-    ///
-    /// For the [GAP Set Broadcast Mode](GapSetBroadcastMode), the provided
-    /// [white list](BroadcastModeParameters::white_list) the maximum number of entries ranges
-    /// from 31 to 35, depending on the length of the advertising data.
-    WhiteListTooLong,
-
-    /// For the [GAP Terminate Procedure](GapTerminateProcedure) command, the
-    /// provided bitfield had no bits set.
-    NoProcedure,
-
-    /// Event Parsing Error
-    ParseError(crate::event::Error),
-
-    /// An error occurred during execution of the command
-    HciError(Status),
-
-    /// An error occurred during execution of the command
-    UnknownHciError(u8),
-
-    /// An internal error occurred during execution of the controller. This is a bug.
-    IoError,
-}
-
-impl<T> From<bt_hci::cmd::Error<T>> for Error {
-    fn from(err: bt_hci::cmd::Error<T>) -> Self {
-        match err {
-            bt_hci::cmd::Error::Io(_) => Self::IoError,
-            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
-                Ok(status) => Self::HciError(status),
-                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
-            },
-        }
-    }
-}
-
-impl From<crate::event::Error> for Error {
-    fn from(e: crate::event::Error) -> Self {
-        Self::ParseError(e)
-    }
-}
-
 impl crate::vendor::command::HciEncodeField<8> for ExtendedAdvertisingInterval {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         let mut bytes = [0; 8];
@@ -1028,97 +1054,6 @@ impl crate::vendor::command::HciEncodeField<4> for AdvSet {
     }
 }
 
-/// Parameters for the
-/// [`set_limited_discoverable`](GapSetLimitedDiscoverable) and
-/// [`set_discoverable`](GapSetDiscoverable) commands.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct DiscoverableParameters<'a, 'b> {
-    /// Advertising method for the device.
-    ///
-    /// Must be
-    /// [ConnectableUndirected](crate::host::AdvertisingType::ConnectableUndirected),
-    /// [ScannableUndirected](crate::host::AdvertisingType::ScannableUndirected), or
-    /// [NonConnectableUndirected](crate::host::AdvertisingType::NonConnectableUndirected).
-    pub advertising_type: AdvertisingType,
-
-    /// Range of advertising for non-directed advertising.
-    ///
-    /// If not provided, the GAP will use default values (1.28 seconds).
-    ///
-    /// Range for both limits: 20 ms to 10.24 seconds.  The second value must be greater than or
-    /// equal to the first.
-    pub advertising_interval: Option<(Duration, Duration)>,
-
-    /// Address type for this device.
-    pub address_type: OwnAddressType,
-
-    /// Filter policy for this device.
-    pub filter_policy: AdvertisingFilterPolicy,
-
-    /// Name of the device.
-    pub local_name: Option<LocalName<'a>>,
-
-    /// Service UUID list as defined in the Bluetooth spec, v4.1, Vol 3, Part C, Section 11.
-    ///
-    /// Must be 31 bytes or fewer.
-    pub advertising_data: &'b [u8],
-
-    /// Expected length of the connection to the peripheral.
-    pub conn_interval: (Option<Duration>, Option<Duration>),
-}
-
-/// Allowed types for the local name.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum LocalName<'a> {
-    /// The shortened local name.
-    Shortened(&'a [u8]),
-
-    /// The complete local name.
-    Complete(&'a [u8]),
-}
-
-/// Parameters for the
-/// [`set_undirected_connectable`](GapSetUnidirectedConnectable) command.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct UndirectedConnectableParameters {
-    /// Range of advertising interval for advertising.
-    ///
-    /// Range for both limits: 20 ms to 10.24 seconds.  The second value must be greater than or
-    /// equal to the first.
-    pub advertising_interval: (Duration, Duration),
-
-    /// Address type of this device.
-    pub own_address_type: OwnAddressType,
-
-    /// filter policy for this device
-    pub filter_policy: AdvertisingFilterPolicy,
-}
-
-/// Parameters for the
-/// [`set_direct_connectable`](GapSetDirectConnectable) command.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct DirectConnectableParameters {
-    /// Address type of this device.
-    pub own_address_type: OwnAddressType,
-
-    /// Advertising method for the device.
-    ///
-    /// Must be
-    /// [ConnectableDirectedHighDutyCycle](crate::host::AdvertisingType::ConnectableDirectedHighDutyCycle),
-    /// or
-    /// [ConnectableDirectedLowDutyCycle](crate::host::AdvertisingType::ConnectableDirectedLowDutyCycle).
-    pub advertising_type: AdvertisingType,
-
-    /// Initiator's Bluetooth address.
-    pub initiator_address: BdAddrType,
-
-    /// Range of advertising interval for advertising.
-    ///
-    /// Range for both limits: 20 ms to 10.24 seconds.  The second value must be greater than or
-    /// equal to the first.
-    pub advertising_interval: (Duration, Duration),
-}
-
 /// I/O capabilities available for the [GAP Set I/O Capability](GapSetIoCapability) command.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -1153,31 +1088,6 @@ impl crate::vendor::command::HciEncodeField<1> for IoCapability {
     }
 }
 
-/// Parameters for the [GAP Set Authentication Requirement](GapSetAuthenticationRequirement) command.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AuthenticationRequirements {
-    /// Is bonding required?
-    pub bonding_required: bool,
-
-    /// Is MITM (man-in-the-middle) protection required?
-    pub mitm_protection_required: bool,
-
-    /// is secure connection support required
-    pub secure_connection_support: SecureConnectionSupport,
-
-    /// is keypress notification support required
-    pub keypress_notification_support: bool,
-
-    /// Minimum and maximum size of the encryption key.
-    pub encryption_key_size_range: (u8, u8),
-
-    /// Pin to use during the pairing process.
-    pub fixed_pin: Pin,
-
-    /// identity address type.
-    pub identity_address_type: AddressType,
-}
-
 /// Options for out-of-band authentication.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutOfBandAuthentication {
@@ -1187,7 +1097,7 @@ pub enum OutOfBandAuthentication {
     Enabled([u8; 16]),
 }
 
-/// Options for [`secure_connection_support`](AuthenticationRequirements)
+/// Secure Connection support mode for [`GapSetAuthenticationRequirement`].
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SecureConnectionSupport {
@@ -1196,7 +1106,7 @@ pub enum SecureConnectionSupport {
     Mandatory = 0x02,
 }
 
-/// Options for [`fixed_pin`](AuthenticationRequirements).
+/// Fixed-PIN behavior for [`GapSetAuthenticationRequirement`].
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Pin {
     /// Do not use fixed pin during the pairing process.  In this case, GAP will generate a
@@ -1361,112 +1271,6 @@ defmt::bitflags! {
     }
 }
 
-/// Parameters for the [GAP Limited Discovery](GapStartLimitedDiscoveryProcedure) and
-/// [GAP General Discovery](GapStartGeneralDiscoveryProcedure) procedures.
-pub struct DiscoveryProcedureParameters {
-    /// Scanning window for the discovery procedure.
-    pub scan_window: ScanWindow,
-
-    /// Address type of this device.
-    pub own_address_type: crate::host::OwnAddressType,
-
-    /// If true, duplicate devices are filtered out.
-    pub filter_duplicates: bool,
-}
-
-/// Parameters for the GAP Name Discovery
-/// procedure.
-pub struct NameDiscoveryProcedureParameters {
-    /// Scanning window for the discovery procedure.
-    pub scan_window: ScanWindow,
-
-    /// Address of the connected device
-    pub peer_address: crate::host::PeerAddrType,
-
-    /// Address type of this device.
-    pub own_address_type: crate::host::OwnAddressType,
-
-    /// Connection interval parameters.
-    pub conn_interval: ConnectionInterval,
-
-    /// Expected connection length
-    pub expected_connection_length: ExpectedConnectionLength,
-}
-
-/// Parameters for the
-/// [GAP Start Auto Connection Establishment](GapStartAutoConnectionEstablishmentProcedure) command.
-pub struct AutoConnectionEstablishmentParameters<'a> {
-    /// Scanning window for connection establishment.
-    pub scan_window: ScanWindow,
-
-    /// Address type of this device.
-    pub own_address_type: crate::host::OwnAddressType,
-
-    /// Connection interval parameters.
-    pub conn_interval: ConnectionInterval,
-
-    /// Expected connection length
-    pub expected_connection_length: ExpectedConnectionLength,
-
-    /// Addresses to white-list for automatic connection.
-    pub white_list: &'a [crate::host::PeerAddrType],
-}
-
-/// Parameters for the
-/// [GAP Start General Connection Establishment](GapStartGeneralConnectionEstablishmentProcedure) command.
-pub struct GeneralConnectionEstablishmentParameters {
-    /// passive or active scanning. With passive scanning, no scan request PDUs are sent
-    pub scan_type: ScanType,
-
-    /// Scanning window for connection establishment.
-    pub scan_window: ScanWindow,
-
-    /// Address type of this device.
-    pub own_address_type: crate::host::OwnAddressType,
-
-    /// Scanning filter policy.
-    ///
-    /// # Note
-    /// if privacy is enabled, filter policy can only assume values
-    /// [Accept All](ScanFilterPolicy::AcceptAll) or
-    /// [Addressed To This Device](ScanFilterPolicy::AddressedToThisDevice)
-    pub filter_policy: ScanFilterPolicy,
-
-    /// If true, only report unique devices.
-    pub filter_duplicates: bool,
-}
-
-/// Parameters for the
-/// [GAP Start Selective Connection Establishment](GapStartSelectiveConnectionEstablishmentProcedure) command.
-pub struct SelectiveConnectionEstablishmentParameters<'a> {
-    /// Type of scanning
-    pub scan_type: crate::host::ScanType,
-
-    /// Scanning window for connection establishment.
-    pub scan_window: ScanWindow,
-
-    /// Address type of this device.
-    pub own_address_type: crate::host::OwnAddressType,
-
-    /// Scanning filter policy.
-    ///
-    /// # Note
-    /// if privacy is enabled, filter policy can only assume values
-    /// [Accept All](ScanFilterPolicy::AcceptAll) or
-    /// [Whitelist Addressed to this Device](ScanFilterPolicy::WhiteListAddressedToThisDevice)
-    pub filter_policy: ScanFilterPolicy,
-
-    /// If true, only report unique devices.
-    pub filter_duplicates: bool,
-
-    /// Addresses to white-list for automatic connection.
-    pub white_list: &'a [crate::host::PeerAddrType],
-}
-
-/// The parameters for the GAP Name Discovery
-/// and [GAP Create Connection](GapCreateConnection) commands are identical.
-pub type ConnectionParameters = NameDiscoveryProcedureParameters;
-
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     /// Roles for a [GAP service](CmdGapInit).
@@ -1513,89 +1317,6 @@ defmt::bitflags! {
     }
 }
 
-/// Parameters for the [`start_connection_update`](GapStartConnectionUpdate)
-/// command.
-pub struct ConnectionUpdateParameters {
-    /// Handle of the connection for which the update procedure has to be started.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Updated connection interval for the connection.
-    pub conn_interval: ConnectionInterval,
-
-    /// Expected length of connection event needed for this connection.
-    pub expected_connection_length: ExpectedConnectionLength,
-}
-
-/// Parameters for the [`send_pairing_request`](GapSendPairingRequest)
-/// command.
-pub struct PairingRequest {
-    /// Handle of the connection for which the pairing request has to be sent.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Whether pairing request has to be sent if the device is previously bonded or not. If false,
-    /// the pairing request is sent only if the device has not previously bonded.
-    pub force_rebond: bool,
-}
-
-/// Parameters for the [GAP Set Broadcast Mode](GapSetBroadcastMode) command.
-pub struct BroadcastModeParameters<'a, 'b> {
-    /// Advertising type and interval.
-    ///
-    /// Only the [ScannableUndirected](crate::types::AdvertisingType::ScannableUndirected) and
-    /// [NonConnectableUndirected](crate::types::AdvertisingType::NonConnectableUndirected).
-    pub advertising_interval: crate::types::AdvertisingInterval,
-
-    /// Type of this device's address.
-    ///
-    /// A privacy enabled device uses either a
-    /// [resolvable private address](AddressType::ResolvablePrivate) or a
-    /// [non-resolvable private](AddressType::NonResolvablePrivate) address.
-    pub own_address_type: AddressType,
-
-    /// Advertising data used by the device when advertising.
-    ///
-    /// Must be 31 bytes or fewer.
-    pub advertising_data: &'a [u8],
-
-    /// Addresses to add to the white list.
-    ///
-    /// Each address takes up 7 bytes (1 byte for the type, 6 for the address). The full length of
-    /// this packet must not exceed 255 bytes. The white list must be less than a maximum of between
-    /// 31 and 35 entries, depending on the length of
-    /// [`advertising_data`](BroadcastModeParameters::advertising_data). Shorter advertising data
-    /// allows more white list entries.
-    pub white_list: &'b [crate::host::PeerAddrType],
-}
-
-/// Parameters for the [GAP Start Observation Procedure](GapStartObservationProcedure)
-/// command.
-pub struct ObservationProcedureParameters {
-    /// Scanning window.
-    pub scan_window: crate::types::ScanWindow,
-
-    /// Active or passive scanning
-    pub scan_type: crate::host::ScanType,
-
-    /// Address type of this device.
-    pub own_address_type: AddressType,
-
-    /// If true, do not report duplicate events in the
-    /// [advertising report](crate::event::Event::LeAdvertisingReport).
-    pub filter_duplicates: bool,
-
-    /// Scanning filter policy
-    pub filter_policy: ScanFilterPolicy,
-}
-
-/// Parameters for [GAP Numeric Comparison Confirm Yes or No](crate::vendor::command::gap::GapConfirmNumericComparisonValue)
-pub struct NumericComparisonValueConfirmYesNoParameters {
-    /// Connection handle for which the command applies.
-    pub conn_handle: ConnectionHandle,
-
-    /// Indicates if the numeric values shown on both local and peer device are different or equal.
-    pub confirm_yes_no: bool,
-}
-
 /// Parameter for [GAP Passkey Input](GapPasskeyInput)
 pub enum InputType {
     EntryStarted = 0x00,
@@ -1621,18 +1342,6 @@ pub enum OobDeviceType {
     Remote = 0x01,
 }
 
-/// Parameters for [GAP Set OOB Data](GapSetOobData)
-pub struct SetOobDataParameters {
-    /// OOB Device type
-    pub device_type: OobDeviceType,
-    /// Identity address
-    pub address: BdAddrType,
-    /// OOB Data type
-    pub oob_data_type: OobDataType,
-    /// Pairing Data received through OOB from remote device
-    pub oob_data: [u8; 16],
-}
-
 /// Parameter for [GAP Add Devices to List](GapAddDevicesToList)
 pub enum AddDeviceToListMode {
     /// Append to the resolving list only
@@ -1647,137 +1356,6 @@ pub enum AddDeviceToListMode {
     AppendBoth = 0x04,
     /// clear and set both resolving and white lists
     ClearAndSetBoth = 0x05,
-}
-
-/// Parameters for [GAP Additional Beacon Start](GapAdditionalBeaconStart)
-pub struct AdditonalBeaconStartParameters {
-    /// Advertising interval
-    pub advertising_interval: (Duration, Duration),
-    /// advertising channel map
-    pub advertising_channel_map: Channels,
-    /// Own address type
-    pub own_address_type: BdAddrType,
-    /// Power amplifier output level. Range: 0x00 .. 0x23
-    pub pa_level: u8,
-}
-
-/// Params for the [adv_set_config](GapAdvSetConfig) command
-pub struct AdvSetConfig {
-    /// Bitmap of extended advertising modes
-    pub adv_mode: AdvertisingMode,
-    /// Used to identify an advertising set
-    pub adv_handle: AdvertisingHandle,
-    /// Type of advertising event
-    pub adv_event_properties: AdvertisingEvent,
-    /// Advertising interval
-    pub adv_interval: ExtendedAdvertisingInterval,
-    /// Advertising channel map
-    pub primary_adv_channel_map: Channels,
-    /// Own address type.
-    ///
-    /// If privacy is disabled, the address can be public or static random, otherwise,
-    /// it can be a resolvable private address or a non-resolvabble private address.
-    pub own_addr_type: OwnAddressType,
-    /// Public device address, random device addressm public identity address, or random
-    /// (static) identity address of the device to be connected.
-    pub peer_addr: BdAddrType,
-    /// Advertising filter policy
-    pub adv_filter_policy: AdvertisingFilterPolicy,
-    /// Advertising TX power. Units; dBm.
-    ///
-    /// Values;
-    /// - -127 .. 20
-    pub adv_tx_power: u8,
-    /// Secondary advertising maximum skip.
-    ///
-    /// Values:
-    /// - 0x00: `AUX_QDV_IND` shall be sent prior to the next advertising event
-    /// - 0x01 .. 0xFF: Maximum advertising events to the Controller can skip
-    ///   before sending the `AUX_QDV_IND` packets on the secondary physical channel.
-    pub secondary_adv_max_skip: u8,
-    /// Secondary advertising PHY
-    pub secondary_adv_phy: AdvertisingPhy,
-    /// Value of advertising SID subfield in the ADI field of the PDU.
-    ///
-    /// Values:
-    /// - 0x00 .. 0x0F
-    pub adv_sid: u8,
-    /// Scan request notifications
-    pub scan_req_notification_enable: bool,
-}
-
-/// Params for the [adv_set_enable](GapAdvSetEnable) command
-pub struct AdvSetEnable<'a> {
-    /// Enable/Disable advertising
-    pub enable: bool,
-    /// Number of advertising sets.
-    ///
-    /// Values
-    /// - 0x00: disable all advertising sets
-    /// - 0x01 .. 0x3F: Number of advertising sets to enable or disable
-    pub num_sets: u8,
-    /// Advertising sets
-    pub adv_set: &'a [AdvSet],
-}
-
-/// Params for the [adv_set_advertising_data](GapAdvSetAdvertisingData) command
-pub struct AdvSetAdvertisingData<'a> {
-    /// Used to identify an advertising set
-    pub adv_handle: AdvertisingHandle,
-    /// Advertising operation
-    pub operation: AdvertisingOperation,
-    /// Fragment preference. If set to `true`, the Controller may fragment all data, else
-    /// the Controller should not fragment or should minimize fragmentation of data
-    pub fragment: bool,
-    /// Data formatted as defined in Bluetooth spec. v.5.4 [Vol 3, Part C, 11].
-    pub data: &'a [u8],
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [adv_set_periodic_parameters](GapAdvSetPeriodicParameters).
-pub struct AdvSetPeriodicParameters {
-    pub advertising_handle: AdvertisingHandle,
-    pub periodic_adv_interval_min: u16,
-    pub periodic_adv_interval_max: u16,
-    pub periodic_adv_properties: u16,
-    pub num_subevents: u8,
-    pub subevent_interval: u8,
-    pub response_slot_delay: u8,
-    pub response_slot_spacing: u8,
-    pub num_response_slots: u8,
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [adv_set_periodic_data](GapAdvSetPeriodicData).
-pub struct AdvSetPeriodicData<'a> {
-    pub advertising_handle: AdvertisingHandle,
-    pub operation: AdvertisingOperation,
-    pub data: &'a [u8],
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [adv_set_configuration_v2](GapAdvSetConfigurationV2).
-///
-/// Like [AdvSetConfig] but uses 4-byte primary advertising intervals and adds PHY fields.
-pub struct AdvSetConfigV2 {
-    pub adv_mode: AdvertisingMode,
-    pub adv_handle: AdvertisingHandle,
-    pub adv_event_properties: AdvertisingEvent,
-    /// Minimum primary advertising interval (N * 0.625 ms).
-    pub primary_adv_interval_min: u32,
-    /// Maximum primary advertising interval (N * 0.625 ms).
-    pub primary_adv_interval_max: u32,
-    pub primary_adv_channel_map: Channels,
-    pub own_addr_type: OwnAddressType,
-    pub peer_addr: BdAddrType,
-    pub adv_filter_policy: AdvertisingFilterPolicy,
-    pub adv_tx_power: u8,
-    pub primary_adv_phy: AdvertisingPhy,
-    pub secondary_adv_max_skip: u8,
-    pub secondary_adv_phy: AdvertisingPhy,
-    pub adv_sid: u8,
-    pub scan_req_notification_enable: bool,
-    pub primary_adv_phy_options: u8,
 }
 
 /// One record in the extended-scan PHY parameter list.
@@ -1802,50 +1380,4 @@ impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
         writer.write_all(&self.scan_interval.to_le_bytes()).await?;
         writer.write_all(&self.scan_window.to_le_bytes()).await
     }
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [ext_start_scan](GapExtStartScan).
-pub struct ExtStartScanParams {
-    pub scan_mode: u8,
-    pub procedure: u8,
-    pub own_address_type: u8,
-    pub filter_duplicates: u8,
-    pub duration: u16,
-    pub period: u16,
-    pub scanning_filter_policy: u8,
-    pub scanning_phys: u8,
-    /// Per-PHY parameters (one entry per set bit in scanning_phys, max 2).
-    pub phy_params: [ExtScanPhyParams; 2],
-    pub num_phys: usize,
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Per-PHY connection parameters for [ExtCreateConnectionParams].
-pub struct ExtConnPhyParams {
-    pub scan_interval: u16,
-    pub scan_window: u16,
-    pub conn_interval_min: u16,
-    pub conn_interval_max: u16,
-    pub conn_latency: u16,
-    pub supervision_timeout: u16,
-    pub min_ce_length: u16,
-    pub max_ce_length: u16,
-}
-
-#[cfg(after_fw_0_17_1)]
-/// Parameters for [ext_create_connection](GapExtCreateConnection).
-pub struct ExtCreateConnectionParams {
-    pub initiating_mode: u8,
-    pub procedure: u8,
-    pub own_address_type: u8,
-    pub peer_address_type: u8,
-    pub peer_address: BdAddr,
-    pub advertising_handle: u8,
-    pub subevent: u8,
-    pub initiator_filter_policy: u8,
-    pub initiating_phys: u8,
-    /// Per-PHY parameters (one entry per set bit in initiating_phys, max 3).
-    pub phy_params: [ExtConnPhyParams; 3],
-    pub num_phys: usize,
 }

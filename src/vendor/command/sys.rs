@@ -2,8 +2,6 @@
 
 #[cfg(after_fw_0_17_1)]
 use crate::vendor::command::BoundedBytes;
-#[cfg(after_fw_0_17_1)]
-use crate::{BadStatusError, Status};
 #[cfg_attr(after_fw_0_17_1, doc = "Mode for [sys_reset](SysReset).")]
 #[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `sys_reset`.")]
 #[repr(u8)]
@@ -26,56 +24,6 @@ impl crate::vendor::command::HciEncodeField<1> for SysResetMode {
         mut writer: W,
     ) -> Result<(), W::Error> {
         writer.write_all(&[*self as u8]).await
-    }
-}
-
-/// Return value for [get_information](SysGetInformation).
-#[cfg(after_fw_0_17_1)]
-pub struct SysInformation {
-    /// BLE stack version (8 bytes).
-    pub version: [u8; 8],
-    /// BLE stack options bitmask.
-    pub options: u32,
-    /// BLE stack debug information (12 bytes).
-    pub debug_info: [u8; 12],
-}
-
-/// Return value for [sys_read_config_data](SysReadConfigData).
-#[cfg(after_fw_0_17_1)]
-pub struct SysConfigData {
-    /// Raw config data bytes.
-    pub data: [u8; 32],
-    pub len: usize,
-}
-
-/// Error type for system commands.
-#[cfg(after_fw_0_17_1)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    HciError(Status),
-    UnknownHciError(u8),
-    InvalidParameterLength(crate::vendor::command::HciLengthError),
-    IoError,
-}
-
-#[cfg(after_fw_0_17_1)]
-impl From<crate::vendor::command::HciLengthError> for Error {
-    fn from(error: crate::vendor::command::HciLengthError) -> Self {
-        Self::InvalidParameterLength(error)
-    }
-}
-
-#[cfg(after_fw_0_17_1)]
-impl<T> From<bt_hci::cmd::Error<T>> for Error {
-    fn from(err: bt_hci::cmd::Error<T>) -> Self {
-        match err {
-            bt_hci::cmd::Error::Io(_) => Self::IoError,
-            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
-                Ok(status) => Self::HciError(status),
-                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
-            },
-        }
     }
 }
 

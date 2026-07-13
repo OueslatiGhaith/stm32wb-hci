@@ -1,8 +1,9 @@
 //! Declarative STM32WB vendor commands and their wire-format support.
 //!
 //! Each `vendor_cmd!` declaration generates a public command type in its
-//! protocol module. Construct that type with `new` (fixed-size parameters) or
-//! `try_new` (variable-size parameters), then execute it through
+//! protocol module. Construct that type with `new` (unconstrained fixed-size
+//! parameters) or `try_new` (variable-size parameters or declarative
+//! constraints), then execute it through
 //! [`bt_hci::cmd::SyncCmd::exec`] or [`bt_hci::cmd::AsyncCmd::exec`] according
 //! to the command's declared completion mechanism.
 
@@ -252,6 +253,91 @@ impl HciLengthError {
     /// Maximum number of bytes/items, or the allowed bitmap mask.
     pub const fn maximum(self) -> usize {
         self.maximum
+    }
+}
+
+/// A scalar value is outside the range accepted by its semantic HCI type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HciValueError {
+    actual: u64,
+    minimum: u64,
+    maximum: u64,
+}
+
+impl HciValueError {
+    pub(crate) const fn new(actual: u64, minimum: u64, maximum: u64) -> Self {
+        Self {
+            actual,
+            minimum,
+            maximum,
+        }
+    }
+
+    /// Rejected value.
+    pub const fn actual(self) -> u64 {
+        self.actual
+    }
+
+    /// Smallest accepted value.
+    pub const fn minimum(self) -> u64 {
+        self.minimum
+    }
+
+    /// Largest accepted value.
+    pub const fn maximum(self) -> u64 {
+        self.maximum
+    }
+}
+
+/// A relationship between command parameters does not satisfy its declarative
+/// constraint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HciConstraintError {
+    command: &'static str,
+    constraint: &'static str,
+}
+
+impl HciConstraintError {
+    const fn new(command: &'static str, constraint: &'static str) -> Self {
+        Self {
+            command,
+            constraint,
+        }
+    }
+
+    /// Generated command type whose parameters were rejected.
+    pub const fn command(self) -> &'static str {
+        self.command
+    }
+
+    /// Declarative constraint that was not satisfied.
+    pub const fn constraint(self) -> &'static str {
+        self.constraint
+    }
+}
+
+/// Parameter validation failure for a command that has both variable wire
+/// bounds and relationships between fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HciValidationError {
+    /// A variable field or the complete HCI request exceeded its wire bounds.
+    Length(HciLengthError),
+    /// A declared relationship between command fields was not satisfied.
+    Constraint(HciConstraintError),
+}
+
+impl From<HciLengthError> for HciValidationError {
+    fn from(error: HciLengthError) -> Self {
+        Self::Length(error)
+    }
+}
+
+impl From<HciConstraintError> for HciValidationError {
+    fn from(error: HciConstraintError) -> Self {
+        Self::Constraint(error)
     }
 }
 
@@ -1354,11 +1440,180 @@ macro_rules! declarative_return {
     };
 }
 
+macro_rules! declarative_constraint_checks {
+    ($command:ident;) => {};
+    (
+        $command:ident;
+        ordered($minimum:ident, $maximum:ident);
+        $($rest:tt)*
+    ) => {
+        if $minimum > $maximum {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(stringify!($minimum), " <= ", stringify!($maximum)),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        range($field:ident, $minimum:expr, $maximum:expr);
+        $($rest:tt)*
+    ) => {
+        if !(($minimum)..=($maximum)).contains(&$field) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($minimum),
+                    " <= ",
+                    stringify!($field),
+                    " <= ",
+                    stringify!($maximum),
+                ),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        one_of($field:ident, [$($allowed:expr),+ $(,)?]);
+        $($rest:tt)*
+    ) => {
+        if ![$($allowed),+].contains(&$field) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(stringify!($field), " in ", stringify!([$($allowed),+])),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        len_at_most($field:ident, $maximum:ident);
+        $($rest:tt)*
+    ) => {
+        if $field.len() > usize::from($maximum) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(stringify!($field), ".len() <= ", stringify!($maximum)),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        non_empty($field:ident);
+        $($rest:tt)*
+    ) => {
+        if $field.is_empty() {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(stringify!($field), " is not empty"),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+}
+
+macro_rules! validate_declarative_constraints {
+    ($command:ident; $($constraint:tt)*) => {{
+        (|| -> Result<(), crate::vendor::command::HciConstraintError> {
+            declarative_constraint_checks!($command; $($constraint)*);
+            Ok(())
+        })()
+    }};
+}
+
+macro_rules! declarative_fixed_constructor {
+    (
+        $cmd:ident;
+        Fields = { $($field:ident: $ty:ty => $len:literal,)* };
+        Constraints = {};
+    ) => {
+        #[allow(clippy::too_many_arguments)]
+        #[allow(missing_docs)]
+        pub fn new($($field: $ty),*) -> Self {
+            Self(crate::vendor::command::DeclarativeParams(
+                declarative_field_list_value!($($field => $len,)*)
+            ))
+        }
+    };
+    (
+        $cmd:ident;
+        Fields = { $($field:ident: $ty:ty => $len:literal,)* };
+        Constraints = { $($constraint:tt)+ };
+    ) => {
+        #[allow(clippy::too_many_arguments)]
+        #[allow(missing_docs)]
+        pub fn try_new(
+            $($field: $ty),*
+        ) -> Result<Self, crate::vendor::command::HciConstraintError> {
+            validate_declarative_constraints!($cmd; $($constraint)+)?;
+            Ok(Self(crate::vendor::command::DeclarativeParams(
+                declarative_field_list_value!($($field => $len,)*)
+            )))
+        }
+    };
+}
+
+macro_rules! declarative_variable_constructor {
+    (
+        $cmd:ident;
+        Fields = { $($field:ident: $ty:ty => $shape:tt,)* };
+        Constraints = {};
+    ) => {
+        #[allow(clippy::too_many_arguments)]
+        #[allow(missing_docs)]
+        pub fn try_new(
+            $($field: $ty),*
+        ) -> Result<Self, crate::vendor::command::HciLengthError> {
+            let params = crate::vendor::command::DeclarativeParams(
+                declarative_schema_list_value!($($field: $ty => $shape,)*)
+            );
+            let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
+            if actual > u8::MAX as usize {
+                return Err(crate::vendor::command::HciLengthError::new(
+                    actual,
+                    0,
+                    u8::MAX as usize,
+                ));
+            }
+            Ok(Self(params))
+        }
+    };
+    (
+        $cmd:ident;
+        Fields = { $($field:ident: $ty:ty => $shape:tt,)* };
+        Constraints = { $($constraint:tt)+ };
+    ) => {
+        #[allow(clippy::too_many_arguments)]
+        #[allow(missing_docs)]
+        pub fn try_new(
+            $($field: $ty),*
+        ) -> Result<Self, crate::vendor::command::HciValidationError> {
+            validate_declarative_constraints!($cmd; $($constraint)+)?;
+            let params = crate::vendor::command::DeclarativeParams(
+                declarative_schema_list_value!($($field: $ty => $shape,)*)
+            );
+            let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
+            if actual > u8::MAX as usize {
+                return Err(crate::vendor::command::HciLengthError::new(
+                    actual,
+                    0,
+                    u8::MAX as usize,
+                ).into());
+            }
+            Ok(Self(params))
+        }
+    };
+}
+
 macro_rules! declarative_command {
     (
         $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $len:literal,)*
         }
+        Constraints = { $($constraint:tt)* };
         Return = $ret:ty;
         ReturnLen = $ret_len:expr;
     ) => {
@@ -1380,12 +1635,10 @@ macro_rules! declarative_command {
             /// Vendor-specific Opcode Command Field.
             pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
 
-            #[allow(clippy::too_many_arguments)]
-            #[allow(missing_docs)]
-            pub fn new($($field: $ty),*) -> Self {
-                Self(crate::vendor::command::DeclarativeParams(
-                    declarative_field_list_value!($($field => $len,)*)
-                ))
+            declarative_fixed_constructor! {
+                $cmd;
+                Fields = { $($field: $ty => $len,)* };
+                Constraints = { $($constraint)* };
             }
         }
 
@@ -1448,6 +1701,7 @@ macro_rules! declarative_command {
         $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $len:literal,)*
         }
+        Constraints = { $($constraint:tt)* };
         CommandStatus;
     ) => {
         const _: () = crate::vendor::command::assert_hci_field_list_length(0 $(+ $len)*);
@@ -1467,12 +1721,10 @@ macro_rules! declarative_command {
             /// Vendor-specific Opcode Command Field.
             pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
 
-            #[allow(clippy::too_many_arguments)]
-            #[allow(missing_docs)]
-            pub fn new($($field: $ty),*) -> Self {
-                Self(crate::vendor::command::DeclarativeParams(
-                    declarative_field_list_value!($($field => $len,)*)
-                ))
+            declarative_fixed_constructor! {
+                $cmd;
+                Fields = { $($field: $ty => $len,)* };
+                Constraints = { $($constraint)* };
             }
         }
 
@@ -1526,6 +1778,7 @@ macro_rules! declarative_variable_command {
         $cmd:ident<$life:lifetime>(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $shape:tt,)*
         }
+        Constraints = { $($constraint:tt)* };
         Return = $ret:ty;
         ReturnLen = $ret_len:expr;
     ) => {
@@ -1547,23 +1800,10 @@ macro_rules! declarative_variable_command {
             /// Vendor-specific Opcode Command Field.
             pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
 
-            #[allow(clippy::too_many_arguments)]
-            #[allow(missing_docs)]
-            pub fn try_new(
-                $($field: $ty),*
-            ) -> Result<Self, crate::vendor::command::HciLengthError> {
-                let params = crate::vendor::command::DeclarativeParams(
-                    declarative_schema_list_value!($($field: $ty => $shape,)*)
-                );
-                let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
-                if actual > u8::MAX as usize {
-                    return Err(crate::vendor::command::HciLengthError::new(
-                        actual,
-                        0,
-                        u8::MAX as usize,
-                    ));
-                }
-                Ok(Self(params))
+            declarative_variable_constructor! {
+                $cmd;
+                Fields = { $($field: $ty => $shape,)* };
+                Constraints = { $($constraint)* };
             }
         }
 
@@ -1626,6 +1866,7 @@ macro_rules! declarative_variable_command {
         $cmd:ident<$life:lifetime>(cgid = $cgid:literal, cid = $cid:literal) {
             $($field:ident: $ty:ty => $shape:tt,)*
         }
+        Constraints = { $($constraint:tt)* };
         CommandStatus;
     ) => {
         $(declarative_schema_validate!($shape);)*
@@ -1645,23 +1886,10 @@ macro_rules! declarative_variable_command {
             /// Vendor-specific Opcode Command Field.
             pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
 
-            #[allow(clippy::too_many_arguments)]
-            #[allow(missing_docs)]
-            pub fn try_new(
-                $($field: $ty),*
-            ) -> Result<Self, crate::vendor::command::HciLengthError> {
-                let params = crate::vendor::command::DeclarativeParams(
-                    declarative_schema_list_value!($($field: $ty => $shape,)*)
-                );
-                let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
-                if actual > u8::MAX as usize {
-                    return Err(crate::vendor::command::HciLengthError::new(
-                        actual,
-                        0,
-                        u8::MAX as usize,
-                    ));
-                }
-                Ok(Self(params))
+            declarative_variable_constructor! {
+                $cmd;
+                Fields = { $($field: $ty => $shape,)* };
+                Constraints = { $($constraint)* };
             }
         }
 
@@ -1722,6 +1950,30 @@ macro_rules! declarative_variable_command {
 /// [`HciEncodeField<N>`](HciEncodeField) for request fields and
 /// [`HciDecodeField<N>`](HciDecodeField) for return fields. The declared widths
 /// are also available to the source-based compliance checker.
+///
+/// Intrinsic validity belongs in the field type itself. Relationships and
+/// command-specific subsets are declared next to `Params` with structured
+/// constraints. A constrained fixed command generates `try_new` returning
+/// [`HciConstraintError`]; a constrained variable command can fail with either
+/// a wire-bound or relationship error and returns [`HciValidationError`]:
+///
+/// ```rust,ignore
+/// vendor_cmd! {
+///     Example(cgid = 0x1, cid = 0x01) {
+///         Params = {
+///             minimum: u16 => 2,
+///             maximum: u16 => 2,
+///             mode: u8 => 1,
+///         };
+///         Constraints = {
+///             ordered(minimum, maximum);
+///             one_of(mode, [0x00, 0x02]);
+///         };
+///         Completion = CommandComplete;
+///         Return = ();
+///     }
+/// }
+/// ```
 ///
 /// A command which completes through Command Status has no `Return`:
 ///
@@ -1858,6 +2110,130 @@ macro_rules! declarative_variable_command {
 macro_rules! vendor_cmd {
     (
         $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params = {
+                $($field:ident: $ty:ty => $len:literal,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandComplete;
+            Return = ();
+        }
+    ) => {
+        declarative_command! {
+            $cmd(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $len,)*
+            }
+            Constraints = { $($constraint)+ };
+            Return = ();
+            ReturnLen = 0;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params = {
+                $($field:ident: $ty:ty => $len:literal,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandComplete;
+            Return = $ret:ident {
+                $($ret_field:ident: $ret_ty:ty => $ret_shape:tt,)*
+            };
+        }
+    ) => {
+        declarative_return! {
+            $ret {
+                $($ret_field: $ret_ty => $ret_shape,)*
+            }
+        }
+        declarative_command! {
+            $cmd(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $len,)*
+            }
+            Constraints = { $($constraint)+ };
+            Return = $ret;
+            ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params = {
+                $($field:ident: $ty:ty => $len:literal,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandStatus;
+        }
+    ) => {
+        declarative_command! {
+            $cmd(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $len,)*
+            }
+            Constraints = { $($constraint)+ };
+            CommandStatus;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params<$life:lifetime> = {
+                $($field:ident: $ty:ty => $shape:tt,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandComplete;
+            Return = ();
+        }
+    ) => {
+        declarative_variable_command! {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $shape,)*
+            }
+            Constraints = { $($constraint)+ };
+            Return = ();
+            ReturnLen = 0;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params<$life:lifetime> = {
+                $($field:ident: $ty:ty => $shape:tt,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandStatus;
+        }
+    ) => {
+        declarative_variable_command! {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $shape,)*
+            }
+            Constraints = { $($constraint)+ };
+            CommandStatus;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
+            Params<$life:lifetime> = {
+                $($field:ident: $ty:ty => $shape:tt,)*
+            };
+            Constraints = { $($constraint:tt)+ };
+            Completion = CommandComplete;
+            Return = $ret:ident {
+                $($ret_field:ident: $ret_ty:ty => $ret_shape:tt,)*
+            };
+        }
+    ) => {
+        declarative_return! {
+            $ret {
+                $($ret_field: $ret_ty => $ret_shape,)*
+            }
+        }
+        declarative_variable_command! {
+            $cmd<$life>(cgid = $cgid, cid = $cid) {
+                $($field: $ty => $shape,)*
+            }
+            Constraints = { $($constraint)+ };
+            Return = $ret;
+            ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
+        }
+    };
+    (
+        $cmd:ident(cgid = $cgid:literal, cid = $cid:literal) {
             Params = ();
             Completion = CommandComplete;
             Return = ();
@@ -1865,6 +2241,7 @@ macro_rules! vendor_cmd {
     ) => {
         declarative_command! {
             $cmd(cgid = $cgid, cid = $cid) {}
+            Constraints = {};
             Return = ();
             ReturnLen = 0;
         }
@@ -1882,6 +2259,7 @@ macro_rules! vendor_cmd {
     ) => {
         declarative_command! {
             $cmd(cgid = $cgid, cid = $cid) {}
+            Constraints = {};
             CommandStatus;
         }
         impl Default for $cmd {
@@ -1906,6 +2284,7 @@ macro_rules! vendor_cmd {
         }
         declarative_command! {
             $cmd(cgid = $cgid, cid = $cid) {}
+            Constraints = {};
             Return = $ret;
             ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
         }
@@ -1928,6 +2307,7 @@ macro_rules! vendor_cmd {
             $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
+            Constraints = {};
             Return = ();
             ReturnLen = 0;
         }
@@ -1944,6 +2324,7 @@ macro_rules! vendor_cmd {
             $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
+            Constraints = {};
             CommandStatus;
         }
     };
@@ -1967,6 +2348,7 @@ macro_rules! vendor_cmd {
             $cmd(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $len,)*
             }
+            Constraints = {};
             Return = $ret;
             ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
         }
@@ -1984,6 +2366,7 @@ macro_rules! vendor_cmd {
             $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
+            Constraints = {};
             Return = ();
             ReturnLen = 0;
         }
@@ -2000,6 +2383,7 @@ macro_rules! vendor_cmd {
             $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
+            Constraints = {};
             CommandStatus;
         }
     };
@@ -2023,6 +2407,7 @@ macro_rules! vendor_cmd {
             $cmd<$life>(cgid = $cgid, cid = $cid) {
                 $($field: $ty => $shape,)*
             }
+            Constraints = {};
             Return = $ret;
             ReturnLen = 0 $(+ declarative_schema_max_len!($ret_shape))*;
         }

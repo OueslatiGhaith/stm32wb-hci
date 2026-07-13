@@ -1,11 +1,55 @@
 //! GATT commands and types needed for those commands.
 
-use core::ops::Range;
-
 use crate::{
-    BadStatusError, ConnectionHandle, Status,
+    ConnectionHandle,
     vendor::{command::BoundedBytes, event::AttributeHandle},
 };
+
+/// Maximum characteristic-descriptor value length accepted by
+/// [`GattAddCharacteristicDescriptor`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DescriptorValueMaxLength(u8);
+
+impl DescriptorValueMaxLength {
+    /// Create a maximum length that keeps the largest UUID form within one HCI
+    /// command packet.
+    pub const fn try_new(value: u8) -> Result<Self, crate::vendor::command::HciValueError> {
+        if value <= 227 {
+            Ok(Self(value))
+        } else {
+            Err(crate::vendor::command::HciValueError::new(
+                value as u64,
+                0,
+                227,
+            ))
+        }
+    }
+
+    /// Maximum descriptor value length in bytes.
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<DescriptorValueMaxLength> for usize {
+    fn from(value: DescriptorValueMaxLength) -> Self {
+        usize::from(value.0)
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<1> for DescriptorValueMaxLength {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[self.0])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[self.0]).await
+    }
+}
 vendor_cmd! {
     GattInit(cgid = 0x2, cid = 0x01) {
         Params = ();
@@ -97,7 +141,7 @@ vendor_cmd! {
             characteristic_properties: u8 => 1,
             security_permissions: u8 => 1,
             gatt_event_mask: u8 => 1,
-            encryption_key_size: u8 => 1,
+            encryption_key_size: EncryptionKeySize => 1,
             is_variable: bool => 1,
         };
         Completion = CommandComplete;
@@ -128,7 +172,7 @@ vendor_cmd! {
                 min_len: 3,
                 max_len: 17,
             },
-            descriptor_value_max_len: u8 => 1,
+            descriptor_value_max_len: DescriptorValueMaxLength => 1,
             descriptor_value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -137,8 +181,11 @@ vendor_cmd! {
             security_permissions: u8 => 1,
             access_permissions: u8 => 1,
             gatt_event_mask: u8 => 1,
-            encryption_key_size: u8 => 1,
+            encryption_key_size: EncryptionKeySize => 1,
             is_variable: bool => 1,
+        };
+        Constraints = {
+            len_at_most(descriptor_value, descriptor_value_max_len);
         };
         Completion = CommandComplete;
         Return = GattCharacteristicDescriptor {
@@ -838,79 +885,6 @@ vendor_cmd! {
     }
 }
 
-/// Potential errors from parameter validation.
-///
-/// Before some commands are sent to the controller, the parameters are validated. This type
-/// enumerates the potential validation errors. Must be specialized on the types of communication
-/// errors.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// For the [Add Characteristic Descriptor](GattAddCharacteristicDescriptor) command:
-    /// the [descriptor value](AddDescriptorParameters::descriptor_value) is longer than the
-    /// [maximum descriptor value length](AddDescriptorParameters::descriptor_value_max_len).
-    DescriptorTooLong,
-
-    /// For the [Add Characteristic Descriptor](GattAddCharacteristicDescriptor) command:
-    /// the [descriptor value maximum length](AddDescriptorParameters::descriptor_value_max_len) is
-    /// so large that the serialized structure may be more than 255 bytes. The maximum size is 227.
-    DescriptorBufferTooLong,
-
-    /// For the [Update Characteristir Value](GattUpdateCharacteristicValue) command: the
-    /// length of the [characteristic value](UpdateCharacteristicValueParameters::value) is so large
-    /// that the serialized structure would be more than 255 bytes. The maximum size is 249.
-    ValueBufferTooLong,
-
-    /// For the [Read Multiple Characteristic Values](GattReadMultipleCharacteristicValues)
-    /// command: the number of [handles](MultipleCharacteristicReadParameters::handles) would cause
-    /// the serialized command to be more than 255 bytes. The maximum length is 126 handles.
-    TooManyHandlesToRead,
-
-    /// Event Parsing Error
-    ParseError(crate::event::Error),
-
-    /// An error occurred during execution of the command
-    HciError(Status),
-
-    /// An error occurred during execution of the command
-    UnknownHciError(u8),
-
-    /// An internal error occurred during execution of the controller. This is a bug.
-    IoError,
-}
-
-impl<T> From<bt_hci::cmd::Error<T>> for Error {
-    fn from(err: bt_hci::cmd::Error<T>) -> Self {
-        match err {
-            bt_hci::cmd::Error::Io(_) => Self::IoError,
-            bt_hci::cmd::Error::Hci(err) => match Status::try_from(err.to_status().into_inner()) {
-                Ok(status) => Self::HciError(status),
-                Err(BadStatusError::BadValue(status)) => Self::UnknownHciError(status),
-            },
-        }
-    }
-}
-
-impl From<crate::event::Error> for Error {
-    fn from(e: crate::event::Error) -> Self {
-        Self::ParseError(e)
-    }
-}
-
-/// Parameters for the [GATT Add Service](GattAddService) command.
-pub struct AddServiceParameters {
-    /// UUID of the service
-    pub uuid: Uuid,
-
-    /// Type of service
-    pub service_type: ServiceType,
-
-    /// The maximum number of attribute records that can be added to this service (including the
-    /// service attribute, include attribute, characteristic attribute, characteristic value
-    /// attribute and characteristic descriptor attribute).
-    pub max_attribute_records: u8,
-}
-
 /// Types of UUID.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -933,52 +907,10 @@ pub enum ServiceType {
     Secondary = 0x02,
 }
 
-/// Parameters for the [GATT Include Service](GattIncludeService) command.
-pub struct IncludeServiceParameters {
-    /// Handle of the service to which another service has to be included
-    pub service_handle: AttributeHandle,
-
-    /// Range of handles of the service which has to be included in the service.
-    pub include_handle_range: Range<AttributeHandle>,
-
-    /// UUID of the included service
-    pub include_uuid: Uuid,
-}
-
-/// Parameters for the [GATT Add Characteristic](GattAddCharacteristic) command.
-pub struct AddCharacteristicParameters {
-    /// Handle of the service to which the characteristic has to be added
-    pub service_handle: AttributeHandle,
-
-    /// UUID of the characteristic
-    pub characteristic_uuid: Uuid,
-
-    /// Maximum length of the characteristic value
-    pub characteristic_value_len: u16,
-
-    /// Properties of the characteristic (defined in Volume 3, Part G, Section 3.3.3.1 of Bluetooth
-    /// Specification 4.1)
-    pub characteristic_properties: CharacteristicProperty,
-
-    /// Security requirements of the characteristic
-    pub security_permissions: CharacteristicPermission,
-
-    /// Which types of events will be generated when the attribute is accessed.
-    pub gatt_event_mask: CharacteristicEvent,
-
-    /// The minimum encryption key size requirement for this attribute.
-    pub encryption_key_size: EncryptionKeySize,
-
-    /// If true, the attribute has a variable length value field. Otherwise, the value field length
-    /// is fixed.
-    pub is_variable: bool,
-}
-
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
-    /// Available [properties](AddCharacteristicParameters::characteristic_properties) for
-    /// characteristics. Defined in Volume 3, Part G, Section 3.3.3.1 of Bluetooth Specification
-    /// 4.1.
+    /// Available characteristic properties. Defined in Volume 3, Part G,
+    /// Section 3.3.3.1 of Bluetooth Specification 4.1.
     pub struct CharacteristicProperty: u8 {
         /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
         /// Configuration Descriptor. If set, the Server Characteristic Configuration Descriptor
@@ -1023,9 +955,8 @@ bitflags::bitflags! {
 
 #[cfg(feature = "defmt")]
 defmt::bitflags! {
-    /// Available [properties](AddCharacteristicParameters::characteristic_properties) for
-    /// characteristics. Defined in Volume 3, Part G, Section 3.3.3.1 of Bluetooth Specification
-    /// 4.1.
+    /// Available characteristic properties. Defined in Volume 3, Part G,
+    /// Section 3.3.3.1 of Bluetooth Specification 4.1.
     pub struct CharacteristicProperty: u8 {
         /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
         /// Configuration Descriptor. If set, the Server Characteristic Configuration Descriptor
@@ -1070,8 +1001,7 @@ defmt::bitflags! {
 
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
-    /// [Permissions](AddCharacteristicParameter::security_permissions) available for
-    /// characteristics.
+    /// Security permissions available for characteristics.
     pub struct CharacteristicPermission: u8 {
         /// Need authentication to read.
         const AUTHENTICATED_READ = 0x01;
@@ -1095,8 +1025,7 @@ bitflags::bitflags! {
 
 #[cfg(feature = "defmt")]
 defmt::bitflags! {
-    /// [Permissions](AddCharacteristicParameter::security_permissions) available for
-    /// characteristics.
+    /// Security permissions available for characteristics.
     pub struct CharacteristicPermission: u8 {
         /// Need authentication to read.
         const AUTHENTICATED_READ = 0x01;
@@ -1192,6 +1121,19 @@ impl EncryptionKeySize {
     }
 }
 
+impl crate::vendor::command::HciEncodeField<1> for EncryptionKeySize {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[self.0])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[self.0]).await
+    }
+}
+
 /// Errors that can occur when creating an [`EncryptionKeySize`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1200,44 +1142,6 @@ pub enum EncryptionKeySizeError {
     TooShort,
     /// The provided size was greater than the maximum allowed size.
     TooLong,
-}
-
-/// Parameters for the [GATT Add Characteristic Descriptor](GattAddCharacteristicDescriptor)
-/// command.
-pub struct AddDescriptorParameters<'a> {
-    /// Handle of the service to which characteristic belongs.
-    pub service_handle: AttributeHandle,
-
-    /// Handle of the characteristic to which description is to be added.
-    pub characteristic_handle: AttributeHandle,
-
-    /// UUID of the characteristic descriptor.
-    ///
-    /// See [KnownDescriptor] for some useful descriptors. This value is not restricted to the known
-    /// descriptors, however.
-    pub descriptor_uuid: Uuid,
-
-    /// The maximum length of the descriptor value.
-    pub descriptor_value_max_len: usize,
-
-    /// Current Length of the characteristic descriptor value.
-    pub descriptor_value: &'a [u8],
-
-    /// What security requirements must be met before the descriptor can be accessed.
-    pub security_permissions: DescriptorPermission,
-
-    /// What types of access are allowed for the descriptor.
-    pub access_permissions: AccessPermission,
-
-    /// Which types of events will be generated when the attribute is accessed.
-    pub gatt_event_mask: CharacteristicEvent,
-
-    /// The minimum encryption key size requirement for this attribute.
-    pub encryption_key_size: EncryptionKeySize,
-
-    /// If true, the attribute has a variable length value field. Otherwise, the value field length
-    /// is fixed.
-    pub is_variable: bool,
 }
 
 /// Common characteristic descriptor UUIDs.
@@ -1328,37 +1232,6 @@ defmt::bitflags! {
     }
 }
 
-/// Parameters for the [Update Characteristic Value](GattUpdateCharacteristicValue)
-/// command.
-pub struct UpdateCharacteristicValueParameters<'a> {
-    /// Handle of the service to which characteristic belongs.
-    pub service_handle: AttributeHandle,
-
-    /// Handle of the characteristic.
-    pub characteristic_handle: AttributeHandle,
-
-    /// The offset from which the attribute value has to be updated. If this is set to 0, and the
-    /// attribute value is of [variable length](AddCharacteristicParameters::is_variable), then the
-    /// length of the attribute will be set to the length of
-    /// [value](UpdateCharacteristicValueParameters::value). If the offset is set to a value greater
-    /// than 0, then the length of the attribute will be set to the
-    /// [maximum length](AddCharacteristicParameters::characteristic_value_len) as specified for the
-    /// attribute while adding the characteristic.
-    pub offset: usize,
-
-    /// The new characteristic value.
-    pub value: &'a [u8],
-}
-
-/// Parameters for the [GATT Delete Included Service](GattDeleteIncludedService) command.
-pub struct DeleteIncludedServiceParameters {
-    /// Handle of the service to which Include definition belongs
-    pub service: AttributeHandle,
-
-    /// Handle of the Included definition to be deleted.
-    pub included_service: AttributeHandle,
-}
-
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     /// Flags for individual events that can be masked by the
@@ -1444,198 +1317,6 @@ defmt::bitflags! {
         /// [GATT Tx Pool Available](crate::vendor::event::VendorEvent::GattTxPoolAvailable)
         const TX_POOL_AVAILABLE = 0x0004_0000;
     }
-}
-
-/// Parameters for the [GATT Find by Type Value Request](GattFindByTypeValueRequest)
-/// command.
-pub struct FindByTypeValueParameters<'a> {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Range of attributes to be discovered on the server.
-    pub attribute_handle_range: Range<AttributeHandle>,
-
-    /// UUID to find.
-    pub uuid: Uuid16,
-
-    /// Attribute value to find.
-    ///
-    /// Note: Though the max attribute value that is allowed according to the spec is 512 octets,
-    /// due to the limitation of the transport layer (command packet max length is 255 bytes) the
-    /// value is limited to 246 bytes.
-    pub value: &'a [u8],
-}
-
-/// 16-bit UUID
-pub struct Uuid16(pub u16);
-
-/// Parameters for the [Read by Group Type Request](GattReadByGroupTypeRequest) command.
-pub struct ReadByTypeParameters {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Range of values to be read on the server.
-    pub attribute_handle_range: Range<AttributeHandle>,
-
-    /// UUID of the attribute.
-    pub uuid: Uuid,
-}
-
-/// Parameters for the [Prepare Write Request](GattPrepareWriteRequest) command.
-pub struct WriteRequest<'a> {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Handle of the attribute whose value has to be written
-    pub attribute_handle: AttributeHandle,
-
-    /// The offset at which value has to be written
-    pub offset: usize,
-
-    /// Value of the attribute to be written
-    pub value: &'a [u8],
-}
-
-/// Parameters for the [Read long characteristic value](GattReadLongCharacteristicValue)
-/// command.
-pub struct LongCharacteristicReadParameters {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Handle of the characteristic to be read
-    pub attribute: AttributeHandle,
-
-    /// Offset from which the value needs to be read.
-    pub offset: usize,
-}
-
-/// Parameters for the [Read Multiple Characteristic Values](GattReadMultipleCharacteristicValues)
-/// command.
-pub struct MultipleCharacteristicReadParameters<'a> {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// The handles for which the attribute value has to be read.
-    ///
-    /// The maximum length is 126 handles.
-    pub handles: &'a [AttributeHandle],
-}
-
-/// Parameters for the [Write Characteristic Value](GattWriteCharacteristicValue) command.
-pub struct CharacteristicValue<'a> {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Handle of the characteristic to be written.
-    pub characteristic_handle: AttributeHandle,
-
-    /// Value to be written. The maximum length is 250 bytes.
-    pub value: &'a [u8],
-}
-
-/// Parameters for the [Write Long Characteristic Value](GattWriteLongCharacteristicValue)
-/// command.
-pub struct LongCharacteristicValue<'a> {
-    /// Connection handle for which the command is given.
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Handle of the characteristic to be written.
-    pub characteristic_handle: AttributeHandle,
-
-    /// Offset at which the attribute has to be written.
-    pub offset: usize,
-
-    /// Value to be written. The maximum length is 248 bytes.
-    pub value: &'a [u8],
-}
-
-/// Parameters for the [Write Response](GattWriteResponse) command.
-pub struct WriteResponseParameters<'a> {
-    /// Connection handle for which the command is given
-    pub conn_handle: crate::ConnectionHandle,
-
-    /// Handle of the attribute that was passed in the
-    /// [Write Permit Request](crate::vendor::event::VendorEvent::AttWritePermitRequest) event.
-    pub attribute_handle: AttributeHandle,
-
-    /// Is the command rejected, and if so, why?
-    pub status: Result<(), crate::Status>,
-
-    /// Value as passed in the
-    /// [Write Permit Request](crate::vendor::event::VendorEvent::AttWritePermitRequest) event.
-    pub value: &'a [u8],
-}
-
-/// Parameters for the [Set Security Permission](GattSetSecurityPermission) command.
-pub struct SecurityPermissionParameters {
-    /// Handle of the service which contains the attribute whose security permission has to be
-    /// modified.
-    pub service_handle: AttributeHandle,
-
-    /// Handle of the attribute whose security permission has to be modified.
-    pub attribute_handle: AttributeHandle,
-
-    /// Security requirements for the attribute.
-    pub permission: CharacteristicPermission,
-}
-
-/// Parameters for the [Set Descriptor Value](GattSetDescriptorValue) command.
-pub struct DescriptorValueParameters<'a> {
-    /// Handle of the service which contains the descriptor.
-    pub service_handle: AttributeHandle,
-
-    /// Handle of the characteristic which contains the descriptor.
-    pub characteristic_handle: AttributeHandle,
-
-    /// Handle of the descriptor whose value has to be set.
-    pub descriptor_handle: AttributeHandle,
-
-    /// Offset from which the descriptor value has to be updated.
-    pub offset: usize,
-
-    /// Descriptor value
-    pub value: &'a [u8],
-}
-
-/// Parameters for the
-/// [Update Long Characteristic Value](GattUpdateLongCharacteristicValue) command.
-pub struct UpdateCharacteristicValueExt<'a> {
-    /// Specifies the client(s) to be notified
-    pub conn_handle_to_notify: ConnectionHandleToNotify,
-
-    /// Handle of the service to which characteristic belongs.
-    pub service_handle: AttributeHandle,
-
-    /// Handle of the characteristic.
-    pub characteristic_handle: AttributeHandle,
-
-    /// Controls whether an indication, notification, both, or neither is generated by the attribute
-    /// update.
-    pub update_type: UpdateType,
-
-    /// Total length of the Attribute value after the update. In case of a
-    /// [variable size](AddCharacteristicParameters::is_variable) characteristic, this field specifies the new
-    /// length of the characteristic value after the update; in case of fixed length characteristic
-    /// this field is ignored.
-    pub total_len: usize,
-
-    /// The offset from which the Attribute value has to be updated.
-    pub offset: usize,
-
-    /// Updated value of the characteristic.
-    pub value: &'a [u8],
-}
-
-#[derive(Clone, Copy)]
-pub enum ConnectionHandleToNotify {
-    /// Notify all subscribed clients on their unenhanced ATT bearer
-    NotifyAll,
-    /// Notify one client on the specified unenhanced ATT bearer (the parameter us the
-    /// connection handle) (0x0001 .. 0x0EFF)
-    NotifyOneUnenhanced(ConnectionHandle),
-    /// Notfiy one client on the specified enhanced ATT bearer (the LST-byte of the
-    /// parameter is the connection-oriented channel index) (0xEA00 .. 0xEA1F)
-    NotifyOneEnhanced(ConnectionHandle),
 }
 
 #[cfg(not(feature = "defmt"))]

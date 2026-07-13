@@ -371,6 +371,8 @@ fn parse_descriptor_definition(
     let mut response_len = None;
     let mut return_variable = false;
     let mut completion = None;
+    let mut param_names = BTreeSet::new();
+    let mut constraint_names = None;
 
     while input.peek().is_some() {
         let Some(TokenTree::Ident(label)) = input.next() else {
@@ -425,7 +427,9 @@ fn parse_descriptor_definition(
                 ));
             }
             saw_params = true;
-            params_empty = parse_params_shape(value, &invocation.name, path)?;
+            let params = parse_params_shape(value, &invocation.name, path)?;
+            params_empty = params.empty;
+            param_names = params.names;
         } else if label == "Return" {
             if saw_return {
                 return Err(format!(
@@ -447,6 +451,15 @@ fn parse_descriptor_definition(
                 ));
             }
             completion = Some(parse_completion_shape(value, &invocation.name, path)?);
+        } else if label == "Constraints" {
+            if constraint_names.is_some() {
+                return Err(format!(
+                    "{}: vendor_cmd! `{}` declares `Constraints` more than once",
+                    path.display(),
+                    invocation.name
+                ));
+            }
+            constraint_names = Some(parse_constraints_shape(value, &invocation.name, path)?);
         } else {
             return Err(format!(
                 "{}: vendor_cmd! `{}` contains unknown declaration `{label}`",
@@ -462,6 +475,21 @@ fn parse_descriptor_definition(
             path.display(),
             invocation.name
         ));
+    }
+
+    if let Some(constraint_names) = constraint_names {
+        let unknown = constraint_names
+            .difference(&param_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            return Err(format!(
+                "{}: vendor_cmd! `{}` constraints reference unknown parameter(s): {}",
+                path.display(),
+                invocation.name,
+                unknown.join(", ")
+            ));
+        }
     }
 
     let completion = completion.ok_or_else(|| {
@@ -500,11 +528,16 @@ fn parse_descriptor_definition(
     })
 }
 
+struct ParsedParamsShape {
+    empty: bool,
+    names: BTreeSet<String>,
+}
+
 fn parse_params_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-) -> Result<bool, String> {
+) -> Result<ParsedParamsShape, String> {
     let mut tokens = value.clone().into_iter();
     if let (Some(TokenTree::Group(group)), None) = (tokens.next(), tokens.next())
         && group.delimiter() == Delimiter::Brace
@@ -521,7 +554,10 @@ fn parse_params_shape(
                 path.display()
             ));
         }
-        return Ok(fields.count == 0);
+        return Ok(ParsedParamsShape {
+            empty: fields.count == 0,
+            names: fields.names,
+        });
     }
 
     let ty = syn::parse2::<Type>(value).map_err(|error| {
@@ -530,7 +566,38 @@ fn parse_params_shape(
             path.display()
         )
     })?;
-    Ok(matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty()))
+    Ok(ParsedParamsShape {
+        empty: matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty()),
+        names: BTreeSet::new(),
+    })
+}
+
+fn parse_constraints_shape(
+    value: TokenStream,
+    descriptor: &syn::Ident,
+    path: &Path,
+) -> Result<BTreeSet<String>, String> {
+    let mut tokens = value.into_iter();
+    let Some(TokenTree::Group(group)) = tokens.next() else {
+        return Err(format!(
+            "{}: descriptor `{descriptor}` Constraints must be a declarative field body",
+            path.display()
+        ));
+    };
+    if tokens.next().is_some() || group.delimiter() != Delimiter::Brace {
+        return Err(format!(
+            "{}: descriptor `{descriptor}` Constraints must be a declarative field body",
+            path.display()
+        ));
+    }
+    syn::parse2::<DeclarativeConstraints>(group.stream())
+        .map(|constraints| constraints.fields)
+        .map_err(|error| {
+            format!(
+                "{}: descriptor `{descriptor}` has unsupported declarative Constraints: {error}",
+                path.display()
+            )
+        })
 }
 
 struct ParsedReturnShape {
@@ -610,8 +677,58 @@ fn parse_completion_shape(
     }
 }
 
+struct DeclarativeConstraints {
+    fields: BTreeSet<String>,
+}
+
+impl Parse for DeclarativeConstraints {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut fields = BTreeSet::new();
+        while !input.is_empty() {
+            let kind = input.parse::<syn::Ident>()?;
+            let arguments;
+            syn::parenthesized!(arguments in input);
+
+            if kind == "ordered" || kind == "len_at_most" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+            } else if kind == "range" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+                arguments.parse::<syn::Token![,]>()?;
+                arguments.parse::<Expr>()?;
+            } else if kind == "one_of" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                let allowed;
+                syn::bracketed!(allowed in arguments);
+                let values = Punctuated::<Expr, syn::Token![,]>::parse_terminated(&allowed)?;
+                if values.is_empty() {
+                    return Err(allowed.error("one_of must declare at least one allowed value"));
+                }
+            } else if kind == "non_empty" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+            } else {
+                return Err(syn::Error::new_spanned(
+                    kind,
+                    "unknown declarative constraint",
+                ));
+            }
+
+            if !arguments.is_empty() {
+                return Err(arguments.error("unexpected tokens in declarative constraint"));
+            }
+            input.parse::<syn::Token![;]>()?;
+        }
+        Ok(Self { fields })
+    }
+}
+
 struct DeclarativeFields {
     count: usize,
+    names: BTreeSet<String>,
     min_len: usize,
     total_len: usize,
     variable: bool,
@@ -621,6 +738,7 @@ struct DeclarativeFields {
 impl Parse for DeclarativeFields {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut count = 0usize;
+        let mut names = BTreeSet::new();
         let mut min_len = 0usize;
         let mut total_len = 0usize;
         let mut variable = false;
@@ -630,7 +748,10 @@ impl Parse for DeclarativeFields {
             if consumes_remainder {
                 return Err(input.error("trailing_bytes must be the final declarative field"));
             }
-            input.parse::<syn::Ident>()?;
+            let name = input.parse::<syn::Ident>()?;
+            if !names.insert(name.to_string()) {
+                return Err(syn::Error::new_spanned(name, "duplicate declarative field"));
+            }
             input.parse::<syn::Token![:]>()?;
             input.parse::<Type>()?;
             input.parse::<syn::Token![=>]>()?;
@@ -665,6 +786,7 @@ impl Parse for DeclarativeFields {
         }
         Ok(Self {
             count,
+            names,
             min_len,
             total_len,
             variable,
@@ -1054,6 +1176,7 @@ impl Parse for VendorEventsInvocation {
                 }
                 DeclarativeFields {
                     count: 0,
+                    names: BTreeSet::new(),
                     min_len: 0,
                     total_len: 0,
                     variable: false,
@@ -1668,6 +1791,51 @@ mod tests {
         let descriptor = descriptors.get("Current").unwrap();
         assert!(!descriptor.params_empty);
         assert!(!descriptor.declares_return);
+    }
+
+    #[test]
+    fn parses_constraints_and_rejects_unknown_parameter_references() {
+        let source = r#"
+            vendor_cmd! {
+                Current(cgid = 0x0, cid = 0x03) {
+                    Params<'a> = {
+                        minimum: u16 => 2,
+                        maximum: u16 => 2,
+                        mode: u8 => 1,
+                        data: &'a [u8] => {
+                            kind: counted_bytes,
+                            count: u8 => 1,
+                            max_len: 16,
+                        },
+                    };
+                    Constraints = {
+                        ordered(minimum, maximum);
+                        range(minimum, 0x20, 0x4000);
+                        one_of(mode, [0x00, 0x02]);
+                        len_at_most(data, mode);
+                    };
+                    Completion = CommandStatus;
+                }
+            }
+        "#;
+        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
+        assert!(!descriptors.get("Current").unwrap().params_empty);
+
+        let source = r#"
+            vendor_cmd! {
+                Current(cgid = 0x0, cid = 0x03) {
+                    Params = { value: u8 => 1, };
+                    Constraints = { ordered(value, missing); };
+                    Completion = CommandStatus;
+                }
+            }
+        "#;
+        let file = syn::parse_file(source).unwrap();
+        let Item::Macro(item) = &file.items[0] else {
+            panic!("expected vendor_cmd! macro item");
+        };
+        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        assert!(error.contains("unknown parameter(s): missing"), "{error}");
     }
 
     #[test]

@@ -999,7 +999,7 @@ vendor_event! {
     }
     /// This event is generated when the central device responds to the L2CAP connection update
     /// request packet. For more info see
-    /// [ConnectionParameterUpdateResponse](crate::vendor::command::l2cap::ConnectionParameterUpdateResponse)
+    /// [L2ConnectionParameterUpdateResponse](crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse)
     /// and CommandReject in Bluetooth Core v4.0 spec.
     L2CapConnectionUpdateResponse(0x0800) {
         Payload = {

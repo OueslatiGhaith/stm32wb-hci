@@ -6,20 +6,24 @@ use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use hci::vendor::{
     command::{
         gap::{
-            CmdGapInit, GapAddDevicesToList, GapAdvSetEnable, GapConfigureWhitelist,
-            GapGetBondedDevices, GapPeripheralSecurityRequest, GapSendPairingRequest,
-            GapSetDiscoverable, GapSetIoCapability, GapSetNonDiscoverable, GapSetOobData,
-            GapUpdateAdvertisingData, IoCapability, Role,
+            CmdGapInit, GapAddDevicesToList, GapAdditionalBeaconStart, GapAdvSetEnable,
+            GapConfigureWhitelist, GapGetBondedDevices, GapPassKeyResponse,
+            GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
+            GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetIoCapability,
+            GapSetLimitedDiscoverable, GapSetNonConnectable, GapSetNonDiscoverable, GapSetOobData,
+            GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
+            GapUpdateAdvertisingData, IoCapability, PassKey, PowerAmplifierOutputLevel, Role,
+            TerminationReason,
         },
         gatt::{
             AccessPermission, CharacteristicEvent, CharacteristicPermission,
-            CharacteristicProperty, DescriptorPermission, EncryptionKeySize, GattAddCharacteristic,
-            GattAddCharacteristicDescriptor, GattAddService, GattCharacteristic,
-            GattCharacteristicDescriptor, GattDiscoverCharacteristicsByUUID,
-            GattDiscoverPrimaryServicesByUUID, GattFindByTypeValueRequest, GattHandleValue,
-            GattIncludeService, GattReadByGroupTypeRequest, GattReadByTypeRequest,
-            GattReadCharacteristicUsingUUID, GattReadHandleValue, GattReadMultipleVarCharValue,
-            GattService, ServiceType, Uuid,
+            CharacteristicProperty, DescriptorPermission, DescriptorValueMaxLength,
+            EncryptionKeySize, GattAddCharacteristic, GattAddCharacteristicDescriptor,
+            GattAddService, GattCharacteristic, GattCharacteristicDescriptor,
+            GattDiscoverCharacteristicsByUUID, GattDiscoverPrimaryServicesByUUID,
+            GattFindByTypeValueRequest, GattHandleValue, GattIncludeService,
+            GattReadByGroupTypeRequest, GattReadByTypeRequest, GattReadCharacteristicUsingUUID,
+            GattReadHandleValue, GattReadMultipleVarCharValue, GattService, ServiceType, Uuid,
         },
         hal::{
             HalEventFlags, HalFirmwareRevision, HalGetFirmwareRevision, HalGetLinkStatus,
@@ -27,6 +31,7 @@ use hci::vendor::{
             HalRawRssi, HalReadRadioReg, HalReadRawRssi, HalReadRssi, HalRssi, HalRxStart,
             HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
             HalStartTone, HalTxTestPacketCount, HalWriteRadioReg, PowerLevel, RadioActivityFlags,
+            ToneChannel,
         },
         l2cap::{L2CocConnectConfirm, L2CocReconfig, L2CocTxData},
     },
@@ -57,6 +62,46 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     let result = GapSetDiscoverable::try_new(0, 0, 0, 0, 0, &name, &[0], 0, 0);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
+    let address = hci::BdAddrType::Public(hci::BdAddr([0; 6]));
+    let pass_key = PassKey::try_new(999_999).unwrap();
+
+    assert!(GapSetLimitedDiscoverable::try_new(0, 0x30, 0x20, 0, 0, &[], &[], 0, 0).is_err());
+    assert!(GapSetDiscoverable::try_new(0x01, 0x20, 0x30, 0, 0, &[], &[], 0, 0).is_err());
+    assert!(GapSetDirectConnectable::try_new(0, 0, address, 0x20, 0x30).is_err());
+    assert!(GapSetDirectConnectable::try_new(0, 0x01, address, 0x001F, 0x0020).is_err());
+    assert!(
+        GapSetAuthenticationRequirement::try_new(false, false, 0, false, 16, 7, true, pass_key, 0,)
+            .is_err()
+    );
+    assert!(PassKey::try_new(1_000_000).is_err());
+    assert!(
+        GapSetAuthenticationRequirement::try_new(false, false, 0, false, 7, 16, true, pass_key, 2,)
+            .is_err()
+    );
+    let _ = GapPassKeyResponse::new(hci::ConnectionHandle(1), pass_key);
+    assert!(GapSetNonConnectable::try_new(0, 0).is_err());
+    assert!(GapSetUnidirectedConnectable::try_new(0x20, 0x30, 0, 1).is_err());
+    let _ = GapTerminate::new(
+        hci::ConnectionHandle(1),
+        TerminationReason::AuthenticationFailure,
+    );
+    assert!(GapTerminateProcedure::try_new(0).is_err());
+    assert!(GapSetBroadcastMode::try_new(0x20, 0x30, 0, 0, &[], &[]).is_err());
+    assert!(GapSetBroadcastMode::try_new(0x30, 0x20, 2, 0, &[], &[]).is_err());
+    assert!(GapSetBroadcastMode::try_new(0x1F, 0x20, 2, 0, &[], &[]).is_err());
+    assert!(PowerAmplifierOutputLevel::try_new(0x24).is_err());
+    let _ = GapAdditionalBeaconStart::new(
+        0x20,
+        0x30,
+        7,
+        address,
+        PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
+    );
+    assert!(ToneChannel::try_new(40).is_err());
 }
 
 #[tokio::test]
@@ -284,7 +329,10 @@ async fn declarative_hal_fixed_setters_match_cubewb() {
         .exec(&sink)
         .await
         .unwrap();
-    HalStartTone::new(0x27, 0xAA).exec(&sink).await.unwrap();
+    HalStartTone::new(ToneChannel::try_new(0x27).unwrap(), 0xAA)
+        .exec(&sink)
+        .await
+        .unwrap();
     HalSetRadioActivityMask::new(RadioActivityFlags::IDLE | RadioActivityFlags::CENTRAL_CONN)
         .exec(&sink)
         .await
@@ -721,7 +769,7 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
         (CharacteristicProperty::READ | CharacteristicProperty::WRITE).bits(),
         CharacteristicPermission::ENCRYPTED_READ.bits(),
         CharacteristicEvent::CONFIRM_READ.bits(),
-        EncryptionKeySize::with_value(16).unwrap().value() as u8,
+        EncryptionKeySize::with_value(16).unwrap(),
         true,
     )
     .unwrap()
@@ -745,12 +793,12 @@ async fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
         AttributeHandle(0x0123),
         AttributeHandle(0x4567),
         &uuid,
-        3,
+        DescriptorValueMaxLength::try_new(3).unwrap(),
         &[0xAA, 0xBB],
         DescriptorPermission::ENCRYPTED.bits(),
         AccessPermission::READ_WRITE.bits(),
         CharacteristicEvent::ATTRIBUTE_WRITE.bits(),
-        EncryptionKeySize::with_value(7).unwrap().value() as u8,
+        EncryptionKeySize::with_value(7).unwrap(),
         false,
     )
     .unwrap()
@@ -848,15 +896,34 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         AttributeHandle(0x0123),
         AttributeHandle(0x4567),
         &uuid,
-        u8::MAX,
+        DescriptorValueMaxLength::try_new(227).unwrap(),
         &oversized_descriptor,
         DescriptorPermission::empty().bits(),
         AccessPermission::READ.bits(),
         CharacteristicEvent::empty().bits(),
-        7,
+        EncryptionKeySize::with_value(7).unwrap(),
         false,
     );
     assert!(result.is_err());
+
+    let descriptor_value = [0; 4];
+    let result = GattAddCharacteristicDescriptor::try_new(
+        AttributeHandle(0x0123),
+        AttributeHandle(0x4567),
+        &uuid,
+        DescriptorValueMaxLength::try_new(3).unwrap(),
+        &descriptor_value,
+        DescriptorPermission::empty().bits(),
+        AccessPermission::READ.bits(),
+        CharacteristicEvent::empty().bits(),
+        EncryptionKeySize::with_value(7).unwrap(),
+        false,
+    );
+    assert!(result.is_err());
+
+    assert!(DescriptorValueMaxLength::try_new(228).is_err());
+    assert!(EncryptionKeySize::with_value(6).is_err());
+    assert!(EncryptionKeySize::with_value(17).is_err());
 }
 
 #[test]
