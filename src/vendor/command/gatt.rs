@@ -1,26 +1,14 @@
 //! GATT commands and types needed for those commands.
 
-extern crate byteorder;
-
 use core::ops::Range;
-
-use bt_hci::{
-    cmd::{AsyncCmd, SyncCmd},
-    controller::{ControllerCmdAsync, ControllerCmdSync},
-};
-use byteorder::{ByteOrder, LittleEndian};
 
 use crate::{
     BadStatusError, ConnectionHandle, Status,
-    vendor::{
-        command::{ParamBuffer, ReturnBuffer},
-        event::{
-            AttributeHandle,
-            command::{
-                GattCharacteristic, GattCharacteristicDescriptor, GattHandleValue, GattService,
-            },
-        },
-    },
+    vendor::{command::BoundedBytes, event::AttributeHandle},
+};
+use bt_hci::{
+    cmd::{AsyncCmd, SyncCmd},
+    controller::{ControllerCmdAsync, ControllerCmdSync},
 };
 
 /// GATT-specific.
@@ -789,6 +777,17 @@ pub trait GattCommands {
         params: &DescriptorValueParameters<'_>,
     ) -> Result<(), Error>;
 
+    /// Read a value from the local GATT database.
+    ///
+    /// `value_length_requested` is the maximum number of value octets returned by the controller.
+    async fn read_handle_value(
+        &self,
+        handle: AttributeHandle,
+        offset: u16,
+        value_length_requested: u16,
+    ) -> Result<GattHandleValue, Error>;
+
+    #[cfg(after_fw_0_17_1)]
     /// The command returns the value of the attribute handle from the specified offset.
     ///
     /// If the length to be returned is greater than 128, then only 128 bytes are
@@ -887,6 +886,7 @@ pub trait GattCommands {
         handles: &[AttributeHandle],
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Write an attribute value without response, using the extra data buffer.
     async fn write_without_resp_ext(
         &self,
@@ -897,6 +897,7 @@ pub trait GattCommands {
         data_pointer: u32,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Write an attribute value with response, using the extra data buffer.
     async fn write_with_resp_ext(
         &self,
@@ -912,290 +913,662 @@ pub trait GattCommands {
 vendor_cmd! {
     GattInit(GATT_INIT) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattAddService(GATT_ADD_SERVICE) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<3>;
+        Params<'a> = {
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+            service_type: u8 => 1,
+            max_attribute_records: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = GattService {
+            service_handle: AttributeHandle => 2,
+        };
     }
 }
 
 vendor_cmd! {
     GattIncludeService(GATT_INCLUDE_SERVICE) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<3>;
+        Params<'a> = {
+            service_handle: AttributeHandle => 2,
+            include_handle_start: AttributeHandle => 2,
+            include_handle_end: AttributeHandle => 2,
+            include_uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandComplete;
+        Return = GattIncludedService {
+            service_handle: AttributeHandle => 2,
+        };
     }
 }
 
 vendor_cmd! {
     GattAddCharacteristic(GATT_ADD_CHARACTERISTIC) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<3>;
+        Params<'a> = {
+            service_handle: AttributeHandle => 2,
+            characteristic_uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+            characteristic_value_len: u16 => 2,
+            characteristic_properties: u8 => 1,
+            security_permissions: u8 => 1,
+            gatt_event_mask: u8 => 1,
+            encryption_key_size: u8 => 1,
+            is_variable: bool => 1,
+        };
+        Completion = CommandComplete;
+        Return = GattCharacteristic {
+            characteristic_handle: AttributeHandle => 2,
+        };
     }
 }
 
 vendor_cmd! {
     GattAddCharacteristicDescriptor(GATT_ADD_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<3>;
+        Params<'a> = {
+            service_handle: AttributeHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            descriptor_uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+            descriptor_value_max_len: u8 => 1,
+            descriptor_value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 227,
+            },
+            security_permissions: u8 => 1,
+            access_permissions: u8 => 1,
+            gatt_event_mask: u8 => 1,
+            encryption_key_size: u8 => 1,
+            is_variable: bool => 1,
+        };
+        Completion = CommandComplete;
+        Return = GattCharacteristicDescriptor {
+            descriptor_handle: AttributeHandle => 2,
+        };
     }
 }
 
 vendor_cmd! {
     GattUpdateCharacteristicValue(GATT_UPDATE_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            service_handle: AttributeHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            offset: u8 => 1,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 249,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteCharacterisitic(GATT_DELETE_CHARACTERISTIC) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            service: AttributeHandle => 2,
+            characteristic: AttributeHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteService(GATT_DELETE_SERVICE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            service: AttributeHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDeleteIncludedService(GATT_DELETE_INCLUDED_SERVICE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            service: AttributeHandle => 2,
+            included_service: AttributeHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetEventMask(GATT_SET_EVENT_MASK) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            event_mask: u32 => 4,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattExchageConfiguration(GATT_EXCHANGE_CONFIGURATION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattFindInformationRequest(GATT_FIND_INFORMATION_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattFindByTypeValueRequest(GATT_FIND_BY_TYPE_VALUE_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+            uuid: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 246,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadByTypeRequest(GATT_READ_BY_TYPE_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadByGroupTypeRequest(GATT_READ_BY_GROUP_TYPE_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattPrepareWriteRequest(GATT_PREPARE_WRITE_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattExecuteWriteRequest(GATT_EXECUTE_WRITE_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            execute: bool => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllPrimaryServices(GATT_DISCOVER_ALL_PRIMARY_SERVICES) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattDiscoverPrimaryServicesByUUID(GATT_DISCOVER_PRIMARY_SERVICES_BY_UUID) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattFindIncludedServices(GATT_FIND_INCLUDED_SERVICES) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            service_handle_start: AttributeHandle => 2,
+            service_handle_end: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllCharacteristicsOfService(GATT_DISCOVER_ALL_CHARACTERISTICS_OF_SERVICE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattDiscoverCharacteristicsByUUID(GATT_DISCOVER_CHARACTERISTICS_BY_UUID) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattDiscoverAllCharacteristicDescriptors(GATT_DISCOVER_ALL_CHARACTERISTIC_DESCRIPTORS) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle_start: AttributeHandle => 2,
+            characteristic_handle_end: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicValue(GATT_READ_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicUsingUUID(GATT_READ_CHARACTERISTIC_BY_UUID) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle_start: AttributeHandle => 2,
+            attribute_handle_end: AttributeHandle => 2,
+            uuid: &'a Uuid => {
+                kind: payload,
+                min_len: 3,
+                max_len: 17,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadLongCharacteristicValue(GATT_READ_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attribute: AttributeHandle => 2,
+            offset: u16 => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadMultipleCharacteristicValues(GATT_READ_MULTIPLE_CHARACTERISTIC_VALUES) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            handles: &'a [AttributeHandle] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: AttributeHandle => 2,
+                max_items: 126,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicValue(GATT_WRITE_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 250,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteLongCharacteristicValue(GATT_WRITE_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicValueReliably(GATT_WRITE_CHARACTERISTIC_VALUE_RELIABLY) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(GATT_WRITE_LONG_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            descriptor_handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadLongCharacteristicDescriptor(GATT_READ_LONG_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attribute: AttributeHandle => 2,
+            offset: u16 => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteCharacteristicDescriptor(GATT_WRITE_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            descriptor_handle: AttributeHandle => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 250,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattReadCharacteristicDescriptor(GATT_READ_CHARACTERISTIC_DESCRIPTOR) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            descriptor_handle: AttributeHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteWithoutResponse(GATT_WRITE_WITHOUT_RESPONSE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 250,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSignedWriteWithoutResponse(GATT_SIGNED_WRITE_WITHOUT_RESPONSE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 250,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattConfirmIndication(GATT_CONFIRM_INDICATION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattWriteResponse(GATT_WRITE_RESPONSE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            write_status: u8 => 1,
+            error_code: u8 => 1,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattAllowRead(GATT_ALLOW_READ) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetSecurityPermission(GATT_SET_SECURITY_PERMISSION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            service_handle: AttributeHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            permission: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetDescriptorValue(GATT_SET_DESCRIPTOR_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            service_handle: AttributeHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            descriptor_handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 246,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
+    GattReadHandleValue(GATT_READ_HANDLE_VALUE) {
+        Params = {
+            handle: AttributeHandle => 2,
+            offset: u16 => 2,
+            value_length_requested: u16 => 2,
+        };
+        Completion = CommandComplete;
+        Return = GattHandleValue {
+            total_length: u16 => 2,
+            value: BoundedBytes<249> => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 249,
+            },
+        };
+    }
+}
+
+impl GattHandleValue {
+    /// Maximum number of value bytes that fit in the response envelope.
+    pub const MAX_VALUE_LEN: usize = 249;
+
+    /// Return the handle value bytes present in this response.
+    pub fn value(&self) -> &[u8] {
+        self.value.as_slice()
+    }
+}
+
+vendor_cmd! {
     GattReadHandleValueOffset(GATT_READ_HANDLE_VALUE_OFFSET) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<3>;
+        Params = {
+            handle: AttributeHandle => 2,
+            offset: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = GattHandleValueOffset {
+            value: BoundedBytes<128> => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 128,
+            },
+        };
     }
 }
 
 vendor_cmd! {
     GattUpdateLongCharacteristicValue(GATT_UPDATE_LONG_CHARACTERISTIC_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle_to_notify: u16 => 2,
+            service_handle: AttributeHandle => 2,
+            characteristic_handle: AttributeHandle => 2,
+            update_type: u8 => 1,
+            total_len: u16 => 2,
+            offset: u16 => 2,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 243,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattDenyRead(GATT_DENY_READ) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            error_code: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSetAccessPermission(GATT_SET_ACCESS_PERMISSION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            service_handle: AttributeHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            permissions: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -1203,34 +1576,67 @@ vendor_cmd! {
 vendor_cmd! {
     GattStoreDatabase(GATT_STORE_DB) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattSendMultipleNotification(GATT_SEND_MULT_NOTIFICATION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            handles: &'a [AttributeHandle] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: AttributeHandle => 2,
+                max_items: 126,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattReadMultipleVarCharValue(GATT_READ_MULTIPLE_VAR_CHAR_VALUE) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ();
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            handles: &'a [AttributeHandle] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: AttributeHandle => 2,
+                max_items: 126,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GattWriteWithoutRespExt(GATT_WRITE_WITHOUT_RESP_EXT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attr_handle: u16 => 2,
+            signed_mode: bool => 1,
+            data_len: u16 => 2,
+            data_pointer: u32 => 4,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GattWriteWithRespExt(GATT_WRITE_WITH_RESP_EXT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            attr_handle: u16 => 2,
+            write_mode: u8 => 1,
+            val_offset: u16 => 2,
+            data_len: u16 => 2,
+            data_pointer: u32 => 4,
+        };
+        Completion = CommandStatus;
     }
 }
 
@@ -1241,131 +1647,188 @@ where
         + for<'t> ControllerCmdSync<GattIncludeService<'t>>
         + for<'t> ControllerCmdSync<GattAddCharacteristicDescriptor<'t>>
         + for<'t> ControllerCmdSync<GattUpdateCharacteristicValue<'t>>
-        + for<'t> ControllerCmdSync<GattDeleteCharacterisitic<'t>>
-        + for<'t> ControllerCmdSync<GattDeleteService<'t>>
-        + for<'t> ControllerCmdSync<GattDeleteIncludedService<'t>>
-        + for<'t> ControllerCmdSync<GattSetEventMask<'t>>
-        + for<'t> ControllerCmdAsync<GattExchageConfiguration<'t>>
-        + for<'t> ControllerCmdAsync<GattFindInformationRequest<'t>>
+        + ControllerCmdSync<GattDeleteCharacterisitic>
+        + ControllerCmdSync<GattDeleteService>
+        + ControllerCmdSync<GattDeleteIncludedService>
+        + ControllerCmdSync<GattSetEventMask>
+        + ControllerCmdAsync<GattExchageConfiguration>
+        + ControllerCmdAsync<GattFindInformationRequest>
         + for<'t> ControllerCmdAsync<GattFindByTypeValueRequest<'t>>
         + for<'t> ControllerCmdAsync<GattReadByTypeRequest<'t>>
         + for<'t> ControllerCmdAsync<GattReadByGroupTypeRequest<'t>>
         + for<'t> ControllerCmdAsync<GattPrepareWriteRequest<'t>>
-        + for<'t> ControllerCmdAsync<GattExecuteWriteRequest<'t>>
-        + for<'t> ControllerCmdAsync<GattDiscoverAllPrimaryServices<'t>>
+        + ControllerCmdAsync<GattExecuteWriteRequest>
+        + ControllerCmdAsync<GattDiscoverAllPrimaryServices>
         + for<'t> ControllerCmdAsync<GattDiscoverPrimaryServicesByUUID<'t>>
-        + for<'t> ControllerCmdAsync<GattFindIncludedServices<'t>>
-        + for<'t> ControllerCmdAsync<GattDiscoverAllCharacteristicsOfService<'t>>
+        + ControllerCmdAsync<GattFindIncludedServices>
+        + ControllerCmdAsync<GattDiscoverAllCharacteristicsOfService>
         + for<'t> ControllerCmdAsync<GattDiscoverCharacteristicsByUUID<'t>>
-        + for<'t> ControllerCmdAsync<GattDiscoverAllCharacteristicDescriptors<'t>>
-        + for<'t> ControllerCmdAsync<GattReadCharacteristicValue<'t>>
+        + ControllerCmdAsync<GattDiscoverAllCharacteristicDescriptors>
+        + ControllerCmdAsync<GattReadCharacteristicValue>
         + for<'t> ControllerCmdAsync<GattReadCharacteristicUsingUUID<'t>>
-        + for<'t> ControllerCmdAsync<GattReadCharacteristicDescriptor<'t>>
-        + for<'t> ControllerCmdAsync<GattReadLongCharacteristicValue<'t>>
+        + ControllerCmdAsync<GattReadCharacteristicDescriptor>
+        + ControllerCmdAsync<GattReadLongCharacteristicValue>
         + for<'t> ControllerCmdAsync<GattReadMultipleCharacteristicValues<'t>>
         + for<'t> ControllerCmdAsync<GattWriteCharacteristicValue<'t>>
         + for<'t> ControllerCmdAsync<GattWriteLongCharacteristicValue<'t>>
         + for<'t> ControllerCmdAsync<GattWriteCharacteristicValueReliably<'t>>
         + for<'t> ControllerCmdAsync<GattWriteLongCharacteristicDescriptor<'t>>
-        + for<'t> ControllerCmdAsync<GattReadLongCharacteristicDescriptor<'t>>
+        + ControllerCmdAsync<GattReadLongCharacteristicDescriptor>
         + for<'t> ControllerCmdSync<GattWriteWithoutResponse<'t>>
         + for<'t> ControllerCmdSync<GattSignedWriteWithoutResponse<'t>>
-        + for<'t> ControllerCmdSync<GattConfirmIndication<'t>>
+        + ControllerCmdSync<GattConfirmIndication>
         + for<'t> ControllerCmdSync<GattWriteResponse<'t>>
-        + for<'t> ControllerCmdSync<GattAllowRead<'t>>
-        + for<'t> ControllerCmdSync<GattSetSecurityPermission<'t>>
+        + ControllerCmdSync<GattAllowRead>
+        + ControllerCmdSync<GattSetSecurityPermission>
         + for<'t> ControllerCmdSync<GattSetDescriptorValue<'t>>
-        + for<'t> ControllerCmdSync<GattReadHandleValueOffset<'t>>
+        + ControllerCmdSync<GattReadHandleValue>
+        + ControllerCmdSync<GattReadHandleValueOffset>
         + for<'t> ControllerCmdSync<GattUpdateLongCharacteristicValue<'t>>
-        + for<'t> ControllerCmdSync<GattDenyRead<'t>>
-        + for<'t> ControllerCmdSync<GattSetAccessPermission<'t>>
+        + ControllerCmdSync<GattDenyRead>
+        + ControllerCmdSync<GattSetAccessPermission>
         + ControllerCmdSync<GattStoreDatabase>
         + for<'t> ControllerCmdSync<GattSendMultipleNotification<'t>>
-        + for<'t> ControllerCmdSync<GattReadMultipleVarCharValue<'t>>
+        + for<'t> ControllerCmdAsync<GattReadMultipleVarCharValue<'t>>
         + for<'t> ControllerCmdAsync<GattWriteCharacteristicDescriptor<'t>>
         + for<'t> ControllerCmdSync<GattAddCharacteristic<'t>>
-        + for<'t> ControllerCmdSync<GattWriteWithoutRespExt<'t>>
-        + for<'t> ControllerCmdAsync<GattWriteWithRespExt<'t>>,
+        + ControllerCmdSync<GattWriteWithoutRespExt>
+        + ControllerCmdAsync<GattWriteWithRespExt>,
 {
     async fn init(&self) -> Result<(), Error> {
         GattInit::new().exec(self).await.map_err(|e| e.into())
     }
 
-    hci_impl_variable_length_params!(
-        add_service,
-        AddServiceParameters,
-        GattAddService,
-        GattService
-    );
+    async fn add_service(&self, params: &AddServiceParameters) -> Result<GattService, Error> {
+        GattAddService::try_new(
+            &params.uuid,
+            params.service_type as u8,
+            params.max_attribute_records,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(
-        include_service,
-        IncludeServiceParameters,
-        GattIncludeService,
-        GattService
-    );
+    async fn include_service(
+        &self,
+        params: &IncludeServiceParameters,
+    ) -> Result<GattService, Error> {
+        let response = GattIncludeService::try_new(
+            params.service_handle,
+            params.include_handle_range.start,
+            params.include_handle_range.end,
+            &params.include_uuid,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)?;
+        Ok(GattService {
+            service_handle: response.service_handle,
+        })
+    }
 
-    hci_impl_variable_length_params!(
-        add_characteristic,
-        AddCharacteristicParameters,
-        GattAddCharacteristic,
-        GattCharacteristic
-    );
+    async fn add_characteristic(
+        &self,
+        params: &AddCharacteristicParameters,
+    ) -> Result<GattCharacteristic, Error> {
+        GattAddCharacteristic::try_new(
+            params.service_handle,
+            &params.characteristic_uuid,
+            params.characteristic_value_len,
+            params.characteristic_properties.bits(),
+            params.security_permissions.bits(),
+            params.gatt_event_mask.bits(),
+            params.encryption_key_size.0,
+            params.is_variable,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        add_characteristic_descriptor<'a>,
-        AddDescriptorParameters<'a>,
-        GattAddCharacteristicDescriptor,
-        GattCharacteristicDescriptor
-    );
+    async fn add_characteristic_descriptor<'a>(
+        &self,
+        params: &AddDescriptorParameters<'a>,
+    ) -> Result<GattCharacteristicDescriptor, Error> {
+        params.validate()?;
+        GattAddCharacteristicDescriptor::try_new(
+            params.service_handle,
+            params.characteristic_handle,
+            &params.descriptor_uuid,
+            params.descriptor_value_max_len as u8,
+            params.descriptor_value,
+            params.security_permissions.bits(),
+            params.access_permissions.bits(),
+            params.gatt_event_mask.bits(),
+            params.encryption_key_size.0,
+            params.is_variable,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        update_characteristic_value<'a>,
-        UpdateCharacteristicValueParameters<'a>,
-        GattUpdateCharacteristicValue
-    );
+    async fn update_characteristic_value(
+        &self,
+        params: &UpdateCharacteristicValueParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattUpdateCharacteristicValue::try_new(
+            params.service_handle,
+            params.characteristic_handle,
+            params.offset as u8,
+            params.value,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn delete_characteristic(
         &self,
         service: AttributeHandle,
         characteristic: AttributeHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 4];
-        LittleEndian::write_u16(&mut bytes[0..2], service.0);
-        LittleEndian::write_u16(&mut bytes[2..4], characteristic.0);
-
-        GattDeleteCharacterisitic::new((&bytes[..]).into())
+        GattDeleteCharacterisitic::new(service, characteristic)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn delete_service(&self, service: AttributeHandle) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes[0..2], service.0);
-
-        GattDeleteService::new((&bytes[..]).into())
+        GattDeleteService::new(service)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        delete_included_service,
-        DeleteIncludedServiceParameters,
-        GattDeleteIncludedService
-    );
+    async fn delete_included_service(
+        &self,
+        params: &DeleteIncludedServiceParameters,
+    ) -> Result<(), Error> {
+        GattDeleteIncludedService::new(params.service, params.included_service)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_value_params!(set_event_mask, Event, GattSetEventMask);
+    async fn set_event_mask(&self, event_mask: Event) -> Result<(), Error> {
+        GattSetEventMask::new(event_mask.bits())
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
     async fn exchange_configuration(
         &self,
         conn_handle: crate::ConnectionHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GattExchageConfiguration::new((&bytes[..]).into())
+        GattExchageConfiguration::new(conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1376,50 +1839,75 @@ where
         conn_handle: crate::ConnectionHandle,
         attribute_range: Range<AttributeHandle>,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 6];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], attribute_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], attribute_range.end.0);
-
-        GattFindInformationRequest::new((&bytes[..]).into())
+        GattFindInformationRequest::new(conn_handle, attribute_range.start, attribute_range.end)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_variable_length_params!(
-        find_by_type_value_request<'a>,
-        FindByTypeValueParameters<'a>,
-        GattFindByTypeValueRequest
-    );
+    async fn find_by_type_value_request(
+        &self,
+        params: &FindByTypeValueParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattFindByTypeValueRequest::try_new(
+            params.conn_handle,
+            params.attribute_handle_range.start,
+            params.attribute_handle_range.end,
+            params.uuid.0,
+            params.value,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(
-        read_by_type_request,
-        ReadByTypeParameters,
-        GattReadByTypeRequest
-    );
+    async fn read_by_type_request(&self, params: &ReadByTypeParameters) -> Result<(), Error> {
+        GattReadByTypeRequest::try_new(
+            params.conn_handle,
+            params.attribute_handle_range.start,
+            params.attribute_handle_range.end,
+            &params.uuid,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(
-        read_by_group_type_request,
-        ReadByTypeParameters,
-        GattReadByGroupTypeRequest
-    );
+    async fn read_by_group_type_request(&self, params: &ReadByTypeParameters) -> Result<(), Error> {
+        GattReadByGroupTypeRequest::try_new(
+            params.conn_handle,
+            params.attribute_handle_range.start,
+            params.attribute_handle_range.end,
+            &params.uuid,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        prepare_write_request<'a>,
-        WriteRequest<'a>,
-        GattPrepareWriteRequest
-    );
+    async fn prepare_write_request(&self, params: &WriteRequest<'_>) -> Result<(), Error> {
+        params.validate()?;
+        GattPrepareWriteRequest::try_new(
+            params.conn_handle,
+            params.attribute_handle,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn execute_write_request(
         &self,
         conn_handle: crate::ConnectionHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-        bytes[2] = true as u8;
-
-        GattExecuteWriteRequest::new((&bytes[..]).into())
+        GattExecuteWriteRequest::new(conn_handle, true)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1429,11 +1917,7 @@ where
         &self,
         conn_handle: crate::ConnectionHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-        bytes[2] = false as u8;
-
-        GattExecuteWriteRequest::new((&bytes[..]).into())
+        GattExecuteWriteRequest::new(conn_handle, false)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1443,10 +1927,7 @@ where
         &self,
         conn_handle: crate::ConnectionHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GattDiscoverAllPrimaryServices::new((&bytes[..]).into())
+        GattDiscoverAllPrimaryServices::new(conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1457,11 +1938,8 @@ where
         conn_handle: crate::ConnectionHandle,
         uuid: Uuid,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 19];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-        let end = 2 + uuid.copy_into_slice(&mut bytes[2..]);
-
-        GattDiscoverPrimaryServicesByUUID::new((&bytes[..end]).into())
+        GattDiscoverPrimaryServicesByUUID::try_new(conn_handle, &uuid)
+            .map_err(|_| Error::IoError)?
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1472,15 +1950,14 @@ where
         conn_handle: crate::ConnectionHandle,
         service_handle_range: Range<AttributeHandle>,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 6];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], service_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], service_handle_range.end.0);
-
-        GattFindIncludedServices::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattFindIncludedServices::new(
+            conn_handle,
+            service_handle_range.start,
+            service_handle_range.end,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
     async fn discover_all_characteristics_of_service(
@@ -1488,15 +1965,14 @@ where
         conn_handle: crate::ConnectionHandle,
         attribute_handle_range: Range<AttributeHandle>,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 6];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], attribute_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
-
-        GattDiscoverAllCharacteristicsOfService::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattDiscoverAllCharacteristicsOfService::new(
+            conn_handle,
+            attribute_handle_range.start,
+            attribute_handle_range.end,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
     async fn discover_characteristics_by_uuid(
@@ -1505,16 +1981,16 @@ where
         attribute_handle_range: Range<AttributeHandle>,
         uuid: Uuid,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 23];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], attribute_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], attribute_handle_range.end.0);
-        let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
-
-        GattDiscoverCharacteristicsByUUID::new((&bytes[..6 + uuid_len]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattDiscoverCharacteristicsByUUID::try_new(
+            conn_handle,
+            attribute_handle_range.start,
+            attribute_handle_range.end,
+            &uuid,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
     async fn discover_all_characteristic_descriptors(
@@ -1522,15 +1998,14 @@ where
         conn_handle: crate::ConnectionHandle,
         characteristic_handle_range: Range<AttributeHandle>,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 6];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
-
-        GattDiscoverAllCharacteristicDescriptors::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattDiscoverAllCharacteristicDescriptors::new(
+            conn_handle,
+            characteristic_handle_range.start,
+            characteristic_handle_range.end,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
     async fn read_characteristic_value(
@@ -1538,11 +2013,7 @@ where
         conn_handle: crate::ConnectionHandle,
         characteristic_handle: AttributeHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 4];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
-
-        GattReadCharacteristicValue::new((&bytes[..]).into())
+        GattReadCharacteristicValue::new(conn_handle, characteristic_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1554,161 +2025,305 @@ where
         characteristic_handle_range: Range<AttributeHandle>,
         uuid: Uuid,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 23];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], characteristic_handle_range.end.0);
-        let uuid_len = uuid.copy_into_slice(&mut bytes[6..]);
-
-        GattReadCharacteristicUsingUUID::new((&bytes[..6 + uuid_len]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattReadCharacteristicUsingUUID::try_new(
+            conn_handle,
+            characteristic_handle_range.start,
+            characteristic_handle_range.end,
+            &uuid,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        read_long_characteristic_value,
-        LongCharacteristicReadParameters,
-        GattReadLongCharacteristicValue
-    );
+    async fn read_long_characteristic_value(
+        &self,
+        params: &LongCharacteristicReadParameters,
+    ) -> Result<(), Error> {
+        GattReadLongCharacteristicValue::new(
+            params.conn_handle,
+            params.attribute,
+            params.offset as u16,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        read_multiple_characteristic_values<'a>,
-        MultipleCharacteristicReadParameters<'a>,
-        GattReadMultipleCharacteristicValues
-    );
+    async fn read_multiple_characteristic_values(
+        &self,
+        params: &MultipleCharacteristicReadParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattReadMultipleCharacteristicValues::try_new(params.conn_handle, params.handles)
+            .map_err(|_| Error::TooManyHandlesToRead)?
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        write_characteristic_value<'a>,
-        CharacteristicValue<'a>,
-        GattWriteCharacteristicValue
-    );
+    async fn write_characteristic_value(
+        &self,
+        params: &CharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteCharacteristicValue::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        write_long_characteristic_value<'a>,
-        LongCharacteristicValue<'a>,
-        GattWriteLongCharacteristicValue
-    );
+    async fn write_long_characteristic_value(
+        &self,
+        params: &LongCharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteLongCharacteristicValue::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        write_characteristic_value_reliably<'a>,
-        LongCharacteristicValue<'a>,
-        GattWriteCharacteristicValueReliably
-    );
+    async fn write_characteristic_value_reliably(
+        &self,
+        params: &LongCharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteCharacteristicValueReliably::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        write_long_characteristic_descriptor<'a>,
-        LongCharacteristicValue<'a>,
-        GattWriteLongCharacteristicDescriptor
-    );
+    async fn write_long_characteristic_descriptor(
+        &self,
+        params: &LongCharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteLongCharacteristicDescriptor::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        read_long_characteristic_descriptor,
-        LongCharacteristicReadParameters,
-        GattReadLongCharacteristicDescriptor
-    );
+    async fn read_long_characteristic_descriptor(
+        &self,
+        params: &LongCharacteristicReadParameters,
+    ) -> Result<(), Error> {
+        GattReadLongCharacteristicDescriptor::new(
+            params.conn_handle,
+            params.attribute,
+            params.offset as u16,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        write_characteristic_descriptor<'a>,
-        CharacteristicValue<'a>,
-        GattWriteCharacteristicDescriptor
-    );
+    async fn write_characteristic_descriptor(
+        &self,
+        params: &CharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteCharacteristicDescriptor::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn read_characteristic_descriptor(
         &self,
         conn_handle: crate::ConnectionHandle,
         characteristic_handle: AttributeHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 4];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], characteristic_handle.0);
-
-        GattReadCharacteristicDescriptor::new((&bytes[..]).into())
+        GattReadCharacteristicDescriptor::new(conn_handle, characteristic_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_variable_length_params!(
-        write_without_response<'a>,
-        CharacteristicValue<'a>,
-        GattWriteWithoutResponse
-    );
+    async fn write_without_response(&self, params: &CharacteristicValue<'_>) -> Result<(), Error> {
+        params.validate()?;
+        GattWriteWithoutResponse::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        signed_write_without_response<'a>,
-        CharacteristicValue<'a>,
-        GattSignedWriteWithoutResponse
-    );
+    async fn signed_write_without_response(
+        &self,
+        params: &CharacteristicValue<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattSignedWriteWithoutResponse::try_new(
+            params.conn_handle,
+            params.characteristic_handle,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn confirm_indication(&self, conn_handle: crate::ConnectionHandle) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GattConfirmIndication::new((&bytes[..]).into())
+        GattConfirmIndication::new(conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_variable_length_params!(
-        write_response<'a>,
-        WriteResponseParameters<'a>,
-        GattWriteResponse
-    );
+    async fn write_response(&self, params: &WriteResponseParameters<'_>) -> Result<(), Error> {
+        params.validate()?;
+        let (write_status, error_code) = match params.status {
+            Ok(()) => (0, 0),
+            Err(status) => (1, status.into()),
+        };
+        GattWriteResponse::try_new(
+            params.conn_handle,
+            params.attribute_handle,
+            write_status,
+            error_code,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn allow_read(&self, conn_handle: crate::ConnectionHandle) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GattAllowRead::new((&bytes[..]).into())
+        GattAllowRead::new(conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        set_security_permission,
-        SecurityPermissionParameters,
-        GattSetSecurityPermission
-    );
+    async fn set_security_permission(
+        &self,
+        params: &SecurityPermissionParameters,
+    ) -> Result<(), Error> {
+        GattSetSecurityPermission::new(
+            params.service_handle,
+            params.attribute_handle,
+            params.permission.bits(),
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        set_descriptor_value<'a>,
-        DescriptorValueParameters<'a>,
-        GattSetDescriptorValue
-    );
+    async fn set_descriptor_value(
+        &self,
+        params: &DescriptorValueParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GattSetDescriptorValue::try_new(
+            params.service_handle,
+            params.characteristic_handle,
+            params.descriptor_handle,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
+    async fn read_handle_value(
+        &self,
+        handle: AttributeHandle,
+        offset: u16,
+        value_length_requested: u16,
+    ) -> Result<GattHandleValue, Error> {
+        GattReadHandleValue::new(handle, offset, value_length_requested)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
+
+    #[cfg(after_fw_0_17_1)]
     async fn read_handle_value_offset(
         &self,
         handle: AttributeHandle,
         offset: usize,
     ) -> Result<GattHandleValue, Error> {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes, handle.0);
-        bytes[2] = offset as u8;
-
-        GattReadHandleValueOffset::new((&bytes[..]).into())
+        let response = GattReadHandleValueOffset::new(handle, offset as u8)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        let value = response.value.as_slice();
+        let value_len = value.len();
+        let mut bytes = [0; 132];
+        bytes[0..2].copy_from_slice(&(value_len as u16).to_le_bytes());
+        bytes[2..4].copy_from_slice(&(value_len as u16).to_le_bytes());
+        bytes[4..4 + value_len].copy_from_slice(value);
+        <GattHandleValue as bt_hci::FromHciBytes>::from_hci_bytes_complete(&bytes[..4 + value_len])
+            .map_err(|_| Error::IoError)
     }
 
-    hci_impl_validate_variable_length_params!(
-        update_characteristic_value_ext<'a>,
-        UpdateCharacteristicValueExt<'a>,
-        GattUpdateLongCharacteristicValue
-    );
+    async fn update_characteristic_value_ext(
+        &self,
+        params: &UpdateCharacteristicValueExt<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        let conn_handle_to_notify = match params.conn_handle_to_notify {
+            ConnectionHandleToNotify::NotifyAll => 0x0000,
+            ConnectionHandleToNotify::NotifyOneUnenhanced(handle)
+            | ConnectionHandleToNotify::NotifyOneEnhanced(handle) => handle.0,
+        };
+        GattUpdateLongCharacteristicValue::try_new(
+            conn_handle_to_notify,
+            params.service_handle,
+            params.characteristic_handle,
+            params.update_type.bits(),
+            params.total_len as u16,
+            params.offset as u16,
+            params.value,
+        )
+        .map_err(|_| Error::ValueBufferTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn deny_read(&self, handle: ConnectionHandle, err: u8) -> Result<(), Error> {
-        let mut payload = [0; 3];
-        LittleEndian::write_u16(&mut payload[0..], handle.0);
-        payload[2] = err;
-
-        GattDenyRead::new((&payload[..]).into())
+        GattDenyRead::new(handle, err)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1720,12 +2335,7 @@ where
         attribute: AttributeHandle,
         permissions: AccessPermission,
     ) -> Result<(), Error> {
-        let mut payload = [0; 5];
-        LittleEndian::write_u16(&mut payload[0..], service.0);
-        LittleEndian::write_u16(&mut payload[2..], attribute.0);
-        payload[4] = permissions.bits();
-
-        GattSetAccessPermission::new((&payload[..]).into())
+        GattSetAccessPermission::new(service, attribute, permissions.bits())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1743,10 +2353,8 @@ where
         conn_handle: ConnectionHandle,
         handles: &[AttributeHandle],
     ) -> Result<(), Error> {
-        let mut payload = [0; 255];
-        let len = copy_multiple_handle_payload(&mut payload, conn_handle, handles)?;
-
-        GattSendMultipleNotification::new((&payload[..len]).into())
+        GattSendMultipleNotification::try_new(conn_handle, handles)
+            .map_err(|_| Error::TooManyHandlesToRead)?
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1757,15 +2365,14 @@ where
         conn_handle: ConnectionHandle,
         handles: &[AttributeHandle],
     ) -> Result<(), Error> {
-        let mut payload = [0; 255];
-        let len = copy_multiple_handle_payload(&mut payload, conn_handle, handles)?;
-
-        GattReadMultipleVarCharValue::new((&payload[..len]).into())
+        GattReadMultipleVarCharValue::try_new(conn_handle, handles)
+            .map_err(|_| Error::TooManyHandlesToRead)?
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn write_without_resp_ext(
         &self,
         conn_handle: ConnectionHandle,
@@ -1774,18 +2381,19 @@ where
         data_len: u16,
         data_pointer: u32,
     ) -> Result<(), Error> {
-        let mut bytes = [0u8; 11];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], attr_handle);
-        bytes[4] = signed_mode as u8;
-        LittleEndian::write_u16(&mut bytes[5..7], data_len);
-        LittleEndian::write_u32(&mut bytes[7..11], data_pointer);
-        GattWriteWithoutRespExt::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattWriteWithoutRespExt::new(
+            conn_handle,
+            attr_handle,
+            signed_mode,
+            data_len,
+            data_pointer,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn write_with_resp_ext(
         &self,
         conn_handle: ConnectionHandle,
@@ -1795,41 +2403,18 @@ where
         data_len: u16,
         data_pointer: u32,
     ) -> Result<(), Error> {
-        let mut bytes = [0u8; 13];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], attr_handle);
-        bytes[4] = write_mode;
-        LittleEndian::write_u16(&mut bytes[5..7], val_offset);
-        LittleEndian::write_u16(&mut bytes[7..9], data_len);
-        LittleEndian::write_u32(&mut bytes[9..13], data_pointer);
-        GattWriteWithRespExt::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GattWriteWithRespExt::new(
+            conn_handle,
+            attr_handle,
+            write_mode,
+            val_offset,
+            data_len,
+            data_pointer,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
-}
-
-fn copy_multiple_handle_payload(
-    bytes: &mut [u8],
-    conn_handle: ConnectionHandle,
-    handles: &[AttributeHandle],
-) -> Result<usize, Error> {
-    const MAX_HANDLE_COUNT: usize = 126;
-    if handles.len() > MAX_HANDLE_COUNT {
-        return Err(Error::TooManyHandlesToRead);
-    }
-
-    assert!(bytes.len() >= 3 + 2 * handles.len());
-
-    LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-    bytes[2] = handles.len() as u8;
-    let mut next = 3;
-    for handle in handles.iter() {
-        LittleEndian::write_u16(&mut bytes[next..next + 2], handle.0);
-        next += 2;
-    }
-
-    Ok(next)
 }
 
 /// Potential errors from parameter validation.
@@ -1905,51 +2490,16 @@ pub struct AddServiceParameters {
     pub max_attribute_records: u8,
 }
 
-impl AddServiceParameters {
-    const MAX_LENGTH: usize = 19;
+vendor_payload! {
+    /// Types of UUID.
+    pub enum Uuid {
+        Tag = u8 => 1;
 
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
+        /// 16-bit UUID.
+        Uuid16(value: u16 => 2) = 0x01;
 
-        let next = self.uuid.copy_into_slice(bytes);
-        bytes[next] = self.service_type as u8;
-        bytes[next + 1] = self.max_attribute_records;
-
-        next + 2
-    }
-}
-
-/// Types of UUID
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Uuid {
-    /// 16-bit UUID
-    Uuid16(u16),
-
-    /// 128-bit UUID
-    Uuid128([u8; 16]),
-}
-
-impl Uuid {
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        match *self {
-            Uuid::Uuid16(uuid) => {
-                assert!(bytes.len() >= 3);
-
-                bytes[0] = 0x01;
-                LittleEndian::write_u16(&mut bytes[1..3], uuid);
-
-                3
-            }
-            Uuid::Uuid128(uuid) => {
-                assert!(bytes.len() >= 17);
-
-                bytes[0] = 0x02;
-                bytes[1..17].copy_from_slice(&uuid);
-
-                17
-            }
-        }
+        /// 128-bit UUID.
+        Uuid128(value: [u8; 16] => 16) = 0x02;
     }
 }
 
@@ -1974,21 +2524,6 @@ pub struct IncludeServiceParameters {
 
     /// UUID of the included service
     pub include_uuid: Uuid,
-}
-
-impl IncludeServiceParameters {
-    const MAX_LENGTH: usize = 23;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.include_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.include_handle_range.end.0);
-        let uuid_len = self.include_uuid.copy_into_slice(&mut bytes[6..]);
-
-        6 + uuid_len
-    }
 }
 
 /// Parameters for the [GATT Add Characteristic](GattCommands::add_characteristic) command.
@@ -2020,26 +2555,6 @@ pub struct AddCharacteristicParameters {
     pub is_variable: bool,
 }
 
-impl AddCharacteristicParameters {
-    const MAX_LENGTH: usize = 26;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        let uuid_len = self.characteristic_uuid.copy_into_slice(&mut bytes[2..19]);
-        let next = 2 + uuid_len;
-        LittleEndian::write_u16(&mut bytes[next..next + 2], self.characteristic_value_len);
-        bytes[next + 2] = self.characteristic_properties.bits();
-        bytes[next + 3] = self.security_permissions.bits();
-        bytes[next + 4] = self.gatt_event_mask.bits();
-        bytes[next + 5] = self.encryption_key_size.0;
-        bytes[next + 6] = self.is_variable as u8;
-
-        next + 6
-    }
-}
-
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     /// Available [properties](AddCharacteristicParameters::characteristic_properties) for
@@ -2199,7 +2714,8 @@ bitflags::bitflags! {
         /// attribute.
         const CONFIRM_READ = 0x04;
 
-        /// The application will be notified when a notification is complete
+        #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+        /// The application will be notified when a notification is complete.
         const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }
 }
@@ -2219,7 +2735,8 @@ defmt::bitflags! {
         /// attribute.
         const CONFIRM_READ = 0x04;
 
-        /// The application will be notified when a notification is complete
+        #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+        /// The application will be notified when a notification is complete.
         const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }
 }
@@ -2317,27 +2834,6 @@ impl<'a> AddDescriptorParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        // The buffer should be big enough to hold this descriptor, assuming a 128-bit UUID.
-        assert!(bytes.len() >= 28 + self.descriptor_value.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.characteristic_handle.0);
-        let uuid_len = self.descriptor_uuid.copy_into_slice(&mut bytes[4..]);
-        bytes[4 + uuid_len] = self.descriptor_value_max_len as u8;
-        bytes[5 + uuid_len] = self.descriptor_value.len() as u8;
-        bytes[6 + uuid_len..6 + uuid_len + self.descriptor_value.len()]
-            .copy_from_slice(self.descriptor_value);
-        let next = 6 + uuid_len + self.descriptor_value.len();
-        bytes[next] = self.security_permissions.bits();
-        bytes[1 + next] = self.access_permissions.bits();
-        bytes[2 + next] = self.gatt_event_mask.bits();
-        bytes[3 + next] = self.encryption_key_size.0;
-        bytes[4 + next] = self.is_variable as u8;
-
-        5 + next
     }
 }
 
@@ -2452,8 +2948,6 @@ pub struct UpdateCharacteristicValueParameters<'a> {
 }
 
 impl<'a> UpdateCharacteristicValueParameters<'a> {
-    const MAX_LENGTH: usize = 255;
-
     fn validate(&self) -> Result<(), Error> {
         const MAX_VALUE_LEN: usize = 249;
         if self.value.len() > MAX_VALUE_LEN {
@@ -2461,18 +2955,6 @@ impl<'a> UpdateCharacteristicValueParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= 6 + self.value.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.characteristic_handle.0);
-        bytes[4] = self.offset as u8;
-        bytes[5] = self.value.len() as u8;
-        bytes[6..6 + self.value.len()].copy_from_slice(self.value);
-
-        6 + self.value.len()
     }
 }
 
@@ -2483,17 +2965,6 @@ pub struct DeleteIncludedServiceParameters {
 
     /// Handle of the Included definition to be deleted.
     pub included_service: AttributeHandle,
-}
-
-impl DeleteIncludedServiceParameters {
-    const LENGTH: usize = 4;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.included_service.0);
-    }
 }
 
 #[cfg(not(feature = "defmt"))]
@@ -2583,16 +3054,6 @@ defmt::bitflags! {
     }
 }
 
-impl Event {
-    const LENGTH: usize = 4;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u32(bytes, self.bits());
-    }
-}
-
 /// Parameters for the [GATT Find by Type Value Request](GattCommands::find_by_type_value_request)
 /// command.
 pub struct FindByTypeValueParameters<'a> {
@@ -2623,19 +3084,6 @@ impl<'a> FindByTypeValueParameters<'a> {
 
         Ok(())
     }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= 9 + self.value.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.attribute_handle_range.end.0);
-        LittleEndian::write_u16(&mut bytes[6..8], self.uuid.0);
-        bytes[8] = self.value.len() as u8;
-        bytes[9..9 + self.value.len()].copy_from_slice(self.value);
-
-        9 + self.value.len()
-    }
 }
 
 /// 16-bit UUID
@@ -2651,19 +3099,6 @@ pub struct ReadByTypeParameters {
 
     /// UUID of the attribute.
     pub uuid: Uuid,
-}
-
-impl ReadByTypeParameters {
-    const MAX_LENGTH: usize = 23;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute_handle_range.start.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.attribute_handle_range.end.0);
-        6 + self.uuid.copy_into_slice(&mut bytes[6..])
-    }
 }
 
 /// Parameters for the [Prepare Write Request](GattCommands::prepare_write_request) command.
@@ -2682,26 +3117,12 @@ pub struct WriteRequest<'a> {
 }
 
 impl<'a> WriteRequest<'a> {
-    const MAX_LENGTH: usize = 255;
-
     fn validate(&self) -> Result<(), Error> {
         if 9 + self.value.len() > 255 {
             return Err(Error::ValueBufferTooLong);
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= 9 + self.value.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute_handle.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.offset as u16);
-        bytes[6] = self.value.len() as u8;
-        bytes[7..7 + self.value.len()].copy_from_slice(self.value);
-
-        7 + self.value.len()
     }
 }
 
@@ -2718,16 +3139,6 @@ pub struct LongCharacteristicReadParameters {
     pub offset: usize,
 }
 
-impl LongCharacteristicReadParameters {
-    const LENGTH: usize = 6;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.offset as u16);
-    }
-}
-
 /// Parameters for the [Read Multiple Characteristic Values](GattCommands::read_multiple_characteristic_values)
 /// command.
 pub struct MultipleCharacteristicReadParameters<'a> {
@@ -2741,8 +3152,6 @@ pub struct MultipleCharacteristicReadParameters<'a> {
 }
 
 impl<'a> MultipleCharacteristicReadParameters<'a> {
-    const MAX_LENGTH: usize = 255;
-
     fn validate(&self) -> Result<(), Error> {
         const MAX_HANDLE_COUNT: usize = 126;
         if self.handles.len() > MAX_HANDLE_COUNT {
@@ -2750,20 +3159,6 @@ impl<'a> MultipleCharacteristicReadParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= 3 + 2 * self.handles.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        bytes[2] = self.handles.len() as u8;
-        let mut next = 3;
-        for handle in self.handles.iter() {
-            LittleEndian::write_u16(&mut bytes[next..next + 2], handle.0);
-            next += 2
-        }
-
-        next
     }
 }
 
@@ -2788,17 +3183,6 @@ impl<'a> CharacteristicValue<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= self.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.characteristic_handle.0);
-        bytes[4] = self.value.len() as u8;
-        bytes[5..self.len()].copy_from_slice(self.value);
-
-        self.len()
     }
 
     fn len(&self) -> usize {
@@ -2831,18 +3215,6 @@ impl<'a> LongCharacteristicValue<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= self.len());
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.characteristic_handle.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.offset as u16);
-        bytes[6] = self.value.len() as u8;
-        bytes[7..self.len()].copy_from_slice(self.value);
-
-        self.len()
     }
 
     fn len(&self) -> usize {
@@ -2878,26 +3250,6 @@ impl<'a> WriteResponseParameters<'a> {
         Ok(())
     }
 
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= self.len());
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute_handle.0);
-        match self.status {
-            Ok(_) => {
-                bytes[4] = 0;
-                bytes[5] = 0;
-            }
-            Err(code) => {
-                bytes[4] = 1;
-                bytes[5] = code.into();
-            }
-        }
-        bytes[6] = self.value.len() as u8;
-        bytes[7..self.len()].copy_from_slice(self.value);
-
-        self.len()
-    }
-
     fn len(&self) -> usize {
         7 + self.value.len()
     }
@@ -2914,18 +3266,6 @@ pub struct SecurityPermissionParameters {
 
     /// Security requirements for the attribute.
     pub permission: CharacteristicPermission,
-}
-
-impl SecurityPermissionParameters {
-    const LENGTH: usize = 5;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.attribute_handle.0);
-        bytes[4] = self.permission.bits();
-    }
 }
 
 /// Parameters for the [Set Descriptor Value](GattCommands::set_descriptor_value) command.
@@ -2955,18 +3295,6 @@ impl<'a> DescriptorValueParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= self.len());
-        LittleEndian::write_u16(&mut bytes[0..2], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..4], self.characteristic_handle.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.descriptor_handle.0);
-        LittleEndian::write_u16(&mut bytes[6..8], self.offset as u16);
-        bytes[8] = self.value.len() as u8;
-        bytes[9..self.len()].copy_from_slice(self.value);
-
-        self.len()
     }
 
     fn len(&self) -> usize {
@@ -3012,28 +3340,6 @@ impl<'a> UpdateCharacteristicValueExt<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= self.len());
-
-        LittleEndian::write_u16(
-            &mut bytes[0..2],
-            match self.conn_handle_to_notify {
-                ConnectionHandleToNotify::NotifyAll => 0x0000,
-                ConnectionHandleToNotify::NotifyOneUnenhanced(handle) => handle.0,
-                ConnectionHandleToNotify::NotifyOneEnhanced(handle) => handle.0,
-            },
-        );
-        LittleEndian::write_u16(&mut bytes[2..4], self.service_handle.0);
-        LittleEndian::write_u16(&mut bytes[4..6], self.characteristic_handle.0);
-        bytes[6] = self.update_type.bits();
-        LittleEndian::write_u16(&mut bytes[7..9], self.total_len as u16);
-        LittleEndian::write_u16(&mut bytes[9..11], self.offset as u16);
-        bytes[11] = self.value.len() as u8;
-        bytes[12..self.len()].copy_from_slice(self.value);
-
-        self.len()
     }
 
     fn len(&self) -> usize {

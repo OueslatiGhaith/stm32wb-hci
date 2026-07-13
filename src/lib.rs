@@ -35,6 +35,16 @@
 
 extern crate byteorder;
 
+/// The standard Bluetooth HCI command and event implementation used by this
+/// crate.
+///
+/// STM32WB-specific APIs live under [`vendor`].  Re-exporting the underlying
+/// standard-HCI crate makes the complete standard command/event surface
+/// available to callers and lets the firmware compliance checker verify that
+/// STM32CubeWB's `ble_hci_le.c` surface is backed by the exact dependency this
+/// crate ships with.
+pub use bt_hci;
+
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 

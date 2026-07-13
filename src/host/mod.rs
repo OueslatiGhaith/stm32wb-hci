@@ -56,7 +56,15 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::slice;
 use core::time::Duration;
 
+pub mod extended;
 pub mod uart;
+
+#[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+pub use extended::LeGenerateDhkeyV2;
+pub use extended::{
+    LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadLocalResolvableAddress,
+    LeReadPeerResolvableAddress, LeReceiverTestV2, LeTransmitterTestV2,
+};
 
 pub use super::types::{
     AdvertisingInterval, AdvertisingType, ConnectionInterval, ConnectionIntervalBuilder,

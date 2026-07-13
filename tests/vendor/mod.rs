@@ -85,9 +85,11 @@ where
             .write_hci(data.deref_mut())
             .map_err(|_| bt_hci::cmd::Error::Io(embedded_io::ErrorKind::InvalidData))?;
 
-        let return_buf = [0u8; 255];
+        // Allocate enough zero bytes for any fixed or bounded declarative
+        // return used by these wire-focused tests.
+        let return_buf = vec![0u8; size_of::<C::Return>()];
 
-        C::Return::from_hci_bytes_complete(&return_buf[..size_of::<C::Return>()])
+        C::Return::from_hci_bytes_complete(&return_buf)
             .map_err(|_| bt_hci::cmd::Error::Io(embedded_io::ErrorKind::InvalidData))
     }
 }

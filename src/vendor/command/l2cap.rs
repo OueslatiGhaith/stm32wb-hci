@@ -1,17 +1,14 @@
 //! L2Cap-specific commands and types needed for those commands.
 
-extern crate byteorder;
-
 use crate::{
     BadStatusError, ConnectionHandle, Status,
     types::{ConnectionInterval, ExpectedConnectionLength},
-    vendor::command::ParamBuffer,
+    vendor::{command::BoundedBytes, event::command::L2CapCocConnectConfirmResponse},
 };
 use bt_hci::{
-    cmd::SyncCmd,
+    cmd::{AsyncCmd, SyncCmd},
     controller::{ControllerCmdAsync, ControllerCmdSync},
 };
-use byteorder::{ByteOrder, LittleEndian};
 
 /// L2Cap-specific commands.
 pub trait L2capCommands {
@@ -59,7 +56,10 @@ pub trait L2capCommands {
     /// event.
     ///
     /// See Bluetooth Core specification Vol.3 Part A.
-    async fn coc_connect_confirm(&self, params: &L2CapCocConnectConfirm) -> Result<(), Error>;
+    async fn coc_connect_confirm(
+        &self,
+        params: &L2CapCocConnectConfirm,
+    ) -> Result<L2CapCocConnectConfirmResponse, Error>;
 
     /// This command sends a Credit-Based Reconfigure Request packet on the specified connection.
     ///
@@ -105,123 +105,255 @@ pub trait L2capCommands {
 
 vendor_cmd! {
     L2ConnectionParameterUpdateRequest(L2CAP_CONN_PARAM_UPDATE_REQ) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            conn_interval: ConnectionInterval => 8,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     L2ConnectionParameterUpdateResponse(L2CAP_CONN_PARAM_UPDATE_RESP) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            conn_interval: ConnectionInterval => 8,
+            expected_connection_length_range: ExpectedConnectionLength => 4,
+            identifier: u8 => 1,
+            accepted: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocConnect(L2CAP_COC_CONNECT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            spsm: u16 => 2,
+            mtu: u16 => 2,
+            mps: u16 => 2,
+            initial_credits: u16 => 2,
+            channel_number: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocConnectConfirm(L2CAP_COC_CONNECT_CONFIRM) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ();
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            mtu: u16 => 2,
+            mps: u16 => 2,
+            initial_credits: u16 => 2,
+            result: u16 => 2,
+        };
+        Completion = CommandComplete;
+        Return = L2CapCocConnectConfirmWire {
+            channel_indices: BoundedBytes<5> => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 5,
+            },
+        };
     }
 }
 
 vendor_cmd! {
     L2CocReconfig(L2CAP_COC_RECONFIG) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            conn_handle: ConnectionHandle => 2,
+            mtu: u16 => 2,
+            mps: u16 => 2,
+            channel_indices: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 246,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocReconfigConfirm(L2CAP_COC_RECONFIG_CONFIRM) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            result: u16 => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocDisconnect(L2CAP_COC_DISCONNECT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            channel_index: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocFlowControl(L2CAP_COC_FLOW_CONTROL) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            channel_index: u8 => 1,
+            credits: u16 => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     L2CocTxData(L2CAP_COC_TX_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            channel_index: u8 => 1,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 252,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 impl<T> L2capCommands for T
 where
-    T: for<'t> ControllerCmdAsync<L2ConnectionParameterUpdateRequest<'t>>
-        + for<'t> ControllerCmdSync<L2ConnectionParameterUpdateResponse<'t>>
-        + for<'t> ControllerCmdSync<L2CocConnect<'t>>
-        + for<'t> ControllerCmdSync<L2CocConnectConfirm<'t>>
+    T: ControllerCmdAsync<L2ConnectionParameterUpdateRequest>
+        + ControllerCmdSync<L2ConnectionParameterUpdateResponse>
+        + ControllerCmdSync<L2CocConnect>
+        + ControllerCmdSync<L2CocConnectConfirm>
         + for<'t> ControllerCmdSync<L2CocReconfig<'t>>
-        + for<'t> ControllerCmdSync<L2CocReconfigConfirm<'t>>
-        + for<'t> ControllerCmdSync<L2CocDisconnect<'t>>
-        + for<'t> ControllerCmdSync<L2CocFlowControl<'t>>
+        + ControllerCmdSync<L2CocReconfigConfirm>
+        + ControllerCmdSync<L2CocDisconnect>
+        + ControllerCmdSync<L2CocFlowControl>
         + for<'t> ControllerCmdSync<L2CocTxData<'t>>,
 {
-    hci_impl_params!(
-        connection_parameter_update_request,
-        ConnectionParameterUpdateRequest,
-        L2ConnectionParameterUpdateRequest
-    );
+    async fn connection_parameter_update_request(
+        &self,
+        params: &ConnectionParameterUpdateRequest,
+    ) -> Result<(), Error> {
+        L2ConnectionParameterUpdateRequest::new(params.conn_handle, params.conn_interval)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        connection_parameter_update_response,
-        ConnectionParameterUpdateResponse,
-        L2ConnectionParameterUpdateResponse
-    );
+    async fn connection_parameter_update_response(
+        &self,
+        params: &ConnectionParameterUpdateResponse,
+    ) -> Result<(), Error> {
+        L2ConnectionParameterUpdateResponse::new(
+            params.conn_handle,
+            params.conn_interval,
+            params.expected_connection_length_range.clone(),
+            params.identifier,
+            params.accepted,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(coc_connect, L2CapCocConnect, L2CocConnect);
+    async fn coc_connect(&self, params: &L2CapCocConnect) -> Result<(), Error> {
+        L2CocConnect::new(
+            params.conn_handle,
+            params.spsm,
+            params.mtu,
+            params.mps,
+            params.initial_credits,
+            params.channel_number,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    // TODO: This has a return buffer
-    hci_impl_variable_length_params!(
-        coc_connect_confirm,
-        L2CapCocConnectConfirm,
-        L2CocConnectConfirm
-    );
+    async fn coc_connect_confirm(
+        &self,
+        params: &L2CapCocConnectConfirm,
+    ) -> Result<L2CapCocConnectConfirmResponse, Error> {
+        let response = L2CocConnectConfirm::new(
+            params.conn_handle,
+            params.mtu,
+            params.mps,
+            params.initial_credits,
+            params.result,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)?;
+        L2CapCocConnectConfirmResponse::from_channel_indices(response.channel_indices.as_slice())
+            .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(coc_reconfig, L2CapCocReconfig, L2CocReconfig);
+    async fn coc_reconfig(&self, params: &L2CapCocReconfig) -> Result<(), Error> {
+        let count = usize::from(params.channel_number);
+        let channel_indices = params
+            .channel_index_list
+            .get(..count)
+            .ok_or(Error::InvalidChannelCount(params.channel_number))?;
+        L2CocReconfig::try_new(params.conn_handle, params.mtu, params.mps, channel_indices)
+            .map_err(|_| Error::InvalidChannelCount(params.channel_number))?
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        coc_reconfig_confirm,
-        L2CapCocReconfigConfirm,
-        L2CocReconfigConfirm
-    );
+    async fn coc_reconfig_confirm(&self, params: &L2CapCocReconfigConfirm) -> Result<(), Error> {
+        L2CocReconfigConfirm::new(params.conn_handle, params.result)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
     async fn coc_disconnect(&self, channel_index: u8) -> Result<(), Error> {
-        L2CocDisconnect::new((&[channel_index][..]).into())
+        L2CocDisconnect::new(channel_index)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(coc_flow_control, L2CapCocFlowControl, L2CocFlowControl);
+    async fn coc_flow_control(&self, params: &L2CapCocFlowControl) -> Result<(), Error> {
+        L2CocFlowControl::new(params.channel_index, params.credits)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(coc_tx_data, L2CapCocTxData, L2CocTxData);
+    async fn coc_tx_data(&self, params: &L2CapCocTxData) -> Result<(), Error> {
+        let count = usize::from(params.length);
+        let data = params
+            .data
+            .get(..count)
+            .ok_or(Error::InvalidDataLength(params.length))?;
+        L2CocTxData::try_new(params.channel_index, data)
+            .map_err(|_| Error::InvalidDataLength(params.length))?
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 }
 
 /// Potential errors from parameter validation.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
+    /// The declared channel count exceeds the channel-index backing array.
+    InvalidChannelCount(u8),
+
+    /// The declared K-frame length exceeds the data backing array.
+    InvalidDataLength(u16),
+
     /// Event Parsing Error
     ParseError(crate::event::Error),
 
@@ -264,14 +396,37 @@ pub struct ConnectionParameterUpdateRequest {
     pub conn_interval: ConnectionInterval,
 }
 
-impl ConnectionParameterUpdateRequest {
-    const LENGTH: usize = 10;
+impl crate::vendor::command::HciEncodeField<8> for ConnectionInterval {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 8];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
 
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 8];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
+    }
+}
 
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        self.conn_interval.copy_into_slice(&mut bytes[2..10]);
+impl crate::vendor::command::HciEncodeField<4> for ExpectedConnectionLength {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
     }
 }
 
@@ -301,21 +456,6 @@ pub struct ConnectionParameterUpdateResponse {
     /// True if the parameters from the
     /// [event](crate::vendor::event::L2CapConnectionUpdateRequest) are acceptable.
     pub accepted: bool,
-}
-
-impl ConnectionParameterUpdateResponse {
-    const LENGTH: usize = 16;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        self.conn_interval.copy_into_slice(&mut bytes[2..10]);
-        self.expected_connection_length_range
-            .copy_into_slice(&mut bytes[10..14]);
-        bytes[14] = self.identifier;
-        bytes[15] = self.accepted as u8;
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -358,21 +498,6 @@ pub struct L2CapCocConnect {
     pub channel_number: u8,
 }
 
-impl L2CapCocConnect {
-    const LENGTH: usize = 11;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..], self.spsm);
-        LittleEndian::write_u16(&mut bytes[4..], self.mtu);
-        LittleEndian::write_u16(&mut bytes[6..], self.mps);
-        LittleEndian::write_u16(&mut bytes[8..], self.initial_credits);
-        bytes[10] = self.channel_number;
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// This event is generated when receiving a valid Credit Based Connection Response packet.
@@ -403,32 +528,21 @@ pub struct L2CapCocConnectConfirm {
     /// Values:
     /// - 0x0000 .. 0x000C
     pub result: u16,
-    /// Number of channels to be created. If this parameter is
-    /// set to 0, it requests the creation of one LE credit based connection-
-    /// oriented channel. Otherwise, it requests the creation of one or more
-    /// enhanced credit based connection-oriented channels.
+
+    /// Number of channels created by the controller.
     ///
-    /// Values:
-    /// - 0 .. 5
+    /// This is an output field in CubeWB's generated C API and is therefore
+    /// ignored when serializing this value for
+    /// [`L2capCommands::coc_connect_confirm`]. It remains here because the
+    /// same public type also represents the corresponding incoming vendor
+    /// event.
     pub channel_number: u8,
-    /// List of channel indexes for which the primitives apply.
+
+    /// Channel indices created by the controller.
+    ///
+    /// Like [`Self::channel_number`], this is response/event data rather than
+    /// command input and is not transmitted by `coc_connect_confirm`.
     pub channel_index_list: [u8; 246],
-}
-
-impl L2CapCocConnectConfirm {
-    const MAX_LENGTH: usize = 258;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..], self.mtu);
-        LittleEndian::write_u16(&mut bytes[4..], self.mps);
-        LittleEndian::write_u16(&mut bytes[6..], self.initial_credits);
-        LittleEndian::write_u16(&mut bytes[8..], self.result);
-        bytes[10] = self.channel_number;
-        bytes[11..].copy_from_slice(&self.channel_index_list);
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -461,20 +575,6 @@ pub struct L2CapCocReconfig {
     pub channel_index_list: [u8; 246],
 }
 
-impl L2CapCocReconfig {
-    const MAX_LENGTH: usize = 254;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..], self.mtu);
-        LittleEndian::write_u16(&mut bytes[4..], self.mps);
-        bytes[6] = self.channel_number;
-        bytes[7..].copy_from_slice(&self.channel_index_list);
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// This event is generated when receiving a valid Credit Based Reconfigure Response packet.
@@ -489,17 +589,6 @@ pub struct L2CapCocReconfigConfirm {
     /// Values:
     /// - 0x0000 .. 0x000C
     pub result: u16,
-}
-
-impl L2CapCocReconfigConfirm {
-    const LENGTH: usize = 4;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..], self.conn_handle.0);
-        LittleEndian::write_u16(&mut bytes[2..], self.result);
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -519,17 +608,6 @@ pub struct L2CapCocFlowControl {
     pub credits: u16,
 }
 
-impl L2CapCocFlowControl {
-    const LENGTH: usize = 3;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        bytes[0] = self.channel_index;
-        LittleEndian::write_u16(&mut bytes[1..], self.credits);
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// Parameter for the [coc_tx_data](L2capCommands::coc_tx_data) command
@@ -537,16 +615,4 @@ pub struct L2CapCocTxData {
     pub channel_index: u8,
     pub length: u16,
     pub data: [u8; 252],
-}
-
-impl L2CapCocTxData {
-    const MAX_LENGTH: usize = 256;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        bytes[0] = self.channel_index;
-        LittleEndian::write_u16(&mut bytes[1..], self.length);
-        bytes[3..].copy_from_slice(&self.data);
-    }
 }

@@ -1,3 +1,26 @@
+## [Unreleased]
+
+### 🚀 Features
+
+- Support STM32CubeWB firmware 1.15.0, 1.16.0, 1.17.0, and 1.17.1 from one crate release through mutually exclusive firmware features.
+- Add a feature-aware STM32CubeWB vendor-command/event compliance checker that discovers all
+  declared firmware features, audits a checked-in exclusion policy, records resolved CubeWB tag
+  commits, and drives CI without a hand-maintained firmware-version matrix.
+- Extend compliance coverage to CubeWB standard HCI commands/events via the public `bt-hci`
+  provider, and validate vendor command completion/envelope metadata plus fixed packed response
+  layouts from the tagged C headers.
+- Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
+  dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
+
+### 🐛 Bug Fixes
+
+- Correct vendor opcode wiring for HAL link status and peripheral latency, and add missing HAL write-radio-register and GATT read-handle-value commands.
+- Correct the STM32WB command wire layouts for firmware build number, raw RSSI, GAP security
+  level, GAP filter-accept-list configuration, and GATT Read Multiple Variable Characteristic
+  Value; raw RSSI now preserves all three returned bytes and GAP security level exposes the
+  firmware's mode/level pair. Correct L2CAP CoC Connect Confirm's request and completion
+  response layout as well.
+
 ## [0.18.0] - 2026-05-24
 
 ### 🚀 Features

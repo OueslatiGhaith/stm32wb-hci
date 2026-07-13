@@ -7,10 +7,11 @@ use crate::types::extended_advertisement::{
     AdvSet, AdvertisingEvent, AdvertisingOperation, AdvertisingPhy, ExtendedAdvertisingInterval,
 };
 pub use crate::types::{ConnectionInterval, ExpectedConnectionLength, ScanWindow};
-use crate::vendor::command::{ParamBuffer, ReturnBuffer};
-use crate::vendor::event::command::{
-    GapBondedDevices, GapInit, GapResolvePrivateAddress, GapSecurityLevel,
-};
+use crate::vendor::command::BoundedItems;
+#[cfg(after_fw_0_17_1)]
+use crate::vendor::command::HciLengthError;
+use crate::vendor::event::AttributeHandle;
+use crate::vendor::event::command::{GapResolvePrivateAddress, GapSecurityLevel};
 use crate::{AdvertisingHandle, BadStatusError, ConnectionHandle, Status};
 pub use crate::{BdAddr, BdAddrType};
 use crate::{
@@ -19,6 +20,7 @@ use crate::{
 };
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
+#[cfg(after_fw_0_17_1)]
 use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
@@ -869,6 +871,7 @@ pub trait GapCommands {
         addr: BdAddr,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Reply to ACI_GAP_PAIRING_REQUEST_EVENT to accept or reject pairing.
     async fn pairing_request_reply(
         &self,
@@ -876,16 +879,19 @@ pub trait GapCommands {
         accept: bool,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Set parameters for periodic advertising.
     async fn adv_set_periodic_parameters(
         &self,
         params: &AdvSetPeriodicParameters,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Set data for periodic advertising PDUs.
     async fn adv_set_periodic_data<'a>(&self, params: &AdvSetPeriodicData<'a>)
     -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Enable or disable periodic advertising.
     async fn adv_set_periodic_enable(
         &self,
@@ -893,12 +899,15 @@ pub trait GapCommands {
         handle: AdvertisingHandle,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Set extended advertising configuration (V2 with 4-byte intervals and PHY options).
     async fn adv_set_configuration_v2(&self, params: &AdvSetConfigV2) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Start extended scan procedure.
     async fn ext_start_scan(&self, params: &ExtStartScanParams) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Create connection using extended advertising.
     async fn ext_create_connection(&self, params: &ExtCreateConnectionParams) -> Result<(), Error>;
 }
@@ -906,61 +915,133 @@ pub trait GapCommands {
 vendor_cmd! {
     GapSetNonDiscoverable(GAP_SET_NONDISCOVERABLE) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetLimitedDiscoverable(GAP_SET_LIMITED_DISCOVERABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            advertising_type: u8 => 1,
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_policy: u8 => 1,
+            local_name: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 242,
+            },
+            advertising_data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 31,
+            },
+            conn_interval_min: u16 => 2,
+            conn_interval_max: u16 => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapSetDiscoverable(GAP_SET_DISCOVERABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            advertising_type: u8 => 1,
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_policy: u8 => 1,
+            local_name: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 242,
+            },
+            advertising_data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 31,
+            },
+            conn_interval_min: u16 => 2,
+            conn_interval_max: u16 => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetDirectConnectable(GAP_SET_DIRECT_CONNECTABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            own_address_type: u8 => 1,
+            advertising_type: u8 => 1,
+            initiator_address: BdAddrType => 7,
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetIoCapability(GAP_SET_IO_CAPABILITY) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            io_capability: IoCapability => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetAuthenticationRequirement(GAP_SET_AUTHENTICATION_REQUIREMENT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            bonding_required: bool => 1,
+            mitm_protection_required: bool => 1,
+            secure_connection_support: u8 => 1,
+            keypress_notification_support: bool => 1,
+            encryption_key_size_min: u8 => 1,
+            encryption_key_size_max: u8 => 1,
+            pass_key_required: bool => 1,
+            fixed_pin: u32 => 4,
+            identity_address_type: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetAuthorizationRequirement(GAP_SET_AUTHORIZATION_REQUIREMENT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            authorization_required: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPassKeyResponse(GAP_PASS_KEY_RESPONSE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            pin: u32 => 4,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAuthorizationResponse(GAP_AUTHORIZATION_RESPONSE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            authorization: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -969,226 +1050,457 @@ vendor_cmd! {
 
 vendor_cmd! {
     CmdGapInit(GAP_INIT) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<7>;
+        Params = {
+            role: Role => 1,
+            privacy_enabled: bool => 1,
+            dev_name_characteristic_len: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = GapInit {
+            service_handle: AttributeHandle => 2,
+            dev_name_handle: AttributeHandle => 2,
+            appearance_handle: AttributeHandle => 2,
+        };
     }
 }
 
 vendor_cmd! {
     GapSetNonConnectable(GAP_SET_NONCONNECTABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            advertising_type: u8 => 1,
+            address_type: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapSetUnidirectedConnectable(GAP_SET_UNDIRECTED_CONNECTABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_policy: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPeripheralSecurityRequest(GAP_PERIPHERAL_SECURITY_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapUpdateAdvertisingData(GAP_UPDATE_ADVERTISING_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 31,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapDeleteAdType(GAP_DELETE_AD_TYPE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            ad_type: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapGetSecurityLevel(GAP_GET_SECURITY_LEVEL) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<5>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandComplete;
+        Return = GapSecurityLevelReturn {
+            security_mode: u8 => 1,
+            security_level: u8 => 1,
+        };
     }
 }
 
 vendor_cmd! {
     GapSetEventMask(GAP_SET_EVENT_MASK) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            flags: u16 => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapConfigureWhitelist(GAP_CONFIGURE_WHITE_LIST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapTerminate(GAP_TERMINATE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            reason: u8 => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapClearSecurityDatabase(GAP_CLEAR_SECURITY_DATABASE) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAllowRebond(GAP_ALLOW_REBOND) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(GAP_START_LIMITED_DISCOVERY_PROCEDURE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_duplicates: bool => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(GAP_START_GENERAL_DISCOVERY_PROCEDURE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_duplicates: bool => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(GAP_START_AUTO_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            own_address_type: u8 => 1,
+            conn_interval_min: u16 => 2,
+            conn_interval_max: u16 => 2,
+            conn_latency: u16 => 2,
+            supervision_timeout: u16 => 2,
+            expected_connection_length_min: u16 => 2,
+            expected_connection_length_max: u16 => 2,
+            white_list: &'a [PeerAddrType] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: PeerAddrType => 7,
+                max_items: 33,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(GAP_START_GENERAL_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            scan_type: u8 => 1,
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            filter_policy: u8 => 1,
+            own_address_type: u8 => 1,
+            filter_duplicates: bool => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(GAP_START_SELECTIVE_CONNECTION_ESTABLISHMENT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            scan_type: u8 => 1,
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            own_address_type: u8 => 1,
+            filter_policy: u8 => 1,
+            filter_duplicates: bool => 1,
+            white_list: &'a [PeerAddrType] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: PeerAddrType => 7,
+                max_items: 35,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapCreateConnection(GAP_CREATE_CONNECTION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            peer_address: PeerAddrType => 7,
+            own_address_type: u8 => 1,
+            conn_interval_min: u16 => 2,
+            conn_interval_max: u16 => 2,
+            conn_latency: u16 => 2,
+            supervision_timeout: u16 => 2,
+            expected_connection_length_min: u16 => 2,
+            expected_connection_length_max: u16 => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapTerminateProcedure(GAP_TERMINATE_PROCEDURE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            procedure: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartConnectionUpdate(GAP_START_CONNECTION_UPDATE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            conn_interval_min: u16 => 2,
+            conn_interval_max: u16 => 2,
+            conn_latency: u16 => 2,
+            supervision_timeout: u16 => 2,
+            expected_connection_length_min: u16 => 2,
+            expected_connection_length_max: u16 => 2,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapSendPairingRequest(GAP_SEND_PAIRING_REQUEST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            force_rebond: bool => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     CmdGapResolvePrivateAddress(GAP_RESOLVE_PRIVATE_ADDRESS) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<7>;
+        Params = {
+            address: BdAddr => 6,
+        };
+        Completion = CommandComplete;
+        Return = GapResolvedPrivateAddress {
+            address: BdAddr => 6,
+        };
     }
 }
 
 vendor_cmd! {
     GapSetBroadcastMode(GAP_SET_BROADCAST_MODE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+            advertising_type: u8 => 1,
+            own_address_type: u8 => 1,
+            advertising_data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 31,
+            },
+            white_list: &'a [PeerAddrType] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: PeerAddrType => 7,
+                max_items: 35,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapStartObservationProcedure(GAP_START_OBSERVATION_PROCEDURE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            scan_type: u8 => 1,
+            own_address_type: u8 => 1,
+            filter_duplicates: bool => 1,
+            filter_policy: u8 => 1,
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapGetBondedDevices(GAP_GET_BONDED_DEVICES) {
         Params = ();
-        Return = ReturnBuffer<255>;
+        Completion = CommandComplete;
+        Return = GapBondedDevices {
+            addresses: BoundedItems<BdAddrType, 35> => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: BdAddrType => 7,
+                max_items: 35,
+            },
+        };
+    }
+}
+
+impl GapBondedDevices {
+    pub(crate) const MAX_ADDRESSES: usize = 35;
+
+    /// Addresses reported by the controller.
+    pub fn bonded_addresses(&self) -> &[BdAddrType] {
+        self.addresses.as_slice()
     }
 }
 
 vendor_cmd! {
     GapIsDeviceBonded(GAP_IS_DEVICE_BONDED) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            address: PeerAddrType => 7,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapConfirmNumericComparisonValue(GAP_NUMERIC_COMPARISON_VALUE_YES_NO) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            confirm_yes_no: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPasskeyInput(GAP_PASSKEY_INPUT) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            input_type: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 vendor_cmd! {
     GapGetOobData(GAP_GET_OOB_DATA) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<26>;
+        Params = {
+            oob_data_type: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = GapOobData {
+            address_type: u8 => 1,
+            address: BdAddr => 6,
+            oob_data_type: u8 => 1,
+            oob_data_len: u8 => 1,
+            oob_data: [u8; 16] => 16,
+        };
     }
 }
 
 vendor_cmd! {
     GapSetOobData(GAP_SET_OOB_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            device_type: u8 => 1,
+            address: BdAddrType => 7,
+            oob_data_type: u8 => 1,
+            oob_data_len: u8 => 1,
+            oob_data: [u8; 16] => 16,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAddDevicesToResolvingList(GAP_ADD_DEVICES_TO_RESOLVING_LIST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            whitelist_identities: &'a [PeerAddrType] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: PeerAddrType => 7,
+                max_items: 36,
+            },
+            clear_resolving_list: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapRemoveBondedDevice(GAP_REMOVE_BONDED_DEVICE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            address: BdAddrType => 7,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAddDevicesToList(GAP_ADD_DEVICES_TO_LIST) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            list_entries: &'a [BdAddrType] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: BdAddrType => 7,
+                max_items: 36,
+            },
+            mode: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdditionalBeaconStart(GAP_ADDITIONAL_BEACON_START) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            advertising_interval_min: u16 => 2,
+            advertising_interval_max: u16 => 2,
+            advertising_channel_map: u8 => 1,
+            own_address_type: BdAddrType => 7,
+            pa_level: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -1196,48 +1508,103 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdditionalBeaconStop(GAP_ADDITIONAL_BEACON_STOP) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdditionalBeaconSetData(GAP_ADDITIONAL_BEACON_SET_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            advertising_data: &'a [u8] => {
+                kind: trailing_bytes,
+                min_len: 0,
+                max_len: 255,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetConfig(GAP_ADV_SET_CONFIGURATION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            adv_mode: u8 => 1,
+            adv_handle: AdvertisingHandle => 1,
+            adv_event_properties: u16 => 2,
+            adv_interval: &'a ExtendedAdvertisingInterval => 8,
+            primary_adv_channel_map: u8 => 1,
+            own_addr_type: u8 => 1,
+            peer_addr: BdAddrType => 7,
+            adv_filter_policy: u8 => 1,
+            adv_tx_power: u8 => 1,
+            secondary_adv_max_skip: u8 => 1,
+            secondary_adv_phy: u8 => 1,
+            adv_sid: u8 => 1,
+            scan_req_notification_enable: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetEnable(GAP_ADV_SET_ENABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            enable: bool => 1,
+            adv_set: &'a [AdvSet] => {
+                kind: counted_items,
+                count: u8 => 1,
+                item: AdvSet => 4,
+                max_items: 63,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetAdvertisingData(GAP_ADV_SET_ADV_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            adv_handle: AdvertisingHandle => 1,
+            operation: u8 => 1,
+            fragment_preference: bool => 1,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 251,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetScanResponseData(GAP_ADV_SET_SCAN_RESPONSE_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            adv_handle: AdvertisingHandle => 1,
+            operation: u8 => 1,
+            fragment_preference: bool => 1,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 251,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvRemoveSet(GAP_ADV_REMOVE_SET) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            handle: AdvertisingHandle => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -1245,61 +1612,147 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvClearSets(GAP_ADV_CLEAR_SETS) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetRandomAddress(GAP_ADV_SET_RANDOM_ADDRESS) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            handle: AdvertisingHandle => 1,
+            address: BdAddr => 6,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapPairingRequestReply(GAP_PAIRING_REQUEST_REPLY) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            conn_handle: ConnectionHandle => 2,
+            accept: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetPeriodicParameters(GAP_ADV_SET_PERIODIC_PARAMETERS) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            advertising_handle: AdvertisingHandle => 1,
+            periodic_adv_interval_min: u16 => 2,
+            periodic_adv_interval_max: u16 => 2,
+            periodic_adv_properties: u16 => 2,
+            num_subevents: u8 => 1,
+            subevent_interval: u8 => 1,
+            response_slot_delay: u8 => 1,
+            response_slot_spacing: u8 => 1,
+            num_response_slots: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetPeriodicData(GAP_ADV_SET_PERIODIC_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            advertising_handle: AdvertisingHandle => 1,
+            operation: u8 => 1,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 252,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetPeriodicEnable(GAP_ADV_SET_PERIODIC_ENABLE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            enable: u8 => 1,
+            handle: AdvertisingHandle => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapAdvSetConfigurationV2(GAP_ADV_SET_CONFIGURATION_V2) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            adv_mode: u8 => 1,
+            adv_handle: AdvertisingHandle => 1,
+            adv_event_properties: u16 => 2,
+            primary_adv_interval_min: u32 => 4,
+            primary_adv_interval_max: u32 => 4,
+            primary_adv_channel_map: u8 => 1,
+            own_addr_type: u8 => 1,
+            peer_addr: BdAddrType => 7,
+            adv_filter_policy: u8 => 1,
+            adv_tx_power: u8 => 1,
+            primary_adv_phy: u8 => 1,
+            secondary_adv_max_skip: u8 => 1,
+            secondary_adv_phy: u8 => 1,
+            adv_sid: u8 => 1,
+            scan_req_notification_enable: bool => 1,
+            primary_adv_phy_options: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     GapExtStartScan(GAP_EXT_START_SCAN) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            scan_mode: u8 => 1,
+            procedure: u8 => 1,
+            own_address_type: u8 => 1,
+            filter_duplicates: u8 => 1,
+            duration: u16 => 2,
+            period: u16 => 2,
+            scanning_filter_policy: u8 => 1,
+            scanning_phys: u8 => 1,
+            phy_params: &'a [ExtScanPhyParams] => {
+                kind: bitmap_items,
+                bitmap: scanning_phys,
+                mask: 0x05,
+                item: ExtScanPhyParams => 5,
+                max_items: 2,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
 vendor_cmd! {
     GapExtCreateConnection(GAP_EXT_CREATE_CONNECTION) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            initiating_mode: u8 => 1,
+            procedure: u8 => 1,
+            own_address_type: u8 => 1,
+            peer_address_type: u8 => 1,
+            peer_address: BdAddr => 6,
+            advertising_handle: u8 => 1,
+            subevent: u8 => 1,
+            initiator_filter_policy: u8 => 1,
+            initiating_phys: u8 => 1,
+            phy_params: &'a [[u8; 16]] => {
+                kind: bitmap_items,
+                bitmap: initiating_phys,
+                mask: 0x07,
+                item: [u8; 16] => 16,
+                max_items: 3,
+            },
+        };
+        Completion = CommandStatus;
     }
 }
 
@@ -1308,60 +1761,60 @@ where
     T: ControllerCmdSync<GapSetNonDiscoverable>
         + for<'t> ControllerCmdAsync<GapSetLimitedDiscoverable<'t>>
         + for<'t> ControllerCmdSync<GapSetDiscoverable<'t>>
-        + for<'t> ControllerCmdSync<GapSetDirectConnectable<'t>>
-        + for<'t> ControllerCmdSync<GapSetIoCapability<'t>>
-        + for<'t> ControllerCmdSync<GapSetAuthenticationRequirement<'t>>
-        + for<'t> ControllerCmdSync<GapSetAuthorizationRequirement<'t>>
-        + for<'t> ControllerCmdSync<GapPassKeyResponse<'t>>
-        + for<'t> ControllerCmdSync<GapAuthorizationResponse<'t>>
-        + for<'t> ControllerCmdSync<CmdGapInit<'t>>
-        + for<'t> ControllerCmdSync<GapSetNonConnectable<'t>>
-        + for<'t> ControllerCmdSync<GapSetUnidirectedConnectable<'t>>
-        + for<'t> ControllerCmdAsync<GapPeripheralSecurityRequest<'t>>
+        + ControllerCmdSync<GapSetDirectConnectable>
+        + ControllerCmdSync<GapSetIoCapability>
+        + ControllerCmdSync<GapSetAuthenticationRequirement>
+        + ControllerCmdSync<GapSetAuthorizationRequirement>
+        + ControllerCmdSync<GapPassKeyResponse>
+        + ControllerCmdSync<GapAuthorizationResponse>
+        + ControllerCmdSync<CmdGapInit>
+        + ControllerCmdSync<GapSetNonConnectable>
+        + ControllerCmdSync<GapSetUnidirectedConnectable>
+        + ControllerCmdAsync<GapPeripheralSecurityRequest>
         + for<'t> ControllerCmdSync<GapUpdateAdvertisingData<'t>>
-        + for<'t> ControllerCmdSync<GapGetSecurityLevel<'t>>
-        + for<'t> ControllerCmdSync<GapSetEventMask<'t>>
-        + for<'t> ControllerCmdSync<GapConfigureWhitelist<'t>>
-        + for<'t> ControllerCmdAsync<GapTerminate<'t>>
+        + ControllerCmdSync<GapGetSecurityLevel>
+        + ControllerCmdSync<GapSetEventMask>
+        + ControllerCmdSync<GapConfigureWhitelist>
+        + ControllerCmdAsync<GapTerminate>
         + ControllerCmdSync<GapClearSecurityDatabase>
-        + for<'t> ControllerCmdSync<GapAllowRebond<'t>>
-        + for<'t> ControllerCmdAsync<GapStartLimitedDiscoveryProcedure<'t>>
-        + for<'t> ControllerCmdAsync<GapStartGeneralDiscoveryProcedure<'t>>
+        + ControllerCmdSync<GapAllowRebond>
+        + ControllerCmdAsync<GapStartLimitedDiscoveryProcedure>
+        + ControllerCmdAsync<GapStartGeneralDiscoveryProcedure>
         + for<'t> ControllerCmdAsync<GapStartAutoConnectionEstablishmentProcedure<'t>>
-        + for<'t> ControllerCmdAsync<GapStartGeneralConnectionEstablishmentProcedure<'t>>
+        + ControllerCmdAsync<GapStartGeneralConnectionEstablishmentProcedure>
         + for<'t> ControllerCmdAsync<GapStartSelectiveConnectionEstablishmentProcedure<'t>>
-        + for<'t> ControllerCmdAsync<GapCreateConnection<'t>>
-        + for<'t> ControllerCmdSync<GapTerminateProcedure<'t>>
-        + for<'t> ControllerCmdSync<CmdGapResolvePrivateAddress<'t>>
+        + ControllerCmdAsync<GapCreateConnection>
+        + ControllerCmdSync<GapTerminateProcedure>
+        + ControllerCmdSync<CmdGapResolvePrivateAddress>
         + for<'t> ControllerCmdSync<GapSetBroadcastMode<'t>>
-        + for<'t> ControllerCmdAsync<GapStartObservationProcedure<'t>>
+        + ControllerCmdAsync<GapStartObservationProcedure>
         + ControllerCmdSync<GapGetBondedDevices>
-        + for<'t> ControllerCmdSync<GapIsDeviceBonded<'t>>
-        + for<'t> ControllerCmdSync<GapConfirmNumericComparisonValue<'t>>
-        + for<'t> ControllerCmdAsync<GapStartConnectionUpdate<'t>>
-        + for<'t> ControllerCmdAsync<GapSendPairingRequest<'t>>
-        + for<'t> ControllerCmdSync<GapPasskeyInput<'t>>
-        + for<'t> ControllerCmdSync<GapGetOobData<'t>>
-        + for<'t> ControllerCmdSync<GapSetOobData<'t>>
+        + ControllerCmdSync<GapIsDeviceBonded>
+        + ControllerCmdSync<GapConfirmNumericComparisonValue>
+        + ControllerCmdAsync<GapStartConnectionUpdate>
+        + ControllerCmdAsync<GapSendPairingRequest>
+        + ControllerCmdSync<GapPasskeyInput>
+        + ControllerCmdSync<GapGetOobData>
+        + ControllerCmdSync<GapSetOobData>
         + for<'t> ControllerCmdSync<GapAddDevicesToResolvingList<'t>>
-        + for<'t> ControllerCmdSync<GapRemoveBondedDevice<'t>>
-        + for<'t> ControllerCmdSync<GapAdditionalBeaconStart<'t>>
+        + ControllerCmdSync<GapRemoveBondedDevice>
+        + ControllerCmdSync<GapAdditionalBeaconStart>
         + ControllerCmdSync<GapAdditionalBeaconStop>
         + for<'t> ControllerCmdSync<GapAdditionalBeaconSetData<'t>>
         + for<'t> ControllerCmdSync<GapAdvSetConfig<'t>>
         + for<'t> ControllerCmdSync<GapAdvSetEnable<'t>>
         + for<'t> ControllerCmdSync<GapAdvSetAdvertisingData<'t>>
         + for<'t> ControllerCmdSync<GapAdvSetScanResponseData<'t>>
-        + for<'t> ControllerCmdSync<GapAdvRemoveSet<'t>>
+        + ControllerCmdSync<GapAdvRemoveSet>
         + for<'t> ControllerCmdSync<GapAddDevicesToList<'t>>
         + ControllerCmdSync<GapAdvClearSets>
-        + for<'t> ControllerCmdSync<GapAdvSetRandomAddress<'t>>
-        + for<'t> ControllerCmdSync<GapDeleteAdType<'t>>
-        + for<'t> ControllerCmdSync<GapPairingRequestReply<'t>>
-        + for<'t> ControllerCmdSync<GapAdvSetPeriodicParameters<'t>>
+        + ControllerCmdSync<GapAdvSetRandomAddress>
+        + ControllerCmdSync<GapDeleteAdType>
+        + ControllerCmdSync<GapPairingRequestReply>
+        + ControllerCmdSync<GapAdvSetPeriodicParameters>
         + for<'t> ControllerCmdSync<GapAdvSetPeriodicData<'t>>
-        + for<'t> ControllerCmdSync<GapAdvSetPeriodicEnable<'t>>
-        + for<'t> ControllerCmdSync<GapAdvSetConfigurationV2<'t>>
+        + ControllerCmdSync<GapAdvSetPeriodicEnable>
+        + ControllerCmdSync<GapAdvSetConfigurationV2>
         + for<'t> ControllerCmdAsync<GapExtStartScan<'t>>
         + for<'t> ControllerCmdAsync<GapExtCreateConnection<'t>>,
 {
@@ -1372,47 +1825,112 @@ where
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_variable_length_params!(
-        set_limited_discoverable<'a, 'b>,
-        DiscoverableParameters<'a, 'b>,
-        GapSetLimitedDiscoverable
-    );
+    async fn set_limited_discoverable(
+        &self,
+        params: &DiscoverableParameters<'_, '_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        let mut local_name = [0; 255];
+        let local_name = encode_local_name(&params.local_name, &mut local_name)?;
+        let advertising_interval = params
+            .advertising_interval
+            .unwrap_or((Duration::ZERO, Duration::ZERO));
+        GapSetLimitedDiscoverable::try_new(
+            params.advertising_type as u8,
+            to_connection_length_value(advertising_interval.0),
+            to_connection_length_value(advertising_interval.1),
+            params.address_type as u8,
+            params.filter_policy as u8,
+            local_name,
+            params.advertising_data,
+            params.conn_interval.0.map_or(0, to_conn_interval_value),
+            params.conn_interval.1.map_or(0, to_conn_interval_value),
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        set_discoverable<'a, 'b>,
-        DiscoverableParameters<'a, 'b>,
-        GapSetDiscoverable
-    );
+    async fn set_discoverable(&self, params: &DiscoverableParameters<'_, '_>) -> Result<(), Error> {
+        params.validate()?;
+        let mut local_name = [0; 255];
+        let local_name = encode_local_name(&params.local_name, &mut local_name)?;
+        let advertising_interval = params
+            .advertising_interval
+            .unwrap_or((Duration::ZERO, Duration::ZERO));
+        GapSetDiscoverable::try_new(
+            params.advertising_type as u8,
+            to_connection_length_value(advertising_interval.0),
+            to_connection_length_value(advertising_interval.1),
+            params.address_type as u8,
+            params.filter_policy as u8,
+            local_name,
+            params.advertising_data,
+            params.conn_interval.0.map_or(0, to_conn_interval_value),
+            params.conn_interval.1.map_or(0, to_conn_interval_value),
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_params!(
-        set_direct_connectable,
-        DirectConnectableParameters,
-        GapSetDirectConnectable
-    );
+    async fn set_direct_connectable(
+        &self,
+        params: &DirectConnectableParameters,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GapSetDirectConnectable::new(
+            params.own_address_type as u8,
+            params.advertising_type as u8,
+            params.initiator_address,
+            to_connection_length_value(params.advertising_interval.0),
+            to_connection_length_value(params.advertising_interval.1),
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn set_io_capability(&self, capability: IoCapability) -> Result<(), Error> {
-        GapSetIoCapability::new((&[capability as u8][..]).into())
+        GapSetIoCapability::new(capability)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_params!(
-        set_authentication_requirement,
-        AuthenticationRequirements,
-        GapSetAuthenticationRequirement
-    );
+    async fn set_authentication_requirement(
+        &self,
+        requirements: &AuthenticationRequirements,
+    ) -> Result<(), Error> {
+        requirements.validate()?;
+        let (pass_key_required, fixed_pin) = match requirements.fixed_pin {
+            Pin::Requested => (true, 0),
+            Pin::Fixed(pin) => (false, pin),
+        };
+        GapSetAuthenticationRequirement::new(
+            requirements.bonding_required,
+            requirements.mitm_protection_required,
+            requirements.secure_connection_support as u8,
+            requirements.keypress_notification_support,
+            requirements.encryption_key_size_range.0,
+            requirements.encryption_key_size_range.1,
+            pass_key_required,
+            fixed_pin,
+            requirements.identity_address_type as u8,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn set_authorization_requirement(
         &self,
         conn_handle: crate::ConnectionHandle,
         authorization_required: bool,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        bytes[2] = authorization_required as u8;
-
-        GapSetAuthorizationRequirement::new((&bytes[..]).into())
+        GapSetAuthorizationRequirement::new(conn_handle, authorization_required)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1427,11 +1945,7 @@ where
             return Err(Error::BadFixedPin(pin));
         }
 
-        let mut bytes = [0; 6];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        LittleEndian::write_u32(&mut bytes[2..6], pin);
-
-        GapPassKeyResponse::new((&bytes[..]).into())
+        GapPassKeyResponse::new(conn_handle, pin)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1442,11 +1956,7 @@ where
         conn_handle: crate::ConnectionHandle,
         authorization: Authorization,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        bytes[2] = authorization as u8;
-
-        GapAuthorizationResponse::new((&bytes[..]).into())
+        GapAuthorizationResponse::new(conn_handle, authorization as u8)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1458,17 +1968,9 @@ where
         privacy_enabled: bool,
         dev_name_characteristic_len: u8,
     ) -> Result<GapInit, Error> {
-        let mut bytes = [0; 3];
-        bytes[0] = role.bits();
-        bytes[1] = privacy_enabled as u8;
-        bytes[2] = dev_name_characteristic_len;
-
-        CmdGapInit::new((&bytes[..]).into())
+        CmdGapInit::new(role, privacy_enabled, dev_name_characteristic_len)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
             .map_err(Error::from)
     }
 
@@ -1484,50 +1986,48 @@ where
             }
         }
 
-        GapSetNonConnectable::new((&[advertising_type as u8, address_type as u8][..]).into())
+        GapSetNonConnectable::new(advertising_type as u8, address_type as u8)
             .exec(self)
             .await
             .map_err(Error::from)
     }
 
-    hci_impl_validate_params!(
-        set_undirected_connectable,
-        UndirectedConnectableParameters,
-        GapSetUnidirectedConnectable
-    );
+    async fn set_undirected_connectable(
+        &self,
+        params: &UndirectedConnectableParameters,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GapSetUnidirectedConnectable::new(
+            to_connection_length_value(params.advertising_interval.0),
+            to_connection_length_value(params.advertising_interval.1),
+            params.own_address_type as u8,
+            params.filter_policy as u8,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn peripheral_security_request(
         &self,
         conn_handle: &ConnectionHandle,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-
-        GapPeripheralSecurityRequest::new((&bytes[..]).into())
+        GapPeripheralSecurityRequest::new(*conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn update_advertising_data(&self, data: &[u8]) -> Result<(), Error> {
-        const MAX_LENGTH: usize = 31;
-        if data.len() > MAX_LENGTH {
-            return Err(Error::BadAdvertisingDataLength(data.len()));
-        }
-
-        let mut bytes = [0; 1 + MAX_LENGTH];
-        bytes[0] = data.len() as u8;
-        bytes[1..=data.len()].copy_from_slice(data);
-
-        GapUpdateAdvertisingData::new((&bytes[0..=data.len()]).into())
+        GapUpdateAdvertisingData::try_new(data)
+            .map_err(|error| Error::BadAdvertisingDataLength(error.actual()))?
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn delete_ad_type(&self, ad_type: AdvertisingDataType) -> Result<(), Error> {
-        GapDeleteAdType::new((&[ad_type as u8][..]).into())
+        GapDeleteAdType::new(ad_type as u8)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1537,31 +2037,25 @@ where
         &self,
         conn_handle: &ConnectionHandle,
     ) -> Result<GapSecurityLevel, Error> {
-        let mut bytes = [0; 2];
-
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GapGetSecurityLevel::new((&bytes[..]).into())
+        let response = GapGetSecurityLevel::new(*conn_handle)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        Ok(GapSecurityLevel {
+            security_mode: response.security_mode,
+            security_level: response.security_level,
+        })
     }
 
     async fn set_event_mask(&self, flags: EventFlags) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, flags.bits());
-
-        GapSetEventMask::new((&bytes[..]).into())
+        GapSetEventMask::new(flags.bits())
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn configure_white_list(&self) -> Result<(), Error> {
-        GapConfigureWhitelist::new((&[][..]).into())
+        GapConfigureWhitelist::new()
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1585,11 +2079,7 @@ where
             }
         }
 
-        let mut bytes = [0; 3];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        bytes[2] = reason.into();
-
-        GapTerminate::new((&bytes[..]).into())
+        GapTerminate::new(conn_handle, reason.into())
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1603,171 +2093,286 @@ where
     }
 
     async fn allow_rebond(&self, conn_handle: crate::ConnectionHandle) -> Result<(), Error> {
-        let mut bytes = [0; 2];
-        LittleEndian::write_u16(&mut bytes, conn_handle.0);
-
-        GapAllowRebond::new((&bytes[..]).into())
+        GapAllowRebond::new(conn_handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        start_limited_discovery_procedure,
-        DiscoveryProcedureParameters,
-        GapStartLimitedDiscoveryProcedure
-    );
+    async fn start_limited_discovery_procedure(
+        &self,
+        params: &DiscoveryProcedureParameters,
+    ) -> Result<(), Error> {
+        GapStartLimitedDiscoveryProcedure::new(
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.own_address_type as u8,
+            params.filter_duplicates,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        start_general_discovery_procedure,
-        DiscoveryProcedureParameters,
-        GapStartGeneralDiscoveryProcedure
-    );
+    async fn start_general_discovery_procedure(
+        &self,
+        params: &DiscoveryProcedureParameters,
+    ) -> Result<(), Error> {
+        GapStartGeneralDiscoveryProcedure::new(
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.own_address_type as u8,
+            params.filter_duplicates,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        start_auto_connection_establishment_procedure<'a>,
-        AutoConnectionEstablishmentParameters<'a>,
-        GapStartAutoConnectionEstablishmentProcedure
-    );
+    async fn start_auto_connection_establishment_procedure(
+        &self,
+        params: &AutoConnectionEstablishmentParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        let conn_interval = params.conn_interval.interval();
+        let expected_connection_length = params.expected_connection_length.range;
+        GapStartAutoConnectionEstablishmentProcedure::try_new(
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.own_address_type as u8,
+            to_conn_interval_value(conn_interval.0),
+            to_conn_interval_value(conn_interval.1),
+            params.conn_interval.conn_latency(),
+            to_supervision_timeout_value(params.conn_interval.supervision_timeout()),
+            to_connection_length_value(expected_connection_length.0),
+            to_connection_length_value(expected_connection_length.1),
+            params.white_list,
+        )
+        .map_err(|_| Error::WhiteListTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        start_general_connection_establishment_procedure,
-        GeneralConnectionEstablishmentParameters,
-        GapStartGeneralConnectionEstablishmentProcedure
-    );
+    async fn start_general_connection_establishment_procedure(
+        &self,
+        params: &GeneralConnectionEstablishmentParameters,
+    ) -> Result<(), Error> {
+        GapStartGeneralConnectionEstablishmentProcedure::new(
+            params.scan_type as u8,
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.filter_policy as u8,
+            params.own_address_type as u8,
+            params.filter_duplicates,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_validate_variable_length_params!(
-        start_selective_connection_establishment_procedure<'a>,
-        SelectiveConnectionEstablishmentParameters<'a>,
-        GapStartSelectiveConnectionEstablishmentProcedure
-    );
+    async fn start_selective_connection_establishment_procedure(
+        &self,
+        params: &SelectiveConnectionEstablishmentParameters<'_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GapStartSelectiveConnectionEstablishmentProcedure::try_new(
+            params.scan_type as u8,
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.own_address_type as u8,
+            params.filter_policy as u8,
+            params.filter_duplicates,
+            params.white_list,
+        )
+        .map_err(|_| Error::WhiteListTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(create_connection, ConnectionParameters, GapCreateConnection);
+    async fn create_connection(&self, params: &ConnectionParameters) -> Result<(), Error> {
+        let conn_interval = params.conn_interval.interval();
+        let expected_connection_length = params.expected_connection_length.range;
+        GapCreateConnection::new(
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.peer_address,
+            params.own_address_type as u8,
+            to_conn_interval_value(conn_interval.0),
+            to_conn_interval_value(conn_interval.1),
+            params.conn_interval.conn_latency(),
+            to_supervision_timeout_value(params.conn_interval.supervision_timeout()),
+            to_connection_length_value(expected_connection_length.0),
+            to_connection_length_value(expected_connection_length.1),
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn terminate_gap_procedure(&self, procedure: Procedure) -> Result<(), Error> {
         if procedure.is_empty() {
             return Err(Error::NoProcedure);
         }
 
-        GapTerminateProcedure::new((&[procedure.bits()][..]).into())
+        GapTerminateProcedure::new(procedure.bits())
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        start_connection_update,
-        ConnectionUpdateParameters,
-        GapStartConnectionUpdate
-    );
+    async fn start_connection_update(
+        &self,
+        params: &ConnectionUpdateParameters,
+    ) -> Result<(), Error> {
+        let conn_interval = params.conn_interval.interval();
+        let expected_connection_length = params.expected_connection_length.range;
+        GapStartConnectionUpdate::new(
+            params.conn_handle,
+            to_conn_interval_value(conn_interval.0),
+            to_conn_interval_value(conn_interval.1),
+            params.conn_interval.conn_latency(),
+            to_supervision_timeout_value(params.conn_interval.supervision_timeout()),
+            to_connection_length_value(expected_connection_length.0),
+            to_connection_length_value(expected_connection_length.1),
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(send_pairing_request, PairingRequest, GapSendPairingRequest);
+    async fn send_pairing_request(&self, params: &PairingRequest) -> Result<(), Error> {
+        GapSendPairingRequest::new(params.conn_handle, params.force_rebond)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
     async fn resolve_private_address(
         &self,
         addr: crate::BdAddr,
     ) -> Result<GapResolvePrivateAddress, Error> {
-        CmdGapResolvePrivateAddress::new((&addr.0[..]).into())
+        let response = CmdGapResolvePrivateAddress::new(addr)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        Ok(GapResolvePrivateAddress {
+            bd_addr: Some(response.address),
+        })
     }
 
-    hci_impl_validate_variable_length_params!(
-        set_broadcast_mode<'a, 'b>,
-        BroadcastModeParameters<'a, 'b>,
-        GapSetBroadcastMode
-    );
+    async fn set_broadcast_mode(
+        &self,
+        params: &BroadcastModeParameters<'_, '_>,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GapSetBroadcastMode::try_new(
+            to_connection_length_value(params.advertising_interval.interval.0),
+            to_connection_length_value(params.advertising_interval.interval.1),
+            params.advertising_interval.advertising_type() as u8,
+            params.own_address_type as u8,
+            params.advertising_data,
+            params.white_list,
+        )
+        .map_err(|_| Error::WhiteListTooLong)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_params!(
-        start_observation_procedure,
-        ObservationProcedureParameters,
-        GapStartObservationProcedure
-    );
+    async fn start_observation_procedure(
+        &self,
+        params: &ObservationProcedureParameters,
+    ) -> Result<(), Error> {
+        GapStartObservationProcedure::new(
+            to_connection_length_value(params.scan_window.interval()),
+            to_connection_length_value(params.scan_window.window()),
+            params.scan_type as u8,
+            params.own_address_type as u8,
+            params.filter_duplicates,
+            params.filter_policy as u8,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn get_bonded_devices(&self) -> Result<GapBondedDevices, Error> {
         GapGetBondedDevices::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
             .map_err(Error::from)
     }
 
     async fn is_device_bonded(&self, addr: crate::host::PeerAddrType) -> Result<(), Error> {
-        let mut bytes = [0; 7];
-        addr.copy_into_slice(&mut bytes);
-
-        GapIsDeviceBonded::new((&bytes[..]).into())
+        GapIsDeviceBonded::new(addr)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(
-        numeric_comparison_value_confirm_yes_no,
-        NumericComparisonValueConfirmYesNoParameters,
-        GapConfirmNumericComparisonValue
-    );
+    async fn numeric_comparison_value_confirm_yes_no(
+        &self,
+        params: &NumericComparisonValueConfirmYesNoParameters,
+    ) -> Result<(), Error> {
+        GapConfirmNumericComparisonValue::new(params.conn_handle, params.confirm_yes_no)
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
     async fn passkey_input(
         &self,
         conn_handle: ConnectionHandle,
         input_type: InputType,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 3];
-
-        LittleEndian::write_u16(&mut bytes[..2], conn_handle.0);
-        bytes[2] = input_type as u8;
-
-        GapPasskeyInput::new((&bytes[..]).into())
+        GapPasskeyInput::new(conn_handle, input_type as u8)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn get_oob_data(&self, oob_data_type: OobDataType) -> Result<[u8; 26], Error> {
-        GapGetOobData::new((&[oob_data_type as u8][..]).into())
+        let response = GapGetOobData::new(oob_data_type as u8)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(|_| Error::IoError)
+            .map_err(Error::from)?;
+        let mut data = [0; 26];
+        data[1] = response.address_type;
+        data[2..8].copy_from_slice(&response.address.0);
+        data[8] = response.oob_data_type;
+        data[9] = response.oob_data_len;
+        data[10..].copy_from_slice(&response.oob_data);
+        Ok(data)
     }
 
-    hci_impl_params!(set_oob_data, SetOobDataParameters, GapSetOobData);
+    async fn set_oob_data(&self, params: &SetOobDataParameters) -> Result<(), Error> {
+        GapSetOobData::new(
+            params.device_type as u8,
+            params.address,
+            params.oob_data_type as u8,
+            params.oob_data.len() as u8,
+            params.oob_data,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn add_devices_to_resolving_list(
         &self,
         whitelist_identities: &[PeerAddrType],
         clear_resolving_list: bool,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 254];
-
-        bytes[0] = whitelist_identities.len() as u8;
-
-        let mut index = 1;
-        for id in whitelist_identities {
-            id.copy_into_slice(&mut bytes[index..index + 7]);
-            index += 7;
-        }
-        bytes[index] = clear_resolving_list as u8;
-
-        GapAddDevicesToResolvingList::new((&bytes[..(index + 1)]).into())
+        GapAddDevicesToResolvingList::try_new(whitelist_identities, clear_resolving_list)
+            .map_err(|_| Error::WhiteListTooLong)?
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn remove_bonded_device(&self, address: BdAddrType) -> Result<(), Error> {
-        let mut bytes = [0; 7];
-
-        address.copy_into_slice(&mut bytes);
-        GapRemoveBondedDevice::new((&bytes[..]).into())
+        GapRemoveBondedDevice::new(address)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1778,28 +2383,29 @@ where
         list_entries: &[BdAddrType],
         mode: AddDeviceToListMode,
     ) -> Result<(), Error> {
-        let mut bytes = [0; 254];
-
-        bytes[0] = list_entries.len() as u8;
-
-        let mut index = 0;
-        for entry in list_entries {
-            entry.copy_into_slice(&mut bytes[index..index + 7]);
-            index += 7;
-        }
-        bytes[index] = mode as u8;
-
-        GapAddDevicesToList::new((&bytes[..(index + 1)]).into())
+        GapAddDevicesToList::try_new(list_entries, mode as u8)
+            .map_err(|_| Error::WhiteListTooLong)?
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_validate_params!(
-        additional_beacon_start,
-        AdditonalBeaconStartParameters,
-        GapAdditionalBeaconStart
-    );
+    async fn additional_beacon_start(
+        &self,
+        params: &AdditonalBeaconStartParameters,
+    ) -> Result<(), Error> {
+        params.validate()?;
+        GapAdditionalBeaconStart::new(
+            to_connection_length_value(params.advertising_interval.0),
+            to_connection_length_value(params.advertising_interval.1),
+            params.advertising_channel_map.bits(),
+            params.own_address_type,
+            params.pa_level,
+        )
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn additional_beacon_stop(&self) -> Result<(), Error> {
         GapAdditionalBeaconStop::new()
@@ -1809,30 +2415,80 @@ where
     }
 
     async fn additonal_beacon_set_data(&self, advertising_data: &[u8]) -> Result<(), Error> {
-        GapAdditionalBeaconSetData::new((advertising_data[..]).into())
+        GapAdditionalBeaconSetData::try_new(advertising_data)
+            .map_err(|_| Error::BadAdvertisingDataLength(advertising_data.len()))?
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
-    hci_impl_params!(adv_set_config, AdvSetConfig, GapAdvSetConfig);
+    async fn adv_set_config(&self, params: &AdvSetConfig) -> Result<(), Error> {
+        GapAdvSetConfig::try_new(
+            params.adv_mode.bits(),
+            params.adv_handle,
+            params.adv_event_properties.bits(),
+            &params.adv_interval,
+            params.primary_adv_channel_map.bits(),
+            params.own_addr_type as u8,
+            params.peer_addr,
+            params.adv_filter_policy as u8,
+            params.adv_tx_power,
+            params.secondary_adv_max_skip,
+            params.secondary_adv_phy as u8,
+            params.adv_sid,
+            params.scan_req_notification_enable,
+        )
+        .map_err(|_| Error::IoError)?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(adv_set_enable<'a>, AdvSetEnable<'a>, GapAdvSetEnable);
+    async fn adv_set_enable<'a>(&self, params: &AdvSetEnable<'a>) -> Result<(), Error> {
+        if usize::from(params.num_sets) != params.adv_set.len() {
+            return Err(Error::IoError);
+        }
+        GapAdvSetEnable::try_new(params.enable, params.adv_set)
+            .map_err(|_| Error::IoError)?
+            .exec(self)
+            .await
+            .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(
-        adv_set_advertising_data<'a>,
-        AdvSetAdvertisingData<'a>,
-        GapAdvSetAdvertisingData
-    );
+    async fn adv_set_advertising_data(
+        &self,
+        params: &AdvSetAdvertisingData<'_>,
+    ) -> Result<(), Error> {
+        GapAdvSetAdvertisingData::try_new(
+            params.adv_handle,
+            params.operation as u8,
+            !params.fragment,
+            params.data,
+        )
+        .map_err(|_| Error::BadAdvertisingDataLength(params.data.len()))?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
-    hci_impl_variable_length_params!(
-        adv_set_scan_response_data<'a>,
-        AdvSetAdvertisingData<'a>,
-        GapAdvSetScanResponseData
-    );
+    async fn adv_set_scan_response_data(
+        &self,
+        params: &AdvSetAdvertisingData<'_>,
+    ) -> Result<(), Error> {
+        GapAdvSetScanResponseData::try_new(
+            params.adv_handle,
+            params.operation as u8,
+            !params.fragment,
+            params.data,
+        )
+        .map_err(|_| Error::BadAdvertisingDataLength(params.data.len()))?
+        .exec(self)
+        .await
+        .map_err(Error::from)
+    }
 
     async fn adv_remove_set(&self, handle: AdvertisingHandle) -> Result<(), Error> {
-        GapAdvRemoveSet::new((&[handle.0][..]).into())
+        GapAdvRemoveSet::new(handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -1850,90 +2506,161 @@ where
         handle: AdvertisingHandle,
         addr: BdAddr,
     ) -> Result<(), Error> {
-        let mut payload = [0; 7];
-        payload[0] = handle.0;
-        payload[1..].copy_from_slice(&addr.0);
-
-        GapAdvSetRandomAddress::new((&payload[..]).into())
+        GapAdvSetRandomAddress::new(handle, addr)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn pairing_request_reply(
         &self,
         conn_handle: crate::ConnectionHandle,
         accept: bool,
     ) -> Result<(), Error> {
-        let mut bytes = [0u8; 3];
-        LittleEndian::write_u16(&mut bytes[0..2], conn_handle.0);
-        bytes[2] = accept as u8;
-        GapPairingRequestReply::new((&bytes[..]).into())
+        GapPairingRequestReply::new(conn_handle, accept)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn adv_set_periodic_parameters(
         &self,
         params: &AdvSetPeriodicParameters,
     ) -> Result<(), Error> {
-        let mut bytes = [0u8; AdvSetPeriodicParameters::LENGTH];
-        params.copy_into_slice(&mut bytes);
-        GapAdvSetPeriodicParameters::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GapAdvSetPeriodicParameters::new(
+            params.advertising_handle,
+            params.periodic_adv_interval_min,
+            params.periodic_adv_interval_max,
+            params.periodic_adv_properties,
+            params.num_subevents,
+            params.subevent_interval,
+            params.response_slot_delay,
+            params.response_slot_spacing,
+            params.num_response_slots,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn adv_set_periodic_data<'a>(
         &self,
         params: &AdvSetPeriodicData<'a>,
     ) -> Result<(), Error> {
-        let mut bytes = [0u8; AdvSetPeriodicData::MAX_LENGTH];
-        let len = params.copy_into_slice(&mut bytes);
-        GapAdvSetPeriodicData::new((&bytes[..len]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GapAdvSetPeriodicData::try_new(
+            params.advertising_handle,
+            params.operation as u8,
+            params.data,
+        )
+        .map_err(|_| Error::BadAdvertisingDataLength(params.data.len()))?
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn adv_set_periodic_enable(
         &self,
         enable: u8,
         handle: AdvertisingHandle,
     ) -> Result<(), Error> {
-        GapAdvSetPeriodicEnable::new((&[enable, handle.0][..]).into())
+        GapAdvSetPeriodicEnable::new(enable, handle)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn adv_set_configuration_v2(&self, params: &AdvSetConfigV2) -> Result<(), Error> {
-        let mut bytes = [0u8; AdvSetConfigV2::LENGTH];
-        params.copy_into_slice(&mut bytes);
-        GapAdvSetConfigurationV2::new((&bytes[..]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        GapAdvSetConfigurationV2::new(
+            params.adv_mode.bits(),
+            params.adv_handle,
+            params.adv_event_properties.bits(),
+            params.primary_adv_interval_min,
+            params.primary_adv_interval_max,
+            params.primary_adv_channel_map.bits(),
+            params.own_addr_type as u8,
+            params.peer_addr,
+            params.adv_filter_policy as u8,
+            params.adv_tx_power,
+            params.primary_adv_phy as u8,
+            params.secondary_adv_max_skip,
+            params.secondary_adv_phy as u8,
+            params.adv_sid,
+            params.scan_req_notification_enable,
+            params.primary_adv_phy_options,
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn ext_start_scan(&self, params: &ExtStartScanParams) -> Result<(), Error> {
-        let mut bytes = [0u8; ExtStartScanParams::MAX_LENGTH];
-        let len = params.copy_into_slice(&mut bytes);
-        GapExtStartScan::new((&bytes[..len]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        let phy_params = params.phy_params.get(..params.num_phys).ok_or_else(|| {
+            Error::BadExtendedScanParameters(HciLengthError::new(
+                params.num_phys,
+                0,
+                params.phy_params.len(),
+            ))
+        })?;
+
+        GapExtStartScan::try_new(
+            params.scan_mode,
+            params.procedure,
+            params.own_address_type,
+            params.filter_duplicates,
+            params.duration,
+            params.period,
+            params.scanning_filter_policy,
+            params.scanning_phys,
+            phy_params,
+        )
+        .map_err(Error::BadExtendedScanParameters)?
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn ext_create_connection(&self, params: &ExtCreateConnectionParams) -> Result<(), Error> {
-        let mut bytes = [0u8; ExtCreateConnectionParams::MAX_LENGTH];
-        let len = params.copy_into_slice(&mut bytes);
-        GapExtCreateConnection::new((&bytes[..len]).into())
-            .exec(self)
-            .await
-            .map_err(|e| e.into())
+        let phy_params = params.phy_params.get(..params.num_phys).ok_or_else(|| {
+            Error::BadExtendedScanParameters(HciLengthError::new(
+                params.num_phys,
+                0,
+                params.phy_params.len(),
+            ))
+        })?;
+        let mut encoded_phy_params = [[0; 16]; 3];
+        for (encoded, phy) in encoded_phy_params.iter_mut().zip(phy_params) {
+            LittleEndian::write_u16(&mut encoded[0..2], phy.scan_interval);
+            LittleEndian::write_u16(&mut encoded[2..4], phy.scan_window);
+            LittleEndian::write_u16(&mut encoded[4..6], phy.conn_interval_min);
+            LittleEndian::write_u16(&mut encoded[6..8], phy.conn_interval_max);
+            LittleEndian::write_u16(&mut encoded[8..10], phy.conn_latency);
+            LittleEndian::write_u16(&mut encoded[10..12], phy.supervision_timeout);
+            LittleEndian::write_u16(&mut encoded[12..14], phy.min_ce_length);
+            LittleEndian::write_u16(&mut encoded[14..16], phy.max_ce_length);
+        }
+        GapExtCreateConnection::try_new(
+            params.initiating_mode,
+            params.procedure,
+            params.own_address_type,
+            params.peer_address_type,
+            params.peer_address,
+            params.advertising_handle,
+            params.subevent,
+            params.initiator_filter_policy,
+            params.initiating_phys,
+            &encoded_phy_params[..phy_params.len()],
+        )
+        .map_err(Error::BadExtendedScanParameters)?
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
     }
 }
 
@@ -1987,6 +2714,11 @@ pub enum Error {
     /// [GAP Set Broadcast Mode](GapCommands::set_broadcast_mode) commands, the advertising data
     /// is too long. It must be 31 bytes or less. The length of the provided data is returned.
     BadAdvertisingDataLength(usize),
+
+    /// For extended scanning, the PHY bitmap selects an unsupported bit, or
+    /// the number of per-PHY records differs from the selected-bit count.
+    #[cfg(after_fw_0_17_1)]
+    BadExtendedScanParameters(HciLengthError),
 
     /// For the [GAP Terminate](GapCommands::terminate) command, the termination reason was
     /// not one of the allowed reason. The reason is returned.
@@ -2046,6 +2778,10 @@ fn to_conn_interval_value(d: Duration) -> u16 {
     (4 * millis / 5) as u16
 }
 
+fn to_supervision_timeout_value(d: Duration) -> u16 {
+    (100 * d.as_secs() as u32 + d.subsec_millis() / 10) as u16
+}
+
 fn to_connection_length_value(d: Duration) -> u16 {
     // Connection interval value: T = N * 0.625 ms
     // We have T, we need to return N.
@@ -2053,6 +2789,74 @@ fn to_connection_length_value(d: Duration) -> u16 {
     //   = T / 625 us
     // 1600 = 1_000_000 / 625
     (1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)) as u16
+}
+
+fn encode_local_name<'a>(
+    local_name: &Option<LocalName<'_>>,
+    bytes: &'a mut [u8; 255],
+) -> Result<&'a [u8], Error> {
+    let (ad_type, name) = match local_name {
+        None => return Ok(&bytes[..0]),
+        Some(LocalName::Shortened(name)) => (0x08, *name),
+        Some(LocalName::Complete(name)) => (0x09, *name),
+    };
+    if name.len() > 241 {
+        return Err(Error::IoError);
+    }
+    bytes[0] = ad_type;
+    bytes[1..1 + name.len()].copy_from_slice(name);
+    Ok(&bytes[..1 + name.len()])
+}
+
+impl crate::vendor::command::HciEncodeField<8> for ExtendedAdvertisingInterval {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 8];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 8];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<7> for PeerAddrType {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 7];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 7];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<4> for AdvSet {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        let mut bytes = [0; 4];
+        self.copy_into_slice(&mut bytes);
+        writer.write_all(&bytes).await
+    }
 }
 
 /// Parameters for the
@@ -2095,10 +2899,11 @@ pub struct DiscoverableParameters<'a, 'b> {
 }
 
 impl<'a, 'b> DiscoverableParameters<'a, 'b> {
-    // 14 fixed-size parameters, one parameter of up to 31 bytes, and one of up to 248 bytes.
-    const MAX_LENGTH: usize = 14 + 31 + 248;
-
     fn validate(&self) -> Result<(), Error> {
+        if self.advertising_data.len() > 31 {
+            return Err(Error::BadAdvertisingDataLength(self.advertising_data.len()));
+        }
+
         match self.advertising_type {
             AdvertisingType::ConnectableUndirected
             | AdvertisingType::ScannableUndirected
@@ -2119,86 +2924,6 @@ impl<'a, 'b> DiscoverableParameters<'a, 'b> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        const NO_SPECIFIC_CONN_INTERVAL: u16 = 0x0000;
-
-        let len = self.required_len();
-        assert!(len <= bytes.len());
-
-        let no_duration = Duration::from_secs(0);
-        let no_interval: (Duration, Duration) = (no_duration, no_duration);
-
-        bytes[0] = self.advertising_type as u8;
-        LittleEndian::write_u16(
-            &mut bytes[1..],
-            to_connection_length_value(self.advertising_interval.unwrap_or(no_interval).0),
-        );
-        LittleEndian::write_u16(
-            &mut bytes[3..],
-            to_connection_length_value(self.advertising_interval.unwrap_or(no_interval).1),
-        );
-        bytes[5] = self.address_type as u8;
-        bytes[6] = self.filter_policy as u8;
-        let advertising_data_len_index = match self.local_name {
-            None => {
-                bytes[7] = 0;
-                7
-            }
-            Some(LocalName::Shortened(name)) => {
-                const AD_TYPE_SHORTENED_LOCAL_NAME: u8 = 0x08;
-                bytes[7] = 1 + name.len() as u8;
-                bytes[8] = AD_TYPE_SHORTENED_LOCAL_NAME;
-                bytes[9..9 + name.len()].copy_from_slice(name);
-                9 + name.len()
-            }
-            Some(LocalName::Complete(name)) => {
-                const AD_TYPE_COMPLETE_LOCAL_NAME: u8 = 0x09;
-                bytes[7] = 1 + name.len() as u8;
-                bytes[8] = AD_TYPE_COMPLETE_LOCAL_NAME;
-                bytes[9..9 + name.len()].copy_from_slice(name);
-                9 + name.len()
-            }
-        };
-        bytes[advertising_data_len_index] = self.advertising_data.len() as u8;
-        bytes[(advertising_data_len_index + 1)
-            ..(advertising_data_len_index + 1 + self.advertising_data.len())]
-            .copy_from_slice(self.advertising_data);
-        let conn_interval_index = advertising_data_len_index + 1 + self.advertising_data.len();
-        LittleEndian::write_u16(
-            &mut bytes[conn_interval_index..],
-            if let Some(conn_interval) = self.conn_interval.0 {
-                to_conn_interval_value(conn_interval)
-            } else {
-                NO_SPECIFIC_CONN_INTERVAL
-            },
-        );
-        LittleEndian::write_u16(
-            &mut bytes[(conn_interval_index + 2)..],
-            if let Some(conn_interval) = self.conn_interval.1 {
-                to_conn_interval_value(conn_interval)
-            } else {
-                NO_SPECIFIC_CONN_INTERVAL
-            },
-        );
-
-        len
-    }
-
-    fn required_len(&self) -> usize {
-        let fixed_len = 13;
-
-        fixed_len + self.name_len() + self.advertising_data.len()
-    }
-
-    fn name_len(&self) -> usize {
-        // The serialized name includes one byte indicating the type of name. That byte is not
-        // included if the name is empty.
-        match self.local_name {
-            Some(LocalName::Shortened(bytes)) | Some(LocalName::Complete(bytes)) => 1 + bytes.len(),
-            None => 0,
-        }
     }
 }
 
@@ -2230,8 +2955,6 @@ pub struct UndirectedConnectableParameters {
 }
 
 impl UndirectedConnectableParameters {
-    const LENGTH: usize = 6;
-
     fn validate(&self) -> Result<(), Error> {
         const MIN_DURATION: Duration = Duration::from_millis(20);
         const MAX_DURATION: Duration = Duration::from_millis(10240);
@@ -2253,22 +2976,6 @@ impl UndirectedConnectableParameters {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        LittleEndian::write_u16(
-            &mut bytes[0..],
-            to_connection_length_value(self.advertising_interval.0),
-        );
-        LittleEndian::write_u16(
-            &mut bytes[2..],
-            to_connection_length_value(self.advertising_interval.1),
-        );
-
-        bytes[4] = self.own_address_type as u8;
-        bytes[5] = self.filter_policy as u8;
     }
 }
 
@@ -2298,8 +3005,6 @@ pub struct DirectConnectableParameters {
 }
 
 impl DirectConnectableParameters {
-    const LENGTH: usize = 13;
-
     fn validate(&self) -> Result<(), Error> {
         const MIN_DURATION: Duration = Duration::from_millis(20);
         const MAX_DURATION: Duration = Duration::from_millis(10240);
@@ -2322,23 +3027,6 @@ impl DirectConnectableParameters {
 
         Ok(())
     }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        bytes[0] = self.own_address_type as u8;
-
-        bytes[1] = self.advertising_type as u8;
-        self.initiator_address.copy_into_slice(&mut bytes[2..9]);
-        LittleEndian::write_u16(
-            &mut bytes[9..],
-            to_connection_length_value(self.advertising_interval.0),
-        );
-        LittleEndian::write_u16(
-            &mut bytes[11..],
-            to_connection_length_value(self.advertising_interval.1),
-        );
-    }
 }
 
 /// I/O capabilities available for the [GAP Set I/O Capability](GapCommands::set_io_capability) command.
@@ -2356,6 +3044,23 @@ pub enum IoCapability {
     None = 0x03,
     /// Keyboard display
     KeyboardDisplay = 0x04,
+}
+
+impl crate::vendor::command::HciEncodeField<1> for IoCapability {
+    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
+        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field(&(*self as u8), writer)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error> {
+        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field_async(
+            &(*self as u8),
+            writer,
+        )
+        .await
+    }
 }
 
 /// Parameters for the [GAP Set Authentication Requirement](GapCommands::set_authentication_requirement) command.
@@ -2384,8 +3089,6 @@ pub struct AuthenticationRequirements {
 }
 
 impl AuthenticationRequirements {
-    const LENGTH: usize = 12;
-
     fn validate(&self) -> Result<(), Error> {
         if self.encryption_key_size_range.0 > self.encryption_key_size_range.1 {
             return Err(Error::BadEncryptionKeySizeRange(
@@ -2407,28 +3110,6 @@ impl AuthenticationRequirements {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        bytes[0] = self.bonding_required as u8;
-        bytes[1] = self.mitm_protection_required as u8;
-        bytes[2] = self.secure_connection_support as u8;
-        bytes[3] = self.keypress_notification_support as u8;
-        bytes[4] = self.encryption_key_size_range.0;
-        bytes[5] = self.encryption_key_size_range.1;
-        match self.fixed_pin {
-            Pin::Requested => {
-                bytes[6] = 1;
-                bytes[7..11].copy_from_slice(&[0; 4]);
-            }
-            Pin::Fixed(pin) => {
-                bytes[6] = 0;
-                LittleEndian::write_u32(&mut bytes[7..11], pin);
-            }
-        }
-        bytes[11] = self.identity_address_type as u8;
     }
 }
 
@@ -2499,6 +3180,23 @@ defmt::bitflags! {
         const CENTRAL = 0x04;
         /// Observer
         const OBSERVER = 0x08;
+    }
+}
+
+impl crate::vendor::command::HciEncodeField<1> for Role {
+    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
+        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field(&self.bits(), writer)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error> {
+        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field_async(
+            &self.bits(),
+            writer,
+        )
+        .await
     }
 }
 
@@ -2611,18 +3309,6 @@ pub struct DiscoveryProcedureParameters {
     pub filter_duplicates: bool,
 }
 
-impl DiscoveryProcedureParameters {
-    const LENGTH: usize = 6;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        self.scan_window.copy_into_slice(&mut bytes[0..4]);
-        bytes[4] = self.own_address_type as u8;
-        bytes[5] = self.filter_duplicates as u8;
-    }
-}
-
 /// Parameters for the GAP Name Discovery
 /// procedure.
 pub struct NameDiscoveryProcedureParameters {
@@ -2640,21 +3326,6 @@ pub struct NameDiscoveryProcedureParameters {
 
     /// Expected connection length
     pub expected_connection_length: ExpectedConnectionLength,
-}
-
-impl NameDiscoveryProcedureParameters {
-    const LENGTH: usize = 24;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        self.scan_window.copy_into_slice(&mut bytes[0..4]);
-        self.peer_address.copy_into_slice(&mut bytes[4..11]);
-        bytes[11] = self.own_address_type as u8;
-        self.conn_interval.copy_into_slice(&mut bytes[12..20]);
-        self.expected_connection_length
-            .copy_into_slice(&mut bytes[20..24]);
-    }
 }
 
 /// Parameters for the
@@ -2677,8 +3348,6 @@ pub struct AutoConnectionEstablishmentParameters<'a> {
 }
 
 impl<'a> AutoConnectionEstablishmentParameters<'a> {
-    const MAX_LENGTH: usize = 249;
-
     fn validate(&self) -> Result<(), Error> {
         const MAX_WHITE_LIST_LENGTH: usize = 33;
         if self.white_list.len() > MAX_WHITE_LIST_LENGTH {
@@ -2686,32 +3355,6 @@ impl<'a> AutoConnectionEstablishmentParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        let len = self.len();
-        assert!(bytes.len() >= len);
-
-        self.scan_window.copy_into_slice(&mut bytes[0..4]);
-        bytes[4] = self.own_address_type as u8;
-        self.conn_interval.copy_into_slice(&mut bytes[5..13]);
-        self.expected_connection_length
-            .copy_into_slice(&mut bytes[13..17]);
-
-        let index = 17;
-
-        bytes[index] = self.white_list.len() as u8;
-        let index = index + 1;
-        for i in 0..self.white_list.len() {
-            self.white_list[i].copy_into_slice(&mut bytes[(index + 7 * i)..(index + 7 * (i + 1))]);
-        }
-
-        len
-    }
-
-    fn len(&self) -> usize {
-        let reconn_addr_len = 0;
-        18 + reconn_addr_len + 7 * self.white_list.len()
     }
 }
 
@@ -2737,20 +3380,6 @@ pub struct GeneralConnectionEstablishmentParameters {
 
     /// If true, only report unique devices.
     pub filter_duplicates: bool,
-}
-
-impl GeneralConnectionEstablishmentParameters {
-    const LENGTH: usize = 8;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        bytes[0] = self.scan_type as u8;
-        self.scan_window.copy_into_slice(&mut bytes[1..5]);
-        bytes[5] = self.filter_policy as u8;
-        bytes[6] = self.own_address_type as u8;
-        bytes[7] = self.filter_duplicates as u8;
-    }
 }
 
 /// Parameters for the
@@ -2781,8 +3410,6 @@ pub struct SelectiveConnectionEstablishmentParameters<'a> {
 }
 
 impl<'a> SelectiveConnectionEstablishmentParameters<'a> {
-    const MAX_LENGTH: usize = 254;
-
     fn validate(&self) -> Result<(), Error> {
         const MAX_WHITE_LIST_LENGTH: usize = 35;
         if self.white_list.len() > MAX_WHITE_LIST_LENGTH {
@@ -2790,27 +3417,6 @@ impl<'a> SelectiveConnectionEstablishmentParameters<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        let len = self.len();
-        assert!(bytes.len() >= len);
-
-        bytes[0] = self.scan_type as u8;
-        self.scan_window.copy_into_slice(&mut bytes[1..5]);
-        bytes[5] = self.own_address_type as u8;
-        bytes[6] = self.filter_policy as u8;
-        bytes[7] = self.filter_duplicates as u8;
-        bytes[8] = self.white_list.len() as u8;
-        for i in 0..self.white_list.len() {
-            self.white_list[i].copy_into_slice(&mut bytes[(9 + 7 * i)..(9 + 7 * (i + 1))]);
-        }
-
-        len
-    }
-
-    fn len(&self) -> usize {
-        9 + 7 * self.white_list.len()
     }
 }
 
@@ -2877,17 +3483,6 @@ pub struct ConnectionUpdateParameters {
     pub expected_connection_length: ExpectedConnectionLength,
 }
 
-impl ConnectionUpdateParameters {
-    const LENGTH: usize = 14;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        self.conn_interval.copy_into_slice(&mut bytes[2..10]);
-        self.expected_connection_length
-            .copy_into_slice(&mut bytes[10..14]);
-    }
-}
-
 /// Parameters for the [`send_pairing_request`](GapCommands::send_pairing_request)
 /// command.
 pub struct PairingRequest {
@@ -2897,16 +3492,6 @@ pub struct PairingRequest {
     /// Whether pairing request has to be sent if the device is previously bonded or not. If false,
     /// the pairing request is sent only if the device has not previously bonded.
     pub force_rebond: bool,
-}
-
-impl PairingRequest {
-    const LENGTH: usize = 2;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-    }
 }
 
 /// Parameters for the [GAP Set Broadcast Mode](GapCommands::set_broadcast_mode) command.
@@ -2968,24 +3553,6 @@ impl<'a, 'b> BroadcastModeParameters<'a, 'b> {
             1 + self.advertising_data.len() + // advertising_data
             1 + 7 * self.white_list.len() // white_list
     }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(self.len() <= bytes.len());
-
-        self.advertising_interval.copy_into_slice(&mut bytes[0..5]);
-        bytes[5] = self.own_address_type as u8;
-        bytes[6] = self.advertising_data.len() as u8;
-        bytes[7..7 + self.advertising_data.len()].copy_from_slice(self.advertising_data);
-        bytes[7 + self.advertising_data.len()] = self.white_list.len() as u8;
-
-        let mut index = 8 + self.advertising_data.len();
-        for addr in self.white_list.iter() {
-            addr.copy_into_slice(&mut bytes[index..index + 7]);
-            index += 7;
-        }
-
-        index
-    }
 }
 
 /// Parameters for the [GAP Start Observation Procedure](GapCommands::start_observation_procedure)
@@ -3008,20 +3575,6 @@ pub struct ObservationProcedureParameters {
     pub filter_policy: ScanFilterPolicy,
 }
 
-impl ObservationProcedureParameters {
-    const LENGTH: usize = 8;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        self.scan_window.copy_into_slice(&mut bytes[0..4]);
-        bytes[4] = self.scan_type as u8;
-        bytes[5] = self.own_address_type as u8;
-        bytes[6] = self.filter_duplicates as u8;
-        bytes[7] = self.filter_policy as u8;
-    }
-}
-
 /// Parameters for [GAP Numeric Comparison Confirm Yes or No](crate::vendor::command::gap::GapCommands::numeric_comparison_value_confirm_yes_no)
 pub struct NumericComparisonValueConfirmYesNoParameters {
     /// Connection handle for which the command applies.
@@ -3029,17 +3582,6 @@ pub struct NumericComparisonValueConfirmYesNoParameters {
 
     /// Indicates if the numeric values shown on both local and peer device are different or equal.
     pub confirm_yes_no: bool,
-}
-
-impl NumericComparisonValueConfirmYesNoParameters {
-    const LENGTH: usize = 3;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u16(&mut bytes[0..2], self.conn_handle.0);
-        bytes[2] = self.confirm_yes_no as u8;
-    }
 }
 
 /// Parameter for [GAP Passkey Input](GapCommands::passkey_input)
@@ -3079,19 +3621,6 @@ pub struct SetOobDataParameters {
     pub oob_data: [u8; 16],
 }
 
-impl SetOobDataParameters {
-    const LENGTH: usize = 26;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        bytes[0] = self.device_type as u8;
-        self.address.copy_into_slice(&mut bytes[1..8]);
-        bytes[9] = self.oob_data_type as u8;
-        bytes[10..26].copy_from_slice(&self.oob_data)
-    }
-}
-
 /// Parameter for [GAP Add Devices to List](GapCommands::add_devices_to_list)
 pub enum AddDeviceToListMode {
     /// Append to the resolving list only
@@ -3121,8 +3650,6 @@ pub struct AdditonalBeaconStartParameters {
 }
 
 impl AdditonalBeaconStartParameters {
-    const LENGTH: usize = 13;
-
     fn validate(&self) -> Result<(), Error> {
         const AMPLIFIER_MAX: u8 = 0x23;
 
@@ -3131,22 +3658,6 @@ impl AdditonalBeaconStartParameters {
         }
 
         Ok(())
-    }
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-
-        LittleEndian::write_u16(
-            &mut bytes[0..],
-            to_connection_length_value(self.advertising_interval.0),
-        );
-        LittleEndian::write_u16(
-            &mut bytes[2..],
-            to_connection_length_value(self.advertising_interval.1),
-        );
-        bytes[4] = self.advertising_channel_map.bits();
-        self.own_address_type.copy_into_slice(&mut bytes[5..12]);
-        bytes[12] = self.pa_level;
     }
 }
 
@@ -3195,27 +3706,6 @@ pub struct AdvSetConfig {
     pub scan_req_notification_enable: bool,
 }
 
-impl AdvSetConfig {
-    const LENGTH: usize = 25;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), Self::LENGTH);
-
-        bytes[0] = self.adv_mode.bits();
-        bytes[1] = self.adv_handle.0;
-        LittleEndian::write_u16(&mut bytes[2..], self.adv_event_properties.bits());
-        self.adv_interval.copy_into_slice(&mut bytes[4..]);
-        bytes[12] = self.primary_adv_channel_map.bits();
-        bytes[13] = self.own_addr_type as u8;
-        self.peer_addr.copy_into_slice(&mut bytes[14..]);
-        bytes[21] = self.adv_filter_policy as u8;
-        bytes[22] = self.adv_tx_power;
-        bytes[23] = self.secondary_adv_max_skip;
-        bytes[24] = self.adv_sid;
-        bytes[25] = self.scan_req_notification_enable as u8;
-    }
-}
-
 /// Params for the [adv_set_enable](GapCommands::adv_set_enable) command
 pub struct AdvSetEnable<'a> {
     /// Enable/Disable advertising
@@ -3228,20 +3718,6 @@ pub struct AdvSetEnable<'a> {
     pub num_sets: u8,
     /// Advertising sets
     pub adv_set: &'a [AdvSet],
-}
-
-impl<'a> AdvSetEnable<'a> {
-    const MAX_LENGTH: usize = 254;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        bytes[0] = self.enable as u8;
-        bytes[1] = self.num_sets;
-        for (idx, set) in self.adv_set.iter().enumerate() {
-            set.copy_into_slice(&mut bytes[2 + (idx * 4)..]);
-        }
-    }
 }
 
 /// Params for the [adv_set_advertising_data](GapCommands::adv_set_advertising_data) command
@@ -3257,21 +3733,7 @@ pub struct AdvSetAdvertisingData<'a> {
     pub data: &'a [u8],
 }
 
-impl<'a> AdvSetAdvertisingData<'a> {
-    const MAX_LENGTH: usize = 255;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-
-        bytes[0] = self.adv_handle.0;
-        bytes[1] = self.operation as u8;
-        bytes[2] = (!self.fragment) as u8;
-        let length = self.data.len();
-        bytes[3] = length as u8;
-        bytes[4..(4 + length)].copy_from_slice(self.data);
-    }
-}
-
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [adv_set_periodic_parameters](GapCommands::adv_set_periodic_parameters).
 pub struct AdvSetPeriodicParameters {
     pub advertising_handle: AdvertisingHandle,
@@ -3285,6 +3747,7 @@ pub struct AdvSetPeriodicParameters {
     pub num_response_slots: u8,
 }
 
+#[cfg(after_fw_0_17_1)]
 impl AdvSetPeriodicParameters {
     pub(crate) const LENGTH: usize = 12;
 
@@ -3302,6 +3765,7 @@ impl AdvSetPeriodicParameters {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [adv_set_periodic_data](GapCommands::adv_set_periodic_data).
 pub struct AdvSetPeriodicData<'a> {
     pub advertising_handle: AdvertisingHandle,
@@ -3309,6 +3773,7 @@ pub struct AdvSetPeriodicData<'a> {
     pub data: &'a [u8],
 }
 
+#[cfg(after_fw_0_17_1)]
 impl<'a> AdvSetPeriodicData<'a> {
     pub(crate) const MAX_LENGTH: usize = 255;
 
@@ -3323,6 +3788,7 @@ impl<'a> AdvSetPeriodicData<'a> {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [adv_set_configuration_v2](GapCommands::adv_set_configuration_v2).
 ///
 /// Like [AdvSetConfig] but uses 4-byte primary advertising intervals and adds PHY fields.
@@ -3347,6 +3813,7 @@ pub struct AdvSetConfigV2 {
     pub primary_adv_phy_options: u8,
 }
 
+#[cfg(after_fw_0_17_1)]
 impl AdvSetConfigV2 {
     pub(crate) const LENGTH: usize = 29;
 
@@ -3371,13 +3838,31 @@ impl AdvSetConfigV2 {
     }
 }
 
-/// Per-PHY scan parameters for [ExtStartScanParams].
+/// One record in the extended-scan PHY parameter list.
 pub struct ExtScanPhyParams {
     pub scan_type: u8,
     pub scan_interval: u16,
     pub scan_window: u16,
 }
 
+impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[self.scan_type])?;
+        writer.write_all(&self.scan_interval.to_le_bytes())?;
+        writer.write_all(&self.scan_window.to_le_bytes())
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[self.scan_type]).await?;
+        writer.write_all(&self.scan_interval.to_le_bytes()).await?;
+        writer.write_all(&self.scan_window.to_le_bytes()).await
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [ext_start_scan](GapCommands::ext_start_scan).
 pub struct ExtStartScanParams {
     pub scan_mode: u8,
@@ -3393,36 +3878,7 @@ pub struct ExtStartScanParams {
     pub num_phys: usize,
 }
 
-impl ExtStartScanParams {
-    pub(crate) const MAX_LENGTH: usize = 10 + 2 * 5; // fixed(10) + up to 2 PHYs * 5 bytes each
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-        bytes[0] = self.scan_mode;
-        bytes[1] = self.procedure;
-        bytes[2] = self.own_address_type;
-        bytes[3] = self.filter_duplicates;
-        LittleEndian::write_u16(&mut bytes[4..6], self.duration);
-        LittleEndian::write_u16(&mut bytes[6..8], self.period);
-        bytes[8] = self.scanning_filter_policy;
-        bytes[9] = self.scanning_phys;
-        let mut offset = 10;
-        for i in 0..self.num_phys.min(2) {
-            bytes[offset] = self.phy_params[i].scan_type;
-            LittleEndian::write_u16(
-                &mut bytes[offset + 1..offset + 3],
-                self.phy_params[i].scan_interval,
-            );
-            LittleEndian::write_u16(
-                &mut bytes[offset + 3..offset + 5],
-                self.phy_params[i].scan_window,
-            );
-            offset += 5;
-        }
-        offset
-    }
-}
-
+#[cfg(after_fw_0_17_1)]
 /// Per-PHY connection parameters for [ExtCreateConnectionParams].
 pub struct ExtConnPhyParams {
     pub scan_interval: u16,
@@ -3435,6 +3891,7 @@ pub struct ExtConnPhyParams {
     pub max_ce_length: u16,
 }
 
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [ext_create_connection](GapCommands::ext_create_connection).
 pub struct ExtCreateConnectionParams {
     pub initiating_mode: u8,
@@ -3451,6 +3908,7 @@ pub struct ExtCreateConnectionParams {
     pub num_phys: usize,
 }
 
+#[cfg(after_fw_0_17_1)]
 impl ExtCreateConnectionParams {
     pub(crate) const MAX_LENGTH: usize = 14 + 3 * 16;
 

@@ -25,10 +25,20 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 use core::convert::{TryFrom, TryInto};
-use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::time::Duration;
 
 use super::AttributeHandle;
+/// Parameters returned by GAP commands with declarative payloads.
+pub use crate::vendor::command::gap::{GapBondedDevices, GapInit};
+/// Parameters returned by the GATT Read Handle Value command.
+pub use crate::vendor::command::gatt::GattHandleValue;
+/// Parameters returned by GATT server-definition commands.
+pub use crate::vendor::command::gatt::{
+    GattCharacteristic, GattCharacteristicDescriptor, GattService,
+};
+/// Parameters returned by declarative HAL commands.
+pub use crate::vendor::command::hal::{HalFirmwareRevision, HalPmDebugInfo, HalTxTestPacketCount};
+use crate::vendor::command::hal::{HalRawRssi, HalRssi};
 
 /// Vendor-specific commands that may generate the
 /// [Command Complete](crate::event::command::ReturnParameters::Vendor) event. If the commands have defined
@@ -55,6 +65,7 @@ pub enum VendorReturnParameters {
 
     /// Status returned by the
     /// HAL Device Standby command.
+    #[cfg(after_fw_0_17_1)]
     HalDeviceStandby(crate::Status),
 
     /// Parameters returned by the
@@ -100,9 +111,13 @@ pub enum VendorReturnParameters {
     /// command.
     HalReadRadioReg(u8),
 
+    /// Status returned by the [HAL Write Radio Register](crate::vendor::command::hal::HalCommands::write_radio_reg)
+    /// command.
+    HalWriteRadioReg(crate::Status),
+
     /// Parameters returned by the [HAL Read Raw RSSI](crate::vendor::command::hal::HalCommands::read_raw_rssi)
     /// command.
-    HalReadRawRssi(u8),
+    HalReadRawRssi([u8; 3]),
 
     /// Status returned by the [HAL RX Start](crate::vendor::command::hal::HalCommands::rx_start) command.
     HalRxStart(crate::Status),
@@ -217,6 +232,7 @@ pub enum VendorReturnParameters {
     /// Parameters returned by the
     /// [GAP Pairing Request Reply](crate::vendor::command::gap::GapCommands::pairing_request_reply)
     /// command.
+    #[cfg(after_fw_0_17_1)]
     GapPairingRequestReply(crate::Status),
 
     /// Parameters returned by the
@@ -367,6 +383,7 @@ pub enum VendorReturnParameters {
 
     /// Parameters returned by the
     /// [GATT Read Handle Value](crate::vendor::command::gatt::GattCommands::read_handle_value_offset) command.
+    #[cfg(after_fw_0_17_1)]
     GattReadHandleValueOffset(GattHandleValue),
 
     /// Parameters returned by the
@@ -404,10 +421,10 @@ pub enum VendorReturnParameters {
     /// [L2CAP COC Connect](crate::vendor::command::l2cap::L2capCommands::coc_connect) command.
     L2CapCocConnect(crate::Status),
 
-    /// Status returned by the
+    /// Parameters returned by the
     /// [L2CAP COC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm)
     /// command.
-    L2CapCocConnectConfirm(crate::Status),
+    L2CapCocConnectConfirm(L2CapCocConnectConfirmResponse),
 
     /// Status returned by the
     /// [L2CAP COC Reconfig](crate::vendor::command::l2cap::L2capCommands::coc_reconfig) command.
@@ -451,6 +468,7 @@ impl VendorReturnParameters {
             crate::vendor::opcode::HAL_SET_TX_POWER_LEVEL => Ok(
                 VendorReturnParameters::HalSetTxPowerLevel(to_status(&bytes[3..])?),
             ),
+            #[cfg(after_fw_0_17_1)]
             crate::vendor::opcode::HAL_DEVICE_STANDBY => Ok(
                 VendorReturnParameters::HalDeviceStandby(to_status(&bytes[3..])?),
             ),
@@ -483,22 +501,21 @@ impl VendorReturnParameters {
             crate::vendor::opcode::HAL_SET_PERIPHERAL_LATENCY => Ok(
                 VendorReturnParameters::HalSetPeripheralLatency(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::HAL_READ_RSSI => Ok(VendorReturnParameters::HalReadRssi({
-                require_len!(&bytes[3..], 1);
-                bytes[3]
-            })),
+            crate::vendor::opcode::HAL_READ_RSSI => Ok(VendorReturnParameters::HalReadRssi(
+                decode_status_prefixed::<HalRssi>(&bytes[3..], 1)?.value,
+            )),
             crate::vendor::opcode::HAL_READ_RADIO_REG => {
                 Ok(VendorReturnParameters::HalReadRadioReg({
                     require_len!(&bytes[3..], 1);
                     bytes[3]
                 }))
             }
-            crate::vendor::opcode::HAL_READ_RAW_RSSI => {
-                Ok(VendorReturnParameters::HalReadRawRssi({
-                    require_len!(&bytes[3..], 1);
-                    bytes[3]
-                }))
-            }
+            crate::vendor::opcode::HAL_WRITE_RADIO_REG => Ok(
+                VendorReturnParameters::HalWriteRadioReg(to_status(&bytes[3..])?),
+            ),
+            crate::vendor::opcode::HAL_READ_RAW_RSSI => Ok(VendorReturnParameters::HalReadRawRssi(
+                decode_status_prefixed::<HalRawRssi>(&bytes[3..], 3)?.value,
+            )),
             crate::vendor::opcode::HAL_RX_START => {
                 Ok(VendorReturnParameters::HalRxStart(to_status(&bytes[3..])?))
             }
@@ -582,6 +599,7 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GAP_IS_DEVICE_BONDED => Ok(
                 VendorReturnParameters::GapIsDeviceBonded(to_status(&bytes[3..])?),
             ),
+            #[cfg(after_fw_0_17_1)]
             crate::vendor::opcode::GAP_PAIRING_REQUEST_REPLY => Ok(
                 VendorReturnParameters::GapPairingRequestReply(to_status(&bytes[3..])?),
             ),
@@ -691,6 +709,7 @@ impl VendorReturnParameters {
             crate::vendor::opcode::GATT_READ_HANDLE_VALUE => Ok(
                 VendorReturnParameters::GattReadHandleValue(to_gatt_handle_value(&bytes[3..])?),
             ),
+            #[cfg(after_fw_0_17_1)]
             crate::vendor::opcode::GATT_READ_HANDLE_VALUE_OFFSET => {
                 Ok(VendorReturnParameters::GattReadHandleValueOffset(
                     to_gatt_handle_value(&bytes[3..])?,
@@ -722,10 +741,11 @@ impl VendorReturnParameters {
             crate::vendor::opcode::L2CAP_COC_CONNECT => Ok(
                 VendorReturnParameters::L2CapCocConnect(to_status(&bytes[3..])?),
             ),
-            crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM => Ok(
-                // TODO: This has a return buffer
-                VendorReturnParameters::L2CapCocConnectConfirm(to_status(&bytes[3..])?),
-            ),
+            crate::vendor::opcode::L2CAP_COC_CONNECT_CONFIRM => {
+                Ok(VendorReturnParameters::L2CapCocConnectConfirm(
+                    to_l2cap_coc_connect_confirm_response(&bytes[3..])?,
+                ))
+            }
             crate::vendor::opcode::L2CAP_COC_RECONFIG => Ok(
                 VendorReturnParameters::L2CapCocReconfig(to_status(&bytes[3..])?),
             ),
@@ -759,21 +779,20 @@ fn to_status(bytes: &[u8]) -> Result<crate::Status, crate::event::Error> {
     bytes[0].try_into().map_err(crate::event::rewrap_bad_status)
 }
 
-/// Parameters returned by the
-/// [HAL Get Firmware Revision](crate::vendor::command::hal::HalCommands::get_firmware_revision) command.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HalFirmwareRevision {
-    /// The firmware revision number.
-    pub revision: u16,
+fn decode_status_prefixed<T>(bytes: &[u8], payload_len: usize) -> Result<T, crate::event::Error>
+where
+    for<'de> T: bt_hci::FromHciBytes<'de>,
+{
+    let expected_len = payload_len + 1;
+    if bytes.len() != expected_len {
+        return Err(crate::event::Error::BadLength(bytes.len(), expected_len));
+    }
+    <T as bt_hci::FromHciBytes>::from_hci_bytes_complete(&bytes[1..])
+        .map_err(|_| crate::event::Error::BadLength(bytes.len(), expected_len))
 }
 
 fn to_hal_firmware_revision(bytes: &[u8]) -> Result<HalFirmwareRevision, crate::event::Error> {
-    require_len!(bytes, 3);
-
-    Ok(HalFirmwareRevision {
-        revision: LittleEndian::read_u16(&bytes[1..]),
-    })
+    decode_status_prefixed(bytes, 2)
 }
 
 impl TryFrom<&[u8]> for HalFirmwareRevision {
@@ -869,20 +888,8 @@ fn to_hal_config_parameter(bytes: &[u8]) -> Result<HalConfigParameter, crate::ev
     }
 }
 
-/// Parameters returned by the
-/// [HAL Get Tx Test Packet Count](crate::vendor::command::hal::HalCommands::get_tx_test_packet_count) command.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HalTxTestPacketCount {
-    /// Number of packets sent during the last Direct TX test.
-    pub packet_count: u32,
-}
-
 fn to_hal_tx_test_packet_count(bytes: &[u8]) -> Result<HalTxTestPacketCount, crate::event::Error> {
-    require_len!(bytes, 5);
-    Ok(HalTxTestPacketCount {
-        packet_count: LittleEndian::read_u32(&bytes[1..]),
-    })
+    decode_status_prefixed(bytes, 4)
 }
 
 impl TryFrom<&[u8]> for HalTxTestPacketCount {
@@ -1013,27 +1020,8 @@ impl TryFrom<&[u8]> for HalAnchorPeriod {
     }
 }
 
-/// Parameters returned by the [HAL Get PM Debug Info](crate::vendor::command::hal::HalCommands::get_pm_debug_info)
-/// command.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HalPmDebugInfo {
-    /// MBlocks allocated for TXing
-    pub tx: u8,
-    /// MBlocks allocated for RXing
-    pub rx: u8,
-    /// Overall allocated MBlocks
-    pub mblocks: u8,
-}
-
 fn to_hal_pm_debug_info(bytes: &[u8]) -> Result<HalPmDebugInfo, crate::event::Error> {
-    require_len!(bytes, 4);
-
-    Ok(HalPmDebugInfo {
-        tx: bytes[1],
-        rx: bytes[2],
-        mblocks: bytes[3],
-    })
+    decode_status_prefixed(bytes, 3)
 }
 
 impl TryFrom<&[u8]> for HalPmDebugInfo {
@@ -1042,20 +1030,6 @@ impl TryFrom<&[u8]> for HalPmDebugInfo {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         to_hal_pm_debug_info(bytes)
     }
-}
-
-/// Parameters returned by the [GAP Init](crate::vendor::command::gap::GapCommands::init) command.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GapInit {
-    /// Handle for the GAP service
-    pub service_handle: AttributeHandle,
-
-    /// Handle for the device name characteristic added to the GAP service.
-    pub dev_name_handle: AttributeHandle,
-
-    /// Handle for the appearance characteristic added to the GAP service.
-    pub appearance_handle: AttributeHandle,
 }
 
 fn to_gap_init(bytes: &[u8]) -> Result<GapInit, crate::event::Error> {
@@ -1081,17 +1055,12 @@ impl TryFrom<&[u8]> for GapInit {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GapSecurityLevel {
-    /// Is MITM (man-in-the-middle) protection required?
-    pub mitm_protection_required: bool,
+    /// GAP security mode. STM32WB firmware currently reports `0x01` for
+    /// Security Mode 1.
+    pub security_mode: u8,
 
-    /// Is bonding required?
-    pub bonding_required: bool,
-
-    /// Is out-of-band data present?
-    pub out_of_band_data_present: bool,
-
-    /// Is a pass key required, and if so, how is it generated?
-    pub pass_key_required: PassKeyRequirement,
+    /// GAP security level, from `0x01` (Level 1) through `0x04` (Level 4).
+    pub security_level: u8,
 }
 
 impl TryFrom<&[u8]> for GapSecurityLevel {
@@ -1127,6 +1096,7 @@ impl TryFrom<u8> for PassKeyRequirement {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 pub(crate) fn to_boolean(value: u8) -> Result<bool, super::VendorError> {
     match value {
         0 => Ok(false),
@@ -1136,13 +1106,11 @@ pub(crate) fn to_boolean(value: u8) -> Result<bool, super::VendorError> {
 }
 
 fn to_gap_security_level(bytes: &[u8]) -> Result<GapSecurityLevel, crate::event::Error> {
-    require_len!(bytes, 5);
+    require_len!(bytes, 3);
 
     Ok(GapSecurityLevel {
-        mitm_protection_required: to_boolean(bytes[1]).map_err(crate::event::Error::Vendor)?,
-        bonding_required: to_boolean(bytes[2]).map_err(crate::event::Error::Vendor)?,
-        out_of_band_data_present: to_boolean(bytes[3]).map_err(crate::event::Error::Vendor)?,
-        pass_key_required: bytes[4].try_into().map_err(crate::event::Error::Vendor)?,
+        security_mode: bytes[1],
+        security_level: bytes[2],
     })
 }
 
@@ -1182,41 +1150,11 @@ fn to_gap_resolve_private_address(
     }
 }
 
-/// Parameters returned by the [GAP Get Bonded Devices](crate::vendor::command::gap::GapCommands::get_bonded_devices)
-/// command.
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GapBondedDevices {
-    // Number of peer addresses in the event, and a buffer that can hold all of the addresses.
-    address_count: usize,
-    address_buffer: [crate::BdAddrType; MAX_ADDRESSES],
-}
-
 impl TryFrom<&[u8]> for GapBondedDevices {
     type Error = crate::event::Error;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         to_gap_bonded_devices(bytes)
-    }
-}
-
-// Max packet size (255 bytes) less non-address data (4 bytes) divided by peer address size (7):
-const MAX_ADDRESSES: usize = 35;
-
-impl GapBondedDevices {
-    /// Return an iterator over the bonded device addresses.
-    pub fn bonded_addresses(&self) -> &[crate::BdAddrType] {
-        &self.address_buffer[..self.address_count]
-    }
-}
-
-impl Debug for GapBondedDevices {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{{")?;
-        for addr in self.bonded_addresses().iter() {
-            write!(f, "{:?}, ", addr)?;
-        }
-        write!(f, "}}")
     }
 }
 
@@ -1229,14 +1167,16 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
 
             require_len_at_least!(bytes, HEADER_LEN);
             let address_count = bytes[1] as usize;
-            if bytes.len() != HEADER_LEN + ADDR_LEN * address_count {
+            if address_count > GapBondedDevices::MAX_ADDRESSES
+                || bytes.len() != HEADER_LEN + ADDR_LEN * address_count
+            {
                 return Err(crate::event::Error::Vendor(
                     super::VendorError::PartialBondedDeviceAddress,
                 ));
             }
 
             let mut address_buffer =
-                [crate::BdAddrType::Public(crate::BdAddr([0; 6])); MAX_ADDRESSES];
+                [crate::BdAddrType::Public(crate::BdAddr([0; 6])); GapBondedDevices::MAX_ADDRESSES];
             for (i, byte) in address_buffer.iter_mut().enumerate().take(address_count) {
                 let index = HEADER_LEN + i * ADDR_LEN;
                 let mut addr = [0; 6];
@@ -1246,30 +1186,26 @@ fn to_gap_bonded_devices(bytes: &[u8]) -> Result<GapBondedDevices, crate::event:
                 })?;
             }
 
-            Ok(GapBondedDevices {
-                address_count,
+            let addresses = crate::vendor::command::BoundedItems::from_array_prefix(
                 address_buffer,
-            })
+                address_count,
+            )
+            .map_err(|_| {
+                crate::event::Error::Vendor(super::VendorError::PartialBondedDeviceAddress)
+            })?;
+            Ok(GapBondedDevices { addresses })
         }
-        _ => Ok(GapBondedDevices {
-            address_count: 0,
-            address_buffer: [crate::BdAddrType::Public(crate::BdAddr([0; 6])); MAX_ADDRESSES],
-        }),
+        _ => {
+            let addresses = crate::vendor::command::BoundedItems::from_array_prefix(
+                [crate::BdAddrType::Public(crate::BdAddr([0; 6])); GapBondedDevices::MAX_ADDRESSES],
+                0,
+            )
+            .map_err(|_| {
+                crate::event::Error::Vendor(super::VendorError::PartialBondedDeviceAddress)
+            })?;
+            Ok(GapBondedDevices { addresses })
+        }
     }
-}
-
-/// Parameters returned by the [GATT Add Service](crate::vendor::command::gatt::GattCommands::add_service) and
-/// [GATT Include Service](crate::vendor::command::gatt::GattCommands::include_service) commands.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GattService {
-    /// Handle of the Service
-    ///
-    /// When this service is added to the server, a handle is allocated by the server to this
-    /// service. Also server allocates a range of handles for this service from `service_handle` to
-    /// `service_handle +
-    /// [max_attribute_records](crate::vendor::command::gatt::AddServiceParameters::max_attribute_records)`.
-    pub service_handle: AttributeHandle,
 }
 
 impl TryFrom<&[u8]> for GattService {
@@ -1288,15 +1224,6 @@ fn to_gatt_service(bytes: &[u8]) -> Result<GattService, crate::event::Error> {
     })
 }
 
-/// Parameters returned by the [GATT Add Characteristic](crate::vendor::command::gatt::GattCommands::add_characteristic)
-/// command.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GattCharacteristic {
-    /// Handle of the characteristic.
-    pub characteristic_handle: AttributeHandle,
-}
-
 fn to_gatt_characteristic(bytes: &[u8]) -> Result<GattCharacteristic, crate::event::Error> {
     require_len!(bytes, 3);
 
@@ -1311,15 +1238,6 @@ impl TryFrom<&[u8]> for GattCharacteristic {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         to_gatt_characteristic(bytes)
     }
-}
-
-/// Parameters returned by the
-/// [GATT Add Characteristic Descriptor](crate::vendor::command::gatt::GattCommands::add_characteristic_descriptor) command.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GattCharacteristicDescriptor {
-    /// Handle of the characteristic.
-    pub descriptor_handle: AttributeHandle,
 }
 
 fn to_gatt_characteristic_descriptor(
@@ -1340,50 +1258,31 @@ impl TryFrom<&[u8]> for GattCharacteristicDescriptor {
     }
 }
 
-/// Parameters returned by the GATT Read Handle Value
-/// command.
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GattHandleValue {
-    value_buf: [u8; GattHandleValue::MAX_VALUE_BUF],
-    value_len: usize,
-}
-
-impl Debug for GattHandleValue {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{{")?;
-        for addr in self.value().iter() {
-            write!(f, "{:?}, ", addr)?;
-        }
-        write!(f, "}}}}")
-    }
-}
-
-impl GattHandleValue {
-    // Maximum length of the handle value. The spec says the length can be 2 bytes (up to 65535),
-    // but the communication layer is limited to 255 bytes in a packet. There are 6 bytes reserved
-    // for data other than the value, so the maximum length of the value buffer is 249 bytes.
-    const MAX_VALUE_BUF: usize = 249;
-
-    /// Return the handle value. Only valid bytes are returned.
-    pub fn value(&self) -> &[u8] {
-        &self.value_buf[..self.value_len]
-    }
-}
-
 fn to_gatt_handle_value(bytes: &[u8]) -> Result<GattHandleValue, crate::event::Error> {
-    require_len_at_least!(bytes, 3);
+    // ACI_GATT_READ_HANDLE_VALUE returns Status, Length, Value_Length, then Value.
+    // `Length` is the total attribute length; this type intentionally exposes the requested
+    // slice returned in `Value`.
+    require_len_at_least!(bytes, 5);
 
-    let value_len = LittleEndian::read_u16(&bytes[1..3]) as usize;
-    require_len!(bytes, 3 + value_len);
+    let value_len = LittleEndian::read_u16(&bytes[3..5]) as usize;
+    require_len!(bytes, 5 + value_len);
+    if value_len > GattHandleValue::MAX_VALUE_LEN {
+        return Err(crate::event::Error::BadLength(
+            value_len,
+            GattHandleValue::MAX_VALUE_LEN,
+        ));
+    }
 
-    let mut handle_value = GattHandleValue {
-        value_buf: [0; GattHandleValue::MAX_VALUE_BUF],
-        value_len,
-    };
-    handle_value.value_buf[..value_len].copy_from_slice(&bytes[3..]);
-
-    Ok(handle_value)
+    <GattHandleValue as bt_hci::FromHciBytes>::from_hci_bytes_complete(&bytes[1..]).map_err(
+        |error| match error {
+            bt_hci::FromHciBytesError::InvalidSize => {
+                crate::event::Error::BadLength(bytes.len(), 5 + value_len)
+            }
+            bt_hci::FromHciBytesError::InvalidValue => {
+                crate::event::Error::BadLength(value_len, GattHandleValue::MAX_VALUE_LEN)
+            }
+        },
+    )
 }
 
 impl TryFrom<&[u8]> for GattHandleValue {
@@ -1391,5 +1290,109 @@ impl TryFrom<&[u8]> for GattHandleValue {
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         to_gatt_handle_value(bytes)
+    }
+}
+
+/// Parameters returned by the
+/// [L2CAP CoC Connect Confirm](crate::vendor::command::l2cap::L2capCommands::coc_connect_confirm)
+/// command.
+///
+/// CubeWB returns the number of created channels followed by exactly that many
+/// channel indices. The generated API limits the count to five even though its
+/// C receive buffer is allocated at the generic event-capacity limit.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct L2CapCocConnectConfirmResponse {
+    /// Number of created channels.
+    pub channel_number: u8,
+    channel_index_list: [u8; Self::MAX_CHANNELS],
+}
+
+impl L2CapCocConnectConfirmResponse {
+    /// Maximum number of channel indices that can be returned by this command.
+    pub const MAX_CHANNELS: usize = 5;
+
+    /// Channel indices reported by the controller.
+    pub fn channel_indices(&self) -> &[u8] {
+        &self.channel_index_list[..usize::from(self.channel_number)]
+    }
+
+    pub(crate) fn from_channel_indices(
+        channel_indices: &[u8],
+    ) -> Result<Self, crate::event::Error> {
+        if channel_indices.len() > Self::MAX_CHANNELS {
+            return Err(crate::event::Error::BadLength(
+                channel_indices.len(),
+                Self::MAX_CHANNELS,
+            ));
+        }
+        let mut channel_index_list = [0; Self::MAX_CHANNELS];
+        channel_index_list[..channel_indices.len()].copy_from_slice(channel_indices);
+        Ok(Self {
+            channel_number: channel_indices.len() as u8,
+            channel_index_list,
+        })
+    }
+}
+
+fn to_l2cap_coc_connect_confirm_response(
+    bytes: &[u8],
+) -> Result<L2CapCocConnectConfirmResponse, crate::event::Error> {
+    // Status + Channel_Number. `bytes` includes the Command Complete status;
+    // declarative command return decoders receive only the bytes after it.
+    require_len_at_least!(bytes, 2);
+    let channel_number = usize::from(bytes[1]);
+    if channel_number > L2CapCocConnectConfirmResponse::MAX_CHANNELS {
+        return Err(crate::event::Error::BadLength(
+            channel_number,
+            L2CapCocConnectConfirmResponse::MAX_CHANNELS,
+        ));
+    }
+    require_len!(bytes, 2 + channel_number);
+
+    L2CapCocConnectConfirmResponse::from_channel_indices(&bytes[2..])
+}
+
+impl TryFrom<&[u8]> for L2CapCocConnectConfirmResponse {
+    type Error = crate::event::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        // The event-facing conversion includes the Command Complete status,
+        // unlike the generated declarative return decoder.
+        to_l2cap_coc_connect_confirm_response(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_gatt_read_handle_value_response() {
+        // Status + total attribute length + returned value length + value.
+        let value = to_gatt_handle_value(&[0x00, 0x34, 0x12, 0x03, 0x00, 0xAA, 0xBB, 0xCC])
+            .expect("valid ACI_GATT_READ_HANDLE_VALUE response");
+
+        assert_eq!(value.value(), [0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn rejects_oversized_gatt_read_handle_value_response() {
+        let mut bytes = [0; 255];
+        bytes[3] = 250;
+
+        let err = to_gatt_handle_value(&bytes).expect_err("value cannot exceed response buffer");
+        assert_eq!(
+            err,
+            crate::event::Error::BadLength(250, GattHandleValue::MAX_VALUE_LEN)
+        );
+    }
+
+    #[test]
+    fn parses_l2cap_coc_connect_confirm_response() {
+        let response = to_l2cap_coc_connect_confirm_response(&[0x00, 2, 0xA1, 0xB2])
+            .expect("valid L2CAP CoC Connect Confirm response");
+        assert_eq!(response.channel_number, 2);
+        assert_eq!(response.channel_indices(), [0xA1, 0xB2]);
     }
 }

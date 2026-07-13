@@ -1,0 +1,123 @@
+use std::{
+    cmp::Ordering,
+    env,
+    path::{Path, PathBuf},
+};
+
+// Keep the build script and the compliance checker on one implementation of
+// feature discovery and version comparison. If these two paths disagree, the
+// checker could report a feature surface that rustc did not actually compile.
+#[path = "tools/compliance/src/firmware.rs"]
+#[allow(dead_code)]
+mod firmware;
+
+use firmware::FirmwareVersion;
+
+fn main() {
+    println!("cargo::rerun-if-changed=Cargo.toml");
+    println!("cargo::rerun-if-changed=tools/compliance/src/firmware.rs");
+
+    let manifest_path = manifest_path();
+    let crate_dir = manifest_path
+        .parent()
+        .expect("Cargo.toml path must have a parent directory");
+    let mut firmwares = FirmwareVersion::declared_in_manifest(crate_dir).unwrap_or_else(|error| {
+        panic!(
+            "failed to discover firmware features from {}: {error}",
+            manifest_path.display()
+        )
+    });
+
+    if firmwares.is_empty() {
+        panic!("no `fw_<major>_<minor>_<patch>` features were found in [features]");
+    }
+
+    // `FirmwareVersion` has numeric ordering, so 0.17.0 correctly sorts after
+    // 0.9.0. The same ordering is used by the compliance checker when it
+    // evaluates a source-level `before_`/`only_`/`after_`/`since_` predicate.
+    firmwares.sort();
+    for pair in firmwares.windows(2) {
+        if pair[0] == pair[1] {
+            panic!(
+                "firmware feature `{}` is declared more than once",
+                pair[0].feature_name()
+            );
+        }
+    }
+
+    for firmware in &firmwares {
+        let feature = firmware.feature_name();
+        println!("cargo::rerun-if-env-changed={}", feature_env_var(&feature));
+        for cfg_name in firmware_cfg_names(&feature) {
+            for prefix in ["before", "only", "after", "since"] {
+                println!("cargo::rustc-check-cfg=cfg({prefix}_{cfg_name})");
+            }
+        }
+    }
+
+    let enabled = firmwares
+        .iter()
+        .filter(|firmware| env::var_os(feature_env_var(&firmware.feature_name())).is_some())
+        .collect::<Vec<_>>();
+
+    let [selected] = enabled.as_slice() else {
+        let enabled = enabled
+            .iter()
+            .map(|firmware| firmware.feature_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let available = firmwares
+            .iter()
+            .map(|firmware| firmware.feature_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        panic!(
+            "exactly one firmware feature must be enabled; enabled: [{enabled}]; available: [{available}]"
+        );
+    };
+    let selected = *selected;
+
+    for firmware in &firmwares {
+        let feature = firmware.feature_name();
+        match selected.cmp(firmware) {
+            Ordering::Less => emit_cfg("before", &feature),
+            Ordering::Equal => emit_cfg("only", &feature),
+            Ordering::Greater => emit_cfg("after", &feature),
+        }
+
+        if selected >= firmware {
+            emit_cfg("since", &feature);
+        }
+    }
+}
+
+fn manifest_path() -> PathBuf {
+    Path::new(
+        &env::var_os("CARGO_MANIFEST_DIR")
+            .expect("Cargo must set CARGO_MANIFEST_DIR for build scripts"),
+    )
+    .join("Cargo.toml")
+}
+
+fn feature_env_var(feature: &str) -> String {
+    format!(
+        "CARGO_FEATURE_{}",
+        feature.to_ascii_uppercase().replace('-', "_")
+    )
+}
+
+fn emit_cfg(prefix: &str, feature: &str) {
+    for cfg_name in firmware_cfg_names(feature) {
+        println!("cargo::rustc-cfg={prefix}_{cfg_name}");
+    }
+}
+
+/// Emit both the explicit `*_fw_0_15_0` spelling used by this crate and the
+/// short `*_0_15_0` spelling from the original feature-gating proposal.
+fn firmware_cfg_names(feature: &str) -> [String; 2] {
+    let short_name = feature
+        .strip_prefix("fw_")
+        .expect("firmware features are filtered by the `fw_` prefix");
+    [feature.to_owned(), short_name.to_owned()]
+}

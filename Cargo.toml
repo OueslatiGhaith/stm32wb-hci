@@ -1,9 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["examples/*"]
+members = ["examples/*", "tools/compliance"]
+# Keep ordinary builds of this no_std crate independent of the host-only
+# compliance CLI, especially for embedded cross-compilation targets.
+default-members = ["."]
 
 [package]
 name = "stm32wb-hci"
+build = "build.rs"
 edition = "2024"
 version = "0.18.0"
 authors = [
@@ -35,8 +39,18 @@ critical-section = { version = "1.2", features = ["std"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
+[build-dependencies]
+# `build.rs` shares firmware feature discovery with the host-only compliance
+# tool, so both paths use a real TOML parser rather than line-based parsing.
+toml = "1"
+
 [features]
+default = ["fw_0_17_1"]
 defmt = ["dep:defmt", "bt-hci/defmt"]
+fw_0_15_0 = []
+fw_0_16_0 = []
+fw_0_17_0 = []
+fw_0_17_1 = []
 
 [profile.dev]
 debug = 2

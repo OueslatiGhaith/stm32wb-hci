@@ -8,12 +8,58 @@ use byteorder::{ByteOrder, LittleEndian};
 use crate::{
     BadStatusError, Status,
     vendor::{
-        command::{ParamBuffer, ReturnBuffer},
+        command::BoundedBytes,
         event::command::{
-            HalAnchorPeriod, HalConfigData, HalLinkStatus, HalPmDebugInfo, HalTxTestPacketCount,
+            ClientStatus, HalAnchorPeriod, HalConfigData, HalConfigParameter, HalLinkStatus,
+            LinkState,
         },
     },
 };
+
+impl TryFrom<BoundedBytes<16>> for HalConfigData {
+    type Error = Error;
+
+    fn try_from(value: BoundedBytes<16>) -> Result<Self, Self::Error> {
+        let bytes = value.as_slice();
+        let value = match bytes.len() {
+            1 => HalConfigParameter::Byte(bytes[0]),
+            2 => HalConfigParameter::Diversifier(LittleEndian::read_u16(bytes)),
+            6 => {
+                let mut address = [0; 6];
+                address.copy_from_slice(bytes);
+                HalConfigParameter::PublicAddress(crate::BdAddr(address))
+            }
+            16 => {
+                let mut key = [0; 16];
+                key.copy_from_slice(bytes);
+                HalConfigParameter::EncryptionKey(crate::host::EncryptionKey(key))
+            }
+            other => {
+                return Err(crate::event::Error::Vendor(
+                    crate::vendor::event::VendorError::BadConfigParameterLength(other),
+                )
+                .into());
+            }
+        };
+        Ok(Self { value })
+    }
+}
+
+impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
+    fn from_hci_field(bytes: &[u8; 16]) -> Result<Self, bt_hci::FromHciBytesError> {
+        Ok(core::array::from_fn(|index| {
+            LittleEndian::read_u16(&bytes[index * 2..index * 2 + 2])
+        }))
+    }
+}
+
+impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
+    fn from_hci_field(bytes: &[u8; 44]) -> Result<Self, bt_hci::FromHciBytesError> {
+        Ok(core::array::from_fn(|index| {
+            LittleEndian::read_u16(&bytes[index * 2..index * 2 + 2])
+        }))
+    }
+}
 
 /// Vendor-specific HCI commands.
 pub trait HalCommands {
@@ -27,6 +73,10 @@ pub trait HalCommands {
     ///
     /// The controller will generate a
     /// [command complete](crate::event::command::CommandComplete) event.
+    ///
+    /// The STM32WB generated API calls this a build number and returns it as
+    /// a 16-bit value. It remains widened to `u64` here for source
+    /// compatibility with the pre-feature-gating API.
     async fn get_firmware_revision(&self) -> Result<u64, Error>;
 
     /// This command writes a value to a low level configure data structure. It is useful to setup
@@ -175,8 +225,12 @@ pub trait HalCommands {
     /// This command reads a register value from the RF module
     async fn read_radio_reg(&self, address: u8) -> Result<u8, Error>;
 
-    /// This command returns the raw value of the RSSI
-    async fn read_raw_rssi(&self) -> Result<u8, Error>;
+    /// This command writes a register value to the RF module.
+    async fn write_radio_reg(&self, address: u8, value: u8) -> Result<(), Error>;
+
+    /// This command returns the three raw RSSI bytes reported by the
+    /// STM32WB firmware.
+    async fn read_raw_rssi(&self) -> Result<[u8; 3], Error>;
 
     /// This command does set up the RF to listen to a specific RF Channel.
     ///
@@ -192,9 +246,11 @@ pub trait HalCommands {
     /// the sleep mode is entered immediately after its completion.
     async fn stack_reset(&self) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Returns the status of BLE links (up to 20 links plus 2 ISO streams).
     async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Configure ACI_HAL_SYNC_EVENT.
     async fn set_sync_event_config(
         &self,
@@ -204,6 +260,7 @@ pub trait HalCommands {
         trigger_source: SyncTriggerSource,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Start continuous transmit test mode.
     async fn continuous_tx_start(
         &self,
@@ -212,6 +269,7 @@ pub trait HalCommands {
         pattern: ContinuousTxPattern,
     ) -> Result<(), Error>;
 
+    #[cfg(after_fw_0_17_1)]
     /// Encrypt or decrypt data using the Encrypted Advertising Data scheme.
     async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error>;
 }
@@ -219,27 +277,51 @@ pub trait HalCommands {
 vendor_cmd! {
     HalGetFirmwareRevision(HAL_GET_FIRMWARE_REVISION) {
         Params = ();
-        Return = ReturnBuffer<9>;
+        Completion = CommandComplete;
+        Return = HalFirmwareRevision {
+            revision: u16 => 2,
+        };
     }
 }
 
 vendor_cmd! {
     HalWriteConfigData(HAL_WRITE_CONFIG_DATA) {
-        Params<'a> = ParamBuffer<'a>;
+        Params<'a> = {
+            offset: u8 => 1,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 46,
+            },
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     HalReadConfigData(HAL_READ_CONFIG_DATA) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<17>;
+        Params = {
+            param: ConfigParameter => 1,
+        };
+        Completion = CommandComplete;
+        Return = HalReadConfigDataReturn {
+            value: BoundedBytes<16> => {
+                kind: trailing_bytes,
+                min_len: 1,
+                max_len: 16,
+            },
+        };
     }
 }
 
 vendor_cmd! {
     HalSetTxPowerLevel(HAL_SET_TX_POWER_LEVEL) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            high_power_mode: bool => 1,
+            power_level: PowerLevel => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -247,13 +329,20 @@ vendor_cmd! {
 vendor_cmd! {
     HalGetTxTestPacketCount(HAL_TX_TEST_PACKET_COUNT) {
         Params = ();
-        Return = ReturnBuffer<5>;
+        Completion = CommandComplete;
+        Return = HalTxTestPacketCount {
+            packet_count: u32 => 4,
+        };
     }
 }
 
 vendor_cmd! {
     HalStartTone(HAL_START_TONE) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            channel: u8 => 1,
+            freq_offset: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -261,20 +350,28 @@ vendor_cmd! {
 vendor_cmd! {
     HalStopTone(HAL_STOP_TONE) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
-    HalGetLinkStatus(HAL_STOP_TONE) {
+    HalGetLinkStatus(HAL_GET_LINK_STATUS) {
         Params = ();
-        Return = ReturnBuffer<25>;
+        Completion = CommandComplete;
+        Return = HalLinkStatusRaw {
+            link_status: [u8; 8] => 8,
+            link_connection_handles: [u16; 8] => 16,
+        };
     }
 }
 
 vendor_cmd! {
     HalSetRadioActivityMask(HAL_SET_RADIO_ACTIVITY_MASK) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            mask: RadioActivityFlags => 2,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -282,13 +379,20 @@ vendor_cmd! {
 vendor_cmd! {
     HalGetAnchorPeriod(HAL_GET_ANCHOR_PERIOD) {
         Params = ();
-        Return = ReturnBuffer<9>;
+        Completion = CommandComplete;
+        Return = HalAnchorPeriodRaw {
+            anchor_interval: u32 => 4,
+            max_slot: u32 => 4,
+        };
     }
 }
 
 vendor_cmd! {
     HalSetEventMask(HAL_SET_EVENT_MASK) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            mask: HalEventFlags => 4,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -296,13 +400,21 @@ vendor_cmd! {
 vendor_cmd! {
     HalGetPmDebugInfo(HAL_GET_PM_DEBUG_INFO) {
         Params = ();
-        Return = ReturnBuffer<4>;
+        Completion = CommandComplete;
+        Return = HalPmDebugInfo {
+            tx: u8 => 1,
+            rx: u8 => 1,
+            mblocks: u8 => 1,
+        };
     }
 }
 
 vendor_cmd! {
     HalSetPeripheralLatency(HAL_SET_PERIPHERAL_LATENCY) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            enabled: bool => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -310,27 +422,52 @@ vendor_cmd! {
 vendor_cmd! {
     HalReadRssi(HAL_READ_RSSI) {
         Params = ();
-        Return = ReturnBuffer<2>;
+        Completion = CommandComplete;
+        Return = HalRssi {
+            value: u8 => 1,
+        };
     }
 }
 
 vendor_cmd! {
     HalReadRadioReg(HAL_READ_RADIO_REG) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<2>;
+        Params = {
+            address: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = HalRadioRegisterValue {
+            value: u8 => 1,
+        };
+    }
+}
+
+vendor_cmd! {
+    HalWriteRadioReg(HAL_WRITE_RADIO_REG) {
+        Params = {
+            address: u8 => 1,
+            value: u8 => 1,
+        };
+        Completion = CommandComplete;
+        Return = ();
     }
 }
 
 vendor_cmd! {
     HalReadRawRssi(HAL_READ_RAW_RSSI) {
         Params = ();
-        Return = ReturnBuffer<2>;
+        Completion = CommandComplete;
+        Return = HalRawRssi {
+            value: [u8; 3] => 3,
+        };
     }
 }
 
 vendor_cmd! {
     HalRxStart(HAL_RX_START) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            rf_channel: u8 => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -338,6 +475,7 @@ vendor_cmd! {
 vendor_cmd! {
     HalRxStop(HAL_RX_STOP) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -345,6 +483,7 @@ vendor_cmd! {
 vendor_cmd! {
     HalStackReset(HAL_STACK_RESET) {
         Params = ();
+        Completion = CommandComplete;
         Return = ();
     }
 }
@@ -352,28 +491,59 @@ vendor_cmd! {
 vendor_cmd! {
     HalGetLinkStatusV2(HAL_GET_LINK_STATUS_V2) {
         Params = ();
-        Return = ReturnBuffer<67>;
+        Completion = CommandComplete;
+        Return = HalLinkStatusV2Raw {
+            link_status: [u8; 22] => 22,
+            link_connection_handles: [u16; 22] => 44,
+        };
     }
 }
 
 vendor_cmd! {
     HalSetSyncEventConfig(HAL_SET_SYNC_EVENT_CONFIG) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            group_id: u8 => 1,
+            enable_sync: bool => 1,
+            enable_cb_trigger: bool => 1,
+            trigger_source: SyncTriggerSource => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     HalContinuousTxStart(HAL_CONTINUOUS_TX_START) {
-        Params<'a> = ParamBuffer<'a>;
+        Params = {
+            rf_channel: u8 => 1,
+            phy: ContinuousTxPhy => 1,
+            pattern: ContinuousTxPattern => 1,
+        };
+        Completion = CommandComplete;
         Return = ();
     }
 }
 
 vendor_cmd! {
     HalEadEncryptDecrypt(HAL_EAD_ENCRYPT_DECRYPT) {
-        Params<'a> = ParamBuffer<'a>;
-        Return = ReturnBuffer<32>;
+        Params<'a> = {
+            mode: EadMode => 1,
+            key: &'a [u8; 16] => 16,
+            iv: &'a [u8; 8] => 8,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 228,
+            },
+        };
+        Completion = CommandComplete;
+        Return = HalEadEncryptDecryptReturn {
+            data: BoundedBytes<237> => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 237,
+            },
+        };
     }
 }
 
@@ -381,59 +551,57 @@ impl<T> HalCommands for T
 where
     T: ControllerCmdSync<HalGetFirmwareRevision>
         + for<'t> ControllerCmdSync<HalWriteConfigData<'t>>
-        + for<'t> ControllerCmdSync<HalReadConfigData<'t>>
-        + for<'t> ControllerCmdSync<HalSetTxPowerLevel<'t>>
+        + ControllerCmdSync<HalReadConfigData>
+        + ControllerCmdSync<HalSetTxPowerLevel>
         + ControllerCmdSync<HalGetTxTestPacketCount>
-        + for<'t> ControllerCmdSync<HalStartTone<'t>>
+        + ControllerCmdSync<HalStartTone>
         + ControllerCmdSync<HalStopTone>
         + ControllerCmdSync<HalGetLinkStatus>
-        + for<'t> ControllerCmdSync<HalSetRadioActivityMask<'t>>
+        + ControllerCmdSync<HalSetRadioActivityMask>
         + ControllerCmdSync<HalGetAnchorPeriod>
-        + for<'t> ControllerCmdSync<HalSetEventMask<'t>>
+        + ControllerCmdSync<HalSetEventMask>
         + ControllerCmdSync<HalGetPmDebugInfo>
-        + for<'t> ControllerCmdSync<HalSetPeripheralLatency<'t>>
+        + ControllerCmdSync<HalSetPeripheralLatency>
         + ControllerCmdSync<HalReadRssi>
         + ControllerCmdSync<HalReadRawRssi>
-        + for<'t> ControllerCmdSync<HalReadRadioReg<'t>>
-        + for<'t> ControllerCmdSync<HalRxStart<'t>>
+        + ControllerCmdSync<HalReadRadioReg>
+        + ControllerCmdSync<HalWriteRadioReg>
+        + ControllerCmdSync<HalRxStart>
         + ControllerCmdSync<HalRxStop>
         + ControllerCmdSync<HalStackReset>
         + ControllerCmdSync<HalGetLinkStatusV2>
-        + for<'t> ControllerCmdSync<HalSetSyncEventConfig<'t>>
-        + for<'t> ControllerCmdSync<HalContinuousTxStart<'t>>
+        + ControllerCmdSync<HalSetSyncEventConfig>
+        + ControllerCmdSync<HalContinuousTxStart>
         + for<'t> ControllerCmdSync<HalEadEncryptDecrypt<'t>>,
 {
     async fn get_firmware_revision(&self) -> Result<u64, Error> {
-        Ok(u64::from_le_bytes(
-            HalGetFirmwareRevision::new()
-                .exec(self)
-                .await
-                .map_err(Error::from)?
-                .buf()
-                .try_into()
-                .unwrap(),
-        ))
-    }
-
-    hci_impl_variable_length_params!(write_config_data, ConfigData, HalWriteConfigData);
-
-    async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error> {
-        HalReadConfigData::new((&[param as u8][..]).into())
+        let revision = HalGetFirmwareRevision::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
+            .map_err(Error::from)?;
+        Ok(u64::from(revision.revision))
+    }
+
+    async fn write_config_data(&self, config: &ConfigData) -> Result<(), Error> {
+        let value = &config.value_buf[..usize::from(config.length)];
+        HalWriteConfigData::try_new(config.offset, value)?
+            .exec(self)
+            .await
             .map_err(Error::from)
     }
 
-    async fn set_tx_power_level(&self, level: PowerLevel) -> Result<(), Error> {
-        // Byte 0: enable high power mode - deprecated and ignored on STM32WB
-        // Byte 1: PA level
-        let mut bytes = [0; 2];
-        bytes[1] = level as u8;
+    async fn read_config_data(&self, param: ConfigParameter) -> Result<HalConfigData, Error> {
+        let value = HalReadConfigData::new(param)
+            .exec(self)
+            .await
+            .map_err(Error::from)?
+            .value;
+        value.try_into()
+    }
 
-        HalSetTxPowerLevel::new((&bytes[..]).into())
+    async fn set_tx_power_level(&self, level: PowerLevel) -> Result<(), Error> {
+        // High power mode is deprecated and ignored on STM32WB.
+        HalSetTxPowerLevel::new(false, level)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -443,9 +611,6 @@ where
         HalGetTxTestPacketCount::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
             .map_err(Error::from)
     }
 
@@ -455,7 +620,7 @@ where
             return Err(Error::InvalidChannel(channel));
         }
 
-        HalStartTone::new((&[channel, freq_offset][..]).into())
+        HalStartTone::new(channel, freq_offset)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -466,40 +631,45 @@ where
     }
 
     async fn get_link_status(&self) -> Result<HalLinkStatus, Error> {
-        HalGetLinkStatus::new()
+        let raw = HalGetLinkStatus::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        let mut clients = [ClientStatus {
+            state: LinkState::Idle,
+            conn_handle: crate::ConnectionHandle(0),
+        }; 8];
+        for (index, client) in clients.iter_mut().enumerate() {
+            client.state = raw.link_status[index]
+                .try_into()
+                .map_err(crate::event::Error::Vendor)?;
+            client.conn_handle = crate::ConnectionHandle(raw.link_connection_handles[index]);
+        }
+        Ok(HalLinkStatus { clients })
     }
 
     async fn get_anchor_period(&self) -> Result<HalAnchorPeriod, Error> {
-        HalGetAnchorPeriod::new()
+        let raw = HalGetAnchorPeriod::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        Ok(HalAnchorPeriod {
+            anchor_interval: core::time::Duration::from_micros(
+                625 * u64::from(raw.anchor_interval),
+            ),
+            max_slot: core::time::Duration::from_micros(625 * u64::from(raw.max_slot)),
+        })
     }
 
     async fn set_radio_activity_mask(&self, mask: RadioActivityFlags) -> Result<(), Error> {
-        let mut payload = [0; 2];
-        LittleEndian::write_u16(&mut payload, mask.bits());
-
-        HalSetRadioActivityMask::new((&payload[..]).into())
+        HalSetRadioActivityMask::new(mask)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
     async fn set_event_mask(&self, mask: HalEventFlags) -> Result<(), Error> {
-        let mut payload = [0; 4];
-        LittleEndian::write_u32(&mut payload, mask.bits());
-
-        HalSetEventMask::new((&payload[..]).into())
+        HalSetEventMask::new(mask)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -509,14 +679,11 @@ where
         HalGetPmDebugInfo::new()
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()
-            .try_into()
             .map_err(Error::from)
     }
 
     async fn set_peripheral_latency(&self, enabled: bool) -> Result<(), Error> {
-        HalSetEventMask::new((&[enabled as u8][..]).into())
+        HalSetPeripheralLatency::new(enabled)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -527,27 +694,34 @@ where
             .exec(self)
             .await
             .map_err(Error::from)?
-            .buf()[0])
+            .value)
     }
 
     async fn read_radio_reg(&self, address: u8) -> Result<u8, Error> {
-        Ok(HalReadRadioReg::new((&[address][..]).into())
+        Ok(HalReadRadioReg::new(address)
             .exec(self)
             .await
             .map_err(Error::from)?
-            .buf()[0])
+            .value)
     }
 
-    async fn read_raw_rssi(&self) -> Result<u8, Error> {
-        Ok(HalReadRawRssi::new()
+    async fn write_radio_reg(&self, address: u8, value: u8) -> Result<(), Error> {
+        HalWriteRadioReg::new(address, value)
             .exec(self)
             .await
-            .map_err(Error::from)?
-            .buf()[0])
+            .map_err(|e| e.into())
+    }
+
+    async fn read_raw_rssi(&self) -> Result<[u8; 3], Error> {
+        let rssi = HalReadRawRssi::new()
+            .exec(self)
+            .await
+            .map_err(Error::from)?;
+        Ok(rssi.value)
     }
 
     async fn rx_start(&self, rf_channel: u8) -> Result<(), Error> {
-        HalRxStart::new((&[rf_channel][..]).into())
+        HalRxStart::new(rf_channel)
             .exec(self)
             .await
             .map_err(|e| e.into())
@@ -561,23 +735,19 @@ where
         HalStackReset::new().exec(self).await.map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn get_link_status_v2(&self) -> Result<HalLinkStatusV2, Error> {
-        let buf = HalGetLinkStatusV2::new()
+        let raw = HalGetLinkStatusV2::new()
             .exec(self)
             .await
             .map_err(Error::from)?;
-        let b = buf.buf();
-        let mut status = HalLinkStatusV2 {
-            link_status: [0u8; 22],
-            link_connection_handles: [0u16; 22],
-        };
-        status.link_status.copy_from_slice(&b[0..22]);
-        for i in 0..22 {
-            status.link_connection_handles[i] = LittleEndian::read_u16(&b[22 + i * 2..]);
-        }
-        Ok(status)
+        Ok(HalLinkStatusV2 {
+            link_status: raw.link_status,
+            link_connection_handles: raw.link_connection_handles,
+        })
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn set_sync_event_config(
         &self,
         group_id: u8,
@@ -585,43 +755,37 @@ where
         enable_cb_trigger: bool,
         trigger_source: SyncTriggerSource,
     ) -> Result<(), Error> {
-        HalSetSyncEventConfig::new(
-            (&[
-                group_id,
-                enable_sync as u8,
-                enable_cb_trigger as u8,
-                trigger_source as u8,
-            ][..])
-                .into(),
-        )
-        .exec(self)
-        .await
-        .map_err(|e| e.into())
+        HalSetSyncEventConfig::new(group_id, enable_sync, enable_cb_trigger, trigger_source)
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn continuous_tx_start(
         &self,
         rf_channel: u8,
         phy: ContinuousTxPhy,
         pattern: ContinuousTxPattern,
     ) -> Result<(), Error> {
-        HalContinuousTxStart::new((&[rf_channel, phy as u8, pattern as u8][..]).into())
+        HalContinuousTxStart::new(rf_channel, phy, pattern)
             .exec(self)
             .await
             .map_err(|e| e.into())
     }
 
+    #[cfg(after_fw_0_17_1)]
     async fn ead_encrypt_decrypt(&self, params: &EadParams) -> Result<HalEadResult, Error> {
-        let mut bytes = [0u8; EadParams::MAX_LENGTH];
-        let len = params.copy_into_slice(&mut bytes);
-        let buf = HalEadEncryptDecrypt::new((&bytes[..len]).into())
+        let data = params.data.get(..params.data_len).ok_or_else(|| {
+            crate::vendor::command::HciLengthError::new(params.data_len, 0, params.data.len())
+        })?;
+        let result = HalEadEncryptDecrypt::try_new(params.mode, &params.key, &params.iv, data)?
             .exec(self)
             .await
             .map_err(Error::from)?;
-        let b = buf.buf();
-        let out_len = LittleEndian::read_u16(&b[0..2]) as usize;
+        let out_len = result.data.as_slice().len();
         let mut data = [0u8; 248];
-        data[..out_len].copy_from_slice(&b[2..2 + out_len]);
+        data[..out_len].copy_from_slice(result.data.as_slice());
         Ok(HalEadResult {
             data,
             data_len: out_len,
@@ -644,6 +808,9 @@ pub enum Error {
     /// Event Parsing Error
     ParseError(crate::event::Error),
 
+    /// A variable-length parameter exceeds the command's wire bounds.
+    InvalidParameterLength(crate::vendor::command::HciLengthError),
+
     /// An error occurred during execution of the command
     HciError(Status),
 
@@ -652,6 +819,12 @@ pub enum Error {
 
     /// An internal error occurred during execution of the controller. This is a bug.
     IoError,
+}
+
+impl From<crate::vendor::command::HciLengthError> for Error {
+    fn from(error: crate::vendor::command::HciLengthError) -> Self {
+        Self::InvalidParameterLength(error)
+    }
 }
 
 impl<T> From<bt_hci::cmd::Error<T>> for Error {
@@ -997,6 +1170,7 @@ pub enum Role {
 /// Configuration parameters that are readable by the
 /// [`read_config_data`](HalCommands::read_config_data) command.
 #[repr(u8)]
+#[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConfigParameter {
     /// Bluetooth public address.
@@ -1023,10 +1197,24 @@ pub enum ConfigParameter {
     Role = 41,
 }
 
+impl crate::vendor::command::HciEncodeField<1> for ConfigParameter {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8]).await
+    }
+}
+
 /// Transmitter power levels available for the system.
 ///
 /// STM32WB5x uses single byte parameter for PA level.
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerLevel {
     /// -40 dBm.
@@ -1126,6 +1314,19 @@ pub enum PowerLevel {
     Plus6dBm = 0x1F,
 }
 
+impl crate::vendor::command::HciEncodeField<1> for PowerLevel {
+    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8])
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        writer.write_all(&[*self as u8]).await
+    }
+}
+
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy)]
@@ -1167,6 +1368,19 @@ defmt::bitflags! {
     }
 }
 
+impl crate::vendor::command::HciEncodeField<2> for RadioActivityFlags {
+    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
+        self.bits().write_hci_field(writer)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error> {
+        self.bits().write_hci_field_async(writer).await
+    }
+}
+
 #[cfg(not(feature = "defmt"))]
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy)]
@@ -1184,6 +1398,20 @@ defmt::bitflags! {
     }
 }
 
+impl crate::vendor::command::HciEncodeField<4> for HalEventFlags {
+    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
+        self.bits().write_hci_field(writer)
+    }
+
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error> {
+        self.bits().write_hci_field_async(writer).await
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
 /// Return value for [get_link_status_v2](HalCommands::get_link_status_v2).
 pub struct HalLinkStatusV2 {
     /// Link statuses for up to 20 links + 2 ISO streams.
@@ -1194,6 +1422,8 @@ pub struct HalLinkStatusV2 {
 
 /// Trigger source for [set_sync_event_config](HalCommands::set_sync_event_config).
 #[repr(u8)]
+#[derive(Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SyncTriggerSource {
     Cig = 0x00,
     Big = 0x01,
@@ -1201,6 +1431,8 @@ pub enum SyncTriggerSource {
 
 /// PHY for [continuous_tx_start](HalCommands::continuous_tx_start).
 #[repr(u8)]
+#[derive(Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ContinuousTxPhy {
     Le1M = 0x01,
     Le2M = 0x02,
@@ -1208,6 +1440,8 @@ pub enum ContinuousTxPhy {
 
 /// Data pattern for [continuous_tx_start](HalCommands::continuous_tx_start).
 #[repr(u8)]
+#[derive(Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ContinuousTxPattern {
     Prbs9 = 0x00,
     Alternating11110000 = 0x01,
@@ -1222,11 +1456,38 @@ pub enum ContinuousTxPattern {
 /// Mode for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
 #[repr(u8)]
 #[derive(Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EadMode {
     Encrypt = 0x00,
     Decrypt = 0x01,
 }
 
+macro_rules! impl_u8_hci_field {
+    ($type:ty) => {
+        impl crate::vendor::command::HciEncodeField<1> for $type {
+            fn write_hci_field<W: embedded_io::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                writer.write_all(&[*self as u8])
+            }
+
+            async fn write_hci_field_async<W: embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                writer.write_all(&[*self as u8]).await
+            }
+        }
+    };
+}
+
+impl_u8_hci_field!(SyncTriggerSource);
+impl_u8_hci_field!(ContinuousTxPhy);
+impl_u8_hci_field!(ContinuousTxPattern);
+impl_u8_hci_field!(EadMode);
+
+#[cfg(after_fw_0_17_1)]
 /// Parameters for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
 pub struct EadParams {
     /// EAD operation mode.
@@ -1241,19 +1502,7 @@ pub struct EadParams {
     pub data_len: usize,
 }
 
-impl EadParams {
-    pub(crate) const MAX_LENGTH: usize = 27 + 248; // mode(1) + key(16) + iv(8) + in_len(2) + data
-
-    pub(crate) fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        bytes[0] = self.mode as u8;
-        bytes[1..17].copy_from_slice(&self.key);
-        bytes[17..25].copy_from_slice(&self.iv);
-        LittleEndian::write_u16(&mut bytes[25..27], self.data_len as u16);
-        bytes[27..27 + self.data_len].copy_from_slice(&self.data[..self.data_len]);
-        27 + self.data_len
-    }
-}
-
+#[cfg(after_fw_0_17_1)]
 /// Return value for [ead_encrypt_decrypt](HalCommands::ead_encrypt_decrypt).
 pub struct HalEadResult {
     /// Result data.

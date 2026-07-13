@@ -11,8 +11,16 @@ jobs:
         with:
           toolchain: stable
           target: thumbv7em-none-eabihf
-      - run: cargo build --release --target=thumbv7em-none-eabihf
-      - run: cargo build --features=defmt --release --target=thumbv7em-none-eabihf
+      - name: Build every declared firmware feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
+          test -n "$firmwares"
+          for firmware in $firmwares; do
+            cargo build -p stm32wb-hci --no-default-features --features="$firmware" --release --target=thumbv7em-none-eabihf
+            cargo build -p stm32wb-hci --no-default-features --features="$firmware,defmt" --release --target=thumbv7em-none-eabihf
+          done
 
   test:
     runs-on: ubuntu-latest
@@ -22,7 +30,15 @@ jobs:
         with:
           toolchain: stable
           target: thumbv7em-none-eabihf
-      - run: cargo test --verbose -p stm32wb-hci
+      - name: Test every declared firmware feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
+          test -n "$firmwares"
+          for firmware in $firmwares; do
+            cargo test --verbose -p stm32wb-hci --no-default-features --features="$firmware"
+          done
 
   example:
     runs-on: ubuntu-latest
@@ -32,3 +48,13 @@ jobs:
         with:
           target: thumbv7em-none-eabi
       - run: cargo check -p stm32wb55-embassy --target thumbv7em-none-eabi
+
+  firmware-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch STM32CubeWB tags without checking out a worktree
+        run: git clone --filter=blob:none --no-checkout --tags https://github.com/STMicroelectronics/STM32CubeWB.git STM32CubeWB
+      - name: Check every declared firmware feature against its CubeWB tag
+        run: cargo run -p stm32wb-compliance -- check --all-supported --deny

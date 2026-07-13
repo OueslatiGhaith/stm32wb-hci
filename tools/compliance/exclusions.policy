@@ -1,0 +1,18 @@
+# stm32wb-compliance exclusion policy, format version 1.
+#
+# Each non-comment entry is:
+#   scope|wire-code|firmware-selector|reason
+#
+# scope: command or event
+# wire-code: a 16-bit hexadecimal code (for example 0x9200)
+# firmware-selector: * for every declared firmware, or one exact version
+#                    (for example 0.17.0 or v1.17.0)
+# reason: non-empty, reviewable explanation. A literal `|` is not supported.
+#
+# The checker rejects duplicate/overlapping selectors, unknown firmware versions,
+# and entries that no longer suppress a real difference. Keep exceptions narrow.
+version = 1
+
+# This event is emitted by the coprocessor transport but is not listed in the
+# generated STM32CubeWB `hci_vs_event_table` catalog.
+event|0x9200|*|transport-only coprocessor-ready event (not in CubeWB auto source)

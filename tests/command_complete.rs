@@ -581,13 +581,15 @@ fn le_test_end() {
 
 #[test]
 fn vendor_command() {
-    let buffer = [0x0E, 6, 1, 0x00, 0xFC, 0x00, 0x00, 0x00];
+    let buffer = [0x0E, 6, 1, 0x00, 0xFC, 0x00, 0x34, 0x12];
     match Event::new(Packet(&buffer)) {
         Ok(Event::CommandComplete(event)) => {
             assert_eq!(event.num_hci_command_packets, 1);
             match event.return_params {
                 ReturnParameters::Vendor(params) => match params {
-                    VendorReturnParameters::HalGetFirmwareRevision(_rev) => {}
+                    VendorReturnParameters::HalGetFirmwareRevision(revision) => {
+                        assert_eq!(revision.revision, 0x1234);
+                    }
                     other => panic!(
                         "Did not get a Get Firmware Revision return params: {:?}",
                         other
@@ -597,5 +599,97 @@ fn vendor_command() {
             }
         }
         other => panic!("Did not get command complete event: {:04X?}", other),
+    }
+}
+
+#[test]
+fn vendor_tx_test_packet_count_decodes_typed_payload() {
+    let buffer = [0x0E, 8, 1, 0x14, 0xFC, 0x00, 0x78, 0x56, 0x34, 0x12];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::HalGetTxTestPacketCount(value)) => {
+                assert_eq!(value.packet_count, 0x1234_5678);
+            }
+            other => panic!("Did not get a TX packet-count vendor response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
+    }
+}
+
+#[test]
+fn vendor_pm_debug_info_decodes_typed_payload() {
+    let buffer = [0x0E, 7, 1, 0x1C, 0xFC, 0x00, 0x11, 0x22, 0x33];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::HalGetPmDebugInfo(value)) => {
+                assert_eq!((value.tx, value.rx, value.mblocks), (0x11, 0x22, 0x33));
+            }
+            other => panic!("Did not get a PM debug-info vendor response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
+    }
+}
+
+#[test]
+fn vendor_rssi_uses_payload_after_status() {
+    let buffer = [0x0E, 5, 1, 0x22, 0xFC, 0x00, 0xA5];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::HalReadRssi(value)) => {
+                assert_eq!(value, 0xA5);
+            }
+            other => panic!("Did not get an RSSI vendor response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
+    }
+}
+
+#[test]
+fn vendor_raw_rssi_preserves_all_three_response_bytes() {
+    // Command Complete: one command credit, OGF 0x3f / OCF 0x032, status,
+    // then the three-byte raw RSSI value from `aci_hal_read_raw_rssi_rp0`.
+    let buffer = [0x0E, 7, 1, 0x32, 0xFC, 0x00, 0x11, 0x22, 0x33];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::HalReadRawRssi(value)) => {
+                assert_eq!(value, [0x11, 0x22, 0x33]);
+            }
+            other => panic!("Did not get a raw RSSI vendor response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
+    }
+}
+
+#[test]
+fn vendor_security_level_uses_mode_and_level_bytes() {
+    // Command Complete: OGF 0x3f / OCF 0x090, status, Security_Mode, and
+    // Security_Level as declared by `aci_gap_get_security_level_rp0`.
+    let buffer = [0x0E, 6, 1, 0x90, 0xFC, 0x00, 0x01, 0x04];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::GapGetSecurityLevel(level)) => {
+                assert_eq!(level.security_mode, 1);
+                assert_eq!(level.security_level, 4);
+            }
+            other => panic!("Did not get a GAP security-level response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
+    }
+}
+
+#[test]
+fn vendor_l2cap_coc_connect_confirm_preserves_created_channel_indices() {
+    // Command Complete: OGF 0x3f / OCF 0x189, status, Channel_Number, then
+    // one index for each created channel.
+    let buffer = [0x0E, 7, 1, 0x89, 0xFD, 0x00, 2, 0x0A, 0x0B];
+    match Event::new(Packet(&buffer)) {
+        Ok(Event::CommandComplete(event)) => match event.return_params {
+            ReturnParameters::Vendor(VendorReturnParameters::L2CapCocConnectConfirm(response)) => {
+                assert_eq!(response.channel_number, 2);
+                assert_eq!(response.channel_indices(), [0x0A, 0x0B]);
+            }
+            other => panic!("Did not get an L2CAP CoC Connect Confirm response: {other:?}"),
+        },
+        other => panic!("Did not get a command complete event: {other:?}"),
     }
 }
