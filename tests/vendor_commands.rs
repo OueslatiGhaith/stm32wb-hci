@@ -627,7 +627,7 @@ async fn declarative_tagged_uuid128_matches_cubewb() {
 }
 
 #[tokio::test]
-async fn reusable_uuid_payload_drives_characteristic_procedures() {
+async fn inline_uuid_shape_drives_characteristic_procedures() {
     let sink = RecordingSink::new();
 
     let uuid = Uuid::Uuid16(0xCDEF);
@@ -674,7 +674,7 @@ async fn reusable_uuid_payload_drives_characteristic_procedures() {
 }
 
 #[tokio::test]
-async fn reusable_uuid_payload_drives_add_service() {
+async fn inline_uuid_shape_drives_add_service() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x1234);
     let _ = GattAddService::try_new(&uuid, ServiceType::Primary as u8, 0x12)
@@ -689,7 +689,7 @@ async fn reusable_uuid_payload_drives_add_service() {
 }
 
 #[tokio::test]
-async fn reusable_uuid_payload_drives_include_service() {
+async fn inline_uuid_shape_drives_include_service() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0xCDEF);
     let _ = GattIncludeService::try_new(
@@ -738,7 +738,7 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
 }
 
 #[tokio::test]
-async fn reusable_uuid_payload_and_counted_value_drive_add_descriptor() {
+async fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x2902);
     let _ = GattAddCharacteristicDescriptor::try_new(
@@ -767,7 +767,7 @@ async fn reusable_uuid_payload_and_counted_value_drive_add_descriptor() {
 }
 
 #[tokio::test]
-async fn reusable_uuid_payload_drives_read_by_type_commands() {
+async fn inline_uuid_shape_drives_read_by_type_commands() {
     let uuid = Uuid::Uuid16(0xCDEF);
 
     let sink = RecordingSink::new();
@@ -857,52 +857,6 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         false,
     );
     assert!(result.is_err());
-}
-
-#[test]
-fn declarative_uuid_payload_decodes_all_variants() {
-    use hci::vendor::command::{HciDecodePayload, HciEncodePayload, decode_declarative_payload};
-
-    assert_eq!(<Uuid as HciEncodePayload>::MIN_LEN, 3);
-    assert_eq!(<Uuid as HciEncodePayload>::MAX_LEN, 17);
-
-    let (uuid16, rest) = Uuid::from_hci_payload(&[0x01, 0x67, 0x45, 0xAA]).unwrap();
-    assert_eq!(uuid16, Uuid::Uuid16(0x4567));
-    assert_eq!(rest, [0xAA]);
-
-    let bytes = [
-        0x02, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
-        0xEE, 0xFF,
-    ];
-    let (uuid128, rest) = Uuid::from_hci_payload(&bytes).unwrap();
-    assert_eq!(
-        uuid128,
-        Uuid::Uuid128([
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
-            0xEE, 0xFF,
-        ])
-    );
-    assert!(rest.is_empty());
-
-    let (return_field, rest) =
-        decode_declarative_payload::<Uuid, 3, 17>(&[0x01, 0xCD, 0xAB, 0xFE]).unwrap();
-    assert_eq!(return_field, Uuid::Uuid16(0xABCD));
-    assert_eq!(rest, [0xFE]);
-}
-
-#[test]
-fn declarative_uuid_payload_rejects_unknown_and_truncated_variants() {
-    use bt_hci::FromHciBytesError;
-    use hci::vendor::command::HciDecodePayload;
-
-    assert!(matches!(
-        Uuid::from_hci_payload(&[0x03]),
-        Err(FromHciBytesError::InvalidValue)
-    ));
-    assert!(matches!(
-        Uuid::from_hci_payload(&[0x01, 0xAA]),
-        Err(FromHciBytesError::InvalidSize)
-    ));
 }
 
 #[test]

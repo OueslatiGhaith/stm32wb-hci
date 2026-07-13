@@ -68,20 +68,6 @@ struct DescriptorDefinition {
     return_variable: bool,
 }
 
-#[derive(Clone, Debug)]
-struct PayloadMetadata {
-    min_len: usize,
-    max_len: usize,
-    location: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct PayloadReference {
-    name: String,
-    min_len: usize,
-    max_len: usize,
-}
-
 #[derive(Clone)]
 struct SourceUnit {
     path: PathBuf,
@@ -108,8 +94,7 @@ pub(crate) fn load_crate_coverage(
         &mut command_sources,
     )?;
 
-    let payloads = collect_payloads(&command_sources, firmware)?;
-    let descriptors = collect_descriptors(&command_sources, &payloads, firmware)?;
+    let descriptors = collect_descriptors(&command_sources, firmware)?;
     let active_commands = descriptor_coverage(&descriptors);
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
@@ -305,54 +290,8 @@ fn module_path_override(module: &ItemMod) -> Result<Option<String>, String> {
     Ok(Some(path.value()))
 }
 
-fn collect_payloads(
-    sources: &[SourceUnit],
-    firmware: FirmwareVersion,
-) -> Result<BTreeMap<String, PayloadMetadata>, String> {
-    let mut payloads = BTreeMap::new();
-    for source in sources {
-        if !source.active {
-            continue;
-        }
-        for item in &source.file.items {
-            let Item::Macro(item) = item else {
-                continue;
-            };
-            if !is_macro_named(&item.mac.path, "vendor_payload")
-                || !attrs_active(&item.attrs, firmware, &source.path)?
-            {
-                continue;
-            }
-
-            let payload = syn::parse2::<VendorPayloadInvocation>(item.mac.tokens.clone()).map_err(
-                |error| {
-                    format!(
-                        "{}: unsupported vendor_payload! declaration: {error}",
-                        source.path.display()
-                    )
-                },
-            )?;
-            let metadata = PayloadMetadata {
-                min_len: payload.min_len,
-                max_len: payload.max_len,
-                location: source.path.clone(),
-            };
-            if let Some(previous) = payloads.insert(payload.name.clone(), metadata) {
-                return Err(format!(
-                    "{}: payload `{}` is active more than once (also declared in {})",
-                    source.path.display(),
-                    payload.name,
-                    previous.location.display()
-                ));
-            }
-        }
-    }
-    Ok(payloads)
-}
-
 fn collect_descriptors(
     sources: &[SourceUnit],
-    payloads: &BTreeMap<String, PayloadMetadata>,
     firmware: FirmwareVersion,
 ) -> Result<BTreeMap<String, DescriptorMetadata>, String> {
     let mut descriptors = BTreeMap::<String, DescriptorMetadata>::new();
@@ -372,7 +311,7 @@ fn collect_descriptors(
                 continue;
             }
 
-            let definition = parse_vendor_descriptor_with_payloads(item, &source.path, payloads)?;
+            let definition = parse_vendor_descriptor(item, &source.path)?;
             let metadata = DescriptorMetadata {
                 name: definition.name.clone(),
                 code: definition.code,
@@ -410,16 +349,7 @@ fn collect_descriptors(
     Ok(descriptors)
 }
 
-#[cfg(test)]
 fn parse_vendor_descriptor(item: &ItemMacro, path: &Path) -> Result<DescriptorDefinition, String> {
-    parse_vendor_descriptor_with_payloads(item, path, &BTreeMap::new())
-}
-
-fn parse_vendor_descriptor_with_payloads(
-    item: &ItemMacro,
-    path: &Path,
-    payloads: &BTreeMap<String, PayloadMetadata>,
-) -> Result<DescriptorDefinition, String> {
     syn::parse2::<VendorCommandInvocation>(item.mac.tokens.clone())
         .map_err(|error| {
             format!(
@@ -427,13 +357,12 @@ fn parse_vendor_descriptor_with_payloads(
                 path.display()
             )
         })
-        .and_then(|definition| parse_descriptor_definition(definition, path, payloads))
+        .and_then(|definition| parse_descriptor_definition(definition, path))
 }
 
 fn parse_descriptor_definition(
     invocation: VendorCommandInvocation,
     path: &Path,
-    payloads: &BTreeMap<String, PayloadMetadata>,
 ) -> Result<DescriptorDefinition, String> {
     let mut input = invocation.body.into_iter().peekable();
     let mut saw_params = false;
@@ -496,7 +425,7 @@ fn parse_descriptor_definition(
                 ));
             }
             saw_params = true;
-            params_empty = parse_params_shape(value, &invocation.name, path, payloads)?;
+            params_empty = parse_params_shape(value, &invocation.name, path)?;
         } else if label == "Return" {
             if saw_return {
                 return Err(format!(
@@ -506,7 +435,7 @@ fn parse_descriptor_definition(
                 ));
             }
             saw_return = true;
-            let shape = parse_return_shape(value, &invocation.name, path, payloads)?;
+            let shape = parse_return_shape(value, &invocation.name, path)?;
             response_len = shape.response_len;
             return_variable = shape.variable;
         } else if label == "Completion" {
@@ -575,7 +504,6 @@ fn parse_params_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-    payloads: &BTreeMap<String, PayloadMetadata>,
 ) -> Result<bool, String> {
     let mut tokens = value.clone().into_iter();
     if let (Some(TokenTree::Group(group)), None) = (tokens.next(), tokens.next())
@@ -587,7 +515,12 @@ fn parse_params_shape(
                 path.display()
             )
         })?;
-        validate_payload_references(&fields.payloads, payloads, descriptor, path)?;
+        if fields.contains_payload_field {
+            return Err(format!(
+                "{}: descriptor `{descriptor}` uses removed `kind: payload` in Params; inline the wire schema instead",
+                path.display()
+            ));
+        }
         return Ok(fields.count == 0);
     }
 
@@ -600,52 +533,6 @@ fn parse_params_shape(
     Ok(matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty()))
 }
 
-fn declarative_payload_type_name(ty: &Type) -> Option<String> {
-    let ty = match ty {
-        Type::Reference(reference) => reference.elem.as_ref(),
-        Type::Group(group) => group.elem.as_ref(),
-        Type::Paren(paren) => paren.elem.as_ref(),
-        ty => ty,
-    };
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    path.path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-}
-
-fn validate_payload_references(
-    references: &[PayloadReference],
-    payloads: &BTreeMap<String, PayloadMetadata>,
-    descriptor: &syn::Ident,
-    path: &Path,
-) -> Result<(), String> {
-    for reference in references {
-        let payload = payloads.get(&reference.name).ok_or_else(|| {
-            format!(
-                "{}: descriptor `{descriptor}` references unknown declarative payload `{}`",
-                path.display(),
-                reference.name
-            )
-        })?;
-        if (reference.min_len, reference.max_len) != (payload.min_len, payload.max_len) {
-            return Err(format!(
-                "{}: descriptor `{descriptor}` declares payload `{}` as {}..={}, but {} defines {}..={}",
-                path.display(),
-                reference.name,
-                reference.min_len,
-                reference.max_len,
-                payload.location.display(),
-                payload.min_len,
-                payload.max_len
-            ));
-        }
-    }
-    Ok(())
-}
-
 struct ParsedReturnShape {
     response_len: Option<usize>,
     variable: bool,
@@ -655,10 +542,14 @@ fn parse_return_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-    payloads: &BTreeMap<String, PayloadMetadata>,
 ) -> Result<ParsedReturnShape, String> {
     if let Ok(shape) = syn::parse2::<DeclarativeReturn>(value.clone()) {
-        validate_payload_references(&shape.fields.payloads, payloads, descriptor, path)?;
+        if shape.fields.contains_payload_field {
+            return Err(format!(
+                "{}: descriptor `{descriptor}` uses removed `kind: payload` in Return; inline the wire schema instead",
+                path.display()
+            ));
+        }
         let payload_len = shape.fields.total_len;
         let response_len = payload_len.checked_add(1).ok_or_else(|| {
             format!(
@@ -724,7 +615,7 @@ struct DeclarativeFields {
     min_len: usize,
     total_len: usize,
     variable: bool,
-    payloads: Vec<PayloadReference>,
+    contains_payload_field: bool,
 }
 
 impl Parse for DeclarativeFields {
@@ -734,19 +625,19 @@ impl Parse for DeclarativeFields {
         let mut total_len = 0usize;
         let mut variable = false;
         let mut consumes_remainder = false;
-        let mut payloads = Vec::new();
+        let mut contains_payload_field = false;
         while !input.is_empty() {
             if consumes_remainder {
                 return Err(input.error("trailing_bytes must be the final declarative field"));
             }
             input.parse::<syn::Ident>()?;
             input.parse::<syn::Token![:]>()?;
-            let field_ty = input.parse::<Type>()?;
+            input.parse::<Type>()?;
             input.parse::<syn::Token![=>]>()?;
-            let (minimum, width, payload_bounds, field_consumes_remainder) = if input.peek(LitInt) {
+            let (minimum, width, payload_field, field_consumes_remainder) = if input.peek(LitInt) {
                 let width = input.parse::<LitInt>()?;
                 let width = parse_usize_literal(&width).map_err(|error| input.error(error))?;
-                (width, width, None, false)
+                (width, width, false, false)
             } else if input.peek(syn::token::Brace) {
                 let shape;
                 syn::braced!(shape in input);
@@ -755,23 +646,14 @@ impl Parse for DeclarativeFields {
                 (
                     shape.min_len,
                     shape.max_len,
-                    shape.payload_bounds,
+                    shape.payload_field,
                     shape.consumes_remainder,
                 )
             } else {
                 return Err(input.error("expected a fixed width or variable field shape"));
             };
             consumes_remainder = field_consumes_remainder;
-            if let Some((min_len, max_len)) = payload_bounds {
-                let name = declarative_payload_type_name(&field_ty).ok_or_else(|| {
-                    input.error("payload fields must use a named type or reference to one")
-                })?;
-                payloads.push(PayloadReference {
-                    name,
-                    min_len,
-                    max_len,
-                });
-            }
+            contains_payload_field |= payload_field;
             total_len = total_len
                 .checked_add(width)
                 .ok_or_else(|| input.error("declarative field length overflows usize"))?;
@@ -786,7 +668,7 @@ impl Parse for DeclarativeFields {
             min_len,
             total_len,
             variable,
-            payloads,
+            contains_payload_field,
         })
     }
 }
@@ -794,7 +676,7 @@ impl Parse for DeclarativeFields {
 struct DeclarativeVariableShape {
     min_len: usize,
     max_len: usize,
-    payload_bounds: Option<(usize, usize)>,
+    payload_field: bool,
     consumes_remainder: bool,
 }
 
@@ -804,7 +686,7 @@ impl Parse for DeclarativeVariableShape {
         let kind = input.parse::<syn::Ident>()?;
         input.parse::<syn::Token![,]>()?;
 
-        let mut payload_bounds = None;
+        let mut payload_field = false;
         let mut consumes_remainder = false;
         let (min_len, max_len) = if kind == "counted_bytes" {
             let count_len = parse_declarative_type_width(input, "count")?;
@@ -830,7 +712,7 @@ impl Parse for DeclarativeVariableShape {
                     "payload minimum {min_len} exceeds maximum {max_len}"
                 )));
             }
-            payload_bounds = Some((min_len, max_len));
+            payload_field = true;
             (Some(min_len), Some(max_len))
         } else if kind == "trailing_bytes" {
             let min_len = parse_declarative_integer(input, "min_len")?;
@@ -870,7 +752,7 @@ impl Parse for DeclarativeVariableShape {
         Ok(Self {
             min_len,
             max_len,
-            payload_bounds,
+            payload_field,
             consumes_remainder,
         })
     }
@@ -1175,7 +1057,7 @@ impl Parse for VendorEventsInvocation {
                     min_len: 0,
                     total_len: 0,
                     variable: false,
-                    payloads: Vec::new(),
+                    contains_payload_field: false,
                 }
             } else {
                 return Err(body.error("event Payload must be `()` or a declarative field body"));
@@ -1410,139 +1292,6 @@ fn cfg_path_name(path: &SynPath) -> String {
         .join("::")
 }
 
-struct VendorPayloadInvocation {
-    name: String,
-    min_len: usize,
-    max_len: usize,
-}
-
-impl Parse for VendorPayloadInvocation {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        input.call(Attribute::parse_outer)?;
-        input.parse::<syn::Visibility>()?;
-        if input.peek(syn::Token![struct]) {
-            input.parse::<syn::Token![struct]>()?;
-            let name = input.parse::<syn::Ident>()?;
-            let body;
-            syn::braced!(body in input);
-            if !input.is_empty() {
-                return Err(input.error("unexpected tokens after vendor_payload! body"));
-            }
-
-            let mut len = 0usize;
-            while !body.is_empty() {
-                body.call(Attribute::parse_outer)?;
-                body.parse::<syn::Ident>()?;
-                body.parse::<syn::Token![:]>()?;
-                body.parse::<Type>()?;
-                body.parse::<syn::Token![=>]>()?;
-                let width = body.parse::<LitInt>()?;
-                let width = parse_usize_literal(&width).map_err(|error| body.error(error))?;
-                len = len
-                    .checked_add(width)
-                    .ok_or_else(|| body.error("payload field length overflows usize"))?;
-                body.parse::<syn::Token![,]>()?;
-            }
-            if len > u8::MAX as usize {
-                return Err(body.error(format!(
-                    "payload maximum length {len} exceeds the HCI limit"
-                )));
-            }
-            return Ok(Self {
-                name: name.to_string(),
-                min_len: len,
-                max_len: len,
-            });
-        }
-
-        input.parse::<syn::Token![enum]>()?;
-        let name = input.parse::<syn::Ident>()?;
-        let body;
-        syn::braced!(body in input);
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after vendor_payload! body"));
-        }
-
-        let tag_label = body.parse::<syn::Ident>()?;
-        if tag_label != "Tag" {
-            return Err(body.error(format!("expected `Tag`, found `{tag_label}`")));
-        }
-        body.parse::<syn::Token![=]>()?;
-        body.parse::<Type>()?;
-        body.parse::<syn::Token![=>]>()?;
-        let tag_len_literal = body.parse::<LitInt>()?;
-        let tag_len = parse_usize_literal(&tag_len_literal).map_err(|error| body.error(error))?;
-        body.parse::<syn::Token![;]>()?;
-
-        let mut tags = BTreeSet::new();
-        let mut min_len = None::<usize>;
-        let mut max_len = None::<usize>;
-        while !body.is_empty() {
-            body.call(Attribute::parse_outer)?;
-            body.parse::<syn::Ident>()?;
-            let fields;
-            syn::parenthesized!(fields in body);
-            let mut field_count = 0usize;
-            let mut payload_len = 0usize;
-            while !fields.is_empty() {
-                fields.parse::<syn::Ident>()?;
-                fields.parse::<syn::Token![:]>()?;
-                fields.parse::<Type>()?;
-                fields.parse::<syn::Token![=>]>()?;
-                let width = fields.parse::<LitInt>()?;
-                let width = parse_usize_literal(&width).map_err(|error| fields.error(error))?;
-                payload_len = payload_len
-                    .checked_add(width)
-                    .ok_or_else(|| fields.error("payload variant length overflows usize"))?;
-                field_count += 1;
-                if fields.is_empty() {
-                    break;
-                }
-                fields.parse::<syn::Token![,]>()?;
-            }
-            if field_count == 0 {
-                return Err(fields.error("payload variants must contain at least one field"));
-            }
-
-            body.parse::<syn::Token![=]>()?;
-            let tag = body.parse::<LitInt>()?;
-            let tag = parse_usize_literal(&tag).map_err(|error| body.error(error))?;
-            if !tags.insert(tag) {
-                return Err(body.error(format!("duplicate payload tag {tag:#x}")));
-            }
-            if tag_len < core::mem::size_of::<usize>()
-                && tag >= (1usize << (tag_len * u8::BITS as usize))
-            {
-                return Err(body.error(format!(
-                    "payload tag {tag:#x} does not fit in {tag_len} bytes"
-                )));
-            }
-            body.parse::<syn::Token![;]>()?;
-
-            let wire_len = tag_len
-                .checked_add(payload_len)
-                .ok_or_else(|| body.error("payload variant length overflows usize"))?;
-            min_len = Some(min_len.map_or(wire_len, |value| value.min(wire_len)));
-            max_len = Some(max_len.map_or(wire_len, |value| value.max(wire_len)));
-        }
-
-        let Some(min_len) = min_len else {
-            return Err(body.error("vendor_payload! must declare at least one variant"));
-        };
-        let max_len = max_len.expect("minimum and maximum are populated together");
-        if max_len > u8::MAX as usize {
-            return Err(body.error(format!(
-                "payload maximum length {max_len} exceeds the HCI limit"
-            )));
-        }
-        Ok(Self {
-            name: name.to_string(),
-            min_len,
-            max_len,
-        })
-    }
-}
-
 struct VendorCommandInvocation {
     name: syn::Ident,
     cgid: u16,
@@ -1655,9 +1404,7 @@ mod tests {
             active: true,
             file: syn::parse_file(source).unwrap(),
         };
-        let payloads = collect_payloads(std::slice::from_ref(&unit), firmware).unwrap();
-        let descriptors =
-            collect_descriptors(std::slice::from_ref(&unit), &payloads, firmware).unwrap();
+        let descriptors = collect_descriptors(std::slice::from_ref(&unit), firmware).unwrap();
         let commands = descriptor_coverage(&descriptors);
         (commands, descriptors)
     }
@@ -1873,12 +1620,8 @@ mod tests {
             )
             .unwrap(),
         };
-        let error = collect_descriptors(
-            std::slice::from_ref(&unit),
-            &BTreeMap::new(),
-            version(0, 17, 0),
-        )
-        .unwrap_err();
+        let error =
+            collect_descriptors(std::slice::from_ref(&unit), version(0, 17, 0)).unwrap_err();
         assert!(error.contains("both declare active vendor OCF 0x082"));
     }
 
@@ -1928,74 +1671,53 @@ mod tests {
     }
 
     #[test]
-    fn resolves_reusable_payload_shapes_and_rejects_bound_drift() {
-        let payload = r#"
-            vendor_payload! {
-                pub enum Uuid {
-                    Tag = u8 => 1;
-                    Uuid16(value: u16 => 2) = 0x01;
-                    Uuid128(value: [u8; 16] => 16) = 0x02;
-                }
-            }
-        "#;
-        let valid = format!(
-            r#"
-                {payload}
-                pub trait Commands {{ async fn command(&self); }}
-                vendor_cmd! {{
-                    Current(cgid = 0x0, cid = 0x03) {{
-                        Params<'a> = {{
-                            uuid: &'a Uuid => {{
-                                kind: payload,
-                                min_len: 3,
-                                max_len: 17,
-                            }},
-                        }};
-                        Completion = CommandComplete;
-                        Return = Result {{
-                            service_handle: AttributeHandle => 2,
-                        }};
-                    }}
-                }}
-                impl<T> Commands for T {{
-                    async fn command(&self) {{ Current::try_new(); }}
-                }}
-            "#
-        );
-        let (_, descriptors) = fixture_descriptors(&valid, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
-        assert!(!descriptor.params_empty);
-        assert_eq!(descriptor.response_len, Some(3));
-        assert!(!descriptor.return_variable);
-
-        let invalid = format!(
-            r#"
-                {payload}
-                vendor_cmd! {{
-                    Current(cgid = 0x0, cid = 0x03) {{
-                        Params<'a> = {{
-                            uuid: &'a Uuid => {{
-                                kind: payload,
-                                min_len: 3,
-                                max_len: 16,
-                            }},
-                        }};
-                        Completion = CommandStatus;
-                    }}
-                }}
-            "#
-        );
-        let unit = SourceUnit {
-            path: PathBuf::from("fixture.rs"),
-            active: true,
-            file: syn::parse_file(&invalid).unwrap(),
-        };
-        let firmware = version(0, 17, 0);
-        let payloads = collect_payloads(std::slice::from_ref(&unit), firmware).unwrap();
-        let error =
-            collect_descriptors(std::slice::from_ref(&unit), &payloads, firmware).unwrap_err();
-        assert!(error.contains("declares payload `Uuid` as 3..=16"));
-        assert!(error.contains("defines 3..=17"));
+    fn rejects_removed_command_payload_fields() {
+        for (source, section) in [
+            (
+                r#"
+                    vendor_cmd! {
+                        Current(cgid = 0x0, cid = 0x03) {
+                            Params<'a> = {
+                                uuid: &'a Uuid => {
+                                    kind: payload,
+                                    min_len: 3,
+                                    max_len: 17,
+                                },
+                            };
+                            Completion = CommandStatus;
+                        }
+                    }
+                "#,
+                "Params",
+            ),
+            (
+                r#"
+                    vendor_cmd! {
+                        Current(cgid = 0x0, cid = 0x03) {
+                            Params = ();
+                            Completion = CommandComplete;
+                            Return = Result {
+                                uuid: Uuid => {
+                                    kind: payload,
+                                    min_len: 3,
+                                    max_len: 17,
+                                },
+                            };
+                        }
+                    }
+                "#,
+                "Return",
+            ),
+        ] {
+            let file = syn::parse_file(source).unwrap();
+            let Item::Macro(item) = &file.items[0] else {
+                panic!("expected vendor_cmd! macro item");
+            };
+            let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+            assert!(error.contains("removed `kind: payload`"), "{error}");
+            assert!(error.contains(section), "{error}");
+            assert!(error.contains("inline the wire schema"), "{error}");
+        }
     }
 
     #[test]
@@ -2229,20 +1951,14 @@ mod tests {
             file: syn::parse_file(source).unwrap(),
         };
         let firmware = version(0, 17, 0);
-        let descriptors =
-            collect_descriptors(std::slice::from_ref(&unit), &BTreeMap::new(), firmware).unwrap();
+        let descriptors = collect_descriptors(std::slice::from_ref(&unit), firmware).unwrap();
         let active = descriptor_coverage(&descriptors);
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].name, "Current");
         assert!(descriptors.contains_key("Current"));
         assert!(!descriptors.contains_key("Retained"));
 
-        let future = collect_descriptors(
-            std::slice::from_ref(&unit),
-            &BTreeMap::new(),
-            version(0, 18, 0),
-        )
-        .unwrap();
+        let future = collect_descriptors(std::slice::from_ref(&unit), version(0, 18, 0)).unwrap();
         assert!(future.contains_key("Current"));
         assert!(future.contains_key("Retained"));
     }

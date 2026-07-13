@@ -42,60 +42,6 @@ pub trait HciDecodeField<const N: usize>: Sized {
     fn from_hci_field(bytes: &[u8; N]) -> Result<Self, bt_hci::FromHciBytesError>;
 }
 
-/// A reusable declarative payload that can be serialized into an HCI packet.
-pub trait HciEncodePayload {
-    /// Smallest encoded variant.
-    const MIN_LEN: usize;
-    /// Largest encoded variant.
-    const MAX_LEN: usize;
-
-    /// Exact encoded length of this value.
-    fn hci_payload_size(&self) -> usize;
-
-    /// Encode this value synchronously.
-    fn write_hci_payload<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
-
-    /// Encode this value asynchronously.
-    async fn write_hci_payload_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error>;
-}
-
-/// A reusable declarative payload that can be decoded from HCI bytes.
-pub trait HciDecodePayload: Sized {
-    /// Smallest encoded variant.
-    const MIN_LEN: usize;
-    /// Largest encoded variant.
-    const MAX_LEN: usize;
-
-    /// Decode one payload and return the unconsumed bytes.
-    fn from_hci_payload(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError>;
-}
-
-impl<T> HciEncodePayload for &T
-where
-    T: HciEncodePayload,
-{
-    const MIN_LEN: usize = T::MIN_LEN;
-    const MAX_LEN: usize = T::MAX_LEN;
-
-    fn hci_payload_size(&self) -> usize {
-        T::hci_payload_size(self)
-    }
-
-    fn write_hci_payload<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        T::write_hci_payload(self, writer)
-    }
-
-    async fn write_hci_payload_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        T::write_hci_payload_async(self, writer).await
-    }
-}
-
 macro_rules! impl_hci_integer_field {
     ($ty:ty, $len:literal) => {
         impl HciEncodeField<$len> for $ty {
@@ -314,40 +260,6 @@ pub struct TaggedField<T, const MAX_LEN: usize> {
     bytes: [u8; MAX_LEN],
     len: usize,
     _value: core::marker::PhantomData<T>,
-}
-
-#[doc(hidden)]
-pub struct PayloadField<T, const MIN_LEN: usize, const MAX_LEN: usize> {
-    bytes: [u8; MAX_LEN],
-    len: usize,
-    _value: core::marker::PhantomData<T>,
-}
-
-impl<T, const MIN_LEN: usize, const MAX_LEN: usize> PayloadField<T, MIN_LEN, MAX_LEN>
-where
-    T: HciEncodePayload,
-{
-    pub fn try_new(value: T) -> Result<Self, HciLengthError> {
-        let len = value.hci_payload_size();
-        if T::MIN_LEN != MIN_LEN || T::MAX_LEN != MAX_LEN || !(MIN_LEN..=MAX_LEN).contains(&len) {
-            return Err(HciLengthError::new(len, T::MIN_LEN, T::MAX_LEN));
-        }
-
-        let mut bytes = [0; MAX_LEN];
-        let mut remaining = &mut bytes[..len];
-        if value.write_hci_payload(&mut remaining).is_err() {
-            return Err(HciLengthError::new(len.saturating_add(1), MIN_LEN, MAX_LEN));
-        }
-        if !remaining.is_empty() {
-            return Err(HciLengthError::new(len - remaining.len(), len, len));
-        }
-
-        Ok(Self {
-            bytes,
-            len,
-            _value: core::marker::PhantomData,
-        })
-    }
 }
 
 impl<T, const MAX_LEN: usize> TaggedField<T, MAX_LEN> {
@@ -697,25 +609,6 @@ where
     T::decode_counted_items(data)
 }
 
-#[doc(hidden)]
-pub fn decode_declarative_payload<T, const MIN_LEN: usize, const MAX_LEN: usize>(
-    data: &[u8],
-) -> Result<(T, &[u8]), bt_hci::FromHciBytesError>
-where
-    T: HciDecodePayload,
-{
-    if T::MIN_LEN != MIN_LEN || T::MAX_LEN != MAX_LEN {
-        return Err(bt_hci::FromHciBytesError::InvalidValue);
-    }
-    let initial_len = data.len();
-    let (value, rest) = T::from_hci_payload(data)?;
-    let consumed = initial_len - rest.len();
-    if !(MIN_LEN..=MAX_LEN).contains(&consumed) {
-        return Err(bt_hci::FromHciBytesError::InvalidSize);
-    }
-    Ok((value, rest))
-}
-
 impl<C, const COUNT_LEN: usize, const MAX_LEN: usize> HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>
     for BoundedBytes<MAX_LEN>
 where
@@ -835,25 +728,6 @@ where
 }
 
 impl<T, const MAX_LEN: usize> DeclarativeEncodedField for TaggedField<T, MAX_LEN> {
-    fn size(&self) -> usize {
-        self.len
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&self.bytes[..self.len])
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&self.bytes[..self.len]).await
-    }
-}
-
-impl<T, const MIN_LEN: usize, const MAX_LEN: usize> DeclarativeEncodedField
-    for PayloadField<T, MIN_LEN, MAX_LEN>
-{
     fn size(&self) -> usize {
         self.len
     }
@@ -1037,216 +911,6 @@ impl<T: DeclarativeFieldList> WriteHci for DeclarativeParams<T> {
     }
 }
 
-/// Defines a reusable tagged enum or fixed struct wire payload and generates
-/// its Rust type, encoder, decoder, and length metadata from one declaration.
-macro_rules! vendor_payload {
-    (
-        $(#[$enum_attr:meta])*
-        $vis:vis enum $payload:ident {
-            Tag = $tag_ty:ty => $tag_len:literal;
-            $($(#[$variant_attr:meta])*
-            $variant:ident(
-                $($field:ident: $field_ty:ty => $field_len:literal),+ $(,)?
-            ) = $tag:literal;)+
-        }
-    ) => {
-        $(#[$enum_attr])*
-        #[derive(Copy, Clone, Debug, PartialEq)]
-        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-        $vis enum $payload {
-            $($(#[$variant_attr])*
-            $variant($($field_ty),+),)+
-        }
-
-        impl crate::vendor::command::HciEncodePayload for $payload {
-            const MIN_LEN: usize = {
-                let minimum = usize::MAX;
-                $(let candidate = $tag_len $(+ $field_len)+;
-                let minimum = if candidate < minimum {
-                    candidate
-                } else {
-                    minimum
-                };)+
-                minimum
-            };
-
-            const MAX_LEN: usize = {
-                let maximum = 0usize;
-                $(let candidate = $tag_len $(+ $field_len)+;
-                let maximum = if candidate > maximum {
-                    candidate
-                } else {
-                    maximum
-                };)+
-                maximum
-            };
-
-            fn hci_payload_size(&self) -> usize {
-                match self {
-                    $(Self::$variant(..) => $tag_len $(+ $field_len)+,)+
-                }
-            }
-
-            fn write_hci_payload<W: embedded_io::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                match self {
-                    $(Self::$variant($($field),+) => {
-                        let tag: $tag_ty = $tag;
-                        <$tag_ty as crate::vendor::command::HciEncodeField<$tag_len>>::write_hci_field(
-                            &tag,
-                            &mut writer,
-                        )?;
-                        $(<$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field(
-                            $field,
-                            &mut writer,
-                        )?;)+
-                        Ok(())
-                    },)+
-                }
-            }
-
-            async fn write_hci_payload_async<W: embedded_io_async::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                match self {
-                    $(Self::$variant($($field),+) => {
-                        let tag: $tag_ty = $tag;
-                        <$tag_ty as crate::vendor::command::HciEncodeField<$tag_len>>::write_hci_field_async(
-                            &tag,
-                            &mut writer,
-                        ).await?;
-                        $(<$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field_async(
-                            $field,
-                            &mut writer,
-                        ).await?;)+
-                        Ok(())
-                    },)+
-                }
-            }
-        }
-
-        impl crate::vendor::command::HciDecodePayload for $payload {
-            const MIN_LEN: usize =
-                <Self as crate::vendor::command::HciEncodePayload>::MIN_LEN;
-            const MAX_LEN: usize =
-                <Self as crate::vendor::command::HciEncodePayload>::MAX_LEN;
-
-            fn from_hci_payload(
-                data: &[u8],
-            ) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError> {
-                let (tag, data) = crate::vendor::command::decode_declarative_fixed_field::<
-                    $tag_ty,
-                    $tag_len,
-                >(data)?;
-                match tag {
-                    $($tag => {
-                        $(let ($field, data) =
-                            crate::vendor::command::decode_declarative_fixed_field::<
-                                $field_ty,
-                                $field_len,
-                            >(data)?;)+
-                        Ok((Self::$variant($($field),+), data))
-                    },)+
-                    _ => Err(bt_hci::FromHciBytesError::InvalidValue),
-                }
-            }
-        }
-
-        impl<'de> bt_hci::FromHciBytes<'de> for $payload {
-            fn from_hci_bytes(
-                data: &'de [u8],
-            ) -> Result<(Self, &'de [u8]), bt_hci::FromHciBytesError> {
-                <Self as crate::vendor::command::HciDecodePayload>::from_hci_payload(data)
-            }
-        }
-
-        const _: () = ::core::assert!(
-            <$payload as crate::vendor::command::HciEncodePayload>::MAX_LEN
-                <= u8::MAX as usize
-        );
-    };
-    (
-        $(#[$struct_attr:meta])*
-        $vis:vis struct $payload:ident {
-            $($(#[$field_attr:meta])*
-            $field:ident: $field_ty:ty => $field_len:literal,)*
-        }
-    ) => {
-        $(#[$struct_attr])*
-        #[derive(Copy, Clone, Debug)]
-        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-        $vis struct $payload {
-            $($(#[$field_attr])*
-            pub $field: $field_ty,)*
-        }
-
-        impl crate::vendor::command::HciEncodePayload for $payload {
-            const MIN_LEN: usize = 0 $(+ $field_len)*;
-            const MAX_LEN: usize = 0 $(+ $field_len)*;
-
-            fn hci_payload_size(&self) -> usize {
-                <Self as crate::vendor::command::HciEncodePayload>::MAX_LEN
-            }
-
-            fn write_hci_payload<W: embedded_io::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                $(<$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field(
-                    &self.$field,
-                    &mut writer,
-                )?;)*
-                Ok(())
-            }
-
-            async fn write_hci_payload_async<W: embedded_io_async::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                $(<$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field_async(
-                    &self.$field,
-                    &mut writer,
-                ).await?;)*
-                Ok(())
-            }
-        }
-
-        impl crate::vendor::command::HciDecodePayload for $payload {
-            const MIN_LEN: usize =
-                <Self as crate::vendor::command::HciEncodePayload>::MIN_LEN;
-            const MAX_LEN: usize =
-                <Self as crate::vendor::command::HciEncodePayload>::MAX_LEN;
-
-            fn from_hci_payload(
-                data: &[u8],
-            ) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError> {
-                $(let ($field, data) =
-                    crate::vendor::command::decode_declarative_fixed_field::<
-                        $field_ty,
-                        $field_len,
-                    >(data)?;)*
-                Ok((Self { $($field,)* }, data))
-            }
-        }
-
-        impl<'de> bt_hci::FromHciBytes<'de> for $payload {
-            fn from_hci_bytes(
-                data: &'de [u8],
-            ) -> Result<(Self, &'de [u8]), bt_hci::FromHciBytesError> {
-                <Self as crate::vendor::command::HciDecodePayload>::from_hci_payload(data)
-            }
-        }
-
-        const _: () = ::core::assert!(
-            <$payload as crate::vendor::command::HciEncodePayload>::MAX_LEN
-                <= u8::MAX as usize
-        );
-    };
-}
-
 macro_rules! declarative_field_list_type {
     () => {
         ()
@@ -1331,16 +995,6 @@ macro_rules! declarative_schema_field_type {
         }
     ) => {
         crate::vendor::command::TaggedField<$ty, $max_len>
-    };
-    (
-        $ty:ty,
-        {
-            kind: payload,
-            min_len: $min_len:literal,
-            max_len: $max_len:literal,
-        }
-    ) => {
-        crate::vendor::command::PayloadField<$ty, $min_len, $max_len>
     };
     (
         $ty:ty,
@@ -1443,16 +1097,6 @@ macro_rules! declarative_schema_field_value {
     (
         $value:ident: $ty:ty,
         {
-            kind: payload,
-            min_len: $min_len:literal,
-            max_len: $max_len:literal,
-        }
-    ) => {
-        crate::vendor::command::PayloadField::<$ty, $min_len, $max_len>::try_new($value)?
-    };
-    (
-        $value:ident: $ty:ty,
-        {
             kind: bitmap_items,
             bitmap: $bitmap:ident,
             mask: $mask:literal,
@@ -1510,15 +1154,6 @@ macro_rules! declarative_schema_max_len {
                     },
                 },)*
             },
-            min_len: $min_len:literal,
-            max_len: $max_len:literal,
-        }
-    ) => {
-        $max_len
-    };
-    (
-        {
-            kind: payload,
             min_len: $min_len:literal,
             max_len: $max_len:literal,
         }
@@ -1602,15 +1237,6 @@ macro_rules! declarative_schema_validate {
             ::core::assert!(false $(|| $tag_len $(+ $variant_len)* == $min_len)*);
             ::core::assert!(false $(|| $tag_len $(+ $variant_len)* == $max_len)*);
         };
-    };
-    (
-        {
-            kind: payload,
-            min_len: $min_len:literal,
-            max_len: $max_len:literal,
-        }
-    ) => {
-        const _: () = ::core::assert!($min_len <= $max_len);
     };
     (
         {
@@ -1698,17 +1324,6 @@ macro_rules! decode_declarative_schema_field {
             $item_len,
             $max_items,
         >($data)
-    };
-    (
-        $ty:ty,
-        {
-            kind: payload,
-            min_len: $min_len:literal,
-            max_len: $max_len:literal,
-        },
-        $data:ident
-    ) => {
-        crate::vendor::command::decode_declarative_payload::<$ty, $min_len, $max_len>($data)
     };
 }
 
@@ -2219,30 +1834,11 @@ macro_rules! declarative_variable_command {
 /// },
 /// ```
 ///
-/// When the same tagged shape appears in more than one command or event,
-/// `vendor_payload!` defines it once and generates both encoding and decoding:
-///
-/// ```rust,ignore
-/// vendor_payload! {
-///     pub enum Uuid {
-///         Tag = u8 => 1;
-///         Uuid16(value: u16 => 2) = 0x01;
-///         Uuid128(value: [u8; 16] => 16) = 0x02;
-///     }
-/// }
-///
-/// // Inside Params or Return:
-/// uuid: &'a Uuid => {
-///     kind: payload,
-///     min_len: 3,
-///     max_len: 17,
-/// },
-/// ```
-///
-/// The compliance checker resolves the payload type and rejects bounds that
-/// differ from the generated payload metadata. Command return structures stay
-/// inline in each `vendor_cmd!` declaration so the complete command wire shape
-/// is visible at its definition site.
+/// Tagged shapes stay inline in every command declaration, even when the same
+/// semantic type appears in several commands. This keeps each command's full
+/// wire shape visible at its definition site and lets the compliance checker
+/// validate every occurrence independently. Command return structures follow
+/// the same rule.
 ///
 /// A bitmap-selected list emits no separate count. Its number of records must
 /// equal the number of selected bits, and bits outside `mask` are rejected:
@@ -2437,24 +2033,6 @@ macro_rules! vendor_cmd {
 mod tests {
     use super::{HciLengthError, TaggedField};
 
-    vendor_payload! {
-        pub(crate) enum ReusablePayloadFixture {
-            Tag = u8 => 1;
-            Short(value: u8 => 1) = 0x01;
-            Long(value: u16 => 2) = 0x02;
-        }
-    }
-
-    declarative_return! {
-        ReusablePayloadReturn {
-            payload: ReusablePayloadFixture => {
-                kind: payload,
-                min_len: 2,
-                max_len: 3,
-            },
-        }
-    }
-
     vendor_cmd! {
         AggregateLengthFixture(cgid = 0x1, cid = 0x0E) {
             Params<'a> = {
@@ -2517,17 +2095,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(&pair.bytes[..pair.len], [0x02, 0xAA, 0x34, 0x12]);
-    }
-
-    #[test]
-    fn reusable_payload_decodes_inside_declarative_return() {
-        use bt_hci::FromHciBytes;
-
-        let short = ReusablePayloadReturn::from_hci_bytes_complete(&[0x01, 0xAA]).unwrap();
-        assert_eq!(short.payload, ReusablePayloadFixture::Short(0xAA));
-
-        let long = ReusablePayloadReturn::from_hci_bytes_complete(&[0x02, 0x34, 0x12]).unwrap();
-        assert_eq!(long.payload, ReusablePayloadFixture::Long(0x1234));
     }
 
     #[test]

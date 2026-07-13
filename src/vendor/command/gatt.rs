@@ -18,7 +18,18 @@ vendor_cmd! {
     GattAddService(cgid = 0x2, cid = 0x02) {
         Params<'a> = {
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -39,7 +50,18 @@ vendor_cmd! {
             include_handle_start: AttributeHandle => 2,
             include_handle_end: AttributeHandle => 2,
             include_uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -56,7 +78,18 @@ vendor_cmd! {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
             characteristic_uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -80,7 +113,18 @@ vendor_cmd! {
             service_handle: AttributeHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             descriptor_uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -206,7 +250,18 @@ vendor_cmd! {
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -222,7 +277,18 @@ vendor_cmd! {
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -271,7 +337,18 @@ vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnectionHandle => 2,
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -309,7 +386,18 @@ vendor_cmd! {
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -346,7 +434,18 @@ vendor_cmd! {
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
             uuid: &'a Uuid => {
-                kind: payload,
+                kind: tagged,
+                tag: u8 => 1,
+                variants: {
+                    Uuid::Uuid16(value) => {
+                        tag: 0x01,
+                        fields: { value: u16 => 2, },
+                    },
+                    Uuid::Uuid128(value) => {
+                        tag: 0x02,
+                        fields: { value: [u8; 16] => 16, },
+                    },
+                },
                 min_len: 3,
                 max_len: 17,
             },
@@ -812,17 +911,15 @@ pub struct AddServiceParameters {
     pub max_attribute_records: u8,
 }
 
-vendor_payload! {
-    /// Types of UUID.
-    pub enum Uuid {
-        Tag = u8 => 1;
+/// Types of UUID.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Uuid {
+    /// 16-bit UUID.
+    Uuid16(u16),
 
-        /// 16-bit UUID.
-        Uuid16(value: u16 => 2) = 0x01;
-
-        /// 128-bit UUID.
-        Uuid128(value: [u8; 16] => 16) = 0x02;
-    }
+    /// 128-bit UUID.
+    Uuid128([u8; 16]),
 }
 
 /// Types of GATT services
