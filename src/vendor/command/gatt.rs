@@ -76,7 +76,7 @@ vendor_cmd! {
                 min_len: 3,
                 max_len: 17,
             },
-            service_type: u8 => 1,
+            service_type: ServiceType => 1,
             max_attribute_records: u8 => 1,
         };
         Completion = CommandComplete;
@@ -137,9 +137,9 @@ vendor_cmd! {
                 max_len: 17,
             },
             characteristic_value_len: u16 => 2,
-            characteristic_properties: u8 => 1,
-            security_permissions: u8 => 1,
-            gatt_event_mask: u8 => 1,
+            characteristic_properties: CharacteristicProperty => 1,
+            security_permissions: CharacteristicPermission => 1,
+            gatt_event_mask: CharacteristicEvent => 1,
             encryption_key_size: EncryptionKeySize => 1,
             is_variable: bool => 1,
         };
@@ -177,9 +177,9 @@ vendor_cmd! {
                 count: u8 => 1,
                 max_len: 227,
             },
-            security_permissions: u8 => 1,
-            access_permissions: u8 => 1,
-            gatt_event_mask: u8 => 1,
+            security_permissions: DescriptorPermission => 1,
+            access_permissions: AccessPermission => 1,
+            gatt_event_mask: CharacteristicEvent => 1,
             encryption_key_size: EncryptionKeySize => 1,
             is_variable: bool => 1,
         };
@@ -245,7 +245,7 @@ vendor_cmd! {
 vendor_cmd! {
     GattSetEventMask(cgid = 0x2, cid = 0x0A) {
         Params = {
-            event_mask: u32 => 4,
+            event_mask: Event => 4,
         };
         Completion = CommandComplete;
         Return = ();
@@ -700,7 +700,7 @@ vendor_cmd! {
         Params = {
             service_handle: AttributeHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            permission: u8 => 1,
+            permission: CharacteristicPermission => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -778,7 +778,7 @@ vendor_cmd! {
             conn_handle_to_notify: u16 => 2,
             service_handle: AttributeHandle => 2,
             characteristic_handle: AttributeHandle => 2,
-            update_type: u8 => 1,
+            update_type: UpdateType => 1,
             total_len: u16 => 2,
             offset: u16 => 2,
             value: &'a [u8] => {
@@ -808,7 +808,7 @@ vendor_cmd! {
         Params = {
             service_handle: AttributeHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            permissions: u8 => 1,
+            permissions: AccessPermission => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -895,22 +895,22 @@ pub enum Uuid {
     Uuid128([u8; 16]),
 }
 
-/// Types of GATT services
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[repr(u8)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ServiceType {
-    /// Primary service
-    Primary = 0x01,
-    /// Secondary service
-    Secondary = 0x02,
+hci_enum! {
+    /// Types of GATT services.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ServiceType: u8 => 1 {
+        /// Primary service
+        Primary = 0x01,
+        /// Secondary service
+        Secondary = 0x02,
+    }
 }
 
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Available characteristic properties. Defined in Volume 3, Part G,
     /// Section 3.3.3.1 of Bluetooth Specification 4.1.
-    pub struct CharacteristicProperty: u8 {
+    pub struct CharacteristicProperty: u8 => 1 {
         /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
         /// Configuration Descriptor. If set, the Server Characteristic Configuration Descriptor
         /// shall exist.
@@ -952,56 +952,9 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Available characteristic properties. Defined in Volume 3, Part G,
-    /// Section 3.3.3.1 of Bluetooth Specification 4.1.
-    pub struct CharacteristicProperty: u8 {
-        /// If set, permits broadcasts of the Characteristic Value using Server Characteristic
-        /// Configuration Descriptor. If set, the Server Characteristic Configuration Descriptor
-        /// shall exist.
-        const BROADCAST = 0x01;
-
-        /// If set, permits reads of the Characteristic Value using procedures defined in Volume 3,
-        /// Part G, Section 4.8 of the Bluetooth specification 4.1.
-        const READ = 0x02;
-
-        /// If set, permit writes of the Characteristic Value without response using procedures
-        /// defined in Volume 3, Part G, Section 4.9.1 of the Bluetooth specification 4.1.
-        const WRITE_WITHOUT_RESPONSE = 0x04;
-
-        /// If set, permits writes of the Characteristic Value with response using procedures
-        /// defined in Volume 3, Part Section 4.9.3 or Section 4.9.4 of the Bluetooth
-        /// specification 4.1.
-        const WRITE = 0x08;
-
-        /// If set, permits notifications of a Characteristic Value without acknowledgement using
-        /// the procedure defined in Volume 3, Part G, Section 4.10 of the Bluetooth specification
-        /// 4.1. If set, the Client Characteristic Configuration Descriptor shall exist.
-        const NOTIFY = 0x10;
-
-        /// If set, permits indications of a Characteristic Value with acknowledgement using the
-        /// procedure defined in Volume 3, Part G, Section 4.11 of the Bluetooth specification
-        /// 4.1. If set, the Client Characteristic Configuration Descriptor shall exist.
-        const INDICATE = 0x20;
-
-        /// If set, permits signed writes to the Characteristic Value using the Signed Writes
-        /// procedure defined in Volume 3, Part G, Section 4.9.2 of the Bluetooth specification
-        /// 4.1.
-        const AUTHENTICATED = 0x40;
-
-        /// If set, additional characteristic properties are defined in the Characteristic Extended
-        /// Properties Descriptor defined in Volume 3, Part G, Section 3.3.3.1 of the Bluetooth
-        /// specification 4.1. If set, the Characteristic Extended Properties Descriptor shall
-        /// exist.
-        const EXTENDED_PROPERTIES = 0x80;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Security permissions available for characteristics.
-    pub struct CharacteristicPermission: u8 {
+    pub struct CharacteristicPermission: u8 => 1 {
         /// Need authentication to read.
         const AUTHENTICATED_READ = 0x01;
 
@@ -1022,55 +975,9 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Security permissions available for characteristics.
-    pub struct CharacteristicPermission: u8 {
-        /// Need authentication to read.
-        const AUTHENTICATED_READ = 0x01;
-
-        /// Need authorization to read.
-        const AUTHORIZED_READ = 0x02;
-
-        /// Link should be encrypted to read.
-        const ENCRYPTED_READ = 0x04;
-
-        /// Need authentication to write.
-        const AUTHENTICATED_WRITE = 0x08;
-
-        /// Need authorization to write.
-        const AUTHORIZED_WRITE = 0x10;
-
-        /// Link should be encrypted for write.
-        const ENCRYPTED_WRITE = 0x20;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Which events may be generated when a characteristic is accessed.
-    pub struct CharacteristicEvent: u8 {
-        /// The application will be notified when a client writes to this attribute.
-        const ATTRIBUTE_WRITE = 0x01;
-
-        /// The application will be notified when a write request/write command/signed write command
-        /// is received by the server for this attribute.
-        const CONFIRM_WRITE = 0x02;
-
-        /// The application will be notified when a read request of any type is got for this
-        /// attribute.
-        const CONFIRM_READ = 0x04;
-
-        #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
-        /// The application will be notified when a notification is complete.
-        const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
-    }
-}
-
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Which events may be generated when a characteristic is accessed.
-    pub struct CharacteristicEvent: u8 {
+    pub struct CharacteristicEvent: u8 => 1 {
         /// The application will be notified when a client writes to this attribute.
         const ATTRIBUTE_WRITE = 0x01;
 
@@ -1167,10 +1074,9 @@ impl From<KnownDescriptor> for Uuid {
     }
 }
 
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Permissions available for characteristic descriptors.
-    pub struct DescriptorPermission: u8 {
+    pub struct DescriptorPermission: u8 => 1 {
         /// Authentication required.
         const AUTHENTICATED = 0x01;
 
@@ -1182,25 +1088,9 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Permissions available for characteristic descriptors.
-    pub struct DescriptorPermission: u8 {
-        /// Authentication required.
-        const AUTHENTICATED = 0x01;
-
-        /// Authorization required.
-        const AUTHORIZED = 0x02;
-
-        /// Encryption required.
-        const ENCRYPTED = 0x04;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Types of access for characteristic descriptors
-    pub struct AccessPermission: u8 {
+    pub struct AccessPermission: u8 => 1 {
         /// Readable
         const READ = 0x01;
         /// Writable
@@ -1214,28 +1104,10 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Types of access for characteristic descriptors
-    pub struct AccessPermission: u8 {
-        /// Readable
-        const READ = 0x01;
-        /// Writable
-        const WRITE = 0x02;
-        /// Readable and writeable
-        const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
-        /// Writeable without responseconst
-        const WRITE_NO_RESP = 0x04;
-        /// Signed writeable
-        const SIGNED_WRITE = 0x08;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Flags for individual events that can be masked by the
     /// [GATT Set Event Mask](GattSetEventMask) command.
-    pub struct Event: u32 {
+    pub struct Event: u32 => 4 {
         /// [GATT Attribute Modified](crate::vendor::event::VendorEvent::GattAttributeModified).
         const ATTRIBUTE_MODIFIED = 0x0000_0001;
         /// [GATT Procedure Timeout](crate::vendor::event::VendorEvent::GattProcedureTimeout).
@@ -1272,71 +1144,19 @@ bitflags::bitflags! {
         const DISCOVER_OR_READ_CHARACTERISTIC_BY_UUID_RESPONSE = 0x0002_0000;
         /// [GATT Tx Pool Available](crate::vendor::event::VendorEvent::GattTxPoolAvailable)
         const TX_POOL_AVAILABLE = 0x0004_0000;
+        /// [GATT Extended Read](crate::vendor::event::VendorEvent::GattReadExt)
+        const READ_EXT = 0x0010_0000;
+        /// [GATT Extended Indication](crate::vendor::event::VendorEvent::GattIndicationExt)
+        const INDICATION_EXT = 0x0020_0000;
+        /// [GATT Extended Notification](crate::vendor::event::VendorEvent::GattNotificationExt)
+        const NOTIFICATION_EXT = 0x0040_0000;
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Flags for individual events that can be masked by the [GATT Set Event Mask](GattSetEventMask) command.
-    pub struct Event: u32 {
-        /// [GATT Attribute Modified](crate::vendor::event::VendorEvent::GattAttributeModified).
-        const ATTRIBUTE_MODIFIED = 0x0000_0001;
-        /// [GATT Procedure Timeout](crate::vendor::event::VendorEvent::GattProcedureTimeout).
-        const PROCEDURE_TIMEOUT = 0x0000_0002;
-        /// [ATT Exchange MTU Response](crate::vendor::event::VendorEvent::AttExchangeMtuResponse).
-        const EXCHANGE_MTU_RESPONSE = 0x0000_0004;
-        /// [ATT Find Information Response](crate::vendor::event::VendorEvent::AttFindInformationResponse).
-        const FIND_INFORMATION_RESPONSE = 0x0000_0008;
-        /// [ATT Find By Type Value Response](crate::vendor::event::VendorEvent::AttFindByTypeValueResponse).
-        const FIND_BY_TYPE_VALUE_RESPONSE = 0x0000_0010;
-        /// [ATT Find By Type Response](crate::vendor::event::VendorEvent::AttFindByTypeResponse).
-        const READ_BY_TYPE_RESPONSE = 0x0000_0020;
-        /// [ATT Read Response](crate::vendor::event::VendorEvent::AttReadResponse).
-        const READ_RESPONSE = 0x0000_0040;
-        /// [ATT Read Blob Response](crate::vendor::event::VendorEvent::AttReadBlobResponse).
-        const READ_BLOB_RESPONSE = 0x0000_0080;
-        /// [ATT Read Multiple Response](crate::vendor::event::VendorEvent::AttReadMultipleResponse).
-        const READ_MULTIPLE_RESPONSE = 0x0000_0100;
-        /// [ATT Read By Group](crate::vendor::event::VendorEvent::AttReadByGroupTypeResponse).
-        const READ_BY_GROUP_RESPONSE = 0x0000_0200;
-        /// [ATT Prepare Write Response](crate::vendor::event::VendorEvent::AttPrepareWriteResponse).
-        const PREPARE_WRITE_RESPONSE = 0x0000_0800;
-        /// [ATT Execute Write Response](crate::vendor::event::VendorEvent::AttExecuteWriteResponse).
-        const EXECUTE_WRITE_RESPONSE = 0x0000_1000;
-        /// [GATT Indication](crate::vendor::event::VendorEvent::GattIndication).
-        const INDICATION = 0x0000_2000;
-        /// [GATT Notification](crate::vendor::event::VendorEvent::GattNotification).
-        const NOTIFICATION = 0x0000_4000;
-        /// [GATT Error Response](crate::vendor::event::VendorEvent::AttErrorResponse).
-        const ERROR_RESPONSE = 0x0000_8000;
-        /// [GATT Procedure Complete](crate::vendor::event::VendorEvent::GattProcedureComplete).
-        const PROCEDURE_COMPLETE = 0x0001_0000;
-        /// [GATT Discover Characteristic by UUID or Read Using Characteristic UUID](crate::vendor::event::VendorEvent::GattDiscoverOrReadCharacteristicByUuidResponse).
-        const DISCOVER_OR_READ_CHARACTERISTIC_BY_UUID_RESPONSE = 0x0002_0000;
-        /// [GATT Tx Pool Available](crate::vendor::event::VendorEvent::GattTxPoolAvailable)
-        const TX_POOL_AVAILABLE = 0x0004_0000;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Flags for types of updates that the controller should signal when a characteristic value is
     /// [updated](GattUpdateLongCharacteristicValue).
-    pub struct UpdateType: u8 {
-        /// A notification can be sent if enabled in the client characteristic configuration
-        /// descriptor.
-        const NOTIFICATION = 0x01;
-        /// An indication can be sent if enabled in the client characteristic configuration
-        /// descriptor.
-        const INDICATION = 0x02;
-    }
-}
-
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Flags for types of updates that the controller should signal when a characteristic value is
-    /// [updated](GattUpdateLongCharacteristicValue).
-    pub struct UpdateType: u8 {
+    pub struct UpdateType: u8 => 1 {
         /// A notification can be sent if enabled in the client characteristic configuration
         /// descriptor.
         const NOTIFICATION = 0x01;

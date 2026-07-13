@@ -150,22 +150,23 @@ pub enum AdvertisingIntervalError {
     NoRange,
 }
 
-/// The advertising type is used in the advertising parameters to determine the packet type that
-/// is used for advertising when advertising is enabled.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdvertisingType {
-    /// Connectable undirected advertising
-    ConnectableUndirected = 0x00,
-    /// Connectable high duty cycle directed advertising
-    ConnectableDirectedHighDutyCycle = 0x01,
-    /// Scannable undirected advertising
-    ScannableUndirected = 0x02,
-    /// Non connectable undirected advertising
-    NonConnectableUndirected = 0x03,
-    /// Connectable low duty cycle directed advertising
-    ConnectableDirectedLowDutyCycle = 0x04,
+hci_enum! {
+    /// The advertising type is used in the advertising parameters to determine the packet type that
+    /// is used for advertising when advertising is enabled.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AdvertisingType: u8 => 1 {
+        /// Connectable undirected advertising
+        ConnectableUndirected = 0x00,
+        /// Connectable high duty cycle directed advertising
+        ConnectableDirectedHighDutyCycle = 0x01,
+        /// Scannable undirected advertising
+        ScannableUndirected = 0x02,
+        /// Non connectable undirected advertising
+        NonConnectableUndirected = 0x03,
+        /// Connectable low duty cycle directed advertising
+        ConnectableDirectedLowDutyCycle = 0x04,
+    }
 }
 
 impl From<AdvertisingType> for AdvKind {

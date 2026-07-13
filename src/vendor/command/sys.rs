@@ -2,28 +2,14 @@
 
 #[cfg(after_fw_0_17_1)]
 use crate::vendor::command::BoundedBytes;
-#[cfg_attr(after_fw_0_17_1, doc = "Mode for [sys_reset](SysReset).")]
-#[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `sys_reset`.")]
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SysResetMode {
-    /// Reset without BLE stack options change.
-    NoOptionsChange = 0x00,
-    /// Reset with BLE stack option changes.
-    WithOptionsChange = 0x01,
-}
-
-impl crate::vendor::command::HciEncodeField<1> for SysResetMode {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8]).await
+hci_enum! {
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum SysResetMode: u8 => 1 {
+        /// Reset without BLE stack options change.
+        NoOptionsChange = 0x00,
+        /// Reset with BLE stack option changes.
+        WithOptionsChange = 0x01,
     }
 }
 

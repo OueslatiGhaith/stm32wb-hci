@@ -60,19 +60,20 @@ pub fn to_bd_addr_type(address_type: u8, address: BdAddr) -> Result<BdAddrType, 
     }
 }
 
-/// Indicates the type of address used in advertising and initiating packets.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum OwnAddressType {
-    /// Public Device Address.
-    Public = 0x00,
-    /// Random Device Address.
-    Random = 0x01,
-    /// Generate a resolvable private address, falling back to the public address.
-    PrivateFallbackPublic = 0x02,
-    /// Generate a resolvable private address, falling back to the random address.
-    PrivateFallbackRandom = 0x03,
+hci_enum! {
+    /// Indicates the type of address used in advertising and initiating packets.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum OwnAddressType: u8 => 1 {
+        /// Public Device Address.
+        Public = 0x00,
+        /// Random Device Address.
+        Random = 0x01,
+        /// Generate a resolvable private address, falling back to the public address.
+        PrivateFallbackPublic = 0x02,
+        /// Generate a resolvable private address, falling back to the random address.
+        PrivateFallbackRandom = 0x03,
+    }
 }
 
 impl From<OwnAddressType> for AddrKind {
@@ -86,19 +87,20 @@ impl From<OwnAddressType> for AddrKind {
     }
 }
 
-/// Filter policy used for undirected advertising.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdvertisingFilterPolicy {
-    /// Process scan and connection requests from all devices.
-    AllowConnectionAndScan = 0x00,
-    /// Filter scan requests, but process connection requests from all devices.
-    AllowConnectionWhiteListScan = 0x01,
-    /// Filter connection requests, but process scan requests from all devices.
-    WhiteListConnectionAllowScan = 0x02,
-    /// Filter both scan and connection requests.
-    WhiteListConnectionAndScan = 0x03,
+hci_enum! {
+    /// Filter policy used for undirected advertising.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AdvertisingFilterPolicy: u8 => 1 {
+        /// Process scan and connection requests from all devices.
+        AllowConnectionAndScan = 0x00,
+        /// Filter scan requests, but process connection requests from all devices.
+        AllowConnectionWhiteListScan = 0x01,
+        /// Filter connection requests, but process scan requests from all devices.
+        WhiteListConnectionAllowScan = 0x02,
+        /// Filter both scan and connection requests.
+        WhiteListConnectionAndScan = 0x03,
+    }
 }
 
 impl From<AdvertisingFilterPolicy> for AdvFilterPolicy {

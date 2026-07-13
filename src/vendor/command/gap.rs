@@ -2,7 +2,10 @@
 
 pub use crate::types::BdAddrType;
 use crate::types::PeerAddrType;
-use crate::types::extended_advertisement::{AdvSet, ExtendedAdvertisingInterval};
+use crate::types::extended_advertisement::{
+    AdvSet, AdvertisingEvent, AdvertisingMode, AdvertisingOperation, AdvertisingPhy,
+    ExtendedAdvertisingInterval,
+};
 pub use crate::types::{
     AdvertisingFilterPolicy, AdvertisingType, ConnectionInterval, ExpectedConnectionLength,
     OwnAddressType, ScanWindow,
@@ -106,30 +109,18 @@ impl crate::vendor::command::HciEncodeField<1> for PowerAmplifierOutputLevel {
     }
 }
 
-/// Reasons accepted by [`GapTerminate`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TerminationReason {
-    AuthenticationFailure = 0x05,
-    RemoteUser = 0x13,
-    RemoteLowResources = 0x14,
-    RemotePowerOff = 0x15,
-    UnsupportedRemoteFeature = 0x1A,
-    PairingWithUnitKeyNotSupported = 0x29,
-    UnacceptableConnectionParameters = 0x3B,
-}
-
-impl crate::vendor::command::HciEncodeField<1> for TerminationReason {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8]).await
+hci_enum! {
+    /// Reasons accepted by [`GapTerminate`].
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum TerminationReason: u8 => 1 {
+        AuthenticationFailure = 0x05,
+        RemoteUser = 0x13,
+        RemoteLowResources = 0x14,
+        RemotePowerOff = 0x15,
+        UnsupportedRemoteFeature = 0x1A,
+        PairingWithUnitKeyNotSupported = 0x29,
+        UnacceptableConnectionParameters = 0x3B,
     }
 }
 
@@ -144,11 +135,11 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetLimitedDiscoverable(cgid = 0x1, cid = 0x02) {
         Params<'a> = {
-            advertising_type: u8 => 1,
+            advertising_type: AdvertisingType => 1,
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
-            own_address_type: u8 => 1,
-            filter_policy: u8 => 1,
+            own_address_type: AddressType => 1,
+            filter_policy: AdvertisingFilterPolicy => 1,
             local_name: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -163,7 +154,11 @@ vendor_cmd! {
             conn_interval_max: u16 => 2,
         };
         Constraints = {
-            one_of(advertising_type, [0x00, 0x02, 0x03]);
+            one_of(advertising_type, [
+                AdvertisingType::ConnectableUndirected,
+                AdvertisingType::ScannableUndirected,
+                AdvertisingType::NonConnectableUndirected,
+            ]);
             ordered(advertising_interval_min, advertising_interval_max);
             ordered(conn_interval_min, conn_interval_max);
         };
@@ -174,11 +169,11 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetDiscoverable(cgid = 0x1, cid = 0x03) {
         Params<'a> = {
-            advertising_type: u8 => 1,
+            advertising_type: AdvertisingType => 1,
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
-            own_address_type: u8 => 1,
-            filter_policy: u8 => 1,
+            own_address_type: AddressType => 1,
+            filter_policy: AdvertisingFilterPolicy => 1,
             local_name: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -193,7 +188,11 @@ vendor_cmd! {
             conn_interval_max: u16 => 2,
         };
         Constraints = {
-            one_of(advertising_type, [0x00, 0x02, 0x03]);
+            one_of(advertising_type, [
+                AdvertisingType::ConnectableUndirected,
+                AdvertisingType::ScannableUndirected,
+                AdvertisingType::NonConnectableUndirected,
+            ]);
             ordered(advertising_interval_min, advertising_interval_max);
             ordered(conn_interval_min, conn_interval_max);
         };
@@ -205,14 +204,17 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetDirectConnectable(cgid = 0x1, cid = 0x04) {
         Params = {
-            own_address_type: u8 => 1,
-            advertising_type: u8 => 1,
+            own_address_type: AddressType => 1,
+            advertising_type: AdvertisingType => 1,
             initiator_address: BdAddrType => 7,
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
         };
         Constraints = {
-            one_of(advertising_type, [0x01, 0x04]);
+            one_of(advertising_type, [
+                AdvertisingType::ConnectableDirectedHighDutyCycle,
+                AdvertisingType::ConnectableDirectedLowDutyCycle,
+            ]);
             range(advertising_interval_min, 0x0020, 0x4000);
             range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
@@ -237,17 +239,17 @@ vendor_cmd! {
         Params = {
             bonding_required: bool => 1,
             mitm_protection_required: bool => 1,
-            secure_connection_support: u8 => 1,
+            secure_connection_support: SecureConnectionSupport => 1,
             keypress_notification_support: bool => 1,
             encryption_key_size_min: u8 => 1,
             encryption_key_size_max: u8 => 1,
             pass_key_required: bool => 1,
             fixed_pin: PassKey => 4,
-            identity_address_type: u8 => 1,
+            identity_address_type: AddressType => 1,
         };
         Constraints = {
             ordered(encryption_key_size_min, encryption_key_size_max);
-            one_of(identity_address_type, [0x00, 0x01]);
+            one_of(identity_address_type, [AddressType::Public, AddressType::Random]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -280,7 +282,7 @@ vendor_cmd! {
     GapAuthorizationResponse(cgid = 0x1, cid = 0x09) {
         Params = {
             conn_handle: ConnHandle => 2,
-            authorization: u8 => 1,
+            authorization: Authorization => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -308,11 +310,14 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetNonConnectable(cgid = 0x1, cid = 0x0B) {
         Params = {
-            advertising_type: u8 => 1,
-            address_type: u8 => 1,
+            advertising_type: AdvertisingType => 1,
+            address_type: AddressType => 1,
         };
         Constraints = {
-            one_of(advertising_type, [0x02, 0x03]);
+            one_of(advertising_type, [
+                AdvertisingType::ScannableUndirected,
+                AdvertisingType::NonConnectableUndirected,
+            ]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -324,14 +329,17 @@ vendor_cmd! {
         Params = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
-            own_address_type: u8 => 1,
-            filter_policy: u8 => 1,
+            own_address_type: AddressType => 1,
+            filter_policy: AdvertisingFilterPolicy => 1,
         };
         Constraints = {
             range(advertising_interval_min, 0x0020, 0x4000);
             range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
-            one_of(filter_policy, [0x00, 0x03]);
+            one_of(filter_policy, [
+                AdvertisingFilterPolicy::AllowConnectionAndScan,
+                AdvertisingFilterPolicy::WhiteListConnectionAndScan,
+            ]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -364,6 +372,8 @@ vendor_cmd! {
 vendor_cmd! {
     GapDeleteAdType(cgid = 0x1, cid = 0x0F) {
         Params = {
+            // Bluetooth AD types are an open registry, so this remains a raw
+            // byte rather than pretending the legacy enum is exhaustive.
             ad_type: u8 => 1,
         };
         Completion = CommandComplete;
@@ -387,7 +397,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetEventMask(cgid = 0x1, cid = 0x11) {
         Params = {
-            flags: u16 => 2,
+            flags: EventFlags => 2,
         };
         Completion = CommandComplete;
         Return = ();
@@ -434,7 +444,7 @@ vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(cgid = 0x1, cid = 0x16) {
         Params = {
             scan_window: ScanWindow => 4,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
         };
         Completion = CommandStatus;
@@ -445,7 +455,7 @@ vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(cgid = 0x1, cid = 0x17) {
         Params = {
             scan_window: ScanWindow => 4,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
         };
         Completion = CommandStatus;
@@ -456,7 +466,7 @@ vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x19) {
         Params<'a> = {
             scan_window: ScanWindow => 4,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             conn_interval: ConnectionInterval => 8,
             expected_connection_length: ExpectedConnectionLength => 4,
             white_list: &'a [PeerAddrType] => {
@@ -476,7 +486,7 @@ vendor_cmd! {
             scan_type: u8 => 1,
             scan_window: ScanWindow => 4,
             filter_policy: u8 => 1,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
         };
         Completion = CommandStatus;
@@ -488,7 +498,7 @@ vendor_cmd! {
         Params<'a> = {
             scan_type: u8 => 1,
             scan_window: ScanWindow => 4,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_policy: u8 => 1,
             filter_duplicates: bool => 1,
             white_list: &'a [PeerAddrType] => {
@@ -507,7 +517,7 @@ vendor_cmd! {
         Params = {
             scan_window: ScanWindow => 4,
             peer_address: PeerAddrType => 7,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             conn_interval: ConnectionInterval => 8,
             expected_connection_length: ExpectedConnectionLength => 4,
         };
@@ -518,10 +528,10 @@ vendor_cmd! {
 vendor_cmd! {
     GapTerminateProcedure(cgid = 0x1, cid = 0x1D) {
         Params = {
-            procedure: u8 => 1,
+            procedure: Procedure => 1,
         };
         Constraints = {
-            range(procedure, 1, u8::MAX);
+            non_empty(procedure);
         };
         Completion = CommandComplete;
         Return = ();
@@ -566,8 +576,8 @@ vendor_cmd! {
         Params<'a> = {
             advertising_interval_min: u16 => 2,
             advertising_interval_max: u16 => 2,
-            advertising_type: u8 => 1,
-            own_address_type: u8 => 1,
+            advertising_type: AdvertisingType => 1,
+            own_address_type: AddressType => 1,
             advertising_data: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -584,7 +594,10 @@ vendor_cmd! {
             range(advertising_interval_min, 0x0020, 0x4000);
             range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
-            one_of(advertising_type, [0x02, 0x03]);
+            one_of(advertising_type, [
+                AdvertisingType::ScannableUndirected,
+                AdvertisingType::NonConnectableUndirected,
+            ]);
         };
         Completion = CommandComplete;
         Return = ();
@@ -596,7 +609,7 @@ vendor_cmd! {
         Params = {
             scan_window: ScanWindow => 4,
             scan_type: u8 => 1,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_duplicates: bool => 1,
             filter_policy: u8 => 1,
         };
@@ -651,7 +664,7 @@ vendor_cmd! {
     GapPasskeyInput(cgid = 0x1, cid = 0x26) {
         Params = {
             conn_handle: ConnHandle => 2,
-            input_type: u8 => 1,
+            input_type: InputType => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -660,7 +673,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapGetOobData(cgid = 0x1, cid = 0x27) {
         Params = {
-            oob_data_type: u8 => 1,
+            oob_data_type: OobDataType => 1,
         };
         Completion = CommandComplete;
         Return = GapOobData {
@@ -676,9 +689,9 @@ vendor_cmd! {
 vendor_cmd! {
     GapSetOobData(cgid = 0x1, cid = 0x28) {
         Params = {
-            device_type: u8 => 1,
+            device_type: OobDeviceType => 1,
             address: BdAddrType => 7,
-            oob_data_type: u8 => 1,
+            oob_data_type: OobDataType => 1,
             oob_data_len: u8 => 1,
             oob_data: [u8; 16] => 16,
         };
@@ -722,7 +735,7 @@ vendor_cmd! {
                 item: BdAddrType => 7,
                 max_items: 36,
             },
-            mode: u8 => 1,
+            mode: AddDeviceToListMode => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -768,17 +781,17 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetConfig(cgid = 0x1, cid = 0x40) {
         Params<'a> = {
-            adv_mode: u8 => 1,
+            adv_mode: AdvertisingMode => 1,
             adv_handle: AdvHandle => 1,
-            adv_event_properties: u16 => 2,
+            adv_event_properties: AdvertisingEvent => 2,
             adv_interval: &'a ExtendedAdvertisingInterval => 8,
             primary_adv_channel_map: u8 => 1,
-            own_addr_type: u8 => 1,
+            own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
-            adv_filter_policy: u8 => 1,
+            adv_filter_policy: AdvertisingFilterPolicy => 1,
             adv_tx_power: u8 => 1,
             secondary_adv_max_skip: u8 => 1,
-            secondary_adv_phy: u8 => 1,
+            secondary_adv_phy: AdvertisingPhy => 1,
             adv_sid: u8 => 1,
             scan_req_notification_enable: bool => 1,
         };
@@ -807,7 +820,7 @@ vendor_cmd! {
     GapAdvSetAdvertisingData(cgid = 0x1, cid = 0x42) {
         Params<'a> = {
             adv_handle: AdvHandle => 1,
-            operation: u8 => 1,
+            operation: AdvertisingOperation => 1,
             fragment_preference: bool => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
@@ -824,7 +837,7 @@ vendor_cmd! {
     GapAdvSetScanResponseData(cgid = 0x1, cid = 0x43) {
         Params<'a> = {
             adv_handle: AdvHandle => 1,
-            operation: u8 => 1,
+            operation: AdvertisingOperation => 1,
             fragment_preference: bool => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
@@ -902,7 +915,7 @@ vendor_cmd! {
     GapAdvSetPeriodicData(cgid = 0x1, cid = 0x48) {
         Params<'a> = {
             advertising_handle: AdvHandle => 1,
-            operation: u8 => 1,
+            operation: AdvertisingOperation => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -930,19 +943,19 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetConfigurationV2(cgid = 0x1, cid = 0x4D) {
         Params = {
-            adv_mode: u8 => 1,
+            adv_mode: AdvertisingMode => 1,
             adv_handle: AdvHandle => 1,
-            adv_event_properties: u16 => 2,
+            adv_event_properties: AdvertisingEvent => 2,
             primary_adv_interval_min: u32 => 4,
             primary_adv_interval_max: u32 => 4,
             primary_adv_channel_map: u8 => 1,
-            own_addr_type: u8 => 1,
+            own_addr_type: AddressType => 1,
             peer_addr: BdAddrType => 7,
-            adv_filter_policy: u8 => 1,
+            adv_filter_policy: AdvertisingFilterPolicy => 1,
             adv_tx_power: u8 => 1,
-            primary_adv_phy: u8 => 1,
+            primary_adv_phy: AdvertisingPhy => 1,
             secondary_adv_max_skip: u8 => 1,
-            secondary_adv_phy: u8 => 1,
+            secondary_adv_phy: AdvertisingPhy => 1,
             adv_sid: u8 => 1,
             scan_req_notification_enable: bool => 1,
             primary_adv_phy_options: u8 => 1,
@@ -958,7 +971,7 @@ vendor_cmd! {
         Params<'a> = {
             scan_mode: u8 => 1,
             procedure: u8 => 1,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             filter_duplicates: u8 => 1,
             duration: u16 => 2,
             period: u16 => 2,
@@ -982,7 +995,7 @@ vendor_cmd! {
         Params<'a> = {
             initiating_mode: u8 => 1,
             procedure: u8 => 1,
-            own_address_type: u8 => 1,
+            own_address_type: AddressType => 1,
             peer_address_type: u8 => 1,
             peer_address: BdAddr => 6,
             advertising_handle: u8 => 1,
@@ -1052,37 +1065,21 @@ impl crate::vendor::command::HciEncodeField<4> for AdvSet {
     }
 }
 
-/// I/O capabilities available for the [GAP Set I/O Capability](GapSetIoCapability) command.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum IoCapability {
-    /// Display Only
-    Display = 0x00,
-    /// Display yes/no
-    DisplayConfirm = 0x01,
-    /// Keyboard Only
-    Keyboard = 0x02,
-    /// No Input, no output
-    None = 0x03,
-    /// Keyboard display
-    KeyboardDisplay = 0x04,
-}
-
-impl crate::vendor::command::HciEncodeField<1> for IoCapability {
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field(&(*self as u8), writer)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field_async(
-            &(*self as u8),
-            writer,
-        )
-        .await
+hci_enum! {
+    /// I/O capabilities available for the [GAP Set I/O Capability](GapSetIoCapability) command.
+    #[derive(Copy, Clone, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum IoCapability: u8 => 1 {
+        /// Display Only
+        Display = 0x00,
+        /// Display yes/no
+        DisplayConfirm = 0x01,
+        /// Keyboard Only
+        Keyboard = 0x02,
+        /// No Input, no output
+        None = 0x03,
+        /// Keyboard display
+        KeyboardDisplay = 0x04,
     }
 }
 
@@ -1095,13 +1092,15 @@ pub enum OutOfBandAuthentication {
     Enabled([u8; 16]),
 }
 
-/// Secure Connection support mode for [`GapSetAuthenticationRequirement`].
-#[derive(Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SecureConnectionSupport {
-    NotSupported = 0x00,
-    Optional = 0x01,
-    Mandatory = 0x02,
+hci_enum! {
+    /// Secure Connection support mode for [`GapSetAuthenticationRequirement`].
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum SecureConnectionSupport: u8 => 1 {
+        NotSupported = 0x00,
+        Optional = 0x01,
+        Mandatory = 0x02,
+    }
 }
 
 /// Fixed-PIN behavior for [`GapSetAuthenticationRequirement`].
@@ -1116,20 +1115,21 @@ pub enum Pin {
     Fixed(u32),
 }
 
-/// Options for the [GAP Authorization Response](GapAuthorizationResponse).
-#[repr(u8)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Authorization {
-    /// Accept the connection.
-    Authorized = 0x01,
-    /// Reject the connection.
-    Rejected = 0x02,
+hci_enum! {
+    /// Options for the [GAP Authorization Response](GapAuthorizationResponse).
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum Authorization: u8 => 1 {
+        /// Accept the connection.
+        Authorized = 0x01,
+        /// Reject the connection.
+        Rejected = 0x02,
+    }
 }
 
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Roles for a [GAP service](CmdGapInit).
-    pub struct Role: u8 {
+    pub struct Role: u8 => 1 {
         /// Peripheral
         const PERIPHERAL = 0x01;
         /// Broadcaster
@@ -1141,138 +1141,97 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Roles for a [GAP service](CmdGapInit).
-    pub struct Role: u8 {
-        /// Peripheral
-        const PERIPHERAL = 0x01;
-        /// Broadcaster
-        const BROADCASTER = 0x02;
-        /// Central Device
-        const CENTRAL = 0x04;
-        /// Observer
-        const OBSERVER = 0x08;
+hci_enum! {
+    /// Indicates the type of address being used in the advertising packets, for
+    /// [`GapSetNonConnectable`].
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AddressType: u8 => 1 {
+        /// Public device address.
+        Public = 0x00,
+        /// Static random device address.
+        Random = 0x01,
+        /// Controller generates Resolvable Private Address.
+        ResolvablePrivate = 0x02,
+        /// Controller generates Resolvable Private Address based on the local IRK from resolving
+        /// list.
+        NonResolvablePrivate = 0x03,
     }
 }
 
-impl crate::vendor::command::HciEncodeField<1> for Role {
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field(&self.bits(), writer)
+hci_enum! {
+    /// Available types of advertising data.
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AdvertisingDataType: u8 => 1 {
+        /// Flags
+        Flags = 0x01,
+        /// 16-bit service UUID
+        Uuid16 = 0x02,
+        /// Complete list of 16-bit service UUIDs
+        UuidCompleteList16 = 0x03,
+        /// 32-bit service UUID
+        Uuid32 = 0x04,
+        /// Complete list of 32-bit service UUIDs
+        UuidCompleteList32 = 0x05,
+        /// 128-bit service UUID
+        Uuid128 = 0x06,
+        /// Complete list of 128-bit service UUIDs.
+        UuidCompleteList128 = 0x07,
+        /// Shortened local name
+        ShortenedLocalName = 0x08,
+        /// Complete local name
+        CompleteLocalName = 0x09,
+        /// Transmitter power level
+        TxPowerLevel = 0x0A,
+        /// Security Manager TK Value
+        SecurityManagerTkValue = 0x10,
+        /// Security Manager out-of-band flags
+        SecurityManagerOutOfBandFlags = 0x11,
+        /// Connection interval
+        PeripheralConnectionInterval = 0x12,
+        /// Service solicitation list, 16-bit UUIDs
+        SolicitUuidList16 = 0x14,
+        /// Service solicitation list, 32-bit UUIDs
+        SolicitUuidList32 = 0x15,
+        /// Service data
+        ServiceData = 0x16,
+        /// Manufacturer-specific data
+        ManufacturerSpecificData = 0xFF,
     }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        <u8 as crate::vendor::command::HciEncodeField<1>>::write_hci_field_async(
-            &self.bits(),
-            writer,
-        )
-        .await
-    }
 }
 
-/// Indicates the type of address being used in the advertising packets, for the
-/// [`set_nonconnectable`](GapSetNonConnectable).
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AddressType {
-    /// Public device address.
-    Public = 0x00,
-    /// Static random device address.
-    Random = 0x01,
-    /// Controller generates Resolvable Private Address.
-    ResolvablePrivate = 0x02,
-    /// Controller generates Resolvable Private Address. based on the local IRK from resolving
-    /// list.
-    NonResolvablePrivate = 0x03,
-}
-
-/// Available types of advertising data.
-#[repr(u8)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdvertisingDataType {
-    /// Flags
-    Flags = 0x01,
-    /// 16-bit service UUID
-    Uuid16 = 0x02,
-    /// Complete list of 16-bit service UUIDs
-    UuidCompleteList16 = 0x03,
-    /// 32-bit service UUID
-    Uuid32 = 0x04,
-    /// Complete list of 32-bit service UUIDs
-    UuidCompleteList32 = 0x05,
-    /// 128-bit service UUID
-    Uuid128 = 0x06,
-    /// Complete list of 128-bit service UUIDs.
-    UuidCompleteList128 = 0x07,
-    /// Shortened local name
-    ShortenedLocalName = 0x08,
-    /// Complete local name
-    CompleteLocalName = 0x09,
-    /// Transmitter power level
-    TxPowerLevel = 0x0A,
-    /// Serurity Manager TK Value
-    SecurityManagerTkValue = 0x10,
-    /// Serurity Manager out-of-band flags
-    SecurityManagerOutOfBandFlags = 0x11,
-    /// Connection interval
-    PeripheralConnectionInterval = 0x12,
-    /// Service solicitation list, 16-bit UUIDs
-    SolicitUuidList16 = 0x14,
-    /// Service solicitation list, 32-bit UUIDs
-    SolicitUuidList32 = 0x15,
-    /// Service data
-    ServiceData = 0x16,
-    /// Manufacturer-specific data
-    ManufacturerSpecificData = 0xFF,
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Event types for [GAP Set Event Mask](GapSetEventMask).
-    #[derive(Debug, Clone, Copy)]
-    pub struct EventFlags: u16 {
-        /// [Limited Discoverable](::event::VendorEvent::GapLimitedDiscoverableTimeout)
+    pub struct EventFlags: u16 => 2 {
+        /// [Limited Discoverable](crate::vendor::event::VendorEvent::GapLimitedDiscoverableTimeout)
         const LIMITED_DISCOVERABLE_TIMEOUT = 0x0001;
-        /// [Pairing Complete](::event::VendorEvent::GapPairingComplete)
+        /// [Pairing Complete](crate::vendor::event::VendorEvent::GapPairingComplete)
         const PAIRING_COMPLETE = 0x0002;
-        /// [Pass Key Request](::event::VendorEvent::GapPassKeyRequest)
+        /// [Pass Key Request](crate::vendor::event::VendorEvent::GapPassKeyRequest)
         const PASS_KEY_REQUEST = 0x0004;
-        /// [Authorization Request](::event::VendorEvent::GapAuthorizationRequest)
+        /// [Authorization Request](crate::vendor::event::VendorEvent::GapAuthorizationRequest)
         const AUTHORIZATION_REQUEST = 0x0008;
-        /// [Peripheral Security Initiated](::event::VendorEvent::GapPeripheralSecurityInitiated).
+        /// [Peripheral Security Initiated](crate::vendor::event::VendorEvent::GapPeripheralSecurityInitiated).
         const PERIPHERAL_SECURITY_INITIATED = 0x0010;
-        /// [Bond Lost](::event::VendorEvent::GapBondLost)
+        /// [Bond Lost](crate::vendor::event::VendorEvent::GapBondLost)
         const BOND_LOST = 0x0020;
+        /// [GAP Procedure Complete](crate::vendor::event::VendorEvent::GapProcedureComplete)
+        const PROCEDURE_COMPLETE = 0x0080;
+        /// [L2CAP Connection Update Request](crate::vendor::event::VendorEvent::L2CapConnectionUpdateRequest)
+        const L2CAP_CONNECTION_UPDATE_REQUEST = 0x0100;
+        /// [L2CAP Connection Update Response](crate::vendor::event::VendorEvent::L2CapConnectionUpdateResponse)
+        const L2CAP_CONNECTION_UPDATE_RESPONSE = 0x0200;
+        /// [L2CAP Procedure Timeout](crate::vendor::event::VendorEvent::L2CapProcedureTimeout)
+        const L2CAP_PROCEDURE_TIMEOUT = 0x0400;
+        /// [GAP Address Not Resolved](crate::vendor::event::VendorEvent::GapAddressNotResolved)
+        const ADDRESS_NOT_RESOLVED = 0x0800;
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Event types for [GAP Set Event Mask](GapSetEventMask).
-    pub struct EventFlags: u16 {
-        /// [Limited Discoverable](::event::VendorEvent::GapLimitedDiscoverableTimeout)
-        const LIMITED_DISCOVERABLE_TIMEOUT = 0x0001;
-        /// [Pairing Complete](::event::VendorEvent::GapPairingComplete)
-        const PAIRING_COMPLETE = 0x0002;
-        /// [Pass Key Request](::event::VendorEvent::GapPassKeyRequest)
-        const PASS_KEY_REQUEST = 0x0004;
-        /// [Authorization Request](::event::VendorEvent::GapAuthorizationRequest)
-        const AUTHORIZATION_REQUEST = 0x0008;
-        /// [Peripheral Security Initiated](::event::VendorEvent::GapPeripheralSecurityInitiated).
-        const PERIPHERAL_SECURITY_INITIATED = 0x0010;
-        /// [Bond Lost](::event::VendorEvent::GapBondLost)
-        const BOND_LOST = 0x0020;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
-    /// Roles for a [GAP service](CmdGapInit).
-    pub struct Procedure: u8 {
+hci_bitflags! {
+    /// GAP procedures accepted by [`GapTerminateProcedure`].
+    pub struct Procedure: u8 => 1 {
         /// [Limited Discovery](GapStartLimitedDiscoveryProcedure) procedure.
         const LIMITED_DISCOVERY = 0x01;
         /// [General Discovery](GapStartGeneralDiscoveryProcedure) procedure.
@@ -1292,68 +1251,61 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Roles for a [GAP service](CmdGapInit).
-    pub struct Procedure: u8 {
-        /// [Limited Discovery](GapStartLimitedDiscoveryProcedure) procedure.
-        const LIMITED_DISCOVERY = 0x01;
-        /// [General Discovery](GapStartGeneralDiscoveryProcedure) procedure.
-        const GENERAL_DISCOVERY = 0x02;
-        /// Name Discovery procedure.
-        const NAME_DISCOVERY = 0x04;
-        /// [Auto Connection Establishment](GapStartAutoConnectionEstablishmentProcedure).
-        const AUTO_CONNECTION_ESTABLISHMENT = 0x08;
-        /// [General Connection Establishment](GapStartGeneralConnectionEstablishmentProcedure).
-        const GENERAL_CONNECTION_ESTABLISHMENT = 0x10;
-        /// [Selective Connection Establishment](GapStartSelectiveConnectionEstablishmentProcedure).
-        const SELECTIVE_CONNECTION_ESTABLISHMENT = 0x20;
-        /// Direct Connection Establishment.
-        const DIRECT_CONNECTION_ESTABLISHMENT = 0x40;
-        /// [Observation](GapStartObservationProcedure) procedure.
-        const OBSERVATION = 0x80;
+hci_enum! {
+    /// Parameter for [GAP Passkey Input](GapPasskeyInput).
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum InputType: u8 => 1 {
+        EntryStarted = 0x00,
+        DigitEntered = 0x01,
+        DigitErased = 0x02,
+        Cleared = 0x03,
+        EntryCompleted = 0x04,
     }
 }
 
-/// Parameter for [GAP Passkey Input](GapPasskeyInput)
-pub enum InputType {
-    EntryStarted = 0x00,
-    DigitEntered = 0x01,
-    DigitErased = 0x02,
-    Cleared = 0x03,
-    EntryCompleted = 0x04,
+hci_enum! {
+    /// Kind of GAP out-of-band pairing data.
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum OobDataType: u8 => 1 {
+        /// TK (LP v.4.1)
+        TK = 0x00,
+        /// Random (SC)
+        Random = 0x01,
+        /// Confirm (SC)
+        Confirm = 0x02,
+    }
 }
 
-#[derive(Clone, Copy)]
-pub enum OobDataType {
-    /// TK (LP v.4.1)
-    TK,
-    /// Random (SC)
-    Random,
-    /// Confirm (SC)
-    Confirm,
+hci_enum! {
+    /// Device whose GAP out-of-band data is being supplied.
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum OobDeviceType: u8 => 1 {
+        Local = 0x00,
+        Remote = 0x01,
+    }
 }
 
-#[derive(Clone, Copy)]
-pub enum OobDeviceType {
-    Local = 0x00,
-    Remote = 0x01,
-}
-
-/// Parameter for [GAP Add Devices to List](GapAddDevicesToList)
-pub enum AddDeviceToListMode {
-    /// Append to the resolving list only
-    AppendResoling = 0x00,
-    /// clear and set the resolving list only
-    ClearAndSetResolving = 0x01,
-    /// append to the whitelist only
-    AppendWhitelist = 0x02,
-    /// clear and set the whitelist only
-    ClearAndSetWhitelist = 0x03,
-    /// apppend to both resolving and white lists
-    AppendBoth = 0x04,
-    /// clear and set both resolving and white lists
-    ClearAndSetBoth = 0x05,
+hci_enum! {
+    /// Parameter for [GAP Add Devices to List](GapAddDevicesToList).
+    #[derive(Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AddDeviceToListMode: u8 => 1 {
+        /// Append to the resolving list only
+        AppendResoling = 0x00,
+        /// Clear and set the resolving list only
+        ClearAndSetResolving = 0x01,
+        /// Append to the whitelist only
+        AppendWhitelist = 0x02,
+        /// Clear and set the whitelist only
+        ClearAndSetWhitelist = 0x03,
+        /// Append to both resolving and white lists
+        AppendBoth = 0x04,
+        /// Clear and set both resolving and white lists
+        ClearAndSetBoth = 0x05,
+    }
 }
 
 /// One record in the extended-scan PHY parameter list.

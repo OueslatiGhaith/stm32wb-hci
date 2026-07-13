@@ -657,12 +657,11 @@ pub enum Role {
     SimultaneousAdvertisingScanning = 4,
 }
 
-/// Configuration parameters that are readable by the
-/// [`read_config_data`](HalReadConfigData) command.
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ConfigParameter {
+hci_enum! {
+    /// Configuration parameters that are readable by [`HalReadConfigData`].
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ConfigParameter: u8 => 1 {
     /// Bluetooth public address.
     PublicAddress = 0,
 
@@ -684,29 +683,17 @@ pub enum ConfigParameter {
     LinkLayerOnly = 40,
 
     /// BlueNRG-MS roles and mode configuration.
-    Role = 41,
-}
-
-impl crate::vendor::command::HciEncodeField<1> for ConfigParameter {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8]).await
+        Role = 41,
     }
 }
 
-/// Transmitter power levels available for the system.
-///
-/// STM32WB5x uses single byte parameter for PA level.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PowerLevel {
+hci_enum! {
+    /// Transmitter power levels available for the system.
+    ///
+    /// STM32WB5x uses single byte parameter for PA level.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum PowerLevel: u8 => 1 {
     /// -40 dBm.
     Minus40dBm = 0x00,
 
@@ -801,26 +788,13 @@ pub enum PowerLevel {
     Plus5dBm = 0x1E,
 
     /// 6 dBm.
-    Plus6dBm = 0x1F,
-}
-
-impl crate::vendor::command::HciEncodeField<1> for PowerLevel {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8])
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[*self as u8]).await
+        Plus6dBm = 0x1F,
     }
 }
 
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy)]
-    pub struct RadioActivityFlags: u16 {
+hci_bitflags! {
+    /// Radio activities reported through the HAL activity mask.
+    pub struct RadioActivityFlags: u16 => 2 {
         /// Idle
         const IDLE = 0x0001;
         /// Advertising
@@ -838,151 +812,75 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    pub struct RadioActivityFlags: u16 {
-        /// Idle
-        const IDLE = 0x0001;
-        /// Advertising
-        const ADVERTISING = 0x0002;
-        /// Peripheral connection
-        const PERIPHERAL_CONN = 0x0004;
-        /// Scanning
-        const SCANNING = 0x0008;
-        /// Central connection
-        const CENTRAL_CONN = 0x0020;
-        /// Tx test mode
-        const TX_TEST = 0x0040;
-        /// Rx test mode
-        const RX_TEST = 0x0080;
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<2> for RadioActivityFlags {
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        self.bits().write_hci_field(writer)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        self.bits().write_hci_field_async(writer).await
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy)]
-    pub struct HalEventFlags: u32 {
+hci_bitflags! {
+    /// HAL vendor events enabled in the controller.
+    pub struct HalEventFlags: u32 => 4 {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
         const SCAN_REQ_REPORT = 0x00000001;
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    pub struct HalEventFlags: u32 {
-        /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
-        const SCAN_REQ_REPORT = 0x00000001;
+hci_enum! {
+    #[cfg_attr(
+        after_fw_0_17_1,
+        doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
+    )]
+    #[cfg_attr(
+        not(after_fw_0_17_1),
+        doc = "Trigger source for `set_sync_event_config`."
+    )]
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum SyncTriggerSource: u8 => 1 {
+        Cig = 0x00,
+        Big = 0x01,
     }
 }
 
-impl crate::vendor::command::HciEncodeField<4> for HalEventFlags {
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        self.bits().write_hci_field(writer)
+hci_enum! {
+    #[cfg_attr(
+        after_fw_0_17_1,
+        doc = "PHY for [continuous_tx_start](HalContinuousTxStart)."
+    )]
+    #[cfg_attr(not(after_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ContinuousTxPhy: u8 => 1 {
+        Le1M = 0x01,
+        Le2M = 0x02,
     }
+}
 
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        self.bits().write_hci_field_async(writer).await
+hci_enum! {
+    #[cfg_attr(
+        after_fw_0_17_1,
+        doc = "Data pattern for [continuous_tx_start](HalContinuousTxStart)."
+    )]
+    #[cfg_attr(not(after_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ContinuousTxPattern: u8 => 1 {
+        Prbs9 = 0x00,
+        Alternating11110000 = 0x01,
+        Alternating10101010 = 0x02,
+        Prbs15 = 0x03,
+        AllOnes = 0x04,
+        AllZeros = 0x05,
+        Alternating00001111 = 0x06,
+        Alternating0101 = 0x07,
     }
 }
 
-#[cfg_attr(
-    after_fw_0_17_1,
-    doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
-)]
-#[cfg_attr(
-    not(after_fw_0_17_1),
-    doc = "Trigger source for `set_sync_event_config`."
-)]
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SyncTriggerSource {
-    Cig = 0x00,
-    Big = 0x01,
+hci_enum! {
+    #[cfg_attr(
+        after_fw_0_17_1,
+        doc = "Mode for [ead_encrypt_decrypt](HalEadEncryptDecrypt)."
+    )]
+    #[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum EadMode: u8 => 1 {
+        Encrypt = 0x00,
+        Decrypt = 0x01,
+    }
 }
-
-#[cfg_attr(
-    after_fw_0_17_1,
-    doc = "PHY for [continuous_tx_start](HalContinuousTxStart)."
-)]
-#[cfg_attr(not(after_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ContinuousTxPhy {
-    Le1M = 0x01,
-    Le2M = 0x02,
-}
-
-#[cfg_attr(
-    after_fw_0_17_1,
-    doc = "Data pattern for [continuous_tx_start](HalContinuousTxStart)."
-)]
-#[cfg_attr(not(after_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ContinuousTxPattern {
-    Prbs9 = 0x00,
-    Alternating11110000 = 0x01,
-    Alternating10101010 = 0x02,
-    Prbs15 = 0x03,
-    AllOnes = 0x04,
-    AllZeros = 0x05,
-    Alternating00001111 = 0x06,
-    Alternating0101 = 0x07,
-}
-
-#[cfg_attr(
-    after_fw_0_17_1,
-    doc = "Mode for [ead_encrypt_decrypt](HalEadEncryptDecrypt)."
-)]
-#[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
-#[repr(u8)]
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum EadMode {
-    Encrypt = 0x00,
-    Decrypt = 0x01,
-}
-
-macro_rules! impl_u8_hci_field {
-    ($type:ty) => {
-        impl crate::vendor::command::HciEncodeField<1> for $type {
-            fn write_hci_field<W: embedded_io::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                writer.write_all(&[*self as u8])
-            }
-
-            async fn write_hci_field_async<W: embedded_io_async::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                writer.write_all(&[*self as u8]).await
-            }
-        }
-    };
-}
-
-impl_u8_hci_field!(SyncTriggerSource);
-impl_u8_hci_field!(ContinuousTxPhy);
-impl_u8_hci_field!(ContinuousTxPattern);
-impl_u8_hci_field!(EadMode);

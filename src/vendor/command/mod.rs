@@ -2402,7 +2402,22 @@ macro_rules! vendor_cmd {
 
 #[cfg(test)]
 mod tests {
-    use super::{HciLengthError, TaggedField};
+    use super::{HciDecodeField, HciLengthError, TaggedField};
+
+    hci_enum! {
+        #[derive(Debug, Eq, PartialEq)]
+        enum SemanticEnumFixture: u8 => 1 {
+            First = 0x01,
+            Third = 0x03,
+        }
+    }
+
+    hci_bitflags! {
+        struct SemanticFlagsFixture: u8 => 1 {
+            const FIRST = 0x01;
+            const THIRD = 0x04;
+        }
+    }
 
     vendor_cmd! {
         AggregateLengthFixture(cgid = 0x1, cid = 0x0E) {
@@ -2466,6 +2481,21 @@ mod tests {
         })
         .unwrap();
         assert_eq!(&pair.bytes[..pair.len], [0x02, 0xAA, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn semantic_wire_declarations_reject_unknown_values_and_bits() {
+        assert_eq!(
+            SemanticEnumFixture::from_hci_field(&[0x03]),
+            Ok(SemanticEnumFixture::Third)
+        );
+        assert!(SemanticEnumFixture::from_hci_field(&[0x02]).is_err());
+
+        assert_eq!(
+            SemanticFlagsFixture::from_hci_field(&[0x05]),
+            Ok(SemanticFlagsFixture::FIRST | SemanticFlagsFixture::THIRD)
+        );
+        assert!(SemanticFlagsFixture::from_hci_field(&[0x02]).is_err());
     }
 
     #[test]

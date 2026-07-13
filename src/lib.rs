@@ -39,6 +39,9 @@ pub use bt_hci;
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 
+#[macro_use]
+mod wire;
+
 pub mod standard;
 pub mod types;
 pub mod vendor;

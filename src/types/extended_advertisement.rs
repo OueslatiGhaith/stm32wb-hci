@@ -4,49 +4,17 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use bt_hci::param::AdvHandle;
 
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Extended advertising modes
-    pub struct AdvertisingMode: u8 {
+    pub struct AdvertisingMode: u8 => 1 {
         /// Use specific random address
         const SPECIFIC = 0x01;
     }
 }
 
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Extended advertising modes
-    pub struct AdvertisingMode: u8 {
-        /// Use specific random address
-        const SPECIFIC = 0x01;
-    }
-}
-
-#[cfg(not(feature = "defmt"))]
-bitflags::bitflags! {
+hci_bitflags! {
     /// Advertising event types
-    pub struct AdvertisingEvent: u16 {
-        /// Connectable advertising
-        const CONNECTABLE = 0x0001;
-        /// Scannable advertising
-        const SCANNABLE = 0x0002;
-        /// Directed advertising
-        const DIRECTED = 0x0004;
-        /// High duty cycle directed connectable advertising
-        const HIGH_DUTY_DIRECTED = 0x0008;
-        /// Use legacy advertising PDUs
-        const LEGACY = 0x0010;
-        /// Anonymous advertising
-        const ANONYMOUS = 0x0020;
-        /// Include Tx power in at least one advertising PDU
-        const INCLUDE_TX_POWER = 0x0040;
-    }
-}
-
-#[cfg(feature = "defmt")]
-defmt::bitflags! {
-    /// Advertising event types
-    pub struct AdvertisingEvent: u16 {
+    pub struct AdvertisingEvent: u16 => 2 {
         /// Connectable advertising
         const CONNECTABLE = 0x0001;
         /// Scannable advertising
@@ -146,14 +114,18 @@ pub enum ExtendedAdvertisingIntervalError {
     Inverted(Duration, Duration),
 }
 
-/// Advertising PHY
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdvertisingPhy {
-    /// Advertisement PHY is LE 1M
-    Le1M = 0x01,
-    /// Advertisement PHY is LE 2M
-    Le2M = 0x02,
+hci_enum! {
+    /// Advertising PHY
+    #[derive(Clone, Copy, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AdvertisingPhy: u8 => 1 {
+        /// Advertisement PHY is LE 1M
+        Le1M = 0x01,
+        /// Advertisement PHY is LE 2M
+        Le2M = 0x02,
+        /// Advertisement PHY is LE Coded
+        LeCoded = 0x03,
+    }
 }
 
 /// Advertising set
@@ -184,18 +156,20 @@ impl AdvSet {
     }
 }
 
-/// Advertising Operation
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AdvertisingOperation {
-    /// Intermediate fragment of fragmented extended advertising data
-    IntermediateFragment = 0x00,
-    /// First fragment of fragmented extended advertising data
-    FirstFragment = 0x01,
-    /// Last fragment of fragmented extended advertising data
-    LastFragment = 0x02,
-    /// Complete extended advertising data
-    CompleteData = 0x03,
-    /// Unchanged data (just update the advertising DID)
-    UnchangedData = 0x04,
+hci_enum! {
+    /// Advertising Operation
+    #[derive(Clone, Copy, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AdvertisingOperation: u8 => 1 {
+        /// Intermediate fragment of fragmented extended advertising data
+        IntermediateFragment = 0x00,
+        /// First fragment of fragmented extended advertising data
+        FirstFragment = 0x01,
+        /// Last fragment of fragmented extended advertising data
+        LastFragment = 0x02,
+        /// Complete extended advertising data
+        CompleteData = 0x03,
+        /// Unchanged data (just update the advertising DID)
+        UnchangedData = 0x04,
+    }
 }
