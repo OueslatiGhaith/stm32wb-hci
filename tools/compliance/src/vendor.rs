@@ -8,8 +8,9 @@ use tree_sitter::{Node, Parser, Tree};
 
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
-    CatalogCommand, CatalogEvent, CatalogFamily, CatalogSchema, CommandScope,
-    CompletionExpectation, EventPayloadLayout, EventScope, RequestLayout, ResponseLayout,
+    CatalogCommand, CatalogCommandKind, CatalogEvent, CatalogEventKind, CatalogFamily,
+    CatalogSchema, CommandScope, CompletionExpectation, EventPayloadLayout, EventScope,
+    RequestLayout, ResponseLayout,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -164,7 +165,11 @@ pub fn extract_vendor_commands(
         extract_command_metadata(source, source_name, CommandScope::VendorAci)?
             .into_iter()
             .map(|command| {
-                CoverageEntry::new(command.ocf, command.name, CoverageOrigin::VendorAutoSource)
+                CoverageEntry::new(
+                    command.ocf(),
+                    command.name,
+                    CoverageOrigin::VendorAutoSource,
+                )
             })
             .collect(),
     )
@@ -332,27 +337,37 @@ fn extract_command_metadata_with_evidence(
                 "{source_name}: generated command `{name}` contains C syntax errors"
             ));
         }
-        let ogf = assignment_integer(body, source, "ogf").map(|value| value as u8);
-        let opcode = match scope {
-            CommandScope::VendorAci => None,
-            CommandScope::StandardHci => ogf.map(|ogf| (u16::from(ogf) << 10) | ocf),
+        let kind = match scope {
+            CommandScope::VendorAci => CatalogCommandKind::VendorAci { ocf },
+            CommandScope::StandardHci => {
+                let ogf = assignment_integer(body, source, "ogf").ok_or_else(|| {
+                    format!(
+                        "{source_name}: standard command `{name}` has an OCF but no literal rq.ogf"
+                    )
+                })?;
+                if ogf > 0x3f {
+                    return Err(format!(
+                        "{source_name}: standard command `{name}` OGF 0x{ogf:X} exceeds six bits"
+                    ));
+                }
+                if ocf > 0x03ff {
+                    return Err(format!(
+                        "{source_name}: standard command `{name}` OCF 0x{ocf:X} exceeds ten bits"
+                    ));
+                }
+                CatalogCommandKind::StandardHci {
+                    opcode: (ogf << 10) | ocf,
+                }
+            }
         };
-        if matches!(scope, CommandScope::StandardHci) && ogf.is_none() {
-            return Err(format!(
-                "{source_name}: standard command `{name}` has an OCF but no literal rq.ogf"
-            ));
-        }
         let source_offset = u32::try_from(function.start_byte()).map_err(|_| {
             format!("{source_name}: command `{name}` source offset exceeds schema range")
         })?;
         commands.push(CatalogCommand {
-            scope,
+            kind,
             name,
             source_name: source_name.to_owned(),
             source_offset,
-            ogf,
-            ocf,
-            opcode,
             completion: completion_expectation(body, source),
             request: request_layout(declarator, body, source, packed_layouts),
             response: response_layout(body, source, packed_layouts),
@@ -438,31 +453,35 @@ fn extract_event_table_with_evidence(
             ));
         }
         let handler_name = node_text(handler, source);
-        let payload = (scope == EventScope::VendorAci).then(|| {
-            process_layouts
-                .get(handler_name)
-                .cloned()
-                .unwrap_or_else(|| {
-                    event_payload_layout(
-                        format!(
-                            "{}_rp0",
-                            handler_name
-                                .strip_suffix("_process")
-                                .unwrap_or(handler_name)
-                        ),
-                        packed_layouts,
-                    )
-                })
-        });
+        let kind = match scope {
+            EventScope::VendorAci => {
+                let payload = process_layouts
+                    .get(handler_name)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        event_payload_layout(
+                            format!(
+                                "{}_rp0",
+                                handler_name
+                                    .strip_suffix("_process")
+                                    .unwrap_or(handler_name)
+                            ),
+                            packed_layouts,
+                        )
+                    });
+                CatalogEventKind::VendorAci { payload }
+            }
+            EventScope::StandardHci => CatalogEventKind::StandardHci,
+            EventScope::LeMeta => CatalogEventKind::LeMeta,
+        };
         entries.push(CatalogEvent {
-            scope,
+            kind,
             code,
             name: handler_name.to_owned(),
             source_name: EVENT_SOURCE.to_owned(),
             source_offset: u32::try_from(handler.start_byte()).map_err(|_| {
                 format!("ble_events.c: {table_name} entry source offset exceeds schema range")
             })?,
-            payload,
         });
     }
 
@@ -1396,7 +1415,55 @@ mod tests {
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "aci_fixture");
-        assert_eq!(commands[0].ocf, 0x81);
+        assert_eq!(commands[0].ocf(), 0x81);
+    }
+
+    #[test]
+    fn standard_command_identity_is_derived_from_one_opcode() {
+        let source = r#"
+            tBleStatus hci_fixture(void)
+            {
+                struct hci_request rq;
+                rq.ogf = 0x08;
+                rq.ocf = 0x003;
+            }
+        "#;
+
+        let commands =
+            extract_command_metadata(source, "fixture.c", CommandScope::StandardHci).unwrap();
+        assert_eq!(
+            commands[0].kind,
+            CatalogCommandKind::StandardHci { opcode: 0x2003 }
+        );
+        assert_eq!(commands[0].ogf(), Some(0x08));
+        assert_eq!(commands[0].ocf(), 0x003);
+    }
+
+    #[test]
+    fn rejects_standard_command_identity_outside_opcode_widths() {
+        let oversized_ogf = r#"
+            tBleStatus hci_fixture(void)
+            {
+                struct hci_request rq;
+                rq.ogf = 0x40;
+                rq.ocf = 0x001;
+            }
+        "#;
+        let error = extract_command_metadata(oversized_ogf, "fixture.c", CommandScope::StandardHci)
+            .unwrap_err();
+        assert!(error.contains("OGF 0x40 exceeds six bits"));
+
+        let oversized_ocf = r#"
+            tBleStatus hci_fixture(void)
+            {
+                struct hci_request rq;
+                rq.ogf = 0x08;
+                rq.ocf = 0x400;
+            }
+        "#;
+        let error = extract_command_metadata(oversized_ocf, "fixture.c", CommandScope::StandardHci)
+            .unwrap_err();
+        assert!(error.contains("OCF 0x400 exceeds ten bits"));
     }
 
     #[test]
@@ -1693,7 +1760,7 @@ mod tests {
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "aci_real");
-        assert_eq!(commands[0].ocf, 0x81);
+        assert_eq!(commands[0].ocf(), 0x81);
     }
 
     #[test]
@@ -1780,11 +1847,13 @@ mod tests {
         assert_eq!(ordinary[0].code, 0x05);
         assert_eq!(le[0].code, 0x01);
         assert_eq!(vendor[0].code, 0x0400);
-        assert!(ordinary[0].payload.is_none());
-        assert!(le[0].payload.is_none());
+        assert_eq!(ordinary[0].kind, CatalogEventKind::StandardHci);
+        assert_eq!(le[0].kind, CatalogEventKind::LeMeta);
         assert!(matches!(
-            &vendor[0].payload,
-            Some(EventPayloadLayout::Unresolved(reason)) if reason.contains("vendor_rp0")
+            &vendor[0].kind,
+            CatalogEventKind::VendorAci {
+                payload: EventPayloadLayout::Unresolved(reason)
+            } if reason.contains("vendor_rp0")
         ));
     }
 

@@ -286,8 +286,8 @@ fn write_command_changes(output: &mut String, changes: &CommandChanges) {
         let _ = writeln!(
             output,
             "  + {} 0x{:04X}: {}",
-            command_scope_name(command.scope),
-            command.opcode.unwrap_or(command.ocf),
+            command_scope_name(command.scope()),
+            command.code(),
             command.name
         );
     }
@@ -295,8 +295,8 @@ fn write_command_changes(output: &mut String, changes: &CommandChanges) {
         let _ = writeln!(
             output,
             "  - {} 0x{:04X}: {}",
-            command_scope_name(command.scope),
-            command.opcode.unwrap_or(command.ocf),
+            command_scope_name(command.scope()),
+            command.code(),
             command.name
         );
     }
@@ -335,7 +335,7 @@ fn write_event_changes(output: &mut String, changes: &EventChanges) {
         let _ = writeln!(
             output,
             "  + {} 0x{:04X}: {}",
-            event_scope_name(event.scope),
+            event_scope_name(event.scope()),
             event.code,
             event.name
         );
@@ -344,7 +344,7 @@ fn write_event_changes(output: &mut String, changes: &EventChanges) {
         let _ = writeln!(
             output,
             "  - {} 0x{:04X}: {}",
-            event_scope_name(event.scope),
+            event_scope_name(event.scope()),
             event.code,
             event.name
         );

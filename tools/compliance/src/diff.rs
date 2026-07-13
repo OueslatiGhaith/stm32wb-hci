@@ -199,8 +199,8 @@ fn unique_commands(
     let mut commands = BTreeMap::new();
     for command in &catalog.commands {
         let key = CommandKey {
-            scope: command.scope,
-            code: command.opcode.unwrap_or(command.ocf),
+            scope: command.scope(),
+            code: command.code(),
         };
         if commands.insert(key, command).is_some() {
             return Err(VersionDiffError::DuplicateCommand {
@@ -218,7 +218,7 @@ fn unique_events(
     let mut events = BTreeMap::new();
     for event in &catalog.events {
         let key = EventKey {
-            scope: event.scope,
+            scope: event.scope(),
             code: event.code,
         };
         if events.insert(key, event).is_some() {
@@ -232,40 +232,31 @@ fn unique_events(
 }
 
 fn same_command_shape(left: &CatalogCommand, right: &CatalogCommand) -> bool {
-    left.scope == right.scope
+    left.kind == right.kind
         && left.name == right.name
-        && left.ogf == right.ogf
-        && left.ocf == right.ocf
-        && left.opcode == right.opcode
         && left.completion == right.completion
         && left.request == right.request
         && left.response == right.response
 }
 
 fn same_event_shape(left: &CatalogEvent, right: &CatalogEvent) -> bool {
-    left.scope == right.scope
-        && left.code == right.code
-        && left.name == right.name
-        && left.payload == right.payload
+    left.kind == right.kind && left.code == right.code && left.name == right.name
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        CATALOG_SCHEMA_VERSION, CompletionExpectation, EventPayloadLayout, RequestLayout,
-        ResponseLayout,
+        CATALOG_SCHEMA_VERSION, CatalogCommandKind, CatalogEventKind, CompletionExpectation,
+        EventPayloadLayout, RequestLayout, ResponseLayout,
     };
 
     fn command(ocf: u16, name: &str) -> CatalogCommand {
         CatalogCommand {
-            scope: CommandScope::VendorAci,
+            kind: CatalogCommandKind::VendorAci { ocf },
             name: name.to_owned(),
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
-            ogf: None,
-            ocf,
-            opcode: None,
             completion: CompletionExpectation::CommandComplete,
             request: RequestLayout::Empty,
             response: ResponseLayout::Status,
@@ -274,12 +265,13 @@ mod tests {
 
     fn event(code: u16, name: &str) -> CatalogEvent {
         CatalogEvent {
-            scope: EventScope::VendorAci,
+            kind: CatalogEventKind::VendorAci {
+                payload: EventPayloadLayout::Fixed(0),
+            },
             code,
             name: name.to_owned(),
             source_name: "events.c".to_owned(),
             source_offset: 0,
-            payload: Some(EventPayloadLayout::Fixed(0)),
         }
     }
 
@@ -312,7 +304,7 @@ mod tests {
             diff.commands
                 .added
                 .iter()
-                .map(|entry| entry.ocf)
+                .map(CatalogCommand::ocf)
                 .collect::<Vec<_>>(),
             [3]
         );
@@ -320,7 +312,7 @@ mod tests {
             diff.commands
                 .removed
                 .iter()
-                .map(|entry| entry.ocf)
+                .map(CatalogCommand::ocf)
                 .collect::<Vec<_>>(),
             [2]
         );

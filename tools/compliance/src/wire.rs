@@ -1,6 +1,6 @@
 //! Conservative validation of normalized command and event wire envelopes.
 //!
-//! Source adapters retain expressions and C type names when CubeWB does not
+//! Source adapters retain explicit unresolved evidence when CubeWB does not
 //! expose a definite size. At this boundary, every resolved layout becomes a
 //! [`WireEnvelope`]. The Rust declarations use the same representation, so
 //! requests, command returns, and event payloads all follow one comparison
@@ -118,8 +118,8 @@ pub(crate) fn compare_vendor_wire_with_external_events(
 ) -> WireReport {
     let mut by_ocf = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
     for command in commands {
-        if command.scope == CommandScope::VendorAci {
-            by_ocf.entry(command.ocf).or_default().push(command);
+        if command.scope() == CommandScope::VendorAci {
+            by_ocf.entry(command.ocf()).or_default().push(command);
         }
     }
 
@@ -151,7 +151,7 @@ pub(crate) fn compare_vendor_wire_with_external_events(
 
     let mut events_by_code = BTreeMap::<u16, Vec<&CatalogEvent>>::new();
     for event in events {
-        if event.scope == EventScope::VendorAci {
+        if event.scope() == EventScope::VendorAci {
             events_by_code.entry(event.code).or_default().push(event);
         }
     }
@@ -201,14 +201,9 @@ pub(crate) fn compare_vendor_wire_with_external_events(
 }
 
 fn compare_event_payload(event: &CatalogEvent, metadata: &EventMetadata, report: &mut WireReport) {
-    let Some(payload) = &event.payload else {
-        report.unavailable.push(WireUnavailable {
-            code: metadata.code,
-            command: metadata.name.clone(),
-            reason: "generated vendor event has no payload evidence".to_owned(),
-        });
-        return;
-    };
+    let payload = event
+        .vendor_payload()
+        .expect("wire comparison filters for vendor ACI events");
     compare_event_payload_layout(payload, metadata, report);
 }
 
@@ -452,6 +447,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::catalog::{CatalogCommandKind, CatalogEventKind};
     use crate::model::ProtocolCoverage;
 
     use super::*;
@@ -496,13 +492,10 @@ mod tests {
         response: ResponseLayout,
     ) -> CatalogCommand {
         CatalogCommand {
-            scope: CommandScope::VendorAci,
+            kind: CatalogCommandKind::VendorAci { ocf },
             name: format!("aci_fixture_{ocf:03x}"),
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
-            ogf: None,
-            ocf,
-            opcode: None,
             completion,
             request,
             response,
@@ -511,12 +504,11 @@ mod tests {
 
     fn fixture_event(code: u16, payload: EventPayloadLayout) -> CatalogEvent {
         CatalogEvent {
-            scope: EventScope::VendorAci,
+            kind: CatalogEventKind::VendorAci { payload },
             code,
             name: format!("aci_fixture_{code:04x}_event_process"),
             source_name: "ble_events.c".to_owned(),
             source_offset: 0,
-            payload: Some(payload),
         }
     }
 

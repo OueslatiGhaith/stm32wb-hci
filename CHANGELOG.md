@@ -22,6 +22,10 @@
 - Keep CubeWB packed C type names private to the source adapter, parse their evidence once, and
   emit only resolved or explicitly unresolved catalog layouts; standard events remain
   inventory-only and carry no payload claim.
+- Make event scope and payload evidence one schema-v7 enum, so vendor events require a payload and
+  standard or LE Meta events cannot accidentally carry one.
+- Make command identity scope-specific in the same catalog schema: vendor commands store an OCF,
+  standard commands store an opcode, and standard OGF/OCF values are derived rather than repeated.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 

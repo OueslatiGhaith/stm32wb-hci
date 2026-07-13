@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 6;
+pub const CATALOG_SCHEMA_VERSION: u16 = 7;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -89,35 +89,134 @@ pub enum EventPayloadLayout {
     Unresolved(String),
 }
 
+/// Scope-specific event evidence. Vendor ACI events always carry a payload
+/// envelope; standard HCI and LE Meta events are inventory-only.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "scope")]
+pub enum CatalogEventKind {
+    VendorAci { payload: EventPayloadLayout },
+    StandardHci,
+    LeMeta,
+}
+
+/// Scope-specific command identity. Vendor ACI commands use their OCF
+/// namespace; standard HCI commands use a full opcode, from which OGF and OCF
+/// are derived.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "scope")]
+pub enum CatalogCommandKind {
+    VendorAci { ocf: u16 },
+    StandardHci { opcode: u16 },
+}
+
+impl CatalogCommandKind {
+    pub const fn scope(&self) -> CommandScope {
+        match self {
+            Self::VendorAci { .. } => CommandScope::VendorAci,
+            Self::StandardHci { .. } => CommandScope::StandardHci,
+        }
+    }
+
+    pub const fn code(&self) -> u16 {
+        match self {
+            Self::VendorAci { ocf } => *ocf,
+            Self::StandardHci { opcode } => *opcode,
+        }
+    }
+
+    pub const fn ocf(&self) -> u16 {
+        match self {
+            Self::VendorAci { ocf } => *ocf,
+            Self::StandardHci { opcode } => *opcode & 0x03ff,
+        }
+    }
+
+    pub const fn ogf(&self) -> Option<u8> {
+        match self {
+            Self::VendorAci { .. } => None,
+            Self::StandardHci { opcode } => Some((*opcode >> 10) as u8),
+        }
+    }
+
+    pub const fn opcode(&self) -> Option<u16> {
+        match self {
+            Self::VendorAci { .. } => None,
+            Self::StandardHci { opcode } => Some(*opcode),
+        }
+    }
+}
+
+impl CatalogEventKind {
+    pub const fn scope(&self) -> EventScope {
+        match self {
+            Self::VendorAci { .. } => EventScope::VendorAci,
+            Self::StandardHci => EventScope::StandardHci,
+            Self::LeMeta => EventScope::LeMeta,
+        }
+    }
+
+    pub const fn vendor_payload(&self) -> Option<&EventPayloadLayout> {
+        match self {
+            Self::VendorAci { payload } => Some(payload),
+            Self::StandardHci | Self::LeMeta => None,
+        }
+    }
+}
+
 /// One generated command declaration normalized from a family source adapter.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CatalogCommand {
-    pub scope: CommandScope,
+    #[serde(flatten)]
+    pub kind: CatalogCommandKind,
     pub name: String,
     pub source_name: String,
     pub source_offset: u32,
-    pub ogf: Option<u8>,
-    /// Vendor ACI OCF, or the low ten bits of a standard HCI opcode.
-    pub ocf: u16,
-    /// Full opcode for standard HCI commands. Vendor ACI keeps its OCF
-    /// namespace and therefore has no opcode here.
-    pub opcode: Option<u16>,
     pub completion: CompletionExpectation,
     pub request: RequestLayout,
     pub response: ResponseLayout,
 }
 
+impl CatalogCommand {
+    pub const fn scope(&self) -> CommandScope {
+        self.kind.scope()
+    }
+
+    pub const fn code(&self) -> u16 {
+        self.kind.code()
+    }
+
+    pub const fn ocf(&self) -> u16 {
+        self.kind.ocf()
+    }
+
+    pub const fn ogf(&self) -> Option<u8> {
+        self.kind.ogf()
+    }
+
+    pub const fn opcode(&self) -> Option<u16> {
+        self.kind.opcode()
+    }
+}
+
 /// One generated event-table entry normalized from a family source adapter.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CatalogEvent {
-    pub scope: EventScope,
+    #[serde(flatten)]
+    pub kind: CatalogEventKind,
     pub code: u16,
     pub name: String,
     pub source_name: String,
     pub source_offset: u32,
-    /// Vendor ACI payload envelope. Standard HCI and LE Meta events are
-    /// inventory-only and intentionally carry no payload claim.
-    pub payload: Option<EventPayloadLayout>,
+}
+
+impl CatalogEvent {
+    pub const fn scope(&self) -> EventScope {
+        self.kind.scope()
+    }
+
+    pub const fn vendor_payload(&self) -> Option<&EventPayloadLayout> {
+        self.kind.vendor_payload()
+    }
 }
 
 /// Stable, normalized result of parsing one immutable firmware source tag.
@@ -161,8 +260,8 @@ impl CatalogSchema {
     pub(crate) fn normalize(&mut self) {
         self.commands.sort_by_key(|command| {
             (
-                command_scope_order(command.scope),
-                command.ocf,
+                command_scope_order(command.scope()),
+                command.ocf(),
                 command.name.clone(),
                 command.source_name.clone(),
                 command.source_offset,
@@ -170,7 +269,7 @@ impl CatalogSchema {
         });
         self.events.sort_by_key(|event| {
             (
-                event_scope_order(event.scope),
+                event_scope_order(event.scope()),
                 event.code,
                 event.name.clone(),
                 event.source_name.clone(),
@@ -184,15 +283,19 @@ impl CatalogSchema {
             commands: self
                 .commands
                 .iter()
-                .filter(|command| command.scope == CommandScope::VendorAci)
+                .filter(|command| command.scope() == CommandScope::VendorAci)
                 .map(|command| {
-                    CoverageEntry::new(command.ocf, &command.name, CoverageOrigin::VendorAutoSource)
+                    CoverageEntry::new(
+                        command.ocf(),
+                        &command.name,
+                        CoverageOrigin::VendorAutoSource,
+                    )
                 })
                 .collect(),
             events: self
                 .events
                 .iter()
-                .filter(|event| event.scope == EventScope::VendorAci)
+                .filter(|event| event.scope() == EventScope::VendorAci)
                 .map(|event| {
                     CoverageEntry::new(event.code, &event.name, CoverageOrigin::VendorAutoSource)
                 })
@@ -205,21 +308,19 @@ impl CatalogSchema {
             commands: self
                 .commands
                 .iter()
-                .filter(|command| command.scope == CommandScope::StandardHci)
-                .filter_map(|command| {
-                    command.opcode.map(|opcode| {
-                        CoverageEntry::new(
-                            opcode,
-                            &command.name,
-                            CoverageOrigin::StandardHciAutoSource,
-                        )
-                    })
+                .filter(|command| command.scope() == CommandScope::StandardHci)
+                .map(|command| {
+                    CoverageEntry::new(
+                        command.code(),
+                        &command.name,
+                        CoverageOrigin::StandardHciAutoSource,
+                    )
                 })
                 .collect(),
             events: self
                 .events
                 .iter()
-                .filter(|event| event.scope == EventScope::StandardHci)
+                .filter(|event| event.scope() == EventScope::StandardHci)
                 .map(|event| {
                     CoverageEntry::new(
                         event.code,
@@ -231,7 +332,7 @@ impl CatalogSchema {
             le_meta_events: self
                 .events
                 .iter()
-                .filter(|event| event.scope == EventScope::LeMeta)
+                .filter(|event| event.scope() == EventScope::LeMeta)
                 .map(|event| {
                     CoverageEntry::new(
                         event.code,
@@ -268,13 +369,10 @@ mod tests {
         let mut schema = CatalogSchema::new(CatalogFamily::Stm32Wb, "v1.17.1");
         schema.commands.extend([
             CatalogCommand {
-                scope: CommandScope::VendorAci,
+                kind: CatalogCommandKind::StandardHci { opcode: 0x2002 },
                 name: "z_last".to_owned(),
                 source_name: "z.c".to_owned(),
                 source_offset: 9,
-                ogf: None,
-                ocf: 2,
-                opcode: None,
                 completion: CompletionExpectation::CommandComplete,
                 request: RequestLayout::Empty,
                 response: ResponseLayout::Variable {
@@ -283,13 +381,10 @@ mod tests {
                 },
             },
             CatalogCommand {
-                scope: CommandScope::VendorAci,
+                kind: CatalogCommandKind::VendorAci { ocf: 1 },
                 name: "a_first".to_owned(),
                 source_name: "a.c".to_owned(),
                 source_offset: 4,
-                ogf: None,
-                ocf: 1,
-                opcode: None,
                 completion: CompletionExpectation::CommandStatus,
                 request: RequestLayout::Variable {
                     minimum: 3,
@@ -299,20 +394,20 @@ mod tests {
             },
         ]);
         schema.events.push(CatalogEvent {
-            scope: EventScope::VendorAci,
+            kind: CatalogEventKind::VendorAci {
+                payload: EventPayloadLayout::Fixed(0),
+            },
             code: 0x400,
             name: "gap_event".to_owned(),
             source_name: "ble_events.c".to_owned(),
             source_offset: 12,
-            payload: Some(EventPayloadLayout::Fixed(0)),
         });
         schema.events.push(CatalogEvent {
-            scope: EventScope::LeMeta,
+            kind: CatalogEventKind::LeMeta,
             code: 0x01,
             name: "le_event".to_owned(),
             source_name: "ble_events.c".to_owned(),
             source_offset: 18,
-            payload: None,
         });
         schema.normalize();
 
@@ -320,7 +415,17 @@ mod tests {
         assert_eq!(value["schema_version"], CATALOG_SCHEMA_VERSION);
         assert_eq!(value["family"], "stm32_wb");
         assert_eq!(value["commands"][0]["name"], "a_first");
-        assert!(value["events"][1]["payload"].is_null());
+        assert_eq!(value["commands"][0]["scope"], "vendor_aci");
+        assert_eq!(value["commands"][0]["ocf"], 1);
+        assert!(value["commands"][0].get("opcode").is_none());
+        assert_eq!(value["commands"][1]["scope"], "standard_hci");
+        assert_eq!(value["commands"][1]["opcode"], 0x2002);
+        assert!(value["commands"][1].get("ocf").is_none());
+        assert_eq!(schema.commands[1].ogf(), Some(8));
+        assert_eq!(schema.commands[1].ocf(), 2);
+        assert_eq!(value["events"][0]["scope"], "vendor_aci");
+        assert_eq!(value["events"][1]["scope"], "le_meta");
+        assert!(value["events"][1].get("payload").is_none());
         assert_eq!(
             value["commands"][0]["request"],
             serde_json::json!({
