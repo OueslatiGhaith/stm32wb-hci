@@ -87,9 +87,9 @@ pub struct WireUnavailable {
 /// Result of checking active vendor declarations against CubeWB C metadata.
 ///
 /// `checked` counts individual request, return, or event-payload envelopes
-/// compared. Entries in `unavailable` are intentionally not failures: they
-/// name a schema detail the checker does not yet have enough information to
-/// normalize and validate.
+/// compared. Entries in `unavailable` name schema details the checker could
+/// not normalize and are compliance failures, preventing silent coverage
+/// regressions.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WireReport {
     pub checked: usize,

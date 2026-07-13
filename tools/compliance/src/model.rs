@@ -143,9 +143,8 @@ pub struct CheckReport {
     pub missing_standard_hci_commands: Vec<CoverageDifference>,
     pub missing_standard_hci_events: Vec<CoverageDifference>,
     pub missing_standard_hci_le_meta_events: Vec<CoverageDifference>,
-    /// Envelope-level vendor command and event wire checks. Unavailable schema details
-    /// are reported transparently but do not make an otherwise verified API
-    /// surface non-compliant.
+    /// Envelope-level vendor command and event wire checks. Both definite
+    /// differences and unavailable evidence make the report non-compliant.
     pub wire: WireReport,
     pub excluded_commands: Vec<ExcludedCode>,
     pub excluded_events: Vec<ExcludedCode>,
@@ -161,6 +160,7 @@ impl CheckReport {
             && self.missing_standard_hci_events.is_empty()
             && self.missing_standard_hci_le_meta_events.is_empty()
             && self.wire.differences.is_empty()
+            && self.wire.unavailable.is_empty()
     }
 
     pub fn to_human(&self) -> String {
@@ -233,7 +233,7 @@ impl CheckReport {
             if self.is_compliant() {
                 "compliant"
             } else {
-                "differences found"
+                "non-compliant"
             }
         );
         output
@@ -502,6 +502,37 @@ mod tests {
         );
         assert!(!report.is_compliant());
         assert!(report.to_json().contains("\"wire\""));
+    }
+
+    #[test]
+    fn unavailable_wire_evidence_makes_a_report_noncompliant() {
+        let report = compare_coverage(
+            FirmwareVersion::new(0, 17, 1),
+            "v1.17.1".into(),
+            ProtocolCoverage::default(),
+            ProtocolCoverage::default(),
+            ProtocolCoverage::default(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        );
+        assert!(report.is_compliant());
+
+        let report = with_wire_report(
+            report,
+            WireReport {
+                checked: 0,
+                differences: Vec::new(),
+                unavailable: vec![crate::wire::WireUnavailable {
+                    code: 0x9200,
+                    command: "CoprocessorReady".into(),
+                    reason: "missing external payload evidence".into(),
+                }],
+            },
+        );
+
+        assert!(!report.is_compliant());
+        assert!(report.to_human().contains("result: non-compliant"));
+        assert!(report.to_json().contains("\"compliant\":false"));
     }
 
     #[test]

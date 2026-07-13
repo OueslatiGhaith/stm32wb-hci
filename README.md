@@ -54,10 +54,10 @@ cargo run -p stm32wb-compliance -- check --firmware 0.15.0 --deny
 cargo run -p stm32wb-compliance -- check --all-supported --deny
 ```
 
-`--deny` makes differences fail the command for CI; omit it to inspect the report, or pass
-`--json` for machine-readable output. `--all-supported` discovers canonical
-`fw_<major>_<minor>_<patch>` entries directly from the crate's `[features]` table, so adding a
-firmware feature automatically puts it in the compliance and CI loops.
+`--deny` makes differences or unavailable wire evidence fail the command for CI; omit it to
+inspect the report, or pass `--json` for machine-readable output. `--all-supported` discovers
+canonical `fw_<major>_<minor>_<patch>` entries directly from the crate's `[features]` table, so
+adding a firmware feature automatically puts it in the compliance and CI loops.
 
 The checker reports the requested CubeWB tag, the tag object, and the resolved commit, making a
 result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
@@ -82,11 +82,10 @@ are all included in the active API inventory. It compares:
 CubeWB request-length formulas are normalized from their generated C parameter types, local
 branches, packed `sizeof` types, and the 255-byte HCI limit. Capacity-shaped command returns are
 normalized from their packed structures and `BLE_EVT_MAX_PARAM_LEN` expressions. Unsupported
-expressions or C layouts are reported as `wire unavailable` rather than guessed. This keeps
-`--deny` meaningful while making the remaining work explicit. All transport-only
-exceptions—including the coprocessor-ready event `0x9200`—come exclusively from the checked-in
-policy; its one-byte payload envelope is validated like generated event metadata, and library
-defaults do not hide it.
+expressions or C layouts are reported as `wire unavailable` rather than guessed and make the
+report non-compliant. All transport-only exceptions—including the coprocessor-ready event
+`0x9200`—come exclusively from the checked-in policy; its one-byte payload envelope is validated
+like generated event metadata, and library defaults do not hide it.
 
 ## Usage
 

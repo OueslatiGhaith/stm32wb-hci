@@ -15,6 +15,8 @@
   response structures.
 - Let checked-in policy entries provide fixed or bounded payload evidence for transport-only
   events absent from CubeWB's generated catalog.
+- Treat unavailable wire evidence as a compliance failure, locking in the zero-unavailable
+  baseline for CI.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 

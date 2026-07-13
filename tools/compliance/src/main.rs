@@ -124,25 +124,29 @@ fn run_check(cli: &Cli, crate_dir: PathBuf) -> Result<ExitCode, String> {
                 } else {
                     print!("{}", result.to_human(&policy, &crate_dir));
                 }
-                return Ok(if cli.deny && !result.report.is_compliant() {
-                    ExitCode::FAILURE
-                } else {
-                    ExitCode::SUCCESS
-                });
+                return Ok(report_exit_code(cli.deny, &result.report));
             }
             BatchResult::Error { error, .. } => return Err(error),
         }
     }
 
     let has_errors = results.iter().any(BatchResult::is_error);
-    let has_differences = results.iter().any(BatchResult::has_differences);
+    let has_noncompliant = results.iter().any(BatchResult::is_noncompliant);
     Ok(if has_errors {
         ExitCode::from(2)
-    } else if cli.deny && has_differences {
+    } else if cli.deny && has_noncompliant {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn report_exit_code(deny: bool, report: &CheckReport) -> ExitCode {
+    if deny && !report.is_compliant() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn run_diff(cli: &Cli, current_dir: &Path) -> Result<ExitCode, String> {
@@ -481,7 +485,7 @@ impl BatchResult {
         matches!(self, Self::Error { .. })
     }
 
-    fn has_differences(&self) -> bool {
+    fn is_noncompliant(&self) -> bool {
         matches!(self, Self::Success(result) if !result.report.is_compliant())
     }
 }
@@ -489,14 +493,14 @@ impl BatchResult {
 fn batch_to_human(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: &Path) -> String {
     let mut output = String::new();
     let mut successful = 0usize;
-    let mut differences = 0usize;
+    let mut noncompliant = 0usize;
     let mut errors = 0usize;
 
     for result in results {
         match result {
             BatchResult::Success(result) => {
                 successful += 1;
-                differences += usize::from(!result.report.is_compliant());
+                noncompliant += usize::from(!result.report.is_compliant());
                 let _ = writeln!(
                     output,
                     "=== {} ({}) ===",
@@ -515,7 +519,7 @@ fn batch_to_human(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: 
 
     let _ = writeln!(
         output,
-        "all-supported summary: {successful} checked, {differences} with coverage differences, {errors} errors"
+        "all-supported summary: {successful} checked, {noncompliant} non-compliant, {errors} errors"
     );
     output
 }
@@ -526,9 +530,9 @@ fn batch_to_json(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: &
         .filter(|result| matches!(result, BatchResult::Success(_)))
         .count();
     let errors = results.len() - successful;
-    let differences = results
+    let noncompliant = results
         .iter()
-        .filter(|result| result.has_differences())
+        .filter(|result| result.is_noncompliant())
         .count();
 
     let results = results
@@ -548,12 +552,12 @@ fn batch_to_json(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: &
         .collect();
     let report = BatchJson {
         mode: "all-supported",
-        compliant: errors == 0 && differences == 0,
+        compliant: errors == 0 && noncompliant == 0,
         exclusion_policy: PolicyMetadataJson::from_policy(policy, crate_dir),
         results,
         summary: BatchSummary {
             checked: successful,
-            coverage_differences: differences,
+            noncompliant_reports: noncompliant,
             errors,
         },
     };
@@ -589,7 +593,7 @@ enum BatchResultJson<'a> {
 #[derive(Serialize)]
 struct BatchSummary {
     checked: usize,
-    coverage_differences: usize,
+    noncompliant_reports: usize,
     errors: usize,
 }
 
@@ -1195,7 +1199,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Exit nonzero when the report has coverage differences"
+        help = "Exit nonzero when a check is non-compliant or a version diff has changes"
     )]
     deny: bool,
 
@@ -1270,7 +1274,7 @@ fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stm32wb_compliance::{ProtocolCoverage, StandardHciCoverage, WireReport};
+    use stm32wb_compliance::{ProtocolCoverage, StandardHciCoverage, WireReport, WireUnavailable};
 
     fn parse_cli(arguments: &[&str]) -> Result<Cli, String> {
         let cli = Cli::try_parse_from(
@@ -1432,6 +1436,41 @@ mod tests {
     }
 
     #[test]
+    fn deny_fails_when_wire_evidence_is_unavailable() {
+        let firmware = FirmwareVersion::new(0, 17, 1);
+        let report = CheckReport {
+            firmware,
+            cube_tag: firmware.cube_tag(),
+            vendor: ProtocolCoverage::default(),
+            descriptors: ProtocolCoverage::default(),
+            active_api: ProtocolCoverage::default(),
+            standard_hci: StandardHciCoverage::default(),
+            standard_hci_provider: StandardHciCoverage::default(),
+            missing_commands: Vec::new(),
+            extraneous_commands: Vec::new(),
+            missing_events: Vec::new(),
+            extraneous_events: Vec::new(),
+            missing_standard_hci_commands: Vec::new(),
+            missing_standard_hci_events: Vec::new(),
+            missing_standard_hci_le_meta_events: Vec::new(),
+            wire: WireReport {
+                checked: 0,
+                differences: Vec::new(),
+                unavailable: vec![WireUnavailable {
+                    code: 0x9200,
+                    command: "CoprocessorReady".into(),
+                    reason: "missing payload evidence".into(),
+                }],
+            },
+            excluded_commands: Vec::new(),
+            excluded_events: Vec::new(),
+        };
+
+        assert_eq!(report_exit_code(false, &report), ExitCode::SUCCESS);
+        assert_eq!(report_exit_code(true, &report), ExitCode::FAILURE);
+    }
+
+    #[test]
     fn batch_json_is_serialized_as_structured_data() {
         let firmware = FirmwareVersion::new(0, 15, 0);
         let report = CheckReport {
@@ -1476,6 +1515,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(value["mode"], "all-supported");
         assert_eq!(value["summary"]["checked"], 1);
+        assert_eq!(value["summary"]["noncompliant_reports"], 0);
         assert_eq!(value["results"][0]["status"], "ok");
         assert_eq!(
             value["results"][0]["report"]["cube_provenance"]["commit"],
