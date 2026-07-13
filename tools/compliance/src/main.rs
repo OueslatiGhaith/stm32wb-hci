@@ -10,12 +10,12 @@ use clap::{CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 use stm32wb_compliance::{
     CATALOG_SCHEMA_VERSION, CheckOptions, CheckReport, CheckReportJson, CommandChanges, CommandKey,
-    CommandScope, EventChanges, EventScope, FirmwareVersion, VersionDiff, check, diff_catalogs,
-    find_crate_root, load_catalog,
+    CommandScope, EventChanges, EventPayloadLayout, EventScope, FirmwareVersion, VersionDiff,
+    check, diff_catalogs, find_crate_root, load_catalog,
 };
 
 const DEFAULT_POLICY_PATH: &str = "tools/compliance/exclusions.policy";
-const POLICY_FORMAT_VERSION: u32 = 1;
+const POLICY_FORMAT_VERSION: u32 = 2;
 
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
@@ -389,6 +389,9 @@ fn run_one_check(
     options
         .excluded_events
         .extend(active_exclusions.events.clone());
+    options
+        .external_event_payloads
+        .extend(active_exclusions.external_event_payloads.clone());
     options.skip_build = skip_build;
 
     let report = check(&options).map_err(|error| error.to_string())?;
@@ -713,6 +716,7 @@ struct PolicyEntry {
     kind: CoverageKind,
     code: u16,
     selector: FirmwareSelector,
+    external_event_payload: Option<EventPayloadLayout>,
     reason: String,
     line: usize,
 }
@@ -777,27 +781,54 @@ impl ExclusionPolicy {
             }
 
             let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
-            if fields.len() != 4 {
-                return Err(policy_error(
-                    &path,
-                    line_number,
-                    "expected `command|0xNNNN|firmware-selector|reason` or `event|0xNNNN|firmware-selector|reason`",
-                ));
-            }
-            let kind = CoverageKind::parse(fields[0]).ok_or_else(|| {
-                policy_error(&path, line_number, "scope must be `command` or `event`")
-            })?;
-            let code = parse_wire_code(fields[1]).map_err(|error| {
+            let (kind, code_field, selector_field, external_event_payload, reason) = match fields
+                .as_slice()
+            {
+                [scope, code, selector, reason] => {
+                    let kind = CoverageKind::parse(scope).ok_or_else(|| {
+                        policy_error(
+                            &path,
+                            line_number,
+                            "scope must be `command`, `event`, or `transport-event`",
+                        )
+                    })?;
+                    (kind, *code, *selector, None, *reason)
+                }
+                [scope, code, selector, envelope, reason] if *scope == "transport-event" => {
+                    let payload = parse_policy_event_envelope(envelope).map_err(|error| {
+                        policy_error(
+                            &path,
+                            line_number,
+                            &format!("invalid transport-event payload envelope: {error}"),
+                        )
+                    })?;
+                    (
+                        CoverageKind::Event,
+                        *code,
+                        *selector,
+                        Some(payload),
+                        *reason,
+                    )
+                }
+                _ => {
+                    return Err(policy_error(
+                        &path,
+                        line_number,
+                        "expected `command|0xNNNN|firmware-selector|reason`, `event|0xNNNN|firmware-selector|reason`, or `transport-event|0xNNNN|firmware-selector|payload-envelope|reason`",
+                    ));
+                }
+            };
+            let code = parse_wire_code(code_field).map_err(|error| {
                 policy_error(&path, line_number, &format!("invalid wire code: {error}"))
             })?;
-            let selector = FirmwareSelector::parse(fields[2]).map_err(|error| {
+            let selector = FirmwareSelector::parse(selector_field).map_err(|error| {
                 policy_error(
                     &path,
                     line_number,
                     &format!("invalid firmware selector: {error}"),
                 )
             })?;
-            if fields[3].is_empty() {
+            if reason.is_empty() {
                 return Err(policy_error(
                     &path,
                     line_number,
@@ -815,7 +846,8 @@ impl ExclusionPolicy {
                 kind,
                 code,
                 selector,
-                reason: fields[3].to_owned(),
+                external_event_payload,
+                reason: reason.to_owned(),
                 line: line_number,
             });
         }
@@ -881,6 +913,11 @@ impl ExclusionPolicy {
                 }
                 CoverageKind::Event => {
                     active.events.insert(entry.code, entry.reason.clone());
+                    if let Some(payload) = &entry.external_event_payload {
+                        active
+                            .external_event_payloads
+                            .insert(entry.code, payload.clone());
+                    }
                 }
             }
         }
@@ -909,10 +946,52 @@ fn parse_wire_code(value: &str) -> Result<u16, String> {
     u16::from_str_radix(value, 16).map_err(|error| error.to_string())
 }
 
+fn parse_policy_event_envelope(value: &str) -> Result<EventPayloadLayout, String> {
+    const MAX_VENDOR_EVENT_PAYLOAD: u32 = u8::MAX as u32 - 2;
+
+    let parse_length = |value: &str| {
+        value
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| "lengths must be decimal unsigned integers".to_owned())
+    };
+    let layout = if let Some(length) = value.strip_prefix("fixed:") {
+        let length = parse_length(length)?;
+        EventPayloadLayout::Fixed(length)
+    } else if let Some(bounds) = value.strip_prefix("bounded:") {
+        let (minimum, maximum) = bounds
+            .split_once("..=")
+            .ok_or_else(|| "bounded envelopes must use `bounded:MIN..=MAX`".to_owned())?;
+        let minimum = parse_length(minimum)?;
+        let maximum = parse_length(maximum)?;
+        if minimum >= maximum {
+            return Err(
+                "a bounded envelope requires MIN < MAX; use `fixed:N` when equal".to_owned(),
+            );
+        }
+        EventPayloadLayout::Variable { minimum, maximum }
+    } else {
+        return Err("expected `fixed:N` or `bounded:MIN..=MAX`".to_owned());
+    };
+
+    let maximum = match layout {
+        EventPayloadLayout::Fixed(length) => length,
+        EventPayloadLayout::Variable { maximum, .. } => maximum,
+        EventPayloadLayout::CStruct(_) => unreachable!("policy parser never creates C layouts"),
+    };
+    if maximum > MAX_VENDOR_EVENT_PAYLOAD {
+        return Err(format!(
+            "payload maximum {maximum} exceeds the {MAX_VENDOR_EVENT_PAYLOAD}-byte vendor-event envelope"
+        ));
+    }
+    Ok(layout)
+}
+
 #[derive(Clone, Debug, Default)]
 struct ActiveExclusions {
     commands: BTreeMap<u16, String>,
     events: BTreeMap<u16, String>,
+    external_event_payloads: BTreeMap<u16, EventPayloadLayout>,
 }
 
 impl ActiveExclusions {
@@ -1270,22 +1349,34 @@ mod tests {
     fn policy_expands_version_selectors_and_rejects_overlaps() {
         let policy = ExclusionPolicy::parse(
             "test.policy".into(),
-            "version = 1\nevent|0x9200|*|transport event\ncommand|0x0001|0.15.0|legacy command\n",
+            "version = 2\ntransport-event|0x9200|*|fixed:1|transport event\ntransport-event|0x9201|0.15.0|bounded:1..=3|bounded transport event\ncommand|0x0001|0.15.0|legacy command\n",
         )
         .unwrap();
         policy.validate_for(&supported()).unwrap();
         let old = policy.active_for(FirmwareVersion::new(0, 15, 0));
         assert_eq!(old.events.get(&0x9200), Some(&"transport event".to_owned()));
         assert_eq!(
+            old.external_event_payloads.get(&0x9200),
+            Some(&EventPayloadLayout::Fixed(1))
+        );
+        assert_eq!(
+            old.external_event_payloads.get(&0x9201),
+            Some(&EventPayloadLayout::Variable {
+                minimum: 1,
+                maximum: 3,
+            })
+        );
+        assert_eq!(
             old.commands.get(&0x0001),
             Some(&"legacy command".to_owned())
         );
         let new = policy.active_for(FirmwareVersion::new(0, 16, 0));
         assert!(!new.commands.contains_key(&0x0001));
+        assert!(!new.external_event_payloads.contains_key(&0x9201));
 
         let overlapping = ExclusionPolicy::parse(
             "test.policy".into(),
-            "version = 1\nevent|0x9200|*|transport event\nevent|0x9200|0.15.0|same event\n",
+            "version = 2\ntransport-event|0x9200|*|fixed:1|transport event\nevent|0x9200|0.15.0|same event\n",
         )
         .unwrap();
         assert!(overlapping.validate_for(&supported()).is_err());
@@ -1295,14 +1386,14 @@ mod tests {
     fn policy_rejects_unknown_versions_and_bad_codes() {
         let policy = ExclusionPolicy::parse(
             "test.policy".into(),
-            "version = 1\nevent|0x9200|0.99.0|future event\n",
+            "version = 2\nevent|0x9200|0.99.0|future event\n",
         )
         .unwrap();
         assert!(policy.validate_for(&supported()).is_err());
 
         let error = ExclusionPolicy::parse(
             "test.policy".into(),
-            "version = 1\nevent|9200|*|missing hex prefix\n",
+            "version = 2\nevent|9200|*|missing hex prefix\n",
         )
         .unwrap_err();
         assert!(error.contains("wire codes"));
@@ -1313,7 +1404,23 @@ mod tests {
         let error =
             ExclusionPolicy::parse("test.policy".into(), "event|0x9200|*|transport event\n")
                 .unwrap_err();
-        assert!(error.contains("no `version = 1` header"));
+        assert!(error.contains("no `version = 2` header"));
+    }
+
+    #[test]
+    fn policy_rejects_invalid_transport_event_envelopes() {
+        for envelope in [
+            "fixed:nope",
+            "fixed:254",
+            "bounded:2..=1",
+            "bounded:1..=254",
+            "unknown:1",
+        ] {
+            let source =
+                format!("version = 2\ntransport-event|0x9200|*|{envelope}|transport event\n");
+            let error = ExclusionPolicy::parse("test.policy".into(), &source).unwrap_err();
+            assert!(error.contains("invalid transport-event payload envelope"));
+        }
     }
 
     #[test]

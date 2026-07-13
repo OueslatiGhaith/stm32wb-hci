@@ -63,8 +63,9 @@ The checker reports the requested CubeWB tag, the tag object, and the resolved c
 result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
 checked-in [policy](tools/compliance/exclusions.policy). The policy requires a reason for every
 exception and rejects malformed, overlapping, unsupported-version, or stale entries; an exception
-must actively suppress a real coverage difference. Pass `--policy <path>` only when evaluating a
-deliberate alternative policy.
+must actively suppress a real coverage difference. Transport-only events can additionally declare
+a fixed or bounded payload envelope, which is checked against the Rust event schema. Pass
+`--policy <path>` only when evaluating a deliberate alternative policy.
 
 The checker parses both the Rust crate and CubeWB's generated C sources as syntax trees, and
 evaluates the selected firmware cfgs, so module-, trait-, impl-, method-, and branch-level gates
@@ -84,7 +85,8 @@ normalized from their packed structures and `BLE_EVT_MAX_PARAM_LEN` expressions.
 expressions or C layouts are reported as `wire unavailable` rather than guessed. This keeps
 `--deny` meaningful while making the remaining work explicit. All transport-only
 exceptions—including the coprocessor-ready event `0x9200`—come exclusively from the checked-in
-policy; library defaults do not hide them.
+policy; its one-byte payload envelope is validated like generated event metadata, and library
+defaults do not hide it.
 
 ## Usage
 

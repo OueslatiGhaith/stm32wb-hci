@@ -48,6 +48,9 @@ pub struct CheckOptions {
     pub skip_build: bool,
     pub excluded_commands: BTreeMap<u16, String>,
     pub excluded_events: BTreeMap<u16, String>,
+    /// Payload layouts supplied by the checked-in policy for transport-only
+    /// events which do not exist in CubeWB's generated event table.
+    pub external_event_payloads: BTreeMap<u16, EventPayloadLayout>,
 }
 
 impl CheckOptions {
@@ -59,6 +62,7 @@ impl CheckOptions {
             skip_build: false,
             excluded_commands: BTreeMap::new(),
             excluded_events: BTreeMap::new(),
+            external_event_payloads: BTreeMap::new(),
         }
     }
 }
@@ -78,7 +82,12 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
         standard::load_standard_provider_coverage(&options.crate_dir, options.firmware)
             .map_err(ComplianceError::Source)?;
 
-    let wire = wire::compare_vendor_wire(&catalog.commands, &catalog.events, &crate_coverage);
+    let wire = wire::compare_vendor_wire_with_external_events(
+        &catalog.commands,
+        &catalog.events,
+        &crate_coverage,
+        &options.external_event_payloads,
+    );
     let vendor = catalog.vendor_coverage();
     let standard_hci = catalog.standard_hci_coverage();
 
@@ -176,5 +185,6 @@ mod tests {
         );
         assert!(options.excluded_commands.is_empty());
         assert!(options.excluded_events.is_empty());
+        assert!(options.external_event_payloads.is_empty());
     }
 }

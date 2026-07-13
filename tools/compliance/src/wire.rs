@@ -99,10 +99,22 @@ pub struct WireReport {
 
 /// Compare active command and event payload declarations for the selected
 /// firmware.
+#[cfg(test)]
 pub(crate) fn compare_vendor_wire(
     commands: &[CatalogCommand],
     events: &[CatalogEvent],
     crate_coverage: &CrateCoverage,
+) -> WireReport {
+    compare_vendor_wire_with_external_events(commands, events, crate_coverage, &BTreeMap::new())
+}
+
+/// Compare wire declarations while accepting explicit payload evidence for
+/// transport-only events absent from CubeWB's generated event table.
+pub(crate) fn compare_vendor_wire_with_external_events(
+    commands: &[CatalogCommand],
+    events: &[CatalogEvent],
+    crate_coverage: &CrateCoverage,
+    external_event_payloads: &BTreeMap<u16, EventPayloadLayout>,
 ) -> WireReport {
     let mut by_ocf = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
     for command in commands {
@@ -145,11 +157,16 @@ pub(crate) fn compare_vendor_wire(
     }
     for metadata in crate_coverage.event_metadata.values() {
         let Some(candidates) = events_by_code.get(&metadata.code) else {
-            report.unavailable.push(WireUnavailable {
-                code: metadata.code,
-                command: metadata.name.clone(),
-                reason: "no generated vendor event-table entry has this code".to_owned(),
-            });
+            if let Some(payload) = external_event_payloads.get(&metadata.code) {
+                compare_event_payload_layout(payload, metadata, &mut report);
+            } else {
+                report.unavailable.push(WireUnavailable {
+                    code: metadata.code,
+                    command: metadata.name.clone(),
+                    reason: "no generated vendor event-table entry or external payload declaration has this code"
+                        .to_owned(),
+                });
+            }
             continue;
         };
         let [event] = candidates.as_slice() else {
@@ -184,7 +201,15 @@ pub(crate) fn compare_vendor_wire(
 }
 
 fn compare_event_payload(event: &CatalogEvent, metadata: &EventMetadata, report: &mut WireReport) {
-    let expected = event_payload_envelope(&event.payload);
+    compare_event_payload_layout(&event.payload, metadata, report);
+}
+
+fn compare_event_payload_layout(
+    payload: &EventPayloadLayout,
+    metadata: &EventMetadata,
+    report: &mut WireReport,
+) {
+    let expected = event_payload_envelope(payload);
     compare_envelope(
         metadata.code,
         &metadata.name,
@@ -601,6 +626,36 @@ mod tests {
         coverage.event_metadata.get_mut(&0x0401).unwrap().payload = WireEnvelope::bounded(4, 253);
         let report = compare_vendor_wire(&[], &events, &coverage);
         assert!(report.differences.is_empty());
+    }
+
+    #[test]
+    fn checks_transport_only_events_from_external_payload_evidence() {
+        let mut coverage = fixture_coverage(Vec::new(), &[]);
+        coverage.event_metadata.insert(
+            0x9200,
+            EventMetadata {
+                name: "CoprocessorReady".to_owned(),
+                code: 0x9200,
+                payload: WireEnvelope::fixed(1),
+                location: PathBuf::from("event.rs"),
+            },
+        );
+
+        let unavailable = compare_vendor_wire(&[], &[], &coverage);
+        assert_eq!(unavailable.checked, 0);
+        assert_eq!(unavailable.unavailable.len(), 1);
+
+        let mut external = BTreeMap::from([(0x9200, EventPayloadLayout::Fixed(1))]);
+        let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
+        assert_eq!(report.checked, 1);
+        assert!(report.differences.is_empty());
+        assert!(report.unavailable.is_empty());
+
+        external.insert(0x9200, EventPayloadLayout::Fixed(2));
+        let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
+        assert_eq!(report.differences.len(), 1);
+        assert!(report.differences[0].issue.contains("is 2 bytes"));
+        assert!(report.differences[0].issue.contains("declares 1 bytes"));
     }
 
     #[test]

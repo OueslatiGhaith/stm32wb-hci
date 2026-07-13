@@ -13,6 +13,8 @@
   parameter domains, branch-selected widths, and packed `sizeof` types.
 - Resolve capacity-shaped CubeWB command returns into bounded wire envelopes from their packed C
   response structures.
+- Let checked-in policy entries provide fixed or bounded payload evidence for transport-only
+  events absent from CubeWB's generated catalog.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 
