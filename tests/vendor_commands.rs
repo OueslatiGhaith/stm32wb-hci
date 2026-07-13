@@ -1504,11 +1504,202 @@ fn extended_gatt_write_command_uses_a_closed_mode() {
 }
 
 #[cfg(after_fw_0_17_1)]
+#[tokio::test]
+async fn periodic_advertising_uses_typed_domains_and_exact_wire_values() {
+    use hci::vendor::command::gap::{
+        GapAdvSetPeriodicEnable, GapAdvSetPeriodicParameters, PeriodicAdvertisingEnable,
+        PeriodicAdvertisingInterval, PeriodicAdvertisingProperties,
+        PeriodicAdvertisingResponseSlotDelay, PeriodicAdvertisingResponseSlotSpacing,
+        PeriodicAdvertisingSubeventCount, PeriodicAdvertisingSubeventInterval,
+    };
+
+    let handle = AdvertisingHandle::try_new(3).unwrap();
+    let sink = RecordingSink::new();
+    GapAdvSetPeriodicParameters::try_new(
+        handle,
+        PeriodicAdvertisingInterval::try_new(0x20).unwrap(),
+        PeriodicAdvertisingInterval::try_new(0x40).unwrap(),
+        PeriodicAdvertisingProperties::INCLUDE_TX_POWER,
+        PeriodicAdvertisingSubeventCount::try_new(2).unwrap(),
+        PeriodicAdvertisingSubeventInterval::try_new(0x10).unwrap(),
+        PeriodicAdvertisingResponseSlotDelay::try_new(1).unwrap(),
+        PeriodicAdvertisingResponseSlotSpacing::try_new(0x10).unwrap(),
+        2,
+    )
+    .unwrap()
+    .exec(&sink)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sink.written_data(),
+        [
+            1, 0xC7, 0xFC, 12, 3, 0x20, 0, 0x40, 0, 0x40, 0, 2, 0x10, 1, 0x10, 2,
+        ]
+    );
+
+    let enable_sink = RecordingSink::new();
+    GapAdvSetPeriodicEnable::new(
+        PeriodicAdvertisingEnable::ENABLE_PERIODIC_ADVERTISING
+            | PeriodicAdvertisingEnable::INCLUDE_ADI,
+        handle,
+    )
+    .exec(&enable_sink)
+    .await
+    .unwrap();
+    assert_eq!(enable_sink.written_data(), [1, 0xC9, 0xFC, 2, 3, 3]);
+
+    assert!(PeriodicAdvertisingInterval::try_new(5).is_err());
+    assert!(PeriodicAdvertisingSubeventCount::try_new(0x81).is_err());
+    assert!(PeriodicAdvertisingSubeventInterval::try_new(5).is_err());
+    assert!(PeriodicAdvertisingResponseSlotDelay::try_new(0xFF).is_err());
+    assert!(PeriodicAdvertisingResponseSlotSpacing::try_new(1).is_err());
+    assert!(PeriodicAdvertisingResponseSlotSpacing::NO_RESPONSE_SLOTS.is_sentinel());
+    assert!(PeriodicAdvertisingProperties::from_bits(0x0001).is_none());
+    assert!(PeriodicAdvertisingEnable::from_bits(0x04).is_none());
+}
+
+#[cfg(after_fw_0_17_1)]
+#[test]
+fn periodic_advertising_rejects_impossible_pawr_schedules() {
+    use hci::vendor::command::gap::{
+        GapAdvSetPeriodicParameters, PeriodicAdvertisingInterval, PeriodicAdvertisingProperties,
+        PeriodicAdvertisingResponseSlotDelay, PeriodicAdvertisingResponseSlotSpacing,
+        PeriodicAdvertisingSubeventCount, PeriodicAdvertisingSubeventInterval,
+    };
+
+    let handle = AdvertisingHandle::try_new(0).unwrap();
+    let interval = |value| PeriodicAdvertisingInterval::try_new(value).unwrap();
+    let subevents = |value| PeriodicAdvertisingSubeventCount::try_new(value).unwrap();
+    let subevent_interval = |value| PeriodicAdvertisingSubeventInterval::try_new(value).unwrap();
+    let delay = |value| PeriodicAdvertisingResponseSlotDelay::try_new(value).unwrap();
+    let spacing = |value| PeriodicAdvertisingResponseSlotSpacing::try_new(value).unwrap();
+    let properties = PeriodicAdvertisingProperties::empty();
+
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(0x40),
+            interval(0x20),
+            properties,
+            subevents(1),
+            subevent_interval(6),
+            delay(1),
+            spacing(2),
+            1,
+        )
+        .is_err()
+    );
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(0x20),
+            interval(0x40),
+            properties,
+            subevents(3),
+            subevent_interval(0x10),
+            delay(1),
+            spacing(2),
+            1,
+        )
+        .is_err()
+    );
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(0x20),
+            interval(0x40),
+            properties,
+            subevents(1),
+            subevent_interval(0x10),
+            delay(0),
+            spacing(2),
+            1,
+        )
+        .is_err()
+    );
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(0x20),
+            interval(0x40),
+            properties,
+            subevents(1),
+            subevent_interval(0x10),
+            delay(1),
+            PeriodicAdvertisingResponseSlotSpacing::NO_RESPONSE_SLOTS,
+            2,
+        )
+        .is_err()
+    );
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(0x20),
+            interval(0x40),
+            properties,
+            subevents(1),
+            subevent_interval(0x10),
+            delay(1),
+            spacing(0xFF),
+            2,
+        )
+        .is_err()
+    );
+
+    // All PAwR timing fields are ignored when there are no subevents.
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(6),
+            interval(6),
+            properties,
+            subevents(0),
+            subevent_interval(6),
+            delay(0xFE),
+            spacing(0xFF),
+            u8::MAX,
+        )
+        .is_ok()
+    );
+    // Delay and spacing are ignored when there are no response slots.
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(6),
+            interval(6),
+            properties,
+            subevents(1),
+            subevent_interval(6),
+            delay(0xFE),
+            spacing(0xFF),
+            0,
+        )
+        .is_ok()
+    );
+    // Spacing alone is ignored when there is exactly one response slot.
+    assert!(
+        GapAdvSetPeriodicParameters::try_new(
+            handle,
+            interval(6),
+            interval(6),
+            properties,
+            subevents(1),
+            subevent_interval(6),
+            delay(1),
+            spacing(0xFF),
+            1,
+        )
+        .is_ok()
+    );
+}
+
+#[cfg(after_fw_0_17_1)]
 #[test]
 fn extended_connection_uses_typed_modes_phys_and_parameter_records() {
     use hci::vendor::command::gap::{
-        ExtConnectionPhyParams, ExtInitiatingMode, GapExtCreateConnection, InitiatingPhy,
-        InitiatorFilterPolicy,
+        ExtConnectionPhyParams, ExtInitiatingMode, GapExtCreateConnection,
+        InitiatingAdvertisingHandle, InitiatingPhy, InitiatingSubevent, InitiatorFilterPolicy,
     };
 
     let phy_params = [ExtConnectionPhyParams {
@@ -1528,14 +1719,29 @@ fn extended_connection_uses_typed_modes_phys_and_parameter_records() {
         Procedure::DIRECT_CONNECTION_ESTABLISHMENT,
         AddressType::Public,
         peer,
-        0xFF,
-        0xFF,
+        InitiatingAdvertisingHandle::UNUSED,
+        InitiatingSubevent::UNUSED,
         InitiatorFilterPolicy::UsePeerAddress,
         InitiatingPhy::LE_1M,
         &phy_params,
     )
     .unwrap();
 
+    assert!(InitiatingAdvertisingHandle::UNUSED.is_sentinel());
+    assert!(InitiatingSubevent::UNUSED.is_sentinel());
+    let invalid_handle = InitiatingAdvertisingHandle::try_new(0xF0).unwrap_err();
+    assert_eq!(invalid_handle.allowed_sentinel(), Some(0xFF));
+    assert!(InitiatingSubevent::try_new(0x80).is_err());
+    assert!(
+        <InitiatingAdvertisingHandle as hci::vendor::command::HciDecodeField<1>>::from_hci_field(
+            &[0xFE]
+        )
+        .is_err()
+    );
+    assert!(
+        <InitiatingSubevent as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0xFF])
+            .is_ok()
+    );
     assert!(InitiatingPhy::from_bits(0x08).is_none());
 }
 

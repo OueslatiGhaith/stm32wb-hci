@@ -44,6 +44,12 @@
   pass-key, PA-level, descriptor-length, tone-channel, and encryption-key-size
   validation/serialization wrappers. Ranged scalars consistently use `try_new` and expose their
   underlying wire scalar through `value`.
+- Let ranged-scalar declarations include a named out-of-range sentinel, and close the extended
+  connection advertising-handle and subevent fields over their documented ranges plus `0xFF`
+  unused value.
+- Close periodic-advertising parameters with typed intervals, properties, PAwR fields, and enable
+  flags, and declaratively reject schedules whose subevents or response slots do not fit their
+  configured timing windows.
 
 ### 🐛 Bug Fixes
 

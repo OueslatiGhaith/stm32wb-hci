@@ -255,21 +255,29 @@ impl HciLengthError {
     }
 }
 
-/// A scalar value is outside the range accepted by its semantic HCI type.
+/// A scalar value is outside the range, and optional sentinel, accepted by its
+/// semantic HCI type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HciValueError {
     actual: u64,
     minimum: u64,
     maximum: u64,
+    allowed_sentinel: Option<u64>,
 }
 
 impl HciValueError {
-    pub(crate) const fn new(actual: u64, minimum: u64, maximum: u64) -> Self {
+    pub(crate) const fn new(
+        actual: u64,
+        minimum: u64,
+        maximum: u64,
+        allowed_sentinel: Option<u64>,
+    ) -> Self {
         Self {
             actual,
             minimum,
             maximum,
+            allowed_sentinel,
         }
     }
 
@@ -286,6 +294,11 @@ impl HciValueError {
     /// Largest accepted value.
     pub const fn maximum(self) -> u64 {
         self.maximum
+    }
+
+    /// Additional accepted value outside the inclusive range, if any.
+    pub const fn allowed_sentinel(self) -> Option<u64> {
+        self.allowed_sentinel
     }
 }
 
@@ -1612,6 +1625,89 @@ macro_rules! declarative_constraint_checks {
     };
     (
         $command:ident;
+        pawr_subevents_fit(
+            $periodic_interval_min:ident,
+            $num_subevents:ident,
+            $subevent_interval:ident
+        );
+        $($rest:tt)*
+    ) => {
+        if $num_subevents.value() != 0
+            && u32::from($num_subevents.value()) * u32::from($subevent_interval.value())
+                > u32::from($periodic_interval_min.value())
+        {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($num_subevents),
+                    " * ",
+                    stringify!($subevent_interval),
+                    " <= ",
+                    stringify!($periodic_interval_min),
+                ),
+            ));
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
+        pawr_response_slots_fit(
+            $num_subevents:ident,
+            $subevent_interval:ident,
+            $response_slot_delay:ident,
+            $response_slot_spacing:ident,
+            $num_response_slots:ident
+        );
+        $($rest:tt)*
+    ) => {
+        if $num_subevents.value() != 0 && $num_response_slots != 0 {
+            let subevent_interval = u32::from($subevent_interval.value());
+            let response_slot_delay = u32::from($response_slot_delay.value());
+
+            if response_slot_delay == 0 || response_slot_delay >= subevent_interval {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!($command),
+                    concat!(
+                        "0 < ",
+                        stringify!($response_slot_delay),
+                        " < ",
+                        stringify!($subevent_interval),
+                        " when ",
+                        stringify!($num_response_slots),
+                        " != 0",
+                    ),
+                ));
+            }
+
+            if $num_response_slots > 1 {
+                let response_slot_spacing = u32::from($response_slot_spacing.value());
+                let num_response_slots = u32::from($num_response_slots);
+                if response_slot_spacing == 0
+                    || response_slot_spacing * num_response_slots
+                        > 10 * (subevent_interval - response_slot_delay)
+                {
+                    return Err(crate::vendor::command::HciConstraintError::new(
+                        stringify!($command),
+                        concat!(
+                            stringify!($response_slot_spacing),
+                            " * ",
+                            stringify!($num_response_slots),
+                            " <= 10 * (",
+                            stringify!($subevent_interval),
+                            " - ",
+                            stringify!($response_slot_delay),
+                            ") when ",
+                            stringify!($num_response_slots),
+                            " > 1",
+                        ),
+                    ));
+                }
+            }
+        }
+        declarative_constraint_checks!($command; $($rest)*);
+    };
+    (
+        $command:ident;
         len_at_most($field:ident, $maximum:ident);
         $($rest:tt)*
     ) => {
@@ -2102,6 +2198,11 @@ macro_rules! declarative_variable_command {
 ///     }
 /// }
 /// ```
+///
+/// PAwR schedules additionally use `pawr_subevents_fit` and
+/// `pawr_response_slots_fit`. These constraints enforce the Bluetooth timing
+/// formulas while preserving fields that the controller ignores when there
+/// are no subevents, no response slots, or exactly one response slot.
 ///
 /// A command which completes through Command Status has no `Return`:
 ///

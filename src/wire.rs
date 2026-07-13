@@ -70,17 +70,38 @@ macro_rules! hci_enum {
     };
 }
 
+macro_rules! hci_ranged_error {
+    ($actual:expr, $minimum:expr, $maximum:expr) => {
+        crate::vendor::command::HciValueError::new(
+            $actual as u64,
+            $minimum as u64,
+            $maximum as u64,
+            None,
+        )
+    };
+    ($actual:expr, $minimum:expr, $maximum:expr, $sentinel:expr) => {
+        crate::vendor::command::HciValueError::new(
+            $actual as u64,
+            $minimum as u64,
+            $maximum as u64,
+            Some($sentinel as u64),
+        )
+    };
+}
+
 /// Declare a bounded unsigned scalar and its exact-width HCI wire encoding.
 ///
 /// The scalar can only be constructed or decoded when its value is within the
-/// declared inclusive range. This keeps intrinsic protocol domains in their
-/// semantic types while command-specific relationships remain in `vendor_cmd!`.
+/// declared inclusive range or matches its optional named sentinel. This keeps
+/// intrinsic protocol domains in their semantic types while command-specific
+/// relationships remain in `vendor_cmd!`.
 macro_rules! hci_ranged {
     (
         $(#[$struct_attr:meta])*
         $vis:vis struct $name:ident : $repr:ty => $len:literal {
             minimum: $minimum:expr,
-            maximum: $maximum:expr $(,)?
+            maximum: $maximum:expr,
+            $(sentinel: $sentinel_name:ident = $sentinel:expr,)?
         }
     ) => {
         $(#[$struct_attr])*
@@ -95,20 +116,35 @@ macro_rules! hci_ranged {
             /// Largest accepted value.
             pub const MAXIMUM: $repr = $maximum;
 
-            /// Construct a value within the declared inclusive range.
+            $(
+                /// Additional accepted value outside the inclusive range.
+                pub const $sentinel_name: Self = Self($sentinel);
+            )?
+
+            /// Construct a value within the declared domain.
             pub const fn try_new(
                 value: $repr,
             ) -> Result<Self, crate::vendor::command::HciValueError> {
-                if value >= Self::MINIMUM && value <= Self::MAXIMUM {
+                if (value >= Self::MINIMUM && value <= Self::MAXIMUM)
+                    $(|| value == $sentinel)?
+                {
                     Ok(Self(value))
                 } else {
-                    Err(crate::vendor::command::HciValueError::new(
-                        value as u64,
-                        Self::MINIMUM as u64,
-                        Self::MAXIMUM as u64,
+                    Err(hci_ranged_error!(
+                        value,
+                        Self::MINIMUM,
+                        Self::MAXIMUM
+                        $(, $sentinel)?
                     ))
                 }
             }
+
+            $(
+                /// Whether this value is the declared out-of-range sentinel.
+                pub const fn is_sentinel(self) -> bool {
+                    self.0 == $sentinel
+                }
+            )?
 
             /// Return the underlying wire value.
             pub const fn value(self) -> $repr {

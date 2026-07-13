@@ -884,14 +884,29 @@ vendor_cmd! {
     GapAdvSetPeriodicParameters(cgid = 0x1, cid = 0x47) {
         Params = {
             advertising_handle: AdvertisingHandle => 1,
-            periodic_adv_interval_min: u16 => 2,
-            periodic_adv_interval_max: u16 => 2,
-            periodic_adv_properties: u16 => 2,
-            num_subevents: u8 => 1,
-            subevent_interval: u8 => 1,
-            response_slot_delay: u8 => 1,
-            response_slot_spacing: u8 => 1,
+            periodic_adv_interval_min: PeriodicAdvertisingInterval => 2,
+            periodic_adv_interval_max: PeriodicAdvertisingInterval => 2,
+            periodic_adv_properties: PeriodicAdvertisingProperties => 2,
+            num_subevents: PeriodicAdvertisingSubeventCount => 1,
+            subevent_interval: PeriodicAdvertisingSubeventInterval => 1,
+            response_slot_delay: PeriodicAdvertisingResponseSlotDelay => 1,
+            response_slot_spacing: PeriodicAdvertisingResponseSlotSpacing => 1,
             num_response_slots: u8 => 1,
+        };
+        Constraints = {
+            ordered(periodic_adv_interval_min, periodic_adv_interval_max);
+            pawr_subevents_fit(
+                periodic_adv_interval_min,
+                num_subevents,
+                subevent_interval
+            );
+            pawr_response_slots_fit(
+                num_subevents,
+                subevent_interval,
+                response_slot_delay,
+                response_slot_spacing,
+                num_response_slots
+            );
         };
         Completion = CommandComplete;
         Return = ();
@@ -919,7 +934,7 @@ vendor_cmd! {
 vendor_cmd! {
     GapAdvSetPeriodicEnable(cgid = 0x1, cid = 0x49) {
         Params = {
-            enable: u8 => 1,
+            enable: PeriodicAdvertisingEnable => 1,
             handle: AdvertisingHandle => 1,
         };
         Completion = CommandComplete;
@@ -1003,8 +1018,8 @@ vendor_cmd! {
             procedure: Procedure => 1,
             own_address_type: AddressType => 1,
             peer_address: BdAddrType => 7,
-            advertising_handle: u8 => 1,
-            subevent: u8 => 1,
+            advertising_handle: InitiatingAdvertisingHandle => 1,
+            subevent: InitiatingSubevent => 1,
             initiator_filter_policy: InitiatorFilterPolicy => 1,
             initiating_phys: InitiatingPhy => 1,
             phy_params: &'a [ExtConnectionPhyParams] => {
@@ -1374,6 +1389,99 @@ hci_bitflags! {
         const CHANNEL_38 = 0x02;
         /// Use primary advertising channel 39.
         const CHANNEL_39 = 0x04;
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Periodic-advertising interval in 1.25 ms units.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PeriodicAdvertisingInterval: u16 => 2 {
+        minimum: 0x0006,
+        maximum: 0xFFFF,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_bitflags! {
+    /// Fields included in periodic advertising packets.
+    pub struct PeriodicAdvertisingProperties: u16 => 2 {
+        /// Include transmit power in periodic advertising packets.
+        const INCLUDE_TX_POWER = 0x0040;
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Number of PAwR subevents transmitted in each periodic advertising event.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PeriodicAdvertisingSubeventCount: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0x80,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Interval between PAwR subevents in 1.25 ms units.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PeriodicAdvertisingSubeventInterval: u8 => 1 {
+        minimum: 0x06,
+        maximum: 0xFF,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Delay before the first PAwR response slot in 1.25 ms units.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PeriodicAdvertisingResponseSlotDelay: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0xFE,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Spacing between PAwR response slots in 0.125 ms units.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct PeriodicAdvertisingResponseSlotSpacing: u8 => 1 {
+        minimum: 0x02,
+        maximum: 0xFF,
+        sentinel: NO_RESPONSE_SLOTS = 0x00,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_bitflags! {
+    /// Controls periodic advertising and the optional ADI field.
+    pub struct PeriodicAdvertisingEnable: u8 => 1 {
+        /// Enable periodic advertising for the selected advertising set.
+        const ENABLE_PERIODIC_ADVERTISING = 0x01;
+        /// Include the ADI field in AUX_SYNC_IND packets.
+        const INCLUDE_ADI = 0x02;
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Periodic-advertising handle used while initiating an extended connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct InitiatingAdvertisingHandle: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0xEF,
+        sentinel: UNUSED = 0xFF,
+    }
+}
+
+#[cfg(after_fw_0_17_1)]
+hci_ranged! {
+    /// Periodic-advertising subevent used while initiating an extended connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct InitiatingSubevent: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0x7F,
+        sentinel: UNUSED = 0xFF,
     }
 }
 

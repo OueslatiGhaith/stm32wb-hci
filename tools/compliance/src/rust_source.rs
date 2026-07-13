@@ -753,6 +753,18 @@ impl Parse for DeclarativeConstraints {
                 arguments.parse::<Expr>()?;
                 arguments.parse::<syn::Token![,]>()?;
                 arguments.parse::<Expr>()?;
+            } else if kind == "pawr_subevents_fit" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                arguments.parse::<syn::Token![,]>()?;
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+            } else if kind == "pawr_response_slots_fit" {
+                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                for _ in 0..4 {
+                    arguments.parse::<syn::Token![,]>()?;
+                    fields.insert(arguments.parse::<syn::Ident>()?.to_string());
+                }
             } else if kind == "non_empty" {
                 fields.insert(arguments.parse::<syn::Ident>()?.to_string());
             } else {
@@ -1870,6 +1882,8 @@ mod tests {
                         ordered_when_in_range(minimum, maximum, 0x20, 0x4000);
                         implies_eq(mode, 0x00, maximum, 0);
                         implies_range(mode, 0x02, maximum, 0x20, 0x4000);
+                        pawr_subevents_fit(minimum, mode, maximum);
+                        pawr_response_slots_fit(mode, minimum, maximum, mode, minimum);
                         len_at_most(data, mode);
                     };
                     Completion = CommandStatus;
