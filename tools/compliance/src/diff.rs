@@ -236,7 +236,6 @@ fn same_command_shape(left: &CatalogCommand, right: &CatalogCommand) -> bool {
         && left.name == right.name
         && left.completion == right.completion
         && left.request == right.request
-        && left.response == right.response
 }
 
 fn same_event_shape(left: &CatalogEvent, right: &CatalogEvent) -> bool {
@@ -247,8 +246,8 @@ fn same_event_shape(left: &CatalogEvent, right: &CatalogEvent) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        CATALOG_SCHEMA_VERSION, CatalogCommandKind, CatalogEventKind, CompletionExpectation,
-        EventPayloadLayout, RequestLayout, ResponseLayout,
+        CATALOG_SCHEMA_VERSION, CatalogCommandKind, CatalogCompletion, CatalogEventKind,
+        EventPayloadLayout, RequestLayout, ReturnLayout,
     };
 
     fn command(ocf: u16, name: &str) -> CatalogCommand {
@@ -257,9 +256,10 @@ mod tests {
             name: name.to_owned(),
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
-            completion: CompletionExpectation::CommandComplete,
+            completion: CatalogCompletion::CommandComplete {
+                returns: ReturnLayout::Fixed(0),
+            },
             request: RequestLayout::Empty,
-            response: ResponseLayout::Status,
         }
     }
 
@@ -295,7 +295,9 @@ mod tests {
         let mut moved = command(1, "renamed");
         moved.source_offset = 99;
         new.commands = vec![moved, command(3, "added")];
-        new.commands[0].response = ResponseLayout::Fixed(3);
+        new.commands[0].completion = CatalogCompletion::CommandComplete {
+            returns: ReturnLayout::Fixed(3),
+        };
         new.events = vec![event(0x400, "renamed_event"), event(0x402, "added_event")];
         new.events[0].source_name = "new_events.c".to_owned();
 

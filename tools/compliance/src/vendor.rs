@@ -8,9 +8,9 @@ use tree_sitter::{Node, Parser, Tree};
 
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
-    CatalogCommand, CatalogCommandKind, CatalogEvent, CatalogEventKind, CatalogFamily,
-    CatalogSchema, CommandScope, CompletionExpectation, EventPayloadLayout, EventScope,
-    RequestLayout, ResponseLayout,
+    CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
+    CatalogFamily, CatalogSchema, CommandScope, EventPayloadLayout, EventScope, RequestLayout,
+    ReturnLayout,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -368,9 +368,8 @@ fn extract_command_metadata_with_evidence(
             name,
             source_name: source_name.to_owned(),
             source_offset,
-            completion: completion_expectation(body, source),
+            completion: command_completion(body, source, packed_layouts),
             request: request_layout(declarator, body, source, packed_layouts),
-            response: response_layout(body, source, packed_layouts),
         });
     }
 
@@ -550,16 +549,38 @@ fn c_pointer_variable_type(body: Node<'_>, source: &str, variable: &str) -> Opti
     })
 }
 
-fn completion_expectation(body: Node<'_>, source: &str) -> CompletionExpectation {
+enum ParsedCompletion {
+    CommandComplete,
+    CommandStatus,
+    Event(u8),
+    Unresolved(String),
+}
+
+fn parsed_completion(body: Node<'_>, source: &str) -> ParsedCompletion {
     match assignment_value(body, source, "rq", "event") {
-        None => CompletionExpectation::CommandComplete,
+        None => ParsedCompletion::CommandComplete,
         Some(value) => match parse_c_integer(node_text(value, source), 0).map(|(value, _)| value) {
-            Some(0x0e) => CompletionExpectation::CommandComplete,
-            Some(0x0f) => CompletionExpectation::CommandStatus,
-            Some(value) if value <= u16::from(u8::MAX) => CompletionExpectation::Event(value as u8),
-            Some(value) => CompletionExpectation::Unresolved(format!("0x{value:04X}")),
-            None => CompletionExpectation::Unresolved(node_text(value, source).trim().to_owned()),
+            Some(0x0e) => ParsedCompletion::CommandComplete,
+            Some(0x0f) => ParsedCompletion::CommandStatus,
+            Some(value) if value <= u16::from(u8::MAX) => ParsedCompletion::Event(value as u8),
+            Some(value) => ParsedCompletion::Unresolved(format!("0x{value:04X}")),
+            None => ParsedCompletion::Unresolved(node_text(value, source).trim().to_owned()),
         },
+    }
+}
+
+fn command_completion(
+    body: Node<'_>,
+    source: &str,
+    packed_layouts: &PackedLayouts,
+) -> CatalogCompletion {
+    match parsed_completion(body, source) {
+        ParsedCompletion::CommandComplete => CatalogCompletion::CommandComplete {
+            returns: return_layout(body, source, packed_layouts),
+        },
+        ParsedCompletion::CommandStatus => CatalogCompletion::CommandStatus {},
+        ParsedCompletion::Event(code) => CatalogCompletion::Event { code },
+        ParsedCompletion::Unresolved(expression) => CatalogCompletion::Unresolved { expression },
     }
 }
 
@@ -962,33 +983,48 @@ fn c_variable_type(body: Node<'_>, source: &str, variable: &str) -> Option<Strin
     })
 }
 
-fn response_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -> ResponseLayout {
+fn return_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -> ReturnLayout {
     let Some(value) = assignment_value(body, source, "rq", "rlen") else {
-        return ResponseLayout::None;
+        return ReturnLayout::Unresolved(
+            "CubeWB does not state a Command Complete response length".to_owned(),
+        );
     };
     let value_text = node_text(value, source).trim();
     if let Some((size, end)) = parse_c_integer(value_text, 0)
         && value_text[end..].trim().is_empty()
     {
-        return if size == 1 {
-            ResponseLayout::Status
-        } else {
-            ResponseLayout::Fixed(u32::from(size))
-        };
+        return normalized_return_layout(u32::from(size), u32::from(size), false);
     }
     if let Some(variable) = sizeof_variable(value)
         && let Some(type_name) = c_variable_type(body, source, node_text(variable, source))
     {
-        return response_layout_for_struct(type_name, packed_layouts);
+        return return_layout_for_struct(type_name, packed_layouts);
     }
-    ResponseLayout::Unresolved(value_text.to_owned())
+    ReturnLayout::Unresolved(value_text.to_owned())
 }
 
-fn response_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> ResponseLayout {
+fn return_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> ReturnLayout {
     match normalized_packed_layout(&type_name, layouts) {
-        Ok((minimum, maximum, true)) => ResponseLayout::Variable { minimum, maximum },
-        Ok((_, maximum, false)) => ResponseLayout::Fixed(maximum),
-        Err(reason) => ResponseLayout::Unresolved(reason),
+        Ok((minimum, maximum, variable)) => normalized_return_layout(minimum, maximum, variable),
+        Err(reason) => ReturnLayout::Unresolved(reason),
+    }
+}
+
+fn normalized_return_layout(minimum: u32, maximum: u32, variable: bool) -> ReturnLayout {
+    let Some(minimum) = minimum.checked_sub(1) else {
+        return ReturnLayout::Unresolved(
+            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
+        );
+    };
+    let Some(maximum) = maximum.checked_sub(1) else {
+        return ReturnLayout::Unresolved(
+            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
+        );
+    };
+    if variable && minimum != maximum {
+        ReturnLayout::Variable { minimum, maximum }
+    } else {
+        ReturnLayout::Fixed(maximum)
     }
 }
 
@@ -1921,40 +1957,40 @@ mod tests {
         assert_eq!(fixed_packed_size(&layouts, "fixed_rp0"), Some(7));
         assert_eq!(fixed_packed_size(&layouts, "capacity_rp0"), None);
 
-        let responses = ["fixed_rp0", "hal_rp0", "gap_rp0", "gatt_rp0", "l2cap_rp0"]
-            .map(|type_name| response_layout_for_struct(type_name.to_owned(), &layouts));
-        assert_eq!(responses[0], ResponseLayout::Fixed(7));
+        let returns = ["fixed_rp0", "hal_rp0", "gap_rp0", "gatt_rp0", "l2cap_rp0"]
+            .map(|type_name| return_layout_for_struct(type_name.to_owned(), &layouts));
+        assert_eq!(returns[0], ReturnLayout::Fixed(6));
         assert_eq!(
-            responses[1],
-            ResponseLayout::Variable {
-                minimum: 2,
-                maximum: 252,
+            returns[1],
+            ReturnLayout::Variable {
+                minimum: 1,
+                maximum: 251,
             }
         );
         assert_eq!(
-            responses[2],
-            ResponseLayout::Variable {
-                minimum: 2,
-                maximum: 247,
+            returns[2],
+            ReturnLayout::Variable {
+                minimum: 1,
+                maximum: 246,
             }
         );
         assert_eq!(
-            responses[3],
-            ResponseLayout::Variable {
-                minimum: 5,
-                maximum: 252,
+            returns[3],
+            ReturnLayout::Variable {
+                minimum: 4,
+                maximum: 251,
             }
         );
         assert_eq!(
-            responses[4],
-            ResponseLayout::Variable {
-                minimum: 2,
-                maximum: 252,
+            returns[4],
+            ReturnLayout::Variable {
+                minimum: 1,
+                maximum: 251,
             }
         );
         assert!(matches!(
-            response_layout_for_struct("missing_rp0".to_owned(), &layouts),
-            ResponseLayout::Unresolved(reason) if reason.contains("missing_rp0")
+            return_layout_for_struct("missing_rp0".to_owned(), &layouts),
+            ReturnLayout::Unresolved(reason) if reason.contains("missing_rp0")
         ));
     }
 

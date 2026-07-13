@@ -16,7 +16,6 @@ use syn::{
     Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath, Type,
 };
 
-use crate::CompletionExpectation;
 use crate::FirmwareVersion;
 use crate::envelope::WireEnvelope;
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
@@ -34,13 +33,21 @@ pub(crate) struct CrateCoverage {
 pub(crate) struct DescriptorMetadata {
     pub(crate) name: String,
     pub(crate) code: u16,
-    pub(crate) completion: CompletionExpectation,
+    pub(crate) completion: DescriptorCompletion,
     /// Command parameter bytes, excluding the HCI command header.
     pub(crate) request: WireEnvelope,
-    /// Return bytes owned by the command, excluding Command Complete framing
-    /// and its status byte. Command Status commands have no return envelope.
-    pub(crate) response: Option<WireEnvelope>,
     pub(crate) location: PathBuf,
+}
+
+/// Completion shape declared by one Rust `vendor_cmd!` invocation.
+///
+/// Command Complete owns its command return envelope; Command Status cannot
+/// carry one, so invalid completion/return combinations are unrepresentable
+/// after parsing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DescriptorCompletion {
+    CommandComplete { returns: WireEnvelope },
+    CommandStatus,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,9 +63,8 @@ pub(crate) struct EventMetadata {
 struct DescriptorDefinition {
     name: String,
     code: u16,
-    completion: CompletionExpectation,
+    completion: DescriptorCompletion,
     request: WireEnvelope,
-    response: Option<WireEnvelope>,
 }
 
 #[derive(Clone)]
@@ -310,7 +316,6 @@ fn collect_descriptors(
                 code: definition.code,
                 completion: definition.completion,
                 request: definition.request,
-                response: definition.response,
                 location: source.path.clone(),
             };
 
@@ -488,26 +493,25 @@ fn parse_descriptor_definition(
             invocation.name
         )
     })?;
-    let response = match &completion {
-        CompletionExpectation::CommandComplete if saw_return => response,
-        CompletionExpectation::CommandComplete => {
+    let completion = match completion {
+        ParsedCompletion::CommandComplete if saw_return => DescriptorCompletion::CommandComplete {
+            returns: response.expect("Return was parsed when saw_return is true"),
+        },
+        ParsedCompletion::CommandComplete => {
             return Err(format!(
                 "{}: vendor_cmd! `{}` declares CommandComplete but has no Return declaration",
                 path.display(),
                 invocation.name
             ));
         }
-        CompletionExpectation::CommandStatus if saw_return => {
+        ParsedCompletion::CommandStatus if saw_return => {
             return Err(format!(
                 "{}: vendor_cmd! `{}` declares CommandStatus and must not declare Return",
                 path.display(),
                 invocation.name
             ));
         }
-        CompletionExpectation::CommandStatus => None,
-        CompletionExpectation::Event(_) | CompletionExpectation::Unresolved(_) => {
-            unreachable!("vendor_cmd! parser accepts only CommandComplete or CommandStatus")
-        }
+        ParsedCompletion::CommandStatus => DescriptorCompletion::CommandStatus,
     };
 
     Ok(DescriptorDefinition {
@@ -515,7 +519,6 @@ fn parse_descriptor_definition(
         code: (invocation.cgid << 7) | invocation.cid,
         completion,
         request: request.expect("presence checked above"),
-        response,
     })
 }
 
@@ -643,11 +646,17 @@ fn parse_return_shape(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParsedCompletion {
+    CommandComplete,
+    CommandStatus,
+}
+
 fn parse_completion_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-) -> Result<CompletionExpectation, String> {
+) -> Result<ParsedCompletion, String> {
     let completion = syn::parse2::<syn::Ident>(value).map_err(|error| {
         format!(
             "{}: descriptor `{descriptor}` has an unsupported Completion shape: {error}",
@@ -655,9 +664,9 @@ fn parse_completion_shape(
         )
     })?;
     if completion == "CommandComplete" {
-        Ok(CompletionExpectation::CommandComplete)
+        Ok(ParsedCompletion::CommandComplete)
     } else if completion == "CommandStatus" {
-        Ok(CompletionExpectation::CommandStatus)
+        Ok(ParsedCompletion::CommandStatus)
     } else {
         Err(format!(
             "{}: descriptor `{descriptor}` has unknown Completion `{completion}`",
@@ -1549,10 +1558,11 @@ mod tests {
         assert_eq!(descriptor.code, 0x0003);
         assert_eq!(
             descriptor.completion,
-            CompletionExpectation::CommandComplete
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::fixed(8),
+            }
         );
         assert_eq!(descriptor.request, WireEnvelope::fixed(0));
-        assert_eq!(descriptor.response, Some(WireEnvelope::fixed(8)));
     }
 
     #[test]
@@ -1582,10 +1592,11 @@ mod tests {
         let descriptor = descriptors.get("Current").unwrap();
         assert_eq!(
             descriptor.completion,
-            CompletionExpectation::CommandComplete
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::fixed(6),
+            }
         );
         assert_eq!(descriptor.request, WireEnvelope::fixed(3));
-        assert_eq!(descriptor.response, Some(WireEnvelope::fixed(6)));
     }
 
     #[test]
@@ -1604,9 +1615,8 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.completion, CompletionExpectation::CommandStatus);
+        assert_eq!(descriptor.completion, DescriptorCompletion::CommandStatus);
         assert_eq!(descriptor.request, WireEnvelope::fixed(1));
-        assert_eq!(descriptor.response, None);
     }
 
     #[test]
@@ -1643,11 +1653,11 @@ mod tests {
         let descriptor = descriptors.get("Current").unwrap();
         assert_eq!(
             descriptor.completion,
-            CompletionExpectation::CommandComplete
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(4, 253),
+            }
         );
         assert_eq!(descriptor.request, WireEnvelope::bounded(3, 255));
-        // The status byte is framing, not part of the command-owned return.
-        assert_eq!(descriptor.response, Some(WireEnvelope::bounded(4, 253)));
     }
 
     #[test]
@@ -1674,7 +1684,12 @@ mod tests {
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
         assert_eq!(descriptor.request, WireEnvelope::fixed(1));
-        assert_eq!(descriptor.response, Some(WireEnvelope::bounded(1, 16)));
+        assert_eq!(
+            descriptor.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(1, 16),
+            }
+        );
     }
 
     #[test]
@@ -1780,9 +1795,8 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.completion, CompletionExpectation::CommandStatus);
+        assert_eq!(descriptor.completion, DescriptorCompletion::CommandStatus);
         assert_eq!(descriptor.request, WireEnvelope::bounded(4, 28));
-        assert_eq!(descriptor.response, None);
     }
 
     #[test]
@@ -2033,7 +2047,12 @@ mod tests {
             .get("GapUpdateAdvertisingData")
             .unwrap();
         assert_eq!(update.request, WireEnvelope::bounded(1, 32));
-        assert_eq!(update.response, Some(WireEnvelope::fixed(0)));
+        assert_eq!(
+            update.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::fixed(0),
+            }
+        );
 
         let discoverable = coverage
             .descriptor_metadata
@@ -2048,7 +2067,12 @@ mod tests {
             .get("GattReadHandleValue")
             .unwrap();
         assert_eq!(read.request, WireEnvelope::fixed(6));
-        assert_eq!(read.response, Some(WireEnvelope::bounded(4, 251)));
+        assert_eq!(
+            read.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(4, 251),
+            }
+        );
 
         assert!(
             coverage
@@ -2061,7 +2085,7 @@ mod tests {
             .get("GattDiscoverPrimaryServicesByUUID")
             .unwrap();
         assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
-        assert_eq!(tagged.completion, CompletionExpectation::CommandStatus);
+        assert_eq!(tagged.completion, DescriptorCompletion::CommandStatus);
 
         assert!(!coverage.descriptor_metadata.contains_key("GapExtStartScan"));
         let future_coverage = load_crate_coverage(&crate_dir, version(0, 18, 0)).unwrap();
@@ -2070,26 +2094,41 @@ mod tests {
             .get("GapExtStartScan")
             .unwrap();
         assert_eq!(bitmap.request, WireEnvelope::bounded(10, 20));
-        assert_eq!(bitmap.response, None);
+        assert_eq!(bitmap.completion, DescriptorCompletion::CommandStatus);
 
         let bonded = coverage
             .descriptor_metadata
             .get("GapGetBondedDevices")
             .unwrap();
         // Count plus at most 35 seven-byte address records; status is framing.
-        assert_eq!(bonded.response, Some(WireEnvelope::bounded(1, 246)));
+        assert_eq!(
+            bonded.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(1, 246),
+            }
+        );
 
         let config = coverage
             .descriptor_metadata
             .get("HalReadConfigData")
             .unwrap();
-        assert_eq!(config.response, Some(WireEnvelope::bounded(1, 16)));
+        assert_eq!(
+            config.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(1, 16),
+            }
+        );
 
         let channels = coverage
             .descriptor_metadata
             .get("L2CocConnectConfirm")
             .unwrap();
-        assert_eq!(channels.response, Some(WireEnvelope::bounded(1, 6)));
+        assert_eq!(
+            channels.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::bounded(1, 6),
+            }
+        );
 
         assert_eq!(coverage.event_metadata.len(), 55);
         let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();

@@ -16,9 +16,9 @@ mod vendor;
 mod wire;
 
 pub use catalog::{
-    CATALOG_SCHEMA_VERSION, CatalogCommand, CatalogCommandKind, CatalogEvent, CatalogEventKind,
-    CatalogFamily, CatalogSchema, CommandScope, CompletionExpectation, EventPayloadLayout,
-    EventScope, RequestLayout, ResponseLayout,
+    CATALOG_SCHEMA_VERSION, CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent,
+    CatalogEventKind, CatalogFamily, CatalogSchema, CommandScope, EventPayloadLayout, EventScope,
+    RequestLayout, ReturnLayout,
 };
 pub use diff::{
     CatalogIdentity, ChangedCommand, ChangedEvent, CommandChanges, CommandKey, EventChanges,

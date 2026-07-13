@@ -9,11 +9,11 @@
 use std::collections::BTreeMap;
 
 use crate::catalog::{
-    CatalogCommand, CatalogEvent, CommandScope, CompletionExpectation, EventPayloadLayout,
-    EventScope, RequestLayout, ResponseLayout,
+    CatalogCommand, CatalogCompletion, CatalogEvent, CommandScope, EventPayloadLayout, EventScope,
+    RequestLayout, ReturnLayout,
 };
 use crate::envelope::WireEnvelope;
-use crate::rust_source::{CrateCoverage, DescriptorMetadata, EventMetadata};
+use crate::rust_source::{CrateCoverage, DescriptorCompletion, DescriptorMetadata, EventMetadata};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EnvelopeRelation {
@@ -244,53 +244,43 @@ fn compare_completion(
     descriptor: &DescriptorMetadata,
     report: &mut WireReport,
 ) {
-    match &command.completion {
-        CompletionExpectation::CommandStatus => {
-            if !matches!(descriptor.completion, CompletionExpectation::CommandStatus) {
-                difference(
-                    report,
-                    descriptor,
-                    "CubeWB waits for Command Status, but Rust declares Command Complete",
-                );
-            }
+    match (&command.completion, &descriptor.completion) {
+        (CatalogCompletion::CommandStatus {}, DescriptorCompletion::CommandStatus) => {}
+        (CatalogCompletion::CommandStatus {}, DescriptorCompletion::CommandComplete { .. }) => {
+            difference(
+                report,
+                descriptor,
+                "CubeWB waits for Command Status, but Rust declares Command Complete",
+            );
         }
-        CompletionExpectation::CommandComplete => {
-            if !matches!(
-                descriptor.completion,
-                CompletionExpectation::CommandComplete
-            ) {
-                difference(
-                    report,
-                    descriptor,
-                    "CubeWB waits for Command Complete, but Rust declares Command Status",
-                );
-                return;
-            }
-            let Some(actual) = descriptor.response else {
-                difference(
-                    report,
-                    descriptor,
-                    "Rust declares Command Complete without a Return payload envelope",
-                );
-                return;
-            };
+        (CatalogCompletion::CommandComplete { .. }, DescriptorCompletion::CommandStatus) => {
+            difference(
+                report,
+                descriptor,
+                "CubeWB waits for Command Complete, but Rust declares Command Status",
+            );
+        }
+        (
+            CatalogCompletion::CommandComplete { returns: expected },
+            DescriptorCompletion::CommandComplete { returns: actual },
+        ) => {
             compare_envelope(
                 descriptor.code,
                 &descriptor.name,
                 "command return payload",
-                response_envelope(&command.response),
-                actual,
+                return_envelope(expected),
+                *actual,
                 report,
             );
         }
-        CompletionExpectation::Event(event) => unavailable(
+        (CatalogCompletion::Event { code }, _) => unavailable(
             report,
             descriptor,
             format!(
-                "CubeWB waits for event 0x{event:02X}; this checker only models Command Complete and Command Status"
+                "CubeWB waits for event 0x{code:02X}; this checker only models Command Complete and Command Status"
             ),
         ),
-        CompletionExpectation::Unresolved(expression) => unavailable(
+        (CatalogCompletion::Unresolved { expression }, _) => unavailable(
             report,
             descriptor,
             format!("CubeWB completion event uses unsupported expression `{expression}`"),
@@ -313,36 +303,17 @@ fn request_envelope(layout: &RequestLayout) -> Result<EnvelopeExpectation, Strin
     }
 }
 
-fn response_envelope(layout: &ResponseLayout) -> Result<EnvelopeExpectation, String> {
+fn return_envelope(layout: &ReturnLayout) -> Result<EnvelopeExpectation, String> {
     match layout {
-        // CubeWB's rlen includes the transport status byte. `Return` does not.
-        ResponseLayout::Status => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(0))),
-        ResponseLayout::Fixed(length) => length
-            .checked_sub(1)
-            .map(|length| EnvelopeExpectation::exact(WireEnvelope::fixed(length as usize)))
-            .ok_or_else(|| {
-                "CubeWB command-complete response length is zero and cannot contain status"
-                    .to_owned()
-            }),
-        ResponseLayout::Variable { minimum, maximum } => {
-            // CubeWB's packed response includes status; the declarative Rust
-            // `Return` starts immediately after it.
-            let minimum = minimum.checked_sub(1).ok_or_else(|| {
-                "CubeWB variable command response cannot contain status".to_owned()
-            })?;
-            let maximum = maximum.checked_sub(1).ok_or_else(|| {
-                "CubeWB variable command response cannot contain status".to_owned()
-            })?;
-            Ok(EnvelopeExpectation::response_capacity(
-                WireEnvelope::bounded(minimum as usize, maximum as usize),
-            ))
-        }
-        ResponseLayout::Unresolved(expression) => Err(format!(
+        ReturnLayout::Fixed(length) => Ok(EnvelopeExpectation::exact(WireEnvelope::fixed(
+            *length as usize,
+        ))),
+        ReturnLayout::Variable { minimum, maximum } => Ok(EnvelopeExpectation::response_capacity(
+            WireEnvelope::bounded(*minimum as usize, *maximum as usize),
+        )),
+        ReturnLayout::Unresolved(expression) => Err(format!(
             "CubeWB command return layout is unresolved: {expression}"
         )),
-        ResponseLayout::None => {
-            Err("CubeWB does not state a command-complete response length".to_owned())
-        }
     }
 }
 
@@ -455,18 +426,20 @@ mod tests {
     fn fixture_descriptor(
         name: &str,
         code: u16,
-        completion: CompletionExpectation,
+        completion: DescriptorCompletion,
         request: WireEnvelope,
-        response: Option<WireEnvelope>,
     ) -> DescriptorMetadata {
         DescriptorMetadata {
             name: name.to_owned(),
             code,
             completion,
             request,
-            response,
             location: PathBuf::from("fixture.rs"),
         }
+    }
+
+    fn descriptor_complete(returns: WireEnvelope) -> DescriptorCompletion {
+        DescriptorCompletion::CommandComplete { returns }
     }
 
     fn fixture_coverage(
@@ -487,9 +460,8 @@ mod tests {
 
     fn fixture_command(
         ocf: u16,
-        completion: CompletionExpectation,
+        completion: CatalogCompletion,
         request: RequestLayout,
-        response: ResponseLayout,
     ) -> CatalogCommand {
         CatalogCommand {
             kind: CatalogCommandKind::VendorAci { ocf },
@@ -498,8 +470,11 @@ mod tests {
             source_offset: 0,
             completion,
             request,
-            response,
         }
+    }
+
+    fn catalog_complete(returns: ReturnLayout) -> CatalogCompletion {
+        CatalogCompletion::CommandComplete { returns }
     }
 
     fn fixture_event(code: u16, payload: EventPayloadLayout) -> CatalogEvent {
@@ -517,30 +492,26 @@ mod tests {
         let active = fixture_descriptor(
             "Active",
             0x001,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(0)),
             WireEnvelope::fixed(1),
-            Some(WireEnvelope::fixed(0)),
         );
         let inactive = fixture_descriptor(
             "Inactive",
             0x002,
-            CompletionExpectation::CommandStatus,
+            DescriptorCompletion::CommandStatus,
             WireEnvelope::fixed(0),
-            None,
         );
         let coverage = fixture_coverage(vec![active, inactive], &["Active"]);
         let commands = vec![
             fixture_command(
                 0x001,
-                CompletionExpectation::CommandStatus,
+                CatalogCompletion::CommandStatus {},
                 RequestLayout::Empty,
-                ResponseLayout::Status,
             ),
             fixture_command(
                 0x002,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Fixed(3)),
                 RequestLayout::Empty,
-                ResponseLayout::Fixed(4),
             ),
         ];
 
@@ -657,30 +628,26 @@ mod tests {
         let status = fixture_descriptor(
             "Status",
             0x001,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(0)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(0)),
         );
         let fixed = fixture_descriptor(
             "Fixed",
             0x002,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(6)),
             WireEnvelope::fixed(3),
-            Some(WireEnvelope::fixed(6)),
         );
         let coverage = fixture_coverage(vec![status, fixed], &["Status", "Fixed"]);
         let commands = vec![
             fixture_command(
                 0x001,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Fixed(0)),
                 RequestLayout::Empty,
-                ResponseLayout::Status,
             ),
             fixture_command(
                 0x002,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Fixed(6)),
                 RequestLayout::Fixed(3),
-                ResponseLayout::Fixed(7),
             ),
         ];
 
@@ -696,23 +663,20 @@ mod tests {
         let contained = fixture_descriptor(
             "Contained",
             0x010,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::bounded(1, 16)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::bounded(1, 16)),
         );
         let missing_prefix = fixture_descriptor(
             "MissingPrefix",
             0x011,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::bounded(0, 16)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::bounded(0, 16)),
         );
         let too_large = fixture_descriptor(
             "TooLarge",
             0x012,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::bounded(1, 252)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::bounded(1, 252)),
         );
         let coverage = fixture_coverage(
             vec![contained, missing_prefix, too_large],
@@ -721,12 +685,11 @@ mod tests {
         let command = |ocf| {
             fixture_command(
                 ocf,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Variable {
+                    minimum: 1,
+                    maximum: 251,
+                }),
                 RequestLayout::Empty,
-                ResponseLayout::Variable {
-                    minimum: 2,
-                    maximum: 252,
-                },
             )
         };
         let commands = vec![command(0x010), command(0x011), command(0x012)];
@@ -755,16 +718,14 @@ mod tests {
         let descriptor = fixture_descriptor(
             "Variable",
             0x001,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::bounded(1, 6)),
             WireEnvelope::fixed(3),
-            Some(WireEnvelope::bounded(1, 6)),
         );
         let coverage = fixture_coverage(vec![descriptor], &["Variable"]);
         let commands = vec![fixture_command(
             0x001,
-            CompletionExpectation::CommandComplete,
+            catalog_complete(ReturnLayout::Fixed(6)),
             RequestLayout::Fixed(3),
-            ResponseLayout::Fixed(7),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -782,16 +743,14 @@ mod tests {
         let descriptor = fixture_descriptor(
             "Fixed",
             0x002,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(5)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(5)),
         );
         let coverage = fixture_coverage(vec![descriptor], &["Fixed"]);
         let commands = vec![fixture_command(
             0x002,
-            CompletionExpectation::CommandComplete,
+            catalog_complete(ReturnLayout::Fixed(6)),
             RequestLayout::Empty,
-            ResponseLayout::Fixed(7),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -803,62 +762,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_command_complete_without_a_return_envelope() {
-        let descriptor = fixture_descriptor(
-            "Structured",
-            0x003,
-            CompletionExpectation::CommandComplete,
-            WireEnvelope::fixed(0),
-            None,
-        );
-        let coverage = fixture_coverage(vec![descriptor], &["Structured"]);
-        let commands = vec![fixture_command(
-            0x003,
-            CompletionExpectation::CommandComplete,
-            RequestLayout::Empty,
-            ResponseLayout::Unresolved("packed C structure `aci_fixture_rp0`".to_owned()),
-        )];
-
-        let report = compare_vendor_wire(&commands, &[], &coverage);
-
-        assert_eq!(report.checked, 1);
-        assert_eq!(report.differences.len(), 1);
-        assert!(report.differences[0].issue.contains("without a Return"));
-        assert!(report.unavailable.is_empty());
-    }
-
-    #[test]
     fn compares_fixed_and_variable_requests() {
         let wrong = fixture_descriptor(
             "Wrong",
             0x006,
-            CompletionExpectation::CommandStatus,
+            DescriptorCompletion::CommandStatus,
             WireEnvelope::fixed(2),
-            None,
         );
         let dynamic = fixture_descriptor(
             "Dynamic",
             0x007,
-            CompletionExpectation::CommandStatus,
+            DescriptorCompletion::CommandStatus,
             WireEnvelope::bounded(1, 17),
-            None,
         );
         let coverage = fixture_coverage(vec![wrong, dynamic], &["Wrong", "Dynamic"]);
         let commands = vec![
             fixture_command(
                 0x006,
-                CompletionExpectation::CommandStatus,
+                CatalogCompletion::CommandStatus {},
                 RequestLayout::Fixed(3),
-                ResponseLayout::None,
             ),
             fixture_command(
                 0x007,
-                CompletionExpectation::CommandStatus,
+                CatalogCompletion::CommandStatus {},
                 RequestLayout::Variable {
                     minimum: 1,
                     maximum: 32,
                 },
-                ResponseLayout::None,
             ),
         ];
 
@@ -876,16 +806,14 @@ mod tests {
         let descriptor = fixture_descriptor(
             "Unresolved",
             0x008,
-            CompletionExpectation::CommandStatus,
+            DescriptorCompletion::CommandStatus,
             WireEnvelope::bounded(1, 17),
-            None,
         );
         let coverage = fixture_coverage(vec![descriptor], &["Unresolved"]);
         let commands = vec![fixture_command(
             0x008,
-            CompletionExpectation::CommandStatus,
+            CatalogCompletion::CommandStatus {},
             RequestLayout::Unresolved("custom(value_len)".to_owned()),
-            ResponseLayout::None,
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -905,16 +833,16 @@ mod tests {
         let descriptor = fixture_descriptor(
             "UnresolvedCompletion",
             0x009,
-            CompletionExpectation::CommandStatus,
+            DescriptorCompletion::CommandStatus,
             WireEnvelope::fixed(0),
-            None,
         );
         let coverage = fixture_coverage(vec![descriptor], &["UnresolvedCompletion"]);
         let commands = vec![fixture_command(
             0x009,
-            CompletionExpectation::Unresolved("HCI_VENDOR_EVENT".to_owned()),
+            CatalogCompletion::Unresolved {
+                expression: "HCI_VENDOR_EVENT".to_owned(),
+            },
             RequestLayout::Empty,
-            ResponseLayout::None,
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -930,16 +858,14 @@ mod tests {
         let descriptor = fixture_descriptor(
             "UnresolvedResponse",
             0x00a,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(1)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(1)),
         );
         let coverage = fixture_coverage(vec![descriptor], &["UnresolvedResponse"]);
         let commands = vec![fixture_command(
             0x00a,
-            CompletionExpectation::CommandComplete,
+            catalog_complete(ReturnLayout::Unresolved("computed_rlen".to_owned())),
             RequestLayout::Empty,
-            ResponseLayout::Unresolved("computed_rlen".to_owned()),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -991,30 +917,26 @@ mod tests {
         let missing = fixture_descriptor(
             "Missing",
             0x004,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(0)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(0)),
         );
         let ambiguous = fixture_descriptor(
             "Ambiguous",
             0x005,
-            CompletionExpectation::CommandComplete,
+            descriptor_complete(WireEnvelope::fixed(0)),
             WireEnvelope::fixed(0),
-            Some(WireEnvelope::fixed(0)),
         );
         let coverage = fixture_coverage(vec![missing, ambiguous], &["Missing", "Ambiguous"]);
         let commands = vec![
             fixture_command(
                 0x005,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Fixed(0)),
                 RequestLayout::Empty,
-                ResponseLayout::Status,
             ),
             fixture_command(
                 0x005,
-                CompletionExpectation::CommandComplete,
+                catalog_complete(ReturnLayout::Fixed(0)),
                 RequestLayout::Empty,
-                ResponseLayout::Status,
             ),
         ];
 

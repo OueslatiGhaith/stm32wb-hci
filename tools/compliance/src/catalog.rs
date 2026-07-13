@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 7;
+pub const CATALOG_SCHEMA_VERSION: u16 = 8;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -36,17 +36,6 @@ pub enum EventScope {
     LeMeta,
 }
 
-/// Generated command-completion behavior.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum CompletionExpectation {
-    CommandComplete,
-    CommandStatus,
-    Event(u8),
-    /// Source value which cannot yet become a stable completion claim.
-    Unresolved(String),
-}
-
 /// Shape of the generated request payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
@@ -61,12 +50,14 @@ pub enum RequestLayout {
     Unresolved(String),
 }
 
-/// Shape of the generated command-complete payload.
+/// Shape of the command-owned return payload.
+///
+/// The family adapter removes Command Complete framing, including its status
+/// byte, before constructing this value. A fixed zero-byte layout therefore
+/// represents a command whose generated response contains only status.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum ResponseLayout {
-    None,
-    Status,
+pub enum ReturnLayout {
     Fixed(u32),
     Variable {
         minimum: u32,
@@ -74,6 +65,27 @@ pub enum ResponseLayout {
     },
     /// Source expression which cannot yet become a stable wire envelope.
     Unresolved(String),
+}
+
+/// Generated command-completion behavior and its completion-specific data.
+///
+/// Owning the return layout here makes it impossible to construct Command
+/// Status or asynchronous-event completions with a Command Complete return,
+/// or a Command Complete without one.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum CatalogCompletion {
+    CommandComplete {
+        returns: ReturnLayout,
+    },
+    CommandStatus {},
+    Event {
+        code: u8,
+    },
+    /// Source value which cannot yet become a stable completion claim.
+    Unresolved {
+        expression: String,
+    },
 }
 
 /// Shape of a generated event payload after the two-byte vendor event code.
@@ -171,9 +183,8 @@ pub struct CatalogCommand {
     pub name: String,
     pub source_name: String,
     pub source_offset: u32,
-    pub completion: CompletionExpectation,
+    pub completion: CatalogCompletion,
     pub request: RequestLayout,
-    pub response: ResponseLayout,
 }
 
 impl CatalogCommand {
@@ -373,24 +384,24 @@ mod tests {
                 name: "z_last".to_owned(),
                 source_name: "z.c".to_owned(),
                 source_offset: 9,
-                completion: CompletionExpectation::CommandComplete,
-                request: RequestLayout::Empty,
-                response: ResponseLayout::Variable {
-                    minimum: 2,
-                    maximum: 252,
+                completion: CatalogCompletion::CommandComplete {
+                    returns: ReturnLayout::Variable {
+                        minimum: 1,
+                        maximum: 251,
+                    },
                 },
+                request: RequestLayout::Empty,
             },
             CatalogCommand {
                 kind: CatalogCommandKind::VendorAci { ocf: 1 },
                 name: "a_first".to_owned(),
                 source_name: "a.c".to_owned(),
                 source_offset: 4,
-                completion: CompletionExpectation::CommandStatus,
+                completion: CatalogCompletion::CommandStatus {},
                 request: RequestLayout::Variable {
                     minimum: 3,
                     maximum: 255,
                 },
-                response: ResponseLayout::None,
             },
         ]);
         schema.events.push(CatalogEvent {
@@ -437,15 +448,17 @@ mod tests {
             })
         );
         assert_eq!(
-            value["commands"][1]["response"],
+            value["commands"][1]["completion"]["returns"],
             serde_json::json!({
                 "kind": "variable",
                 "value": {
-                    "minimum": 2,
-                    "maximum": 252,
+                    "minimum": 1,
+                    "maximum": 251,
                 },
             })
         );
+        assert!(value["commands"][0].get("response").is_none());
+        assert_eq!(value["commands"][0]["completion"]["kind"], "command_status");
         assert_eq!(
             serde_json::from_value::<CatalogSchema>(value).unwrap(),
             schema
@@ -461,5 +474,19 @@ mod tests {
         let mut unsupported = serde_json::to_value(&schema).unwrap();
         unsupported["schema_version"] = serde_json::json!(CATALOG_SCHEMA_VERSION + 1);
         assert!(serde_json::from_value::<CatalogSchema>(unsupported).is_err());
+    }
+
+    #[test]
+    fn completion_deserialization_rejects_invalid_return_states() {
+        let status_with_return = serde_json::json!({
+            "kind": "command_status",
+            "returns": { "kind": "fixed", "value": 0 },
+        });
+        assert!(serde_json::from_value::<CatalogCompletion>(status_with_return).is_err());
+
+        let complete_without_return = serde_json::json!({
+            "kind": "command_complete",
+        });
+        assert!(serde_json::from_value::<CatalogCompletion>(complete_without_return).is_err());
     }
 }

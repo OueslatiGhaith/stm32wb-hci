@@ -26,6 +26,9 @@
   standard or LE Meta events cannot accidentally carry one.
 - Make command identity scope-specific in the same catalog schema: vendor commands store an OCF,
   standard commands store an opcode, and standard OGF/OCF values are derived rather than repeated.
+- Make command completion and return evidence one schema-v8 enum, normalize generated responses to
+  command-owned return bytes at the source-adapter boundary, and make Command Complete without a
+  return or Command Status with one unrepresentable in both catalog and Rust metadata.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 
