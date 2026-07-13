@@ -2048,7 +2048,7 @@ mod tests {
             .get("GattReadHandleValue")
             .unwrap();
         assert_eq!(read.request, WireEnvelope::fixed(6));
-        assert_eq!(read.response, Some(WireEnvelope::bounded(4, 253)));
+        assert_eq!(read.response, Some(WireEnvelope::bounded(4, 251)));
 
         assert!(
             coverage
@@ -2078,6 +2078,18 @@ mod tests {
             .unwrap();
         // Count plus at most 35 seven-byte address records; status is framing.
         assert_eq!(bonded.response, Some(WireEnvelope::bounded(1, 246)));
+
+        let config = coverage
+            .descriptor_metadata
+            .get("HalReadConfigData")
+            .unwrap();
+        assert_eq!(config.response, Some(WireEnvelope::bounded(1, 16)));
+
+        let channels = coverage
+            .descriptor_metadata
+            .get("L2CocConnectConfirm")
+            .unwrap();
+        assert_eq!(channels.response, Some(WireEnvelope::bounded(1, 6)));
 
         assert_eq!(coverage.event_metadata.len(), 55);
         let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();

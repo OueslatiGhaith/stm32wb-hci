@@ -25,6 +25,9 @@ enum EnvelopeRelation {
     /// A generated request declaration proves the complete safe capacity. A
     /// Rust API may intentionally expose a subset of that capacity.
     RequestCapacity,
+    /// A generated response structure proves its fixed prefix and storage
+    /// capacity. The controller's semantic response may use a narrower range.
+    ResponseCapacity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +55,13 @@ impl EnvelopeExpectation {
         Self {
             envelope,
             relation: EnvelopeRelation::RequestCapacity,
+        }
+    }
+
+    const fn response_capacity(envelope: WireEnvelope) -> Self {
+        Self {
+            envelope,
+            relation: EnvelopeRelation::ResponseCapacity,
         }
     }
 }
@@ -289,6 +299,19 @@ fn response_envelope(layout: &ResponseLayout) -> Result<EnvelopeExpectation, Str
                 "CubeWB command-complete response length is zero and cannot contain status"
                     .to_owned()
             }),
+        ResponseLayout::Variable { minimum, maximum } => {
+            // CubeWB's packed response includes status; the declarative Rust
+            // `Return` starts immediately after it.
+            let minimum = minimum.checked_sub(1).ok_or_else(|| {
+                "CubeWB variable command response cannot contain status".to_owned()
+            })?;
+            let maximum = maximum.checked_sub(1).ok_or_else(|| {
+                "CubeWB variable command response cannot contain status".to_owned()
+            })?;
+            Ok(EnvelopeExpectation::response_capacity(
+                WireEnvelope::bounded(minimum as usize, maximum as usize),
+            ))
+        }
         ResponseLayout::CStruct(type_name) => Err(format!(
             "CubeWB command return uses unresolved packed C structure `{type_name}`"
         )),
@@ -354,6 +377,13 @@ fn compare_envelope(
             // The C wrapper's command buffer proves a safe outer capacity,
             // while public parameter constraints can intentionally be
             // narrower. The entire Rust envelope must fit within that proof.
+            actual.minimum >= expected.envelope.minimum
+                && actual.maximum <= expected.envelope.maximum
+        }
+        EnvelopeRelation::ResponseCapacity => {
+            // A capacity-sized C response buffer is an outer storage bound.
+            // Rust may preserve stricter command semantics, but must never
+            // decode outside the proven prefix/capacity envelope.
             actual.minimum >= expected.envelope.minimum
                 && actual.maximum <= expected.envelope.maximum
         }
@@ -609,6 +639,65 @@ mod tests {
 
         assert_eq!(report.checked, 4);
         assert!(report.differences.is_empty());
+        assert!(report.unavailable.is_empty());
+    }
+
+    #[test]
+    fn capacity_shaped_responses_accept_only_contained_rust_envelopes() {
+        let contained = fixture_descriptor(
+            "Contained",
+            0x010,
+            CompletionExpectation::CommandComplete,
+            WireEnvelope::fixed(0),
+            Some(WireEnvelope::bounded(1, 16)),
+        );
+        let missing_prefix = fixture_descriptor(
+            "MissingPrefix",
+            0x011,
+            CompletionExpectation::CommandComplete,
+            WireEnvelope::fixed(0),
+            Some(WireEnvelope::bounded(0, 16)),
+        );
+        let too_large = fixture_descriptor(
+            "TooLarge",
+            0x012,
+            CompletionExpectation::CommandComplete,
+            WireEnvelope::fixed(0),
+            Some(WireEnvelope::bounded(1, 252)),
+        );
+        let coverage = fixture_coverage(
+            vec![contained, missing_prefix, too_large],
+            &["Contained", "MissingPrefix", "TooLarge"],
+        );
+        let command = |ocf| {
+            fixture_command(
+                ocf,
+                CompletionExpectation::CommandComplete,
+                RequestLayout::Empty,
+                ResponseLayout::Variable {
+                    minimum: 2,
+                    maximum: 252,
+                },
+            )
+        };
+        let commands = vec![command(0x010), command(0x011), command(0x012)];
+
+        let report = compare_vendor_wire(&commands, &[], &coverage);
+
+        assert_eq!(report.checked, 6);
+        assert_eq!(report.differences.len(), 2);
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.command == "MissingPrefix")
+        );
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.command == "TooLarge")
+        );
         assert!(report.unavailable.is_empty());
     }
 

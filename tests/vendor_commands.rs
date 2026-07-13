@@ -445,6 +445,7 @@ fn declarative_gap_init_decodes_payload_without_status_byte() {
 fn declarative_bounded_return_decodes_counted_bytes() {
     use bt_hci::FromHciBytes;
 
+    assert_eq!(GattHandleValue::MAX_VALUE_LEN, 247);
     let value = GattHandleValue::from_hci_bytes_complete(&[
         0x34, 0x12, // total attribute length
         0x03, 0x00, // returned value length
@@ -460,7 +461,12 @@ fn declarative_bounded_return_decodes_counted_bytes() {
 fn declarative_bounded_return_rejects_invalid_counts() {
     use bt_hci::{FromHciBytes, FromHciBytesError};
 
-    let oversized = [0, 0, 250, 0];
+    let mut maximum = [0; 251];
+    maximum[0] = 247;
+    maximum[2] = 247;
+    assert!(GattHandleValue::from_hci_bytes_complete(&maximum).is_ok());
+
+    let oversized = [0, 0, 248, 0];
     assert!(matches!(
         GattHandleValue::from_hci_bytes_complete(&oversized),
         Err(FromHciBytesError::InvalidValue)

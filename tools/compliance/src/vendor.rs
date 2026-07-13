@@ -62,11 +62,10 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     let le_events = extract_event_table(&source, "hci_le_event_table", EventScope::LeMeta)?;
     catalog.events.extend(le_events);
 
-    // `rq.rlen = sizeof(resp)` is only an exact wire claim when the generated
-    // packed response structure can be resolved.  Resolve the straightforward
-    // fixed layouts from the tag's own `ble_types.h`; unknown or capacity-sized
-    // layouts deliberately stay as `CStruct` for the wire checker to report as
-    // unavailable rather than guessed.
+    // `rq.rlen = sizeof(resp)` is a wire claim only when the generated packed
+    // response structure can be resolved. Fixed layouts become exact sizes;
+    // capacity arrays become bounded envelopes. Unknown layouts deliberately
+    // stay as `CStruct` for the wire checker to report as unavailable.
     resolve_packed_response_layouts(&mut catalog.commands, &types_source);
     resolve_packed_event_layouts(&mut catalog.events, &types_source);
 
@@ -940,23 +939,29 @@ fn response_layout(body: Node<'_>, source: &str) -> ResponseLayout {
     ResponseLayout::Expression(value_text.to_owned())
 }
 
-/// Convert `sizeof(resp)` response layouts into fixed byte counts only when
-/// the tagged C header proves the packed structure has a fixed primitive/array
-/// layout. This intentionally ignores flexible/capacity buffers and unknown
-/// C declarations; those remain visible as unavailable wire checks.
+/// Convert `sizeof(resp)` response layouts into fixed or bounded byte counts
+/// when the tagged C header proves the packed structure layout. Capacity-sized
+/// fields contribute zero bytes to the minimum and their complete declared
+/// storage to the maximum. Unknown C declarations remain unavailable.
 fn resolve_packed_response_layouts(commands: &mut [CatalogCommand], types_source: &str) {
-    let layouts = parse_packed_struct_sizes(types_source);
+    let layouts = parse_packed_struct_envelopes(types_source);
     for command in commands {
         let ResponseLayout::CStruct(type_name) = &command.response else {
             continue;
         };
-        let Some(Some(size)) = layouts.get(type_name) else {
+        let Some(Some(layout)) = layouts.get(type_name) else {
             continue;
         };
-        let Ok(size) = u32::try_from(*size) else {
+        let (Ok(minimum), Ok(maximum)) =
+            (u32::try_from(layout.minimum), u32::try_from(layout.maximum))
+        else {
             continue;
         };
-        command.response = ResponseLayout::Fixed(size);
+        command.response = if layout.variable {
+            ResponseLayout::Variable { minimum, maximum }
+        } else {
+            ResponseLayout::Fixed(maximum)
+        };
     }
 }
 
@@ -1923,7 +1928,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_fixed_packed_response_sizes_without_guessing_capacity_fields() {
+    fn resolves_fixed_and_capacity_shaped_packed_responses() {
         let types = r#"
             typedef __PACKED_STRUCT
             {
@@ -1942,26 +1947,99 @@ mod tests {
                 uint8_t Status;
                 uint8_t Bytes[BLE_EVT_MAX_PARAM_LEN - 1];
             } capacity_rp0;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Address_Type;
+                uint8_t Address[6];
+            } Bonded_Device_Entry_t;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Status;
+                uint8_t Data_Length;
+                uint8_t Data[(BLE_EVT_MAX_PARAM_LEN - 3) - 2];
+            } hal_rp0;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Status;
+                uint8_t Num_of_Addresses;
+                Bonded_Device_Entry_t Entries[
+                    ((BLE_EVT_MAX_PARAM_LEN - 3) - 2)
+                    / sizeof(Bonded_Device_Entry_t)
+                ];
+            } gap_rp0;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Status;
+                uint16_t Length;
+                uint16_t Value_Length;
+                uint8_t Value[(BLE_EVT_MAX_PARAM_LEN - 3) - 5];
+            } gatt_rp0;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Status;
+                uint8_t Channel_Number;
+                uint8_t Channel_Index_List[(BLE_EVT_MAX_PARAM_LEN - 3) - 2];
+            } l2cap_rp0;
         "#;
         let layouts = parse_packed_struct_sizes(types);
         assert_eq!(layouts.get("nested_rp0"), Some(&Some(2)));
         assert_eq!(layouts.get("fixed_rp0"), Some(&Some(7)));
         assert_eq!(layouts.get("capacity_rp0"), Some(&None));
 
-        let mut commands = vec![CatalogCommand {
+        let command = |ocf, type_name: &str| CatalogCommand {
             scope: CommandScope::VendorAci,
-            name: "aci_fixture".to_owned(),
+            name: type_name.to_owned(),
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
             ogf: None,
-            ocf: 1,
+            ocf,
             opcode: None,
             completion: CompletionExpectation::CommandComplete,
             request: RequestLayout::Empty,
-            response: ResponseLayout::CStruct("fixed_rp0".to_owned()),
-        }];
+            response: ResponseLayout::CStruct(type_name.to_owned()),
+        };
+        let mut commands = vec![
+            command(1, "fixed_rp0"),
+            command(2, "hal_rp0"),
+            command(3, "gap_rp0"),
+            command(4, "gatt_rp0"),
+            command(5, "l2cap_rp0"),
+        ];
         resolve_packed_response_layouts(&mut commands, types);
         assert_eq!(commands[0].response, ResponseLayout::Fixed(7));
+        assert_eq!(
+            commands[1].response,
+            ResponseLayout::Variable {
+                minimum: 2,
+                maximum: 252,
+            }
+        );
+        assert_eq!(
+            commands[2].response,
+            ResponseLayout::Variable {
+                minimum: 2,
+                maximum: 247,
+            }
+        );
+        assert_eq!(
+            commands[3].response,
+            ResponseLayout::Variable {
+                minimum: 5,
+                maximum: 252,
+            }
+        );
+        assert_eq!(
+            commands[4].response,
+            ResponseLayout::Variable {
+                minimum: 2,
+                maximum: 252,
+            }
+        );
     }
 
     #[test]

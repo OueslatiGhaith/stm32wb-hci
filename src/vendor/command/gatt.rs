@@ -735,10 +735,10 @@ vendor_cmd! {
         Completion = CommandComplete;
         Return = GattHandleValue {
             total_length: u16 => 2,
-            value: BoundedBytes<249> => {
+            value: BoundedBytes<247> => {
                 kind: counted_bytes,
                 count: u16 => 2,
-                max_len: 249,
+                max_len: 247,
             },
         };
     }
@@ -746,7 +746,7 @@ vendor_cmd! {
 
 impl GattHandleValue {
     /// Maximum number of value bytes that fit in the response envelope.
-    pub const MAX_VALUE_LEN: usize = 249;
+    pub const MAX_VALUE_LEN: usize = 247;
 
     /// Return the handle value bytes present in this response.
     pub fn value(&self) -> &[u8] {

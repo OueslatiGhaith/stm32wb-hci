@@ -11,6 +11,8 @@
   wire envelopes validated against the tagged C sources.
 - Resolve generated CubeWB request-length formulas into bounded wire envelopes from their C
   parameter domains, branch-selected widths, and packed `sizeof` types.
+- Resolve capacity-shaped CubeWB command returns into bounded wire envelopes from their packed C
+  response structures.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 
@@ -18,6 +20,8 @@
 
 - Correct vendor opcode wiring for HAL link status and peripheral latency, and add missing HAL write-radio-register and GATT read-handle-value commands.
 - Correct GAP Additional Beacon Set Data to encode its required one-byte data-length prefix.
+- Cap GATT Read Handle Value responses at the 247 value bytes available in CubeWB's packed return
+  structure.
 - Correct the STM32WB command wire layouts for firmware build number, raw RSSI, GAP security
   level, GAP filter-accept-list configuration, and GATT Read Multiple Variable Characteristic
   Value; raw RSSI now preserves all three returned bytes and GAP security level exposes the
