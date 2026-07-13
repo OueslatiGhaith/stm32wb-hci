@@ -7,8 +7,8 @@
   declared firmware features, audits a checked-in exclusion policy, records resolved CubeWB tag
   commits, and drives CI without a hand-maintained firmware-version matrix.
 - Extend compliance coverage to CubeWB standard HCI commands/events via the public `bt-hci`
-  provider, and validate vendor command completion/envelope metadata plus fixed packed response
-  layouts from the tagged C headers.
+  provider, and normalize vendor command requests, command returns, and event payloads into shared
+  wire envelopes validated against the tagged C sources.
 - Refactor the host-only compliance tool around typed CLI, TOML, error, JSON, and C syntax-tree
   dependencies, replacing handwritten argument/manifest/JSON/C-structure parsing.
 

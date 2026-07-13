@@ -143,7 +143,7 @@ pub struct CheckReport {
     pub missing_standard_hci_commands: Vec<CoverageDifference>,
     pub missing_standard_hci_events: Vec<CoverageDifference>,
     pub missing_standard_hci_le_meta_events: Vec<CoverageDifference>,
-    /// Envelope-level vendor-command wire checks. Unavailable schema details
+    /// Envelope-level vendor command and event wire checks. Unavailable schema details
     /// are reported transparently but do not make an otherwise verified API
     /// surface non-compliant.
     pub wire: WireReport,
@@ -366,7 +366,7 @@ pub fn with_standard_hci_coverage(
     report
 }
 
-/// Attach detailed vendor-command transport-envelope results to a report.
+/// Attach detailed vendor command and event envelope results to a report.
 pub fn with_wire_report(mut report: CheckReport, wire: WireReport) -> CheckReport {
     report.wire = wire;
     report

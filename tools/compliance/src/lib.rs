@@ -6,6 +6,7 @@
 mod c_preprocessor;
 mod catalog;
 mod diff;
+mod envelope;
 mod firmware;
 mod json;
 mod model;

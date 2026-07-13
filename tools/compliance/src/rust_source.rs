@@ -16,14 +16,15 @@ use syn::{
     Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath, Type,
 };
 
+use crate::CompletionExpectation;
 use crate::FirmwareVersion;
+use crate::envelope::WireEnvelope;
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
 
 pub(crate) struct CrateCoverage {
     pub(crate) descriptors: ProtocolCoverage,
     pub(crate) active_api: ProtocolCoverage,
-    /// Descriptor-level information retained for the wire-envelope checker.
-    #[allow(dead_code)] // consumed by the wire-envelope comparison layer
+    /// Command-envelope metadata declared by the active `vendor_cmd!` catalog.
     pub(crate) descriptor_metadata: BTreeMap<String, DescriptorMetadata>,
     /// Payload envelopes declared by the active `vendor_event!` catalog.
     pub(crate) event_metadata: BTreeMap<u16, EventMetadata>,
@@ -33,18 +34,12 @@ pub(crate) struct CrateCoverage {
 pub(crate) struct DescriptorMetadata {
     pub(crate) name: String,
     pub(crate) code: u16,
-    /// Whether `vendor_cmd!` declares an empty `Params = ()` request body.
-    /// Any other parameter shape is conservatively reported as non-empty.
-    pub(crate) params_empty: bool,
-    /// Whether the command completes through Command Complete and therefore
-    /// declares a `Return = ...` payload.
-    pub(crate) declares_return: bool,
-    /// Fixed Command Complete response size including status: one plus the sum
-    /// of declarative return field widths.
-    pub(crate) response_len: Option<usize>,
-    /// Whether the declarative return contains at least one variable field and
-    /// `response_len` is therefore a maximum rather than an exact size.
-    pub(crate) return_variable: bool,
+    pub(crate) completion: CompletionExpectation,
+    /// Command parameter bytes, excluding the HCI command header.
+    pub(crate) request: WireEnvelope,
+    /// Return bytes owned by the command, excluding Command Complete framing
+    /// and its status byte. Command Status commands have no return envelope.
+    pub(crate) response: Option<WireEnvelope>,
     pub(crate) location: PathBuf,
 }
 
@@ -52,9 +47,8 @@ pub(crate) struct DescriptorMetadata {
 pub(crate) struct EventMetadata {
     pub(crate) name: String,
     pub(crate) code: u16,
-    pub(crate) min_payload_len: usize,
-    pub(crate) max_payload_len: usize,
-    pub(crate) variable: bool,
+    /// Vendor event payload bytes, excluding the two-byte vendor event code.
+    pub(crate) payload: WireEnvelope,
     pub(crate) location: PathBuf,
 }
 
@@ -62,10 +56,9 @@ pub(crate) struct EventMetadata {
 struct DescriptorDefinition {
     name: String,
     code: u16,
-    params_empty: bool,
-    declares_return: bool,
-    response_len: Option<usize>,
-    return_variable: bool,
+    completion: CompletionExpectation,
+    request: WireEnvelope,
+    response: Option<WireEnvelope>,
 }
 
 #[derive(Clone)]
@@ -315,10 +308,9 @@ fn collect_descriptors(
             let metadata = DescriptorMetadata {
                 name: definition.name.clone(),
                 code: definition.code,
-                params_empty: definition.params_empty,
-                declares_return: definition.declares_return,
-                response_len: definition.response_len,
-                return_variable: definition.return_variable,
+                completion: definition.completion,
+                request: definition.request,
+                response: definition.response,
                 location: source.path.clone(),
             };
 
@@ -366,10 +358,9 @@ fn parse_descriptor_definition(
 ) -> Result<DescriptorDefinition, String> {
     let mut input = invocation.body.into_iter().peekable();
     let mut saw_params = false;
-    let mut params_empty = false;
+    let mut request = None;
     let mut saw_return = false;
-    let mut response_len = None;
-    let mut return_variable = false;
+    let mut response = None;
     let mut completion = None;
     let mut param_names = BTreeSet::new();
     let mut constraint_names = None;
@@ -428,7 +419,7 @@ fn parse_descriptor_definition(
             }
             saw_params = true;
             let params = parse_params_shape(value, &invocation.name, path)?;
-            params_empty = params.empty;
+            request = Some(params.envelope);
             param_names = params.names;
         } else if label == "Return" {
             if saw_return {
@@ -439,9 +430,7 @@ fn parse_descriptor_definition(
                 ));
             }
             saw_return = true;
-            let shape = parse_return_shape(value, &invocation.name, path)?;
-            response_len = shape.response_len;
-            return_variable = shape.variable;
+            response = Some(parse_return_shape(value, &invocation.name, path)?);
         } else if label == "Completion" {
             if completion.is_some() {
                 return Err(format!(
@@ -499,37 +488,39 @@ fn parse_descriptor_definition(
             invocation.name
         )
     })?;
-    let declares_return = match completion {
-        CompletionShape::CommandComplete if saw_return => true,
-        CompletionShape::CommandComplete => {
+    let response = match &completion {
+        CompletionExpectation::CommandComplete if saw_return => response,
+        CompletionExpectation::CommandComplete => {
             return Err(format!(
                 "{}: vendor_cmd! `{}` declares CommandComplete but has no Return declaration",
                 path.display(),
                 invocation.name
             ));
         }
-        CompletionShape::CommandStatus if saw_return => {
+        CompletionExpectation::CommandStatus if saw_return => {
             return Err(format!(
                 "{}: vendor_cmd! `{}` declares CommandStatus and must not declare Return",
                 path.display(),
                 invocation.name
             ));
         }
-        CompletionShape::CommandStatus => false,
+        CompletionExpectation::CommandStatus => None,
+        CompletionExpectation::Event(_) | CompletionExpectation::Expression(_) => {
+            unreachable!("vendor_cmd! parser accepts only CommandComplete or CommandStatus")
+        }
     };
 
     Ok(DescriptorDefinition {
         name: invocation.name.to_string(),
         code: (invocation.cgid << 7) | invocation.cid,
-        params_empty,
-        declares_return,
-        response_len,
-        return_variable,
+        completion,
+        request: request.expect("presence checked above"),
+        response,
     })
 }
 
 struct ParsedParamsShape {
-    empty: bool,
+    envelope: WireEnvelope,
     names: BTreeSet<String>,
 }
 
@@ -555,7 +546,7 @@ fn parse_params_shape(
             ));
         }
         return Ok(ParsedParamsShape {
-            empty: fields.count == 0,
+            envelope: fields.envelope(),
             names: fields.names,
         });
     }
@@ -567,7 +558,15 @@ fn parse_params_shape(
         )
     })?;
     Ok(ParsedParamsShape {
-        empty: matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty()),
+        envelope: match ty {
+            Type::Tuple(tuple) if tuple.elems.is_empty() => WireEnvelope::fixed(0),
+            _ => {
+                return Err(format!(
+                    "{}: descriptor `{descriptor}` has an unsupported Params shape; expected `()` or an inline named field body",
+                    path.display()
+                ));
+            }
+        },
         names: BTreeSet::new(),
     })
 }
@@ -600,16 +599,11 @@ fn parse_constraints_shape(
         })
 }
 
-struct ParsedReturnShape {
-    response_len: Option<usize>,
-    variable: bool,
-}
-
 fn parse_return_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-) -> Result<ParsedReturnShape, String> {
+) -> Result<WireEnvelope, String> {
     if let Ok(shape) = syn::parse2::<DeclarativeReturn>(value.clone()) {
         if shape.fields.contains_payload_field {
             return Err(format!(
@@ -617,17 +611,7 @@ fn parse_return_shape(
                 path.display()
             ));
         }
-        let payload_len = shape.fields.total_len;
-        let response_len = payload_len.checked_add(1).ok_or_else(|| {
-            format!(
-                "{}: descriptor `{descriptor}` declarative Return length overflows usize",
-                path.display()
-            )
-        })?;
-        return Ok(ParsedReturnShape {
-            response_len: Some(response_len),
-            variable: shape.fields.variable,
-        });
+        return Ok(shape.fields.envelope());
     }
 
     let ty = syn::parse2::<Type>(value).map_err(|error| {
@@ -637,10 +621,7 @@ fn parse_return_shape(
         )
     })?;
     match ty {
-        Type::Tuple(tuple) if tuple.elems.is_empty() => Ok(ParsedReturnShape {
-            response_len: None,
-            variable: false,
-        }),
+        Type::Tuple(tuple) if tuple.elems.is_empty() => Ok(WireEnvelope::fixed(0)),
         _ => Err(format!(
             "{}: descriptor `{descriptor}` has an unsupported Return shape; expected `()` or an inline named field body",
             path.display()
@@ -648,17 +629,11 @@ fn parse_return_shape(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CompletionShape {
-    CommandComplete,
-    CommandStatus,
-}
-
 fn parse_completion_shape(
     value: TokenStream,
     descriptor: &syn::Ident,
     path: &Path,
-) -> Result<CompletionShape, String> {
+) -> Result<CompletionExpectation, String> {
     let completion = syn::parse2::<syn::Ident>(value).map_err(|error| {
         format!(
             "{}: descriptor `{descriptor}` has an unsupported Completion shape: {error}",
@@ -666,9 +641,9 @@ fn parse_completion_shape(
         )
     })?;
     if completion == "CommandComplete" {
-        Ok(CompletionShape::CommandComplete)
+        Ok(CompletionExpectation::CommandComplete)
     } else if completion == "CommandStatus" {
-        Ok(CompletionShape::CommandStatus)
+        Ok(CompletionExpectation::CommandStatus)
     } else {
         Err(format!(
             "{}: descriptor `{descriptor}` has unknown Completion `{completion}`",
@@ -727,21 +702,27 @@ impl Parse for DeclarativeConstraints {
 }
 
 struct DeclarativeFields {
-    count: usize,
     names: BTreeSet<String>,
     min_len: usize,
     total_len: usize,
-    variable: bool,
     contains_payload_field: bool,
+}
+
+impl DeclarativeFields {
+    fn envelope(&self) -> WireEnvelope {
+        if self.min_len == self.total_len {
+            WireEnvelope::fixed(self.total_len)
+        } else {
+            WireEnvelope::bounded(self.min_len, self.total_len)
+        }
+    }
 }
 
 impl Parse for DeclarativeFields {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut count = 0usize;
         let mut names = BTreeSet::new();
         let mut min_len = 0usize;
         let mut total_len = 0usize;
-        let mut variable = false;
         let mut consumes_remainder = false;
         let mut contains_payload_field = false;
         while !input.is_empty() {
@@ -762,7 +743,6 @@ impl Parse for DeclarativeFields {
             } else if input.peek(syn::token::Brace) {
                 let shape;
                 syn::braced!(shape in input);
-                variable = true;
                 let shape = shape.parse::<DeclarativeVariableShape>()?;
                 (
                     shape.min_len,
@@ -781,15 +761,12 @@ impl Parse for DeclarativeFields {
             min_len = min_len
                 .checked_add(minimum)
                 .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
-            count += 1;
             input.parse::<syn::Token![,]>()?;
         }
         Ok(Self {
-            count,
             names,
             min_len,
             total_len,
-            variable,
             contains_payload_field,
         })
     }
@@ -1079,9 +1056,7 @@ fn parse_vendor_event_declarations(
         let event = EventMetadata {
             name: definition.name.to_string(),
             code: definition.code,
-            min_payload_len: definition.payload.min_len,
-            max_payload_len: definition.payload.total_len,
-            variable: definition.payload.variable,
+            payload: definition.payload.envelope(),
             location: path.to_path_buf(),
         };
         if let Some(previous) = metadata.insert(event.code, event.clone()) {
@@ -1175,11 +1150,9 @@ impl Parse for VendorEventsInvocation {
                     return Err(unit.error("unit event payload must be `()`"));
                 }
                 DeclarativeFields {
-                    count: 0,
                     names: BTreeSet::new(),
                     min_len: 0,
                     total_len: 0,
-                    variable: false,
                     contains_payload_field: false,
                 }
             } else {
@@ -1560,10 +1533,12 @@ mod tests {
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
         assert_eq!(descriptor.code, 0x0003);
-        assert!(descriptor.params_empty);
-        assert!(descriptor.declares_return);
-        assert_eq!(descriptor.response_len, Some(9));
-        assert!(!descriptor.return_variable);
+        assert_eq!(
+            descriptor.completion,
+            CompletionExpectation::CommandComplete
+        );
+        assert_eq!(descriptor.request, WireEnvelope::fixed(0));
+        assert_eq!(descriptor.response, Some(WireEnvelope::fixed(8)));
     }
 
     #[test]
@@ -1591,11 +1566,12 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert!(!descriptor.params_empty);
-        assert!(descriptor.declares_return);
-        // Six declared payload bytes plus the Command Complete status byte.
-        assert_eq!(descriptor.response_len, Some(7));
-        assert!(!descriptor.return_variable);
+        assert_eq!(
+            descriptor.completion,
+            CompletionExpectation::CommandComplete
+        );
+        assert_eq!(descriptor.request, WireEnvelope::fixed(3));
+        assert_eq!(descriptor.response, Some(WireEnvelope::fixed(6)));
     }
 
     #[test]
@@ -1614,10 +1590,9 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert!(!descriptor.params_empty);
-        assert!(!descriptor.declares_return);
-        assert_eq!(descriptor.response_len, None);
-        assert!(!descriptor.return_variable);
+        assert_eq!(descriptor.completion, CompletionExpectation::CommandStatus);
+        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        assert_eq!(descriptor.response, None);
     }
 
     #[test]
@@ -1652,11 +1627,13 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert!(!descriptor.params_empty);
-        assert!(descriptor.declares_return);
-        // Status + total length + value count + bounded value.
-        assert_eq!(descriptor.response_len, Some(254));
-        assert!(descriptor.return_variable);
+        assert_eq!(
+            descriptor.completion,
+            CompletionExpectation::CommandComplete
+        );
+        assert_eq!(descriptor.request, WireEnvelope::bounded(3, 255));
+        // The status byte is framing, not part of the command-owned return.
+        assert_eq!(descriptor.response, Some(WireEnvelope::bounded(4, 253)));
     }
 
     #[test]
@@ -1682,8 +1659,8 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.response_len, Some(17));
-        assert!(descriptor.return_variable);
+        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        assert_eq!(descriptor.response, Some(WireEnvelope::bounded(1, 16)));
     }
 
     #[test]
@@ -1789,8 +1766,9 @@ mod tests {
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
         let descriptor = descriptors.get("Current").unwrap();
-        assert!(!descriptor.params_empty);
-        assert!(!descriptor.declares_return);
+        assert_eq!(descriptor.completion, CompletionExpectation::CommandStatus);
+        assert_eq!(descriptor.request, WireEnvelope::bounded(4, 28));
+        assert_eq!(descriptor.response, None);
     }
 
     #[test]
@@ -1819,7 +1797,10 @@ mod tests {
             }
         "#;
         let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        assert!(!descriptors.get("Current").unwrap().params_empty);
+        assert_eq!(
+            descriptors.get("Current").unwrap().request,
+            WireEnvelope::bounded(6, 22)
+        );
 
         let source = r#"
             vendor_cmd! {
@@ -2037,14 +2018,15 @@ mod tests {
             .descriptor_metadata
             .get("GapUpdateAdvertisingData")
             .unwrap();
-        assert!(!update.params_empty);
+        assert_eq!(update.request, WireEnvelope::bounded(1, 32));
+        assert_eq!(update.response, Some(WireEnvelope::fixed(0)));
 
         let read = coverage
             .descriptor_metadata
             .get("GattReadHandleValue")
             .unwrap();
-        assert_eq!(read.response_len, Some(254));
-        assert!(read.return_variable);
+        assert_eq!(read.request, WireEnvelope::fixed(6));
+        assert_eq!(read.response, Some(WireEnvelope::bounded(4, 253)));
 
         assert!(
             coverage
@@ -2056,7 +2038,8 @@ mod tests {
             .descriptor_metadata
             .get("GattDiscoverPrimaryServicesByUUID")
             .unwrap();
-        assert!(!tagged.params_empty);
+        assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
+        assert_eq!(tagged.completion, CompletionExpectation::CommandStatus);
 
         assert!(!coverage.descriptor_metadata.contains_key("GapExtStartScan"));
         let future_coverage = load_crate_coverage(&crate_dir, version(0, 18, 0)).unwrap();
@@ -2064,32 +2047,26 @@ mod tests {
             .descriptor_metadata
             .get("GapExtStartScan")
             .unwrap();
-        assert!(!bitmap.params_empty);
+        assert_eq!(bitmap.request, WireEnvelope::bounded(10, 20));
+        assert_eq!(bitmap.response, None);
 
         let bonded = coverage
             .descriptor_metadata
             .get("GapGetBondedDevices")
             .unwrap();
-        // Status + count + at most 35 seven-byte address records.
-        assert_eq!(bonded.response_len, Some(247));
-        assert!(bonded.return_variable);
+        // Count plus at most 35 seven-byte address records; status is framing.
+        assert_eq!(bonded.response, Some(WireEnvelope::bounded(1, 246)));
 
         assert_eq!(coverage.event_metadata.len(), 55);
         let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
-        assert_eq!(gap_procedure.min_payload_len, 3);
-        assert_eq!(gap_procedure.max_payload_len, 253);
-        assert!(gap_procedure.variable);
+        assert_eq!(gap_procedure.payload, WireEnvelope::bounded(3, 253));
 
         let bond_lost = coverage.event_metadata.get(&0x0405).unwrap();
-        assert_eq!(bond_lost.min_payload_len, 0);
-        assert_eq!(bond_lost.max_payload_len, 0);
-        assert!(!bond_lost.variable);
+        assert_eq!(bond_lost.payload, WireEnvelope::fixed(0));
 
         let read_multiple = coverage.event_metadata.get(&0x0C15).unwrap();
-        assert_eq!(read_multiple.min_payload_len, 3);
-        assert_eq!(read_multiple.max_payload_len, 253);
-        assert!(read_multiple.variable);
+        assert_eq!(read_multiple.payload, WireEnvelope::bounded(3, 253));
     }
 
     #[test]

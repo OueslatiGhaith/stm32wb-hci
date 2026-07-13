@@ -74,14 +74,15 @@ are all included in the active API inventory. It compares:
   `ble_events.c` files;
 - standard HCI command opcodes, ordinary events, and LE Meta subevents from `ble_hci_le.c` and
   `ble_events.c` against the crate's public `bt_hci` re-export plus STM32WB command extensions;
-- vendor command envelopes: empty versus non-empty requests, Command Complete versus Command
-  Status completion, and exact response lengths for literal and fixed packed C layouts.
+- vendor command and event payload envelopes: exact and bounded request, return, and event sizes,
+  plus Command Complete versus Command Status completion. Command returns are normalized without
+  the transport status byte, matching the declarative `Return` schema.
 
-The four CubeWB responses whose capacity is configured by `BLE_EVT_MAX_PARAM_LEN` are reported as
-`wire unavailable` rather than guessed: HAL Read Config Data, GAP Get Bonded Devices, GATT Read
-Handle Value, and L2CAP CoC Connect Confirm. This keeps `--deny` meaningful while making the
-remaining schema work explicit. All transport-only exceptions—including the coprocessor-ready
-event `0x9200`—come exclusively from the checked-in policy; library defaults do not hide them.
+CubeWB request-length formulas and response structures whose capacities depend on
+`BLE_EVT_MAX_PARAM_LEN` are reported as `wire unavailable` rather than guessed. This keeps
+`--deny` meaningful while making the remaining expression-normalization work explicit. All
+transport-only exceptions—including the coprocessor-ready event `0x9200`—come exclusively from
+the checked-in policy; library defaults do not hide them.
 
 ## Usage
 
