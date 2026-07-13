@@ -4,8 +4,6 @@
 //! vendor-specific events by the Bluetooth HCI. This module defines those events and functions to
 //! deserialize buffers into them.
 
-pub mod command;
-
 use byteorder::{ByteOrder, LittleEndian};
 use core::cmp::PartialEq;
 use core::convert::{TryFrom, TryInto};
@@ -278,34 +276,11 @@ pub enum VendorError {
     /// event: The packet ends with a partial attribute handle.
     AttReadMultiplePermitRequestPartial,
 
-    /// For the [HAL Read Config Data](crate::vendor::command::hal::HalReadConfigData) command complete
-    /// [event](crate::vendor::event::command::VendorReturnParameters::HalReadConfigData): The returned value has a length that
-    /// does not correspond to a requested parameter. Known lengths are 1, 2, 6, or 16. Includes the
-    /// number of bytes returned.
-    BadConfigParameterLength(usize),
-
-    /// For the [HAL Get Link Status](crate::vendor::command::hal::HalGetLinkStatus) command complete
-    /// [event](crate::vendor::event::command::VendorReturnParameters::HalGetLinkStatus): One of the bytes representing a link
-    /// state does not represent a known link state. Returns the unknown value.
-    UnknownLinkState(u8),
-
     /// A field that is defined as a Boolean was neither 0 nor 1. The unknown
     /// value is provided.
     BadBooleanValue(u8),
 
-    /// A legacy pass-key-requirement value was invalid. This is retained for
-    /// source compatibility; current STM32WB GAP security-level responses use
-    /// a mode byte and a level byte instead.
-    BadPassKeyRequirement(u8),
-
-    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapGetBondedDevices) command complete
-    /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): the packat was not long enough to
-    /// contain the number of addresses it claimed to contain.
-    PartialBondedDeviceAddress,
-
-    /// For the [GAP Get Bonded Devices](crate::vendor::command::gap::GapGetBondedDevices) command complete
-    /// [event](crate::vendor::event::command::VendorReturnParameters::GapGetBondedDevices): one of the address type bytes was
-    /// invalid. Includes the invalid byte.
+    /// A vendor event contained an invalid Bluetooth address-type byte.
     BadBdAddrType(u8),
 
     /// For the [GATT EAT Bearer](crate::vendor::event::VendorEvent::GattEattBrearer) event: The EAB state was not recognized.

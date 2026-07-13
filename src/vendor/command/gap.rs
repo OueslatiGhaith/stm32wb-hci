@@ -620,8 +620,6 @@ vendor_cmd! {
 }
 
 impl GapBondedDevices {
-    pub(crate) const MAX_ADDRESSES: usize = 35;
-
     /// Addresses reported by the controller.
     pub fn bonded_addresses(&self) -> &[BdAddrType] {
         self.addresses.as_slice()

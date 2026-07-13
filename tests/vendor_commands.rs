@@ -261,26 +261,6 @@ fn declarative_hal_fixed_returns_decode_without_status_byte() {
     ));
 }
 
-#[test]
-fn migrated_hal_event_types_keep_status_prefixed_try_from() {
-    use hci::vendor::event::command::{
-        HalFirmwareRevision as EventFirmwareRevision, HalPmDebugInfo as EventPmDebugInfo,
-        HalTxTestPacketCount as EventTxTestPacketCount,
-    };
-
-    let revision = EventFirmwareRevision::try_from(&[0x00, 0x34, 0x12][..]).unwrap();
-    assert_eq!(revision.revision, 0x1234);
-
-    let count = EventTxTestPacketCount::try_from(&[0x00, 0x78, 0x56, 0x34, 0x12][..]).unwrap();
-    assert_eq!(count.packet_count, 0x1234_5678);
-
-    let debug = EventPmDebugInfo::try_from(&[0x00, 0x11, 0x22, 0x33][..]).unwrap();
-    assert_eq!((debug.tx, debug.rx, debug.mblocks), (0x11, 0x22, 0x33));
-
-    assert!(EventFirmwareRevision::try_from(&[0x00, 0x34][..]).is_err());
-    assert!(EventPmDebugInfo::try_from(&[0x00, 0x11, 0x22, 0x33, 0x44][..]).is_err());
-}
-
 #[tokio::test]
 async fn declarative_hal_fixed_return_commands_have_no_wire_parameters() {
     let sink = RecordingSink::new();
@@ -568,14 +548,6 @@ fn declarative_bonded_devices_payload_decodes_counted_addresses() {
             hci::BdAddrType::Public(hci::BdAddr([1, 2, 3, 4, 5, 6])),
             hci::BdAddrType::Random(hci::BdAddr([7, 8, 9, 10, 11, 12])),
         ]
-    );
-
-    let event_devices =
-        hci::vendor::event::command::GapBondedDevices::try_from(&[0, 1, 0, 1, 2, 3, 4, 5, 6][..])
-            .unwrap();
-    assert_eq!(
-        event_devices.bonded_addresses(),
-        [hci::BdAddrType::Public(hci::BdAddr([1, 2, 3, 4, 5, 6]))]
     );
 }
 
@@ -941,14 +913,6 @@ fn reusable_fixed_gatt_returns_decode_without_transport_status() {
 
     let descriptor = GattCharacteristicDescriptor::from_hci_bytes_complete(&[0xBC, 0x9A]).unwrap();
     assert_eq!(descriptor.descriptor_handle, AttributeHandle(0x9ABC));
-}
-
-#[test]
-fn fixed_gatt_return_event_reexports_keep_status_aware_try_from() {
-    use hci::vendor::event::command::GattService as EventGattService;
-
-    let service = EventGattService::try_from(&[0x00, 0x34, 0x12][..]).unwrap();
-    assert_eq!(service.service_handle, AttributeHandle(0x1234));
 }
 
 #[cfg(after_fw_0_17_1)]

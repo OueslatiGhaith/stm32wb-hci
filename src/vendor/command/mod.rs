@@ -547,6 +547,18 @@ pub struct BoundedBytes<const MAX_LEN: usize> {
 }
 
 impl<const MAX_LEN: usize> BoundedBytes<MAX_LEN> {
+    pub(crate) fn try_from_slice(value: &[u8]) -> Result<Self, HciLengthError> {
+        if value.len() > MAX_LEN {
+            return Err(HciLengthError::new(value.len(), 0, MAX_LEN));
+        }
+        let mut bytes = [0; MAX_LEN];
+        bytes[..value.len()].copy_from_slice(value);
+        Ok(Self {
+            bytes,
+            len: value.len(),
+        })
+    }
+
     /// Returns only the bytes present on the wire.
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len]
@@ -588,20 +600,6 @@ impl<T: Copy, const MAX_ITEMS: usize> BoundedItems<T, MAX_ITEMS> {
         // SAFETY: constructors initialize every element in `0..len`, `len`
         // never exceeds `MAX_ITEMS`, and `T: Copy` cannot require drop glue.
         unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len) }
-    }
-
-    pub(crate) fn from_array_prefix(
-        values: [T; MAX_ITEMS],
-        len: usize,
-    ) -> Result<Self, HciLengthError> {
-        if len > MAX_ITEMS {
-            return Err(HciLengthError::new(len, 0, MAX_ITEMS));
-        }
-        let mut items = [core::mem::MaybeUninit::uninit(); MAX_ITEMS];
-        for (slot, value) in items.iter_mut().zip(values) {
-            slot.write(value);
-        }
-        Ok(Self { items, len })
     }
 }
 

@@ -159,15 +159,10 @@ impl CommandComplete {
                 ReturnParameters::LeTransmitterTest(to_status(&bytes[3..])?)
             }
             crate::opcode::LE_TEST_END => ReturnParameters::LeTestEnd(to_le_test_end(&bytes[3..])?),
-            other => {
-                if other.ogf() != VENDOR_OGF {
-                    return Err(crate::event::Error::UnknownOpcode(other));
-                }
-
-                ReturnParameters::Vendor(
-                    crate::vendor::event::command::VendorReturnParameters::new(bytes)?,
-                )
+            other if other.ogf() == VENDOR_OGF => {
+                ReturnParameters::Vendor(VendorCommandComplete::new(other, &bytes[3..])?)
             }
+            other => return Err(crate::event::Error::UnknownOpcode(other)),
         };
         Ok(CommandComplete {
             num_hci_command_packets: bytes[0],
@@ -176,8 +171,52 @@ impl CommandComplete {
     }
 }
 
+/// Opaque return data from a vendor-specific Command Complete event.
+///
+/// Vendor commands decode their typed return value through their generated
+/// [`bt_hci::cmd::SyncCmd`] implementation. This type lets the general event
+/// parser preserve an otherwise-unhandled vendor response without maintaining
+/// a second opcode catalog.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct VendorCommandComplete {
+    opcode: crate::Opcode,
+    status: Status,
+    payload: crate::vendor::command::BoundedBytes<251>,
+}
+
+impl VendorCommandComplete {
+    fn new(opcode: crate::Opcode, return_parameters: &[u8]) -> Result<Self, crate::event::Error> {
+        require_len_at_least!(return_parameters, 1);
+        let status = return_parameters[0]
+            .try_into()
+            .map_err(super::rewrap_bad_status)?;
+        let payload = crate::vendor::command::BoundedBytes::try_from_slice(&return_parameters[1..])
+            .map_err(|error| crate::event::Error::BadLength(error.actual(), error.maximum()))?;
+        Ok(Self {
+            opcode,
+            status,
+            payload,
+        })
+    }
+
+    /// Opcode reported by the controller.
+    pub const fn opcode(&self) -> crate::Opcode {
+        self.opcode
+    }
+
+    /// Command status reported before the command-specific return payload.
+    pub const fn status(&self) -> Status {
+        self.status
+    }
+
+    /// Command-specific bytes after the status byte.
+    pub fn payload(&self) -> &[u8] {
+        self.payload.as_slice()
+    }
+}
+
 /// Commands that may generate the [Command Complete](crate::event::Event::CommandComplete) event.
-/// If the commands have defined return parameters, they are included in this enum.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(clippy::large_enum_variant)]
@@ -309,8 +348,8 @@ pub enum ReturnParameters {
     /// Parameters returned by the [LE Test End](crate::host::HostHci::le_test_end) command.
     LeTestEnd(LeTestEnd),
 
-    /// Parameters returned by vendor-specific commands.
-    Vendor(crate::vendor::event::command::VendorReturnParameters),
+    /// Opaque completion data for a vendor-specific command.
+    Vendor(VendorCommandComplete),
 }
 
 fn to_status(bytes: &[u8]) -> Result<Status, crate::event::Error> {
