@@ -488,6 +488,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     HalGetLinkStatusV2(HAL_GET_LINK_STATUS_V2) {
         Params = ();
@@ -499,6 +500,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     HalSetSyncEventConfig(HAL_SET_SYNC_EVENT_CONFIG) {
         Params = {
@@ -512,6 +514,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     HalContinuousTxStart(HAL_CONTINUOUS_TX_START) {
         Params = {
@@ -524,6 +527,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     HalEadEncryptDecrypt(HAL_EAD_ENCRYPT_DECRYPT) {
         Params<'a> = {
@@ -545,6 +549,15 @@ vendor_cmd! {
             },
         };
     }
+}
+
+cfg_command_bounds! {
+    HalFirmwareCommands,
+    after_fw_0_17_1,
+    ControllerCmdSync<HalGetLinkStatusV2>
+        + ControllerCmdSync<HalSetSyncEventConfig>
+        + ControllerCmdSync<HalContinuousTxStart>
+        + for<'t> ControllerCmdSync<HalEadEncryptDecrypt<'t>>
 }
 
 impl<T> HalCommands for T
@@ -569,10 +582,7 @@ where
         + ControllerCmdSync<HalRxStart>
         + ControllerCmdSync<HalRxStop>
         + ControllerCmdSync<HalStackReset>
-        + ControllerCmdSync<HalGetLinkStatusV2>
-        + ControllerCmdSync<HalSetSyncEventConfig>
-        + ControllerCmdSync<HalContinuousTxStart>
-        + for<'t> ControllerCmdSync<HalEadEncryptDecrypt<'t>>,
+        + HalFirmwareCommands,
 {
     async fn get_firmware_revision(&self) -> Result<u64, Error> {
         let revision = HalGetFirmwareRevision::new()

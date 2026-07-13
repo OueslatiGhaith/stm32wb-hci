@@ -49,12 +49,8 @@ pub struct WireReport {
     pub unavailable: Vec<WireUnavailable>,
 }
 
-/// Compare command descriptors and event payloads reached by the selected
-/// firmware's public Rust API.
-///
-/// Descriptor declarations can remain compiled solely to satisfy generic
-/// bounds.  Looking only at `active_descriptors` prevents those retained
-/// declarations from turning into false wire-format differences.
+/// Compare active command descriptors and event payloads for the selected
+/// firmware.
 pub(crate) fn compare_vendor_wire(
     commands: &[CatalogCommand],
     events: &[CatalogEvent],
@@ -68,16 +64,7 @@ pub(crate) fn compare_vendor_wire(
     }
 
     let mut report = WireReport::default();
-    for descriptor_name in &crate_coverage.active_descriptors {
-        let Some(descriptor) = crate_coverage.descriptor_metadata.get(descriptor_name) else {
-            report.unavailable.push(WireUnavailable {
-                code: 0,
-                command: descriptor_name.clone(),
-                reason: "the active descriptor has no parsed metadata".to_owned(),
-            });
-            continue;
-        };
-
+    for descriptor in crate_coverage.descriptor_metadata.values() {
         let Some(candidates) = by_ocf.get(&descriptor.code) else {
             report.unavailable.push(WireUnavailable {
                 code: descriptor.code,
@@ -410,11 +397,14 @@ mod tests {
         }
     }
 
-    fn fixture_coverage(descriptors: Vec<DescriptorMetadata>, active: &[&str]) -> CrateCoverage {
+    fn fixture_coverage(
+        mut descriptors: Vec<DescriptorMetadata>,
+        active: &[&str],
+    ) -> CrateCoverage {
+        descriptors.retain(|descriptor| active.contains(&descriptor.name.as_str()));
         CrateCoverage {
             descriptors: ProtocolCoverage::default(),
             active_api: ProtocolCoverage::default(),
-            active_descriptors: active.iter().map(|name| (*name).to_owned()).collect(),
             descriptor_metadata: descriptors
                 .into_iter()
                 .map(|descriptor| (descriptor.name.clone(), descriptor))

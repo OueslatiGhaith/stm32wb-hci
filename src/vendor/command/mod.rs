@@ -2384,6 +2384,33 @@ macro_rules! vendor_cmd {
     };
 }
 
+/// Adds controller bounds only when a firmware cfg is active.
+///
+/// This keeps the legacy controller extension traits compatible with command
+/// descriptors whose generated types are themselves cfg-gated.
+macro_rules! cfg_command_bounds {
+    (
+        $trait:ident,
+        $cfg:meta,
+        $($bounds:tt)+
+    ) => {
+        #[cfg($cfg)]
+        trait $trait: $($bounds)+ {}
+
+        #[cfg($cfg)]
+        impl<T> $trait for T
+        where
+            T: $($bounds)+,
+        {}
+
+        #[cfg(not($cfg))]
+        trait $trait {}
+
+        #[cfg(not($cfg))]
+        impl<T> $trait for T {}
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::{HciLengthError, TaggedField};

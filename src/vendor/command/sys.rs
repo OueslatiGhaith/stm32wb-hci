@@ -1,5 +1,6 @@
 //! System commands (ACI_RESET, ACI_GET_INFORMATION, ACI_WRITE_CONFIG_DATA, ACI_READ_CONFIG_DATA).
 
+#[cfg(after_fw_0_17_1)]
 use crate::vendor::command::BoundedBytes;
 #[cfg(after_fw_0_17_1)]
 use crate::{BadStatusError, Status};
@@ -103,6 +104,7 @@ impl<T> From<bt_hci::cmd::Error<T>> for Error {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     SysReset(SYS_RESET) {
         Params = {
@@ -114,6 +116,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     SysGetInformation(SYS_GET_INFORMATION) {
         Params = ();
@@ -126,6 +129,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     SysWriteConfigData(SYS_WRITE_CONFIG_DATA) {
         Params<'a> = {
@@ -141,6 +145,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     SysReadConfigData(SYS_READ_CONFIG_DATA) {
         Params = {

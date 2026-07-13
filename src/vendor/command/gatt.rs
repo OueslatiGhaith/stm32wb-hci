@@ -1513,6 +1513,7 @@ impl GattHandleValue {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GattReadHandleValueOffset(GATT_READ_HANDLE_VALUE_OFFSET) {
         Params = {
@@ -1612,6 +1613,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GattWriteWithoutRespExt(GATT_WRITE_WITHOUT_RESP_EXT) {
         Params = {
@@ -1626,6 +1628,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GattWriteWithRespExt(GATT_WRITE_WITH_RESP_EXT) {
         Params = {
@@ -1638,6 +1641,14 @@ vendor_cmd! {
         };
         Completion = CommandStatus;
     }
+}
+
+cfg_command_bounds! {
+    GattFirmwareCommands,
+    after_fw_0_17_1,
+    ControllerCmdSync<GattReadHandleValueOffset>
+        + ControllerCmdSync<GattWriteWithoutRespExt>
+        + ControllerCmdAsync<GattWriteWithRespExt>
 }
 
 impl<T> GattCommands for T
@@ -1682,7 +1693,6 @@ where
         + ControllerCmdSync<GattSetSecurityPermission>
         + for<'t> ControllerCmdSync<GattSetDescriptorValue<'t>>
         + ControllerCmdSync<GattReadHandleValue>
-        + ControllerCmdSync<GattReadHandleValueOffset>
         + for<'t> ControllerCmdSync<GattUpdateLongCharacteristicValue<'t>>
         + ControllerCmdSync<GattDenyRead>
         + ControllerCmdSync<GattSetAccessPermission>
@@ -1691,8 +1701,7 @@ where
         + for<'t> ControllerCmdAsync<GattReadMultipleVarCharValue<'t>>
         + for<'t> ControllerCmdAsync<GattWriteCharacteristicDescriptor<'t>>
         + for<'t> ControllerCmdSync<GattAddCharacteristic<'t>>
-        + ControllerCmdSync<GattWriteWithoutRespExt>
-        + ControllerCmdAsync<GattWriteWithRespExt>,
+        + GattFirmwareCommands,
 {
     async fn init(&self) -> Result<(), Error> {
         GattInit::new().exec(self).await.map_err(|e| e.into())

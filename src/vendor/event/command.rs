@@ -1096,15 +1096,6 @@ impl TryFrom<u8> for PassKeyRequirement {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
-pub(crate) fn to_boolean(value: u8) -> Result<bool, super::VendorError> {
-    match value {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(super::VendorError::BadBooleanValue(value)),
-    }
-}
-
 fn to_gap_security_level(bytes: &[u8]) -> Result<GapSecurityLevel, crate::event::Error> {
     require_len!(bytes, 3);
 

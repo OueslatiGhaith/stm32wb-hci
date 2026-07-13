@@ -1,10 +1,8 @@
 //! Feature-aware extraction of the crate's vendor command and event surface.
 //!
 //! The checker deliberately works from the Rust syntax tree rather than source
-//! text. In particular, firmware cfgs can live on a module, trait, impl,
-//! method, macro invocation, match arm, or expression. Treating them as a
-//! "nearby line" property silently produces the wrong API inventory as soon as
-//! a new firmware has alternate implementations.
+//! text. Command, event, and module cfgs are evaluated structurally for the
+//! selected firmware.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -15,8 +13,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{
-    Attribute, Expr, File, ImplItem, Item, ItemImpl, ItemMacro, ItemMod, ItemTrait, Lit, LitInt,
-    Meta, Path as SynPath, TraitItem, Type,
+    Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath, Type,
 };
 
 use crate::FirmwareVersion;
@@ -25,19 +22,7 @@ use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
 pub(crate) struct CrateCoverage {
     pub(crate) descriptors: ProtocolCoverage,
     pub(crate) active_api: ProtocolCoverage,
-    /// Descriptor names reached by at least one active public command method.
-    ///
-    /// This deliberately excludes descriptors retained solely for generic
-    /// blanket-implementation bounds.
-    #[allow(dead_code)] // consumed by the wire-envelope comparison layer
-    pub(crate) active_descriptors: BTreeSet<String>,
     /// Descriptor-level information retained for the wire-envelope checker.
-    ///
-    /// The ordinary command coverage deliberately counts public methods rather
-    /// than descriptors: generic trait bounds require some descriptors to stay
-    /// compiled even when their methods are unavailable. The metadata is kept
-    /// separately so a later checker can compare `vendor_cmd!` return envelopes
-    /// without changing that coverage rule.
     #[allow(dead_code)] // consumed by the wire-envelope comparison layer
     pub(crate) descriptor_metadata: BTreeMap<String, DescriptorMetadata>,
     /// Payload envelopes declared by the active `vendor_event!` catalog.
@@ -104,26 +89,8 @@ struct SourceUnit {
     file: File,
 }
 
-#[derive(Clone, Debug)]
-struct PublicTrait {
-    methods: BTreeMap<String, PublicMethod>,
-}
-
-#[derive(Clone, Debug)]
-struct PublicMethod {
-    alias_target: Option<String>,
-    direct_descriptors: BTreeSet<String>,
-    location: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct MethodMapping {
-    descriptor: String,
-    location: PathBuf,
-}
-
-/// Load all active vendor command methods, command descriptors, and vendor
-/// event dispatches for one selected firmware feature.
+/// Load the declarative vendor command and event catalogs for one selected
+/// firmware feature.
 pub(crate) fn load_crate_coverage(
     crate_dir: &Path,
     firmware: FirmwareVersion,
@@ -148,8 +115,7 @@ pub(crate) fn load_crate_coverage(
     let payloads = collect_payloads(&command_sources, firmware)?;
     let descriptors =
         collect_descriptors(&command_sources, &opcode_constants, &payloads, firmware)?;
-    let (active_commands, active_descriptors) =
-        collect_active_command_methods(&command_sources, &descriptors, firmware)?;
+    let active_commands = descriptor_coverage(&descriptors);
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
     let event_file = read_rust_file(&event_path)?;
@@ -180,10 +146,25 @@ pub(crate) fn load_crate_coverage(
             commands: active_commands,
             events: active_events,
         },
-        active_descriptors,
         descriptor_metadata,
         event_metadata,
     })
+}
+
+fn descriptor_coverage(descriptors: &BTreeMap<String, DescriptorMetadata>) -> Vec<CoverageEntry> {
+    let mut commands = descriptors
+        .values()
+        .map(|descriptor| {
+            CoverageEntry::new(
+                descriptor.code,
+                &descriptor.name,
+                CoverageOrigin::VendorCommandDescriptor,
+            )
+            .at(descriptor.location.clone())
+        })
+        .collect::<Vec<_>>();
+    commands.sort_by_key(|entry| (entry.code, entry.name.clone()));
+    commands
 }
 
 fn read_rust_file(path: &Path) -> Result<File, String> {
@@ -1096,471 +1077,6 @@ impl Parse for DeclarativeReturn {
     }
 }
 
-fn collect_active_command_methods(
-    sources: &[SourceUnit],
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-) -> Result<(Vec<CoverageEntry>, BTreeSet<String>), String> {
-    let traits = collect_public_traits(sources, descriptors, firmware)?;
-    let mappings = collect_impl_mappings(sources, &traits, descriptors, firmware)?;
-    let mut commands = Vec::new();
-    let mut active_descriptors = BTreeSet::new();
-
-    for (trait_name, public_trait) in &traits {
-        for (method_name, method) in &public_trait.methods {
-            let descriptor = resolve_method_descriptor(
-                trait_name,
-                method_name,
-                &traits,
-                &mappings,
-                &mut BTreeSet::new(),
-            )?;
-            let metadata = descriptors.get(&descriptor).ok_or_else(|| {
-                format!(
-                    "{}: method `{method_name}` resolved to inactive or missing descriptor `{descriptor}`",
-                    method.location.display()
-                )
-            })?;
-            active_descriptors.insert(descriptor);
-            commands.push(
-                CoverageEntry::new(metadata.code, method_name, CoverageOrigin::PublicMethod)
-                    .at(method.location.clone()),
-            );
-        }
-    }
-
-    commands.sort_by_key(|entry| (entry.code, entry.name.clone()));
-    Ok((commands, active_descriptors))
-}
-
-fn collect_public_traits(
-    sources: &[SourceUnit],
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-) -> Result<BTreeMap<String, PublicTrait>, String> {
-    let mut traits = BTreeMap::new();
-    for source in sources {
-        if !source.active {
-            continue;
-        }
-        for item in &source.file.items {
-            let Item::Trait(item) = item else {
-                continue;
-            };
-            if !matches!(item.vis, syn::Visibility::Public(_))
-                || !attrs_active(&item.attrs, firmware, &source.path)?
-            {
-                continue;
-            }
-            // Codec/helper traits live in the same module tree and may also
-            // contain async methods. Only the public command families define
-            // API coverage entries.
-            if !item.ident.to_string().ends_with("Commands") {
-                continue;
-            }
-            let public_trait = collect_trait_methods(item, descriptors, firmware, &source.path)?;
-            if let Some(previous) = traits.insert(item.ident.to_string(), public_trait) {
-                let method = previous.methods.keys().next().cloned().unwrap_or_default();
-                return Err(format!(
-                    "{}: duplicate active public trait `{}` (previous trait contains `{method}`)",
-                    source.path.display(),
-                    item.ident
-                ));
-            }
-        }
-    }
-    Ok(traits)
-}
-
-fn collect_trait_methods(
-    item: &ItemTrait,
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<PublicTrait, String> {
-    let mut methods = BTreeMap::new();
-    for member in &item.items {
-        let TraitItem::Fn(method) = member else {
-            continue;
-        };
-        if method.sig.asyncness.is_none() || !attrs_active(&method.attrs, firmware, path)? {
-            continue;
-        }
-
-        let mut direct_descriptors = BTreeSet::new();
-        let mut alias_target = None;
-        if let Some(body) = &method.default {
-            direct_descriptors =
-                descriptor_constructors_in_block(body, descriptors, firmware, path)?;
-            if direct_descriptors.is_empty() {
-                alias_target = single_self_method_call(body, firmware, path)?;
-            }
-        }
-
-        let method_name = method.sig.ident.to_string();
-        let public_method = PublicMethod {
-            alias_target,
-            direct_descriptors,
-            location: path.to_path_buf(),
-        };
-        if methods.insert(method_name.clone(), public_method).is_some() {
-            return Err(format!(
-                "{}: public trait `{}` has multiple active `{method_name}` methods",
-                path.display(),
-                item.ident
-            ));
-        }
-    }
-    Ok(PublicTrait { methods })
-}
-
-fn collect_impl_mappings(
-    sources: &[SourceUnit],
-    traits: &BTreeMap<String, PublicTrait>,
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-) -> Result<BTreeMap<(String, String), Vec<MethodMapping>>, String> {
-    let mut mappings = BTreeMap::<(String, String), Vec<MethodMapping>>::new();
-    for source in sources {
-        if !source.active {
-            continue;
-        }
-        for item in &source.file.items {
-            let Item::Impl(item) = item else {
-                continue;
-            };
-            if !attrs_active(&item.attrs, firmware, &source.path)? {
-                continue;
-            }
-            let Some(trait_name) = implemented_trait_name(item) else {
-                continue;
-            };
-            let Some(public_trait) = traits.get(&trait_name) else {
-                continue;
-            };
-            collect_impl_mapping_items(
-                item,
-                &trait_name,
-                public_trait,
-                descriptors,
-                firmware,
-                &source.path,
-                &mut mappings,
-            )?;
-        }
-    }
-    Ok(mappings)
-}
-
-fn implemented_trait_name(item: &ItemImpl) -> Option<String> {
-    let (_, trait_path, _) = item.trait_.as_ref()?;
-    trait_path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-}
-
-fn collect_impl_mapping_items(
-    item: &ItemImpl,
-    trait_name: &str,
-    public_trait: &PublicTrait,
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-    path: &Path,
-    mappings: &mut BTreeMap<(String, String), Vec<MethodMapping>>,
-) -> Result<(), String> {
-    for member in &item.items {
-        match member {
-            ImplItem::Fn(method) => {
-                if method.sig.asyncness.is_none() || !attrs_active(&method.attrs, firmware, path)? {
-                    continue;
-                }
-                let method_name = method.sig.ident.to_string();
-                if !public_trait.methods.contains_key(&method_name) {
-                    continue;
-                }
-                let found =
-                    descriptor_constructors_in_block(&method.block, descriptors, firmware, path)?;
-                insert_method_descriptors(mappings, trait_name, &method_name, found, path);
-            }
-            ImplItem::Macro(invocation) => {
-                if !attrs_active(&invocation.attrs, firmware, path)?
-                    || !is_hci_impl_macro(&invocation.mac.path)
-                {
-                    continue;
-                }
-                let mapping = parse_hci_impl_mapping(invocation, path)?;
-                if !public_trait.methods.contains_key(&mapping.method) {
-                    continue;
-                }
-                if !descriptors.contains_key(&mapping.descriptor) {
-                    return Err(format!(
-                        "{}: active `{}` mapping for method `{}` references inactive or unknown descriptor `{}`",
-                        path.display(),
-                        macro_name(&invocation.mac.path),
-                        mapping.method,
-                        mapping.descriptor,
-                    ));
-                }
-                insert_method_descriptors(
-                    mappings,
-                    trait_name,
-                    &mapping.method,
-                    [mapping.descriptor].into_iter().collect(),
-                    path,
-                );
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn insert_method_descriptors(
-    mappings: &mut BTreeMap<(String, String), Vec<MethodMapping>>,
-    trait_name: &str,
-    method_name: &str,
-    descriptors: BTreeSet<String>,
-    path: &Path,
-) {
-    let values = mappings
-        .entry((trait_name.to_owned(), method_name.to_owned()))
-        .or_default();
-    for descriptor in descriptors {
-        if values.iter().all(|value| value.descriptor != descriptor) {
-            values.push(MethodMapping {
-                descriptor,
-                location: path.to_path_buf(),
-            });
-        }
-    }
-}
-
-fn resolve_method_descriptor(
-    trait_name: &str,
-    method_name: &str,
-    traits: &BTreeMap<String, PublicTrait>,
-    mappings: &BTreeMap<(String, String), Vec<MethodMapping>>,
-    resolving: &mut BTreeSet<(String, String)>,
-) -> Result<String, String> {
-    let key = (trait_name.to_owned(), method_name.to_owned());
-    if !resolving.insert(key.clone()) {
-        return Err(format!(
-            "public method alias cycle while resolving `{trait_name}::{method_name}`"
-        ));
-    }
-
-    let public_trait = traits
-        .get(trait_name)
-        .expect("trait was selected from the trait map");
-    let method = public_trait.methods.get(method_name).ok_or_else(|| {
-        format!(
-            "{}: public method alias refers to unavailable `{trait_name}::{method_name}`",
-            public_trait.methods.values().next().map_or_else(
-                || Path::new("<unknown>").display().to_string(),
-                |value| value.location.display().to_string()
-            )
-        )
-    })?;
-
-    let mut descriptors = method.direct_descriptors.clone();
-    let mapping_locations = mappings.get(&key).cloned().unwrap_or_default();
-    descriptors.extend(
-        mapping_locations
-            .iter()
-            .map(|mapping| mapping.descriptor.clone()),
-    );
-
-    let result = if descriptors.len() == 1 {
-        descriptors.into_iter().next().expect("length checked")
-    } else if descriptors.len() > 1 {
-        let names = descriptors.into_iter().collect::<Vec<_>>().join(", ");
-        let locations = mapping_locations
-            .iter()
-            .map(|mapping| mapping.location.display().to_string())
-            .collect::<Vec<_>>();
-        let suffix = if locations.is_empty() {
-            String::new()
-        } else {
-            format!(" (implementation mappings at {})", locations.join(", "))
-        };
-        return Err(format!(
-            "{}: active public method `{trait_name}::{method_name}` has multiple descriptor branches: {names}{suffix}",
-            method.location.display()
-        ));
-    } else if let Some(target) = &method.alias_target {
-        resolve_method_descriptor(trait_name, target, traits, mappings, resolving)?
-    } else {
-        return Err(format!(
-            "{}: active public method `{trait_name}::{method_name}` could not be tied to a vendor command descriptor",
-            method.location.display()
-        ));
-    };
-
-    resolving.remove(&key);
-    Ok(result)
-}
-
-fn descriptor_constructors_in_block(
-    block: &syn::Block,
-    descriptors: &BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<BTreeSet<String>, String> {
-    let mut collector = DescriptorConstructorCollector {
-        descriptors,
-        firmware,
-        path,
-        found: BTreeSet::new(),
-        error: None,
-    };
-    collector.visit_block(block);
-    collector.error.map_or_else(|| Ok(collector.found), Err)
-}
-
-fn single_self_method_call(
-    block: &syn::Block,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<Option<String>, String> {
-    let mut collector = SelfMethodCallCollector {
-        firmware,
-        path,
-        found: BTreeSet::new(),
-        error: None,
-    };
-    collector.visit_block(block);
-    let Some(error) = collector.error else {
-        return Ok((collector.found.len() == 1)
-            .then(|| collector.found.into_iter().next().expect("length checked")));
-    };
-    Err(error)
-}
-
-struct DescriptorConstructorCollector<'a> {
-    descriptors: &'a BTreeMap<String, DescriptorMetadata>,
-    firmware: FirmwareVersion,
-    path: &'a Path,
-    found: BTreeSet<String>,
-    error: Option<String>,
-}
-
-impl<'ast> Visit<'ast> for DescriptorConstructorCollector<'_> {
-    fn visit_expr(&mut self, expression: &'ast Expr) {
-        if !self.expr_is_active(expression) {
-            return;
-        }
-        if let Some(descriptor) = descriptor_constructor_name(expression)
-            && self.descriptors.contains_key(&descriptor)
-        {
-            self.found.insert(descriptor);
-        }
-        visit::visit_expr(self, expression);
-    }
-
-    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
-        if self.attrs_are_active(&arm.attrs) {
-            visit::visit_arm(self, arm);
-        }
-    }
-
-    fn visit_local(&mut self, local: &'ast syn::Local) {
-        if self.attrs_are_active(&local.attrs) {
-            visit::visit_local(self, local);
-        }
-    }
-}
-
-impl DescriptorConstructorCollector<'_> {
-    fn attrs_are_active(&mut self, attributes: &[Attribute]) -> bool {
-        if self.error.is_some() {
-            return false;
-        }
-        match attrs_active(attributes, self.firmware, self.path) {
-            Ok(active) => active,
-            Err(error) => {
-                self.error = Some(error);
-                false
-            }
-        }
-    }
-
-    fn expr_is_active(&mut self, expression: &Expr) -> bool {
-        self.attrs_are_active(expr_attrs(expression))
-    }
-}
-
-struct SelfMethodCallCollector<'a> {
-    firmware: FirmwareVersion,
-    path: &'a Path,
-    found: BTreeSet<String>,
-    error: Option<String>,
-}
-
-impl<'ast> Visit<'ast> for SelfMethodCallCollector<'_> {
-    fn visit_expr(&mut self, expression: &'ast Expr) {
-        if !self.expr_is_active(expression) {
-            return;
-        }
-        if let Expr::MethodCall(call) = expression
-            && is_self_expression(&call.receiver)
-        {
-            self.found.insert(call.method.to_string());
-        }
-        visit::visit_expr(self, expression);
-    }
-
-    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
-        if self.attrs_are_active(&arm.attrs) {
-            visit::visit_arm(self, arm);
-        }
-    }
-
-    fn visit_local(&mut self, local: &'ast syn::Local) {
-        if self.attrs_are_active(&local.attrs) {
-            visit::visit_local(self, local);
-        }
-    }
-}
-
-impl SelfMethodCallCollector<'_> {
-    fn attrs_are_active(&mut self, attributes: &[Attribute]) -> bool {
-        if self.error.is_some() {
-            return false;
-        }
-        match attrs_active(attributes, self.firmware, self.path) {
-            Ok(active) => active,
-            Err(error) => {
-                self.error = Some(error);
-                false
-            }
-        }
-    }
-
-    fn expr_is_active(&mut self, expression: &Expr) -> bool {
-        self.attrs_are_active(expr_attrs(expression))
-    }
-}
-
-fn descriptor_constructor_name(expression: &Expr) -> Option<String> {
-    let Expr::Call(call) = expression else {
-        return None;
-    };
-    let Expr::Path(path) = call.func.as_ref() else {
-        return None;
-    };
-    let segments = path.path.segments.iter().collect::<Vec<_>>();
-    let constructor = segments.last()?;
-    if (constructor.ident != "new" && constructor.ident != "try_new") || segments.len() < 2 {
-        return None;
-    }
-    Some(segments[segments.len() - 2].ident.to_string())
-}
-
-fn is_self_expression(expression: &Expr) -> bool {
-    matches!(expression, Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self"))
-}
-
 fn parse_vendor_event_declarations(
     file: &File,
     firmware: FirmwareVersion,
@@ -1942,19 +1458,6 @@ fn is_macro_named(path: &SynPath, name: &str) -> bool {
         .is_some_and(|segment| segment.ident == name)
 }
 
-fn is_hci_impl_macro(path: &SynPath) -> bool {
-    path.segments
-        .last()
-        .is_some_and(|segment| segment.ident.to_string().starts_with("hci_impl_"))
-}
-
-fn macro_name(path: &SynPath) -> String {
-    path.segments.last().map_or_else(
-        || "hci_impl".to_owned(),
-        |segment| segment.ident.to_string(),
-    )
-}
-
 fn cfg_path_name(path: &SynPath) -> String {
     path.segments
         .iter()
@@ -2174,70 +1677,6 @@ impl Parse for VendorCommandInvocation {
     }
 }
 
-struct HciImplMapping {
-    method: String,
-    descriptor: String,
-}
-
-fn parse_hci_impl_mapping(
-    invocation: &syn::ImplItemMacro,
-    path: &Path,
-) -> Result<HciImplMapping, String> {
-    syn::parse2::<HciImplInvocation>(invocation.mac.tokens.clone())
-        .map_err(|error| {
-            format!(
-                "{}: unsupported {}! mapping: {error}",
-                path.display(),
-                macro_name(&invocation.mac.path)
-            )
-        })
-        .map(|mapping| HciImplMapping {
-            method: mapping.method.to_string(),
-            descriptor: mapping.descriptor.to_string(),
-        })
-}
-
-struct HciImplInvocation {
-    method: syn::Ident,
-    descriptor: syn::Ident,
-}
-
-impl Parse for HciImplInvocation {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let method = input.parse::<syn::Ident>()?;
-        if input.peek(syn::Token![<]) {
-            input.parse::<syn::Token![<]>()?;
-            while !input.peek(syn::Token![>]) {
-                input.parse::<syn::Lifetime>()?;
-                if input.peek(syn::Token![,]) {
-                    input.parse::<syn::Token![,]>()?;
-                } else if !input.peek(syn::Token![>]) {
-                    return Err(input.error("expected `,` or `>` in hci_impl! method lifetimes"));
-                }
-            }
-            input.parse::<syn::Token![>]>()?;
-        }
-        input.parse::<syn::Token![,]>()?;
-        // The parameter type is intentionally parsed structurally rather than
-        // discarded as text. Every current hci_impl macro has it as argument 2.
-        input.parse::<Type>()?;
-        input.parse::<syn::Token![,]>()?;
-        let descriptor = input.parse::<syn::Ident>()?;
-
-        // Some macro variants carry one final return type. Its exact shape does
-        // not affect command-ID coverage, but rejecting arbitrary trailing
-        // tokens prevents silently accepting a changed mapping convention.
-        if input.peek(syn::Token![,]) {
-            input.parse::<syn::Token![,]>()?;
-            input.parse::<Type>()?;
-        }
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens in hci_impl! mapping"));
-        }
-        Ok(Self { method, descriptor })
-    }
-}
-
 fn parse_u16_literal(literal: &LitInt) -> Result<u16, String> {
     parse_integer_literal(literal)
         .and_then(|value| u16::try_from(value).map_err(|_| format!("{value} does not fit in u16")))
@@ -2270,55 +1709,6 @@ fn parse_integer_literal(literal: &LitInt) -> Result<u128, String> {
     u128::from_str_radix(digits, radix).map_err(|error| error.to_string())
 }
 
-/// Attributes are stored on every syntactic expression variant in syn, but
-/// syn intentionally does not expose a common accessor. Keeping this exhaustive
-/// match local makes expression-level `#[cfg]` propagation explicit.
-fn expr_attrs(expression: &Expr) -> &[Attribute] {
-    match expression {
-        Expr::Array(value) => &value.attrs,
-        Expr::Assign(value) => &value.attrs,
-        Expr::Async(value) => &value.attrs,
-        Expr::Await(value) => &value.attrs,
-        Expr::Binary(value) => &value.attrs,
-        Expr::Block(value) => &value.attrs,
-        Expr::Break(value) => &value.attrs,
-        Expr::Call(value) => &value.attrs,
-        Expr::Cast(value) => &value.attrs,
-        Expr::Closure(value) => &value.attrs,
-        Expr::Const(value) => &value.attrs,
-        Expr::Continue(value) => &value.attrs,
-        Expr::Field(value) => &value.attrs,
-        Expr::ForLoop(value) => &value.attrs,
-        Expr::Group(value) => &value.attrs,
-        Expr::If(value) => &value.attrs,
-        Expr::Index(value) => &value.attrs,
-        Expr::Infer(value) => &value.attrs,
-        Expr::Let(value) => &value.attrs,
-        Expr::Lit(value) => &value.attrs,
-        Expr::Loop(value) => &value.attrs,
-        Expr::Macro(value) => &value.attrs,
-        Expr::Match(value) => &value.attrs,
-        Expr::MethodCall(value) => &value.attrs,
-        Expr::Paren(value) => &value.attrs,
-        Expr::Path(value) => &value.attrs,
-        Expr::Range(value) => &value.attrs,
-        Expr::RawAddr(value) => &value.attrs,
-        Expr::Reference(value) => &value.attrs,
-        Expr::Repeat(value) => &value.attrs,
-        Expr::Return(value) => &value.attrs,
-        Expr::Struct(value) => &value.attrs,
-        Expr::Try(value) => &value.attrs,
-        Expr::TryBlock(value) => &value.attrs,
-        Expr::Tuple(value) => &value.attrs,
-        Expr::Unary(value) => &value.attrs,
-        Expr::Unsafe(value) => &value.attrs,
-        Expr::Verbatim(_) => &[],
-        Expr::While(value) => &value.attrs,
-        Expr::Yield(value) => &value.attrs,
-        _ => &[],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2347,8 +1737,7 @@ mod tests {
         let descriptors =
             collect_descriptors(std::slice::from_ref(&unit), &opcodes, &payloads, firmware)
                 .unwrap();
-        let (commands, _) =
-            collect_active_command_methods(&[unit], &descriptors, firmware).unwrap();
+        let commands = descriptor_coverage(&descriptors);
         (commands, descriptors)
     }
 
@@ -2360,112 +1749,6 @@ mod tests {
             #[cfg(all(since_fw_0_17_0, not(after_fw_0_17_0)))]
         );
         assert!(attrs_active(&[attribute], firmware, path).unwrap());
-    }
-
-    #[test]
-    fn honors_enclosing_and_multiline_cfgs() {
-        let source = r#"
-            #[cfg(
-                all(
-                    since_fw_0_17_0,
-                    not(after_fw_0_17_0),
-                ),
-            )]
-            pub trait Commands {
-                #[cfg(
-                    any(
-                        only_fw_0_17_0,
-                        after_fw_0_17_0,
-                    ),
-                )]
-                async fn current(&self);
-
-                #[cfg(before_fw_0_17_0)]
-                async fn old(&self);
-            }
-
-            vendor_cmd! {
-                Current(CURRENT) {
-                    Params = ();
-                    Completion = CommandComplete;
-                    Return = ();
-                }
-            }
-
-            impl<T> Commands for T {
-                hci_impl_params!(current, Params, Current);
-                hci_impl_params!(old, Params, Current);
-            }
-        "#;
-        let (commands, _) = fixture_descriptors(source, version(0, 17, 0));
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "current");
-        assert_eq!(commands[0].code, 0x003);
-    }
-
-    #[test]
-    fn selects_cfg_gated_alternate_implementations() {
-        let source = r#"
-            pub trait Commands { async fn command(&self); }
-            vendor_cmd! { Older(OLDER) { Params = (); Completion = CommandStatus; } }
-            vendor_cmd! { Newer(NEWER) { Params = (); Completion = CommandStatus; } }
-
-            #[cfg(before_fw_0_17_0)]
-            impl<T> Commands for T {
-                hci_impl_params!(command, Params, Older);
-            }
-
-            #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
-            impl<T> Commands for T {
-                hci_impl_params!(command, Params, Newer);
-            }
-        "#;
-        let (old, _) = fixture_descriptors(source, version(0, 16, 0));
-        let (new, _) = fixture_descriptors(source, version(0, 17, 0));
-        assert_eq!(old[0].code, 0x001);
-        assert_eq!(new[0].code, 0x002);
-    }
-
-    #[test]
-    fn selects_one_of_multiple_descriptor_branches() {
-        let source = r#"
-            pub trait Commands { async fn command(&self); }
-            vendor_cmd! { Older(OLDER) { Params = (); Completion = CommandStatus; } }
-            vendor_cmd! { Newer(NEWER) { Params = (); Completion = CommandStatus; } }
-
-            impl<T> Commands for T {
-                #[cfg(before_fw_0_17_0)]
-                hci_impl_params!(command, Params, Older);
-                #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
-                hci_impl_params!(command, Params, Newer);
-            }
-        "#;
-        let (old, _) = fixture_descriptors(source, version(0, 16, 0));
-        let (new, _) = fixture_descriptors(source, version(0, 17, 0));
-        assert_eq!(old[0].code, 0x001);
-        assert_eq!(new[0].code, 0x002);
-    }
-
-    #[test]
-    fn selects_cfg_gated_direct_descriptor_branches() {
-        let source = r#"
-            pub trait Commands { async fn command(&self); }
-            vendor_cmd! { Older(OLDER) { Params = (); Completion = CommandStatus; } }
-            vendor_cmd! { Newer(NEWER) { Params = (); Completion = CommandStatus; } }
-
-            impl<T> Commands for T {
-                async fn command(&self) {
-                    #[cfg(before_fw_0_17_0)]
-                    { Older::new(); }
-                    #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
-                    { Newer::new(); }
-                }
-            }
-        "#;
-        let (old, _) = fixture_descriptors(source, version(0, 16, 0));
-        let (new, _) = fixture_descriptors(source, version(0, 17, 0));
-        assert_eq!(old[0].code, 0x001);
-        assert_eq!(new[0].code, 0x002);
     }
 
     #[test]
@@ -2906,11 +2189,6 @@ mod tests {
             .get("GapUpdateAdvertisingData")
             .unwrap();
         assert!(!update.params_empty);
-        assert!(
-            coverage
-                .active_descriptors
-                .contains("GapUpdateAdvertisingData")
-        );
 
         let read = coverage
             .descriptor_metadata
@@ -2918,12 +2196,11 @@ mod tests {
             .unwrap();
         assert_eq!(read.response_len, Some(254));
         assert!(read.return_variable);
-        assert!(coverage.active_descriptors.contains("GattReadHandleValue"));
 
         assert!(
             coverage
-                .active_descriptors
-                .contains("GattReadMultipleVarCharValue")
+                .descriptor_metadata
+                .contains_key("GattReadMultipleVarCharValue")
         );
 
         let tagged = coverage
@@ -2932,7 +2209,12 @@ mod tests {
             .unwrap();
         assert!(!tagged.params_empty);
 
-        let bitmap = coverage.descriptor_metadata.get("GapExtStartScan").unwrap();
+        assert!(!coverage.descriptor_metadata.contains_key("GapExtStartScan"));
+        let future_coverage = load_crate_coverage(&crate_dir, version(0, 18, 0)).unwrap();
+        let bitmap = future_coverage
+            .descriptor_metadata
+            .get("GapExtStartScan")
+            .unwrap();
         assert!(!bitmap.params_empty);
 
         let bonded = coverage
@@ -2942,7 +2224,6 @@ mod tests {
         // Status + count + at most 35 seven-byte address records.
         assert_eq!(bonded.response_len, Some(247));
         assert!(bonded.return_variable);
-        assert!(coverage.active_descriptors.contains("GapGetBondedDevices"));
 
         assert_eq!(coverage.event_metadata.len(), 55);
         let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();
@@ -2963,13 +2244,15 @@ mod tests {
     }
 
     #[test]
-    fn records_only_descriptors_reached_by_active_public_methods() {
+    fn selects_commands_from_descriptor_cfg() {
         let source = r#"
-            pub trait Commands { async fn command(&self); }
             vendor_cmd! { Current(CURRENT) { Params = (); Completion = CommandStatus; } }
-            vendor_cmd! { Retained(OLDER) { Params = (); Completion = CommandStatus; } }
-            impl<T> Commands for T {
-                hci_impl_params!(command, Params, Current);
+            #[cfg(after_fw_0_17_1)]
+            vendor_cmd! {
+                Retained(OLDER) {
+                    Params = ();
+                    Completion = CommandStatus;
+                }
             }
         "#;
         let path = PathBuf::from("fixture.rs");
@@ -2987,8 +2270,21 @@ mod tests {
             firmware,
         )
         .unwrap();
-        let (_, active) = collect_active_command_methods(&[unit], &descriptors, firmware).unwrap();
-        assert_eq!(active, BTreeSet::from(["Current".to_owned()]));
+        let active = descriptor_coverage(&descriptors);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].name, "Current");
+        assert!(descriptors.contains_key("Current"));
+        assert!(!descriptors.contains_key("Retained"));
+
+        let future = collect_descriptors(
+            std::slice::from_ref(&unit),
+            &opcodes,
+            &BTreeMap::new(),
+            version(0, 18, 0),
+        )
+        .unwrap();
+        assert!(future.contains_key("Current"));
+        assert!(future.contains_key("Retained"));
     }
 
     #[test]

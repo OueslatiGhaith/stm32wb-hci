@@ -1628,6 +1628,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapPairingRequestReply(GAP_PAIRING_REQUEST_REPLY) {
         Params = {
@@ -1639,6 +1640,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicParameters(GAP_ADV_SET_PERIODIC_PARAMETERS) {
         Params = {
@@ -1657,6 +1659,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicData(GAP_ADV_SET_PERIODIC_DATA) {
         Params<'a> = {
@@ -1673,6 +1676,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicEnable(GAP_ADV_SET_PERIODIC_ENABLE) {
         Params = {
@@ -1684,6 +1688,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetConfigurationV2(GAP_ADV_SET_CONFIGURATION_V2) {
         Params = {
@@ -1709,6 +1714,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapExtStartScan(GAP_EXT_START_SCAN) {
         Params<'a> = {
@@ -1732,6 +1738,7 @@ vendor_cmd! {
     }
 }
 
+#[cfg(after_fw_0_17_1)]
 vendor_cmd! {
     GapExtCreateConnection(GAP_EXT_CREATE_CONNECTION) {
         Params<'a> = {
@@ -1754,6 +1761,18 @@ vendor_cmd! {
         };
         Completion = CommandStatus;
     }
+}
+
+cfg_command_bounds! {
+    GapFirmwareCommands,
+    after_fw_0_17_1,
+    ControllerCmdSync<GapPairingRequestReply>
+        + ControllerCmdSync<GapAdvSetPeriodicParameters>
+        + for<'t> ControllerCmdSync<GapAdvSetPeriodicData<'t>>
+        + ControllerCmdSync<GapAdvSetPeriodicEnable>
+        + ControllerCmdSync<GapAdvSetConfigurationV2>
+        + for<'t> ControllerCmdAsync<GapExtStartScan<'t>>
+        + for<'t> ControllerCmdAsync<GapExtCreateConnection<'t>>
 }
 
 impl<T> GapCommands for T
@@ -1810,13 +1829,7 @@ where
         + ControllerCmdSync<GapAdvClearSets>
         + ControllerCmdSync<GapAdvSetRandomAddress>
         + ControllerCmdSync<GapDeleteAdType>
-        + ControllerCmdSync<GapPairingRequestReply>
-        + ControllerCmdSync<GapAdvSetPeriodicParameters>
-        + for<'t> ControllerCmdSync<GapAdvSetPeriodicData<'t>>
-        + ControllerCmdSync<GapAdvSetPeriodicEnable>
-        + ControllerCmdSync<GapAdvSetConfigurationV2>
-        + for<'t> ControllerCmdAsync<GapExtStartScan<'t>>
-        + for<'t> ControllerCmdAsync<GapExtCreateConnection<'t>>,
+        + GapFirmwareCommands,
 {
     async fn gap_set_nondiscoverable(&self) -> Result<(), Error> {
         GapSetNonDiscoverable::new()
@@ -3748,44 +3761,11 @@ pub struct AdvSetPeriodicParameters {
 }
 
 #[cfg(after_fw_0_17_1)]
-impl AdvSetPeriodicParameters {
-    pub(crate) const LENGTH: usize = 12;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-        bytes[0] = self.advertising_handle.0;
-        LittleEndian::write_u16(&mut bytes[1..3], self.periodic_adv_interval_min);
-        LittleEndian::write_u16(&mut bytes[3..5], self.periodic_adv_interval_max);
-        LittleEndian::write_u16(&mut bytes[5..7], self.periodic_adv_properties);
-        bytes[7] = self.num_subevents;
-        bytes[8] = self.subevent_interval;
-        bytes[9] = self.response_slot_delay;
-        bytes[10] = self.response_slot_spacing;
-        bytes[11] = self.num_response_slots;
-    }
-}
-
-#[cfg(after_fw_0_17_1)]
 /// Parameters for [adv_set_periodic_data](GapCommands::adv_set_periodic_data).
 pub struct AdvSetPeriodicData<'a> {
     pub advertising_handle: AdvertisingHandle,
     pub operation: AdvertisingOperation,
     pub data: &'a [u8],
-}
-
-#[cfg(after_fw_0_17_1)]
-impl<'a> AdvSetPeriodicData<'a> {
-    pub(crate) const MAX_LENGTH: usize = 255;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-        bytes[0] = self.advertising_handle.0;
-        bytes[1] = self.operation as u8;
-        let len = self.data.len();
-        bytes[2] = len as u8;
-        bytes[3..3 + len].copy_from_slice(self.data);
-        3 + len
-    }
 }
 
 #[cfg(after_fw_0_17_1)]
@@ -3811,31 +3791,6 @@ pub struct AdvSetConfigV2 {
     pub adv_sid: u8,
     pub scan_req_notification_enable: bool,
     pub primary_adv_phy_options: u8,
-}
-
-#[cfg(after_fw_0_17_1)]
-impl AdvSetConfigV2 {
-    pub(crate) const LENGTH: usize = 29;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= Self::LENGTH);
-        bytes[0] = self.adv_mode.bits();
-        bytes[1] = self.adv_handle.0;
-        LittleEndian::write_u16(&mut bytes[2..4], self.adv_event_properties.bits());
-        LittleEndian::write_u32(&mut bytes[4..8], self.primary_adv_interval_min);
-        LittleEndian::write_u32(&mut bytes[8..12], self.primary_adv_interval_max);
-        bytes[12] = self.primary_adv_channel_map.bits();
-        bytes[13] = self.own_addr_type as u8;
-        self.peer_addr.copy_into_slice(&mut bytes[14..]);
-        bytes[21] = self.adv_filter_policy as u8;
-        bytes[22] = self.adv_tx_power;
-        bytes[23] = self.primary_adv_phy as u8;
-        bytes[24] = self.secondary_adv_max_skip;
-        bytes[25] = self.secondary_adv_phy as u8;
-        bytes[26] = self.adv_sid;
-        bytes[27] = self.scan_req_notification_enable as u8;
-        bytes[28] = self.primary_adv_phy_options;
-    }
 }
 
 /// One record in the extended-scan PHY parameter list.
@@ -3906,36 +3861,4 @@ pub struct ExtCreateConnectionParams {
     /// Per-PHY parameters (one entry per set bit in initiating_phys, max 3).
     pub phy_params: [ExtConnPhyParams; 3],
     pub num_phys: usize,
-}
-
-#[cfg(after_fw_0_17_1)]
-impl ExtCreateConnectionParams {
-    pub(crate) const MAX_LENGTH: usize = 14 + 3 * 16;
-
-    fn copy_into_slice(&self, bytes: &mut [u8]) -> usize {
-        assert!(bytes.len() >= Self::MAX_LENGTH);
-        bytes[0] = self.initiating_mode;
-        bytes[1] = self.procedure;
-        bytes[2] = self.own_address_type;
-        bytes[3] = self.peer_address_type;
-        bytes[4..10].copy_from_slice(&self.peer_address.0);
-        bytes[10] = self.advertising_handle;
-        bytes[11] = self.subevent;
-        bytes[12] = self.initiator_filter_policy;
-        bytes[13] = self.initiating_phys;
-        let mut offset = 14;
-        for i in 0..self.num_phys.min(3) {
-            let p = &self.phy_params[i];
-            LittleEndian::write_u16(&mut bytes[offset..], p.scan_interval);
-            LittleEndian::write_u16(&mut bytes[offset + 2..], p.scan_window);
-            LittleEndian::write_u16(&mut bytes[offset + 4..], p.conn_interval_min);
-            LittleEndian::write_u16(&mut bytes[offset + 6..], p.conn_interval_max);
-            LittleEndian::write_u16(&mut bytes[offset + 8..], p.conn_latency);
-            LittleEndian::write_u16(&mut bytes[offset + 10..], p.supervision_timeout);
-            LittleEndian::write_u16(&mut bytes[offset + 12..], p.min_ce_length);
-            LittleEndian::write_u16(&mut bytes[offset + 14..], p.max_ce_length);
-            offset += 16;
-        }
-        offset
-    }
 }
