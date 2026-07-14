@@ -1636,23 +1636,33 @@ pub struct HandleUuid128Pair {
     pub uuid: Uuid128,
 }
 
-impl HciEventField<4> for HandleUuid16Pair {
-    fn from_hci_event_field(bytes: &[u8; 4]) -> Result<Self, Error> {
-        Ok(Self {
-            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
-            uuid: Uuid16(u16::from_le_bytes([bytes[2], bytes[3]])),
-        })
+hci_event_composite! {
+    HandleUuid16Pair => 4 {
+        Fields = {
+            handle: AttributeHandle => 2,
+            uuid: u16 => 2,
+        };
+        Decode = {
+            Ok(Self {
+                handle,
+                uuid: Uuid16(uuid),
+            })
+        };
     }
 }
 
-impl HciEventField<18> for HandleUuid128Pair {
-    fn from_hci_event_field(bytes: &[u8; 18]) -> Result<Self, Error> {
-        let mut uuid = [0; 16];
-        uuid.copy_from_slice(&bytes[2..]);
-        Ok(Self {
-            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
-            uuid: Uuid128(uuid),
-        })
+hci_event_composite! {
+    HandleUuid128Pair => 18 {
+        Fields = {
+            handle: AttributeHandle => 2,
+            uuid: [u8; 16] => 16,
+        };
+        Decode = {
+            Ok(Self {
+                handle,
+                uuid: Uuid128(uuid),
+            })
+        };
     }
 }
 
@@ -1836,9 +1846,18 @@ impl HandleInfoPair {
     }
 }
 
-impl HciEventField<4> for HandleInfoPair {
-    fn from_hci_event_field(bytes: &[u8; 4]) -> Result<Self, Error> {
-        Ok(Self::from_wire_bytes(bytes))
+hci_event_composite! {
+    HandleInfoPair => 4 {
+        Fields = {
+            attribute: AttributeHandle => 2,
+            group_end: u16 => 2,
+        };
+        Decode = {
+            Ok(Self {
+                attribute,
+                group_end: GroupEndHandle(group_end),
+            })
+        };
     }
 }
 
@@ -2839,6 +2858,30 @@ mod tests {
             VendorEvent::new(&partial128).unwrap_err(),
             Error::Vendor(VendorError::AttFindInformationResponsePartialPair128)
         );
+    }
+
+    #[test]
+    fn counted_items_decode_handle_information_records() {
+        let bytes = [
+            0x05, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x02, // pair count
+            0x01, 0x00, 0x05, 0x00, // first attribute and group-end handles
+            0x06, 0x00, 0x09, 0x00, // second attribute and group-end handles
+        ];
+        let VendorEvent::AttFindByTypeValueResponse(event) =
+            VendorEvent::new(&bytes).expect("two handle-information records")
+        else {
+            panic!("unexpected event variant");
+        };
+        let mut pairs = event.handle_pairs_iter();
+        let first = pairs.next().expect("first pair");
+        assert_eq!(first.attribute, AttributeHandle(0x0001));
+        assert_eq!(first.group_end, GroupEndHandle(0x0005));
+        let second = pairs.next().expect("second pair");
+        assert_eq!(second.attribute, AttributeHandle(0x0006));
+        assert_eq!(second.group_end, GroupEndHandle(0x0009));
+        assert!(pairs.next().is_none());
     }
 
     #[test]
