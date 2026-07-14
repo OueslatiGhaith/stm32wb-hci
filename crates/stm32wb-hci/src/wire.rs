@@ -8,7 +8,7 @@ pub use decode::{
 };
 pub(crate) use decode::{
     DecodeError, decode_counted_bytes, decode_counted_items, decode_fixed_field,
-    decode_trailing_bytes,
+    decode_fixed_items, decode_prefixed_bytes, decode_trailing_bytes,
 };
 
 /// A value with an exact, canonical representation in an HCI request.

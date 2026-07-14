@@ -1055,10 +1055,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_removed_command_payload_fields() {
-        for (source, section) in [
-            (
-                r#"
+    fn rejects_removed_payload_kind() {
+        for source in [
+            r#"
                     vendor_cmd! {
                         Current(cgid = 0x0, cid = 0x03) {
                             Params<'a> = {
@@ -1072,10 +1071,7 @@ mod tests {
                         }
                     }
                 "#,
-                "Params",
-            ),
-            (
-                r#"
+            r#"
                     vendor_cmd! {
                         Current(cgid = 0x0, cid = 0x03) {
                             Params = ();
@@ -1090,17 +1086,16 @@ mod tests {
                         }
                     }
                 "#,
-                "Return",
-            ),
         ] {
             let file = syn::parse_file(source).unwrap();
             let Item::Macro(item) = &file.items[0] else {
                 panic!("expected vendor_cmd! macro item");
             };
             let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
-            assert!(error.contains("removed `kind: payload`"), "{error}");
-            assert!(error.contains(section), "{error}");
-            assert!(error.contains("inline the wire schema"), "{error}");
+            assert!(
+                error.contains("unknown declarative variable kind `payload`"),
+                "{error}"
+            );
         }
     }
 

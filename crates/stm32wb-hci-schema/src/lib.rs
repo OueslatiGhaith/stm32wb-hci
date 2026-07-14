@@ -174,7 +174,6 @@ pub struct Fields {
     names: BTreeSet<String>,
     min_len: usize,
     max_len: usize,
-    contains_semantic_payload: bool,
 }
 
 impl Fields {
@@ -196,11 +195,6 @@ impl Fields {
     /// Maximum number of bytes encoded by this field body.
     pub const fn max_len(&self) -> usize {
         self.max_len
-    }
-
-    /// Whether this body contains a bounded semantic payload decoder.
-    pub const fn contains_semantic_payload(&self) -> bool {
-        self.contains_semantic_payload
     }
 }
 
@@ -248,6 +242,8 @@ pub enum VariableEncodingShape {
     CountedBytes {
         /// Count type and its wire width.
         count: WireType,
+        /// Minimum accepted byte count.
+        min_len: IntegerValue,
         /// Maximum accepted byte count.
         max_len: IntegerValue,
     },
@@ -262,13 +258,19 @@ pub enum VariableEncodingShape {
     },
     /// A discriminator followed by a variant-specific fixed payload.
     Tagged(TaggedEncoding),
-    /// A bounded value decoded by the semantic type's event-payload decoder.
-    SemanticPayload {
-        /// Declared minimum encoded length.
-        min_len: IntegerValue,
-        /// Declared maximum encoded length.
+    /// A record width and byte length followed by homogeneous raw records.
+    LengthPrefixedRecords {
+        /// Record-width type and its wire width.
+        record_len: WireType,
+        /// Byte-length type and its wire width.
+        length: WireType,
+        /// Smallest valid record width.
+        min_record_len: IntegerValue,
+        /// Maximum accepted combined record byte length.
         max_len: IntegerValue,
     },
+    /// A tag and byte length followed by tag-selected fixed-width items.
+    TaggedItems(TaggedItemsEncoding),
     /// A bounded field that consumes every remaining byte.
     TrailingBytes {
         /// Minimum accepted byte count.
@@ -325,6 +327,28 @@ pub struct TaggedVariant {
     pub tag: IntegerValue,
     /// Fixed-width fields bound by `pattern` and encoded after the tag.
     pub fields: Fields,
+}
+
+/// Tag-selected fixed-width item encoding details.
+pub struct TaggedItemsEncoding {
+    /// Discriminator type and wire width.
+    pub tag: WireType,
+    /// Combined item-byte length type and wire width.
+    pub length: WireType,
+    /// Variants in declaration order.
+    pub variants: Vec<TaggedItemsVariant>,
+    /// Maximum accepted combined item byte length.
+    pub max_len: IntegerValue,
+}
+
+/// One tag-selected fixed-width item variant.
+pub struct TaggedItemsVariant {
+    /// Discriminator value selecting this item representation.
+    pub tag: IntegerValue,
+    /// Item type and its exact wire width.
+    pub item: WireType,
+    /// Maximum item count for this representation.
+    pub max_items: IntegerValue,
 }
 
 /// Completion mechanism declared by a command.
@@ -595,13 +619,21 @@ impl Parse for VendorCommand {
                 ),
             ));
         }
-        if params
-            .fields()
-            .is_some_and(Fields::contains_semantic_payload)
-        {
+        if params.fields().is_some_and(|fields| {
+            fields.fields().iter().any(|field| {
+                let FieldEncoding::Variable(encoding) = &field.encoding else {
+                    return false;
+                };
+                matches!(
+                    encoding.shape,
+                    VariableEncodingShape::LengthPrefixedRecords { .. }
+                        | VariableEncodingShape::TaggedItems(_)
+                )
+            })
+        }) {
             return Err(syn::Error::new(
                 invocation.name.span(),
-                "Params uses removed `kind: payload`; inline the wire schema instead",
+                "Params uses an event-only variable encoding",
             ));
         }
         let has_variable_params = params.fields().is_some_and(|fields| {
@@ -659,16 +691,6 @@ impl Parse for VendorCommand {
         if returns
             .as_ref()
             .and_then(Returns::fields)
-            .is_some_and(Fields::contains_semantic_payload)
-        {
-            return Err(syn::Error::new(
-                invocation.name.span(),
-                "Return uses removed `kind: payload`; inline the wire schema instead",
-            ));
-        }
-        if returns
-            .as_ref()
-            .and_then(Returns::fields)
             .is_some_and(|fields| {
                 fields.fields().iter().any(|field| {
                     let FieldEncoding::Variable(encoding) = &field.encoding else {
@@ -678,6 +700,8 @@ impl Parse for VendorCommand {
                         encoding.shape,
                         VariableEncodingShape::Tagged(_)
                             | VariableEncodingShape::BitmapItems { .. }
+                            | VariableEncodingShape::LengthPrefixedRecords { .. }
+                            | VariableEncodingShape::TaggedItems(_)
                     )
                 })
             })
@@ -1153,7 +1177,6 @@ impl Parse for Fields {
         let mut min_len = 0usize;
         let mut max_len = 0usize;
         let mut consumes_remainder = false;
-        let mut contains_semantic_payload = false;
 
         while !input.is_empty() {
             if consumes_remainder {
@@ -1170,50 +1193,38 @@ impl Parse for Fields {
             let ty = input.parse::<Type>()?;
             input.parse::<syn::Token![=>]>()?;
 
-            let (
-                encoding,
-                field_min_len,
-                field_max_len,
-                semantic_payload,
-                field_consumes_remainder,
-            ) = if input.peek(LitInt) {
-                let width_literal = input.parse::<LitInt>()?;
-                let width =
-                    parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
-                (
-                    FieldEncoding::Fixed(FixedEncoding {
-                        width_literal,
+            let (encoding, field_min_len, field_max_len, field_consumes_remainder) =
+                if input.peek(LitInt) {
+                    let width_literal = input.parse::<LitInt>()?;
+                    let width =
+                        parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
+                    (
+                        FieldEncoding::Fixed(FixedEncoding {
+                            width_literal,
+                            width,
+                        }),
                         width,
-                    }),
-                    width,
-                    width,
-                    false,
-                    false,
-                )
-            } else if input.peek(syn::token::Brace) {
-                let shape;
-                syn::braced!(shape in input);
-                let encoding = shape.parse::<VariableEncoding>()?;
-                let field_min_len = encoding.min_len;
-                let field_max_len = encoding.max_len;
-                let semantic_payload = matches!(
-                    encoding.shape,
-                    VariableEncodingShape::SemanticPayload { .. }
-                );
-                let field_consumes_remainder = encoding.consumes_remainder;
-                (
-                    FieldEncoding::Variable(Box::new(encoding)),
-                    field_min_len,
-                    field_max_len,
-                    semantic_payload,
-                    field_consumes_remainder,
-                )
-            } else {
-                return Err(input.error("expected a fixed width or variable field shape"));
-            };
+                        width,
+                        false,
+                    )
+                } else if input.peek(syn::token::Brace) {
+                    let shape;
+                    syn::braced!(shape in input);
+                    let encoding = shape.parse::<VariableEncoding>()?;
+                    let field_min_len = encoding.min_len;
+                    let field_max_len = encoding.max_len;
+                    let field_consumes_remainder = encoding.consumes_remainder;
+                    (
+                        FieldEncoding::Variable(Box::new(encoding)),
+                        field_min_len,
+                        field_max_len,
+                        field_consumes_remainder,
+                    )
+                } else {
+                    return Err(input.error("expected a fixed width or variable field shape"));
+                };
 
             consumes_remainder = field_consumes_remainder;
-            contains_semantic_payload |= semantic_payload;
             min_len = min_len
                 .checked_add(field_min_len)
                 .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
@@ -1229,7 +1240,6 @@ impl Parse for Fields {
             names,
             min_len,
             max_len,
-            contains_semantic_payload,
         })
     }
 }
@@ -1243,8 +1253,21 @@ impl Parse for VariableEncoding {
         let shape = match kind.to_string().as_str() {
             "counted_bytes" => {
                 let count = parse_wire_type(input, "count")?;
+                let min_len = if next_label_is(input, "min_len")? {
+                    parse_integer_value(input, "min_len")?
+                } else {
+                    IntegerValue {
+                        literal: LitInt::new("0", kind.span()),
+                        value: 0,
+                    }
+                };
                 let max_len = parse_integer_value(input, "max_len")?;
-                VariableEncodingShape::CountedBytes { count, max_len }
+                validate_range(input, "counted_bytes", min_len.value, max_len.value)?;
+                VariableEncodingShape::CountedBytes {
+                    count,
+                    min_len,
+                    max_len,
+                }
             }
             "counted_items" => {
                 let count = parse_wire_type(input, "count")?;
@@ -1257,11 +1280,26 @@ impl Parse for VariableEncoding {
                 }
             }
             "tagged" => VariableEncodingShape::Tagged(parse_tagged_encoding(input)?),
-            "payload" => {
-                let min_len = parse_integer_value(input, "min_len")?;
+            "length_prefixed_records" => {
+                let record_len = parse_wire_type(input, "record_len")?;
+                let length = parse_wire_type(input, "length")?;
+                let min_record_len = parse_integer_value(input, "min_record_len")?;
                 let max_len = parse_integer_value(input, "max_len")?;
-                validate_range(input, "payload", min_len.value, max_len.value)?;
-                VariableEncodingShape::SemanticPayload { min_len, max_len }
+                if min_record_len.value == 0 {
+                    return Err(
+                        input.error("length_prefixed_records minimum record length is zero")
+                    );
+                }
+                validate_integer_capacity(input, "record byte length", &length, max_len.value)?;
+                VariableEncodingShape::LengthPrefixedRecords {
+                    record_len,
+                    length,
+                    min_record_len,
+                    max_len,
+                }
+            }
+            "tagged_items" => {
+                VariableEncodingShape::TaggedItems(parse_tagged_items_encoding(input)?)
             }
             "trailing_bytes" => {
                 let min_len = parse_integer_value(input, "min_len")?;
@@ -1313,8 +1351,16 @@ fn variable_bounds(
     shape: &VariableEncodingShape,
 ) -> syn::Result<(usize, usize, bool)> {
     let bounds = match shape {
-        VariableEncodingShape::CountedBytes { count, max_len } => (
-            count.width.value,
+        VariableEncodingShape::CountedBytes {
+            count,
+            min_len,
+            max_len,
+        } => (
+            count
+                .width
+                .value
+                .checked_add(min_len.value)
+                .ok_or_else(|| input.error("counted_bytes minimum field length overflows usize"))?,
             count.width.value.checked_add(max_len.value),
             false,
         ),
@@ -1333,9 +1379,41 @@ fn variable_bounds(
         VariableEncodingShape::Tagged(tagged) => {
             (tagged.min_len.value, Some(tagged.max_len.value), false)
         }
-        VariableEncodingShape::SemanticPayload { min_len, max_len } => {
-            (min_len.value, Some(max_len.value), false)
-        }
+        VariableEncodingShape::LengthPrefixedRecords {
+            record_len,
+            length,
+            max_len,
+            ..
+        } => (
+            record_len
+                .width
+                .value
+                .checked_add(length.width.value)
+                .ok_or_else(|| {
+                    input.error("length_prefixed_records prefix length overflows usize")
+                })?,
+            record_len
+                .width
+                .value
+                .checked_add(length.width.value)
+                .and_then(|prefix| prefix.checked_add(max_len.value)),
+            false,
+        ),
+        VariableEncodingShape::TaggedItems(tagged) => (
+            tagged
+                .tag
+                .width
+                .value
+                .checked_add(tagged.length.width.value)
+                .ok_or_else(|| input.error("tagged_items prefix length overflows usize"))?,
+            tagged
+                .tag
+                .width
+                .value
+                .checked_add(tagged.length.width.value)
+                .and_then(|prefix| prefix.checked_add(tagged.max_len.value)),
+            false,
+        ),
         VariableEncodingShape::TrailingBytes { min_len, max_len } => {
             (min_len.value, Some(max_len.value), true)
         }
@@ -1362,6 +1440,35 @@ fn validate_range(
     } else {
         Ok(())
     }
+}
+
+fn next_label_is(input: ParseStream<'_>, expected: &str) -> syn::Result<bool> {
+    if !input.peek(syn::Ident) {
+        return Ok(false);
+    }
+    let fork = input.fork();
+    Ok(fork.parse::<syn::Ident>()? == expected)
+}
+
+fn validate_integer_capacity(
+    input: ParseStream<'_>,
+    label: &str,
+    wire_type: &WireType,
+    maximum: usize,
+) -> syn::Result<()> {
+    let width = wire_type.width.value;
+    if width == 0 {
+        return Err(input.error(format!("{label} wire width must be nonzero")));
+    }
+    if width < core::mem::size_of::<usize>() {
+        let capacity = (1usize << (width * u8::BITS as usize)) - 1;
+        if maximum > capacity {
+            return Err(input.error(format!(
+                "{label} maximum {maximum} does not fit in {width} bytes"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> {
@@ -1453,6 +1560,71 @@ fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> 
         variants: parsed_variants,
         min_len: declared_min,
         max_len: declared_max,
+    })
+}
+
+fn parse_tagged_items_encoding(input: ParseStream<'_>) -> syn::Result<TaggedItemsEncoding> {
+    let tag = parse_wire_type(input, "tag")?;
+    let length = parse_wire_type(input, "length")?;
+    parse_colon_label(input, "variants")?;
+    let variants;
+    syn::braced!(variants in input);
+    input.parse::<syn::Token![,]>()?;
+
+    let mut tags = BTreeSet::new();
+    let mut parsed_variants = Vec::new();
+    while !variants.is_empty() {
+        let variant_tag = parse_integer_literal_value(&variants)?;
+        if !tags.insert(variant_tag.value) {
+            return Err(variants.error(format!(
+                "duplicate tagged_items variant value {:#x}",
+                variant_tag.value,
+            )));
+        }
+        validate_integer_capacity(&variants, "tagged_items tag", &tag, variant_tag.value)?;
+        variants.parse::<syn::Token![=>]>()?;
+
+        let body;
+        syn::braced!(body in variants);
+        let item = parse_wire_type(&body, "item")?;
+        if item.width.value == 0 {
+            return Err(body.error("tagged_items item wire width must be nonzero"));
+        }
+        let max_items = parse_integer_value(&body, "max_items")?;
+        if !body.is_empty() {
+            return Err(body.error("unexpected tokens after tagged_items variant"));
+        }
+        parsed_variants.push(TaggedItemsVariant {
+            tag: variant_tag,
+            item,
+            max_items,
+        });
+        variants.parse::<syn::Token![,]>()?;
+    }
+    if parsed_variants.is_empty() {
+        return Err(input.error("tagged_items must declare at least one variant"));
+    }
+
+    let max_len = parse_integer_value(input, "max_len")?;
+    validate_integer_capacity(input, "tagged_items byte length", &length, max_len.value)?;
+    for variant in &parsed_variants {
+        let expected = max_len.value / variant.item.width.value;
+        if variant.max_items.value != expected {
+            return Err(input.error(format!(
+                "tagged_items variant {:#x} declares {} items, but max_len {} and item width {} allow {expected}",
+                variant.tag.value,
+                variant.max_items.value,
+                max_len.value,
+                variant.item.width.value,
+            )));
+        }
+    }
+
+    Ok(TaggedItemsEncoding {
+        tag,
+        length,
+        variants: parsed_variants,
+        max_len,
     })
 }
 
@@ -1608,10 +1780,16 @@ mod tests {
             panic!("expected a variable encoding");
         };
         assert_eq!((encoding.min_len, encoding.max_len), (1, 17));
-        let VariableEncodingShape::CountedBytes { count, max_len } = &encoding.shape else {
+        let VariableEncodingShape::CountedBytes {
+            count,
+            min_len,
+            max_len,
+        } = &encoding.shape
+        else {
             panic!("expected typed counted-bytes metadata");
         };
         assert_eq!(count.width.value, 1);
+        assert_eq!(min_len.value, 0);
         assert_eq!(max_len.value, 16);
         let constraints = command.constraints.as_ref().unwrap();
         assert_eq!(
@@ -1656,16 +1834,32 @@ mod tests {
                         },
                     };
                 }
-                Semantic(0x0004) {
+                Records(0x0004) {
                     Payload = {
-                        value: SemanticValue => {
-                            kind: payload,
-                            min_len: 1,
-                            max_len: 4,
+                        value: Records => {
+                            kind: length_prefixed_records,
+                            record_len: u8 => 1,
+                            length: u8 => 1,
+                            min_record_len: 2,
+                            max_len: 8,
                         },
                     };
                 }
-                Trailing(0x0005) {
+                TaggedItems(0x0005) {
+                    Payload = {
+                        value: TaggedItems => {
+                            kind: tagged_items,
+                            tag: u8 => 1,
+                            length: u8 => 1,
+                            variants: {
+                                1 => { item: Short => 2, max_items: 4, },
+                                2 => { item: Long => 4, max_items: 2, },
+                            },
+                            max_len: 8,
+                        },
+                    };
+                }
+                Trailing(0x0006) {
                     Payload = {
                         value: BoundedBytes<4> => {
                             kind: trailing_bytes,
@@ -1678,7 +1872,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(catalog.events.len(), 5);
+        assert_eq!(catalog.events.len(), 6);
         assert!(matches!(catalog.events[0].payload, EventPayload::Unit));
         assert_eq!(catalog.events[1].code, 0x0002);
         assert_eq!(catalog.events[1].attrs.len(), 1);
@@ -1689,14 +1883,21 @@ mod tests {
             ),
             (3, 11),
         );
-        let semantic = catalog.events[3].payload.fields().unwrap();
-        assert!(semantic.contains_semantic_payload());
-        let FieldEncoding::Variable(encoding) = &semantic.fields()[0].encoding else {
-            panic!("expected semantic variable payload");
+        let records = catalog.events[3].payload.fields().unwrap();
+        let FieldEncoding::Variable(encoding) = &records.fields()[0].encoding else {
+            panic!("expected record encoding");
         };
         assert!(matches!(
             encoding.shape,
-            VariableEncodingShape::SemanticPayload { .. }
+            VariableEncodingShape::LengthPrefixedRecords { .. }
+        ));
+        let tagged = catalog.events[4].payload.fields().unwrap();
+        let FieldEncoding::Variable(encoding) = &tagged.fields()[0].encoding else {
+            panic!("expected tagged item encoding");
+        };
+        assert!(matches!(
+            encoding.shape,
+            VariableEncodingShape::TaggedItems(_)
         ));
     }
 
@@ -1723,6 +1924,10 @@ mod tests {
             (
                 "NoDecoder(1) { Payload = { bitmap: u8 => 1, values: BoundedItems<Item, 1> => { kind: bitmap_items, bitmap: bitmap, mask: 0x01, item: Item => 1, max_items: 1, }, }; }",
                 "no owned decoder",
+            ),
+            (
+                "Removed(1) { Payload = { value: Value => { kind: payload, min_len: 1, max_len: 2, }, }; }",
+                "unknown declarative variable kind `payload`",
             ),
         ] {
             let error = syn::parse_str::<VendorEvents>(source)

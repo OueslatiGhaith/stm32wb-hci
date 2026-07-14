@@ -514,7 +514,8 @@ fn map_declarative_decode_error(
 ) -> bt_hci::FromHciBytesError {
     match error {
         crate::wire::DecodeError::Field(error) => error,
-        crate::wire::DecodeError::CountTooLarge { .. } => bt_hci::FromHciBytesError::InvalidValue,
+        crate::wire::DecodeError::CountTooLarge { .. }
+        | crate::wire::DecodeError::CountTooSmall { .. } => bt_hci::FromHciBytesError::InvalidValue,
         crate::wire::DecodeError::Truncated { .. }
         | crate::wire::DecodeError::LengthOutOfRange { .. }
         | crate::wire::DecodeError::SizeOverflow { .. } => bt_hci::FromHciBytesError::InvalidSize,
@@ -529,7 +530,7 @@ where
     T: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
     C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
 {
-    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MAX_LEN>(
+    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, 0, MAX_LEN>(
         data,
         |bytes| C::from_hci_field(bytes).map(HciCount::to_usize),
         <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,

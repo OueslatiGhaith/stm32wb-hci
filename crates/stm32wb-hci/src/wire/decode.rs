@@ -158,6 +158,8 @@ pub(crate) enum DecodeError<E> {
     Truncated { required: usize },
     /// A count exceeded the maximum declared by the schema.
     CountTooLarge { actual: usize, maximum: usize },
+    /// A count was below the minimum declared by the schema.
+    CountTooSmall { actual: usize, minimum: usize },
     /// A remaining-byte field was outside its inclusive length range.
     LengthOutOfRange {
         actual: usize,
@@ -187,12 +189,24 @@ pub(crate) fn decode_fixed_field<T, E, const N: usize>(
 }
 
 /// Decode a count-prefixed byte field and construct its owned representation.
-pub(crate) fn decode_counted_bytes<T, E, const COUNT_LEN: usize, const MAX_LEN: usize>(
+pub(crate) fn decode_counted_bytes<
+    T,
+    E,
+    const COUNT_LEN: usize,
+    const MIN_LEN: usize,
+    const MAX_LEN: usize,
+>(
     data: &[u8],
     decode_count: impl FnOnce(&[u8; COUNT_LEN]) -> Result<usize, E>,
     build: impl FnOnce(&[u8]) -> T,
 ) -> Result<(T, &[u8]), DecodeError<E>> {
     let (len, after_count) = decode_fixed_field(data, decode_count)?;
+    if len < MIN_LEN {
+        return Err(DecodeError::CountTooSmall {
+            actual: len,
+            minimum: MIN_LEN,
+        });
+    }
     if len > MAX_LEN {
         return Err(DecodeError::CountTooLarge {
             actual: len,
@@ -207,6 +221,83 @@ pub(crate) fn decode_counted_bytes<T, E, const COUNT_LEN: usize, const MAX_LEN: 
 
     let (value, rest) = after_count.split_at(len);
     Ok((build(value), rest))
+}
+
+/// Decode a fixed prefix and byte length followed by that many raw bytes.
+type PrefixedBytesResult<'a, P, E> = Result<(P, &'a [u8], &'a [u8]), DecodeError<E>>;
+
+pub(crate) fn decode_prefixed_bytes<
+    'a,
+    P,
+    E,
+    const PREFIX_LEN: usize,
+    const LENGTH_LEN: usize,
+    const MAX_LEN: usize,
+>(
+    data: &'a [u8],
+    decode_prefix: impl FnOnce(&[u8; PREFIX_LEN]) -> Result<P, E>,
+    decode_length: impl FnOnce(&[u8; LENGTH_LEN]) -> Result<usize, E>,
+) -> PrefixedBytesResult<'a, P, E> {
+    let prefix_len = PREFIX_LEN
+        .checked_add(LENGTH_LEN)
+        .ok_or(DecodeError::SizeOverflow {
+            actual: PREFIX_LEN,
+            maximum: usize::MAX,
+        })?;
+    if data.len() < prefix_len {
+        return Err(DecodeError::Truncated {
+            required: prefix_len,
+        });
+    }
+
+    let (prefix, after_prefix) = decode_fixed_field(data, decode_prefix)?;
+    let (len, after_length) = decode_fixed_field(after_prefix, decode_length)?;
+    if len > MAX_LEN {
+        return Err(DecodeError::CountTooLarge {
+            actual: len,
+            maximum: MAX_LEN,
+        });
+    }
+    if after_length.len() < len {
+        return Err(DecodeError::Truncated {
+            required: prefix_len + len,
+        });
+    }
+
+    let (bytes, rest) = after_length.split_at(len);
+    Ok((prefix, bytes, rest))
+}
+
+/// Decode an exact raw byte slice into homogeneous fixed-width items.
+pub(crate) fn decode_fixed_items<
+    T,
+    Item: Copy,
+    E,
+    const ITEM_LEN: usize,
+    const MAX_ITEMS: usize,
+>(
+    data: &[u8],
+    decode_item: impl Fn(&[u8; ITEM_LEN]) -> Result<Item, E>,
+    invalid_layout: impl FnOnce() -> E,
+    padding: Item,
+    build: impl FnOnce([Item; MAX_ITEMS], usize) -> T,
+) -> Result<T, DecodeError<E>> {
+    if ITEM_LEN == 0 || !data.len().is_multiple_of(ITEM_LEN) {
+        return Err(DecodeError::Field(invalid_layout()));
+    }
+    let len = data.len() / ITEM_LEN;
+    if len > MAX_ITEMS {
+        return Err(DecodeError::Field(invalid_layout()));
+    }
+
+    let mut items = [padding; MAX_ITEMS];
+    for (slot, bytes) in items.iter_mut().zip(data.chunks_exact(ITEM_LEN)) {
+        let bytes = bytes
+            .try_into()
+            .expect("chunks_exact returned the declared item width");
+        *slot = decode_item(bytes).map_err(DecodeError::Field)?;
+    }
+    Ok(build(items, len))
 }
 
 /// Decode all remaining bytes when their length is within the declared range.

@@ -4,7 +4,6 @@
 //! vendor-specific events by the Bluetooth HCI. This module defines those events and functions to
 //! deserialize buffers into them.
 
-use byteorder::{ByteOrder, LittleEndian};
 use core::cmp::PartialEq;
 use core::convert::{TryFrom, TryInto};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
@@ -346,6 +345,71 @@ pub trait HciEventField<const N: usize>: Sized {
     fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, Error>;
 }
 
+/// Event-specific diagnostics for a count-prefixed byte-field target.
+#[doc(hidden)]
+pub trait HciEventCountedBytesTarget<
+    C,
+    const COUNT_LEN: usize,
+    const MIN_LEN: usize,
+    const MAX_LEN: usize,
+>: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>
+{
+    fn truncated_counted_bytes_error(
+        _declared_len: Option<usize>,
+        _actual: usize,
+        _required: usize,
+    ) -> Option<Error> {
+        None
+    }
+
+    fn counted_bytes_bound_error(_actual: usize, _bound: usize) -> Option<Error> {
+        None
+    }
+
+    fn validate_counted_bytes_len(_len: usize) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+impl<C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
+    HciEventCountedBytesTarget<C, COUNT_LEN, MIN_LEN, MAX_LEN> for BoundedBytes<MAX_LEN>
+{
+}
+
+/// Owned target for a record-width and byte-length prefixed event field.
+#[doc(hidden)]
+pub trait HciEventRecordTarget<const MIN_RECORD_LEN: usize, const MAX_LEN: usize>: Sized {
+    fn invalid_record_layout() -> Error;
+
+    fn prefixed_record_length_error(_actual: usize, _required: usize) -> Option<Error> {
+        None
+    }
+
+    fn from_event_records(record_len: usize, records: &[u8]) -> Self;
+}
+
+/// Owned target that reports an unknown tag in a `tagged_items` event field.
+#[doc(hidden)]
+pub trait HciEventTaggedItemsTarget<Tag>: Sized {
+    fn unknown_tag(tag: Tag) -> Error;
+
+    fn truncated_tagged_items_error(_actual: usize, _required: usize) -> Option<Error> {
+        None
+    }
+}
+
+/// One tag-selected fixed-width item representation for an owned event field.
+#[doc(hidden)]
+pub trait HciEventTaggedItemsVariant<Tag, Item: Copy, const ITEM_LEN: usize, const MAX_ITEMS: usize>:
+    Sized
+{
+    fn padding() -> Item;
+
+    fn invalid_items(tag: Tag) -> Error;
+
+    fn from_tagged_items(tag: Tag, items: [Item; MAX_ITEMS], len: usize) -> Self;
+}
+
 macro_rules! impl_hci_event_integer_field {
     ($ty:ty, $len:literal) => {
         impl HciEventField<$len> for $ty {
@@ -414,6 +478,9 @@ fn map_event_decode_error(
         | crate::wire::DecodeError::SizeOverflow { actual, maximum } => {
             Error::BadLength(actual, maximum)
         }
+        crate::wire::DecodeError::CountTooSmall { actual, minimum } => {
+            Error::BadLength(actual, minimum)
+        }
         crate::wire::DecodeError::LengthOutOfRange {
             actual,
             minimum,
@@ -422,20 +489,59 @@ fn map_event_decode_error(
     }
 }
 
-fn decode_hci_event_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize>(
+fn decode_hci_event_counted_bytes<
+    T,
+    C,
+    const COUNT_LEN: usize,
+    const MIN_LEN: usize,
+    const MAX_LEN: usize,
+>(
     data: &[u8],
     original_len: usize,
 ) -> Result<(T, &[u8]), Error>
 where
-    T: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
+    T: HciEventCountedBytesTarget<C, COUNT_LEN, MIN_LEN, MAX_LEN>,
     C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
-    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MAX_LEN>(
+    let (value, rest) = crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MIN_LEN, MAX_LEN>(
         data,
         |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
         <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,
     )
-    .map_err(|error| map_event_decode_error(error, data.len(), original_len))
+    .map_err(|error| {
+        match &error {
+            crate::wire::DecodeError::Truncated { required } => {
+                let prefix_len = if data.len() >= COUNT_LEN {
+                    COUNT_LEN
+                } else {
+                    0
+                };
+                let actual = data.len().saturating_sub(prefix_len);
+                let required = required.saturating_sub(prefix_len);
+                let declared_len = (prefix_len == COUNT_LEN).then_some(required);
+                if let Some(error) =
+                    T::truncated_counted_bytes_error(declared_len, actual, required)
+                {
+                    return error;
+                }
+            }
+            crate::wire::DecodeError::CountTooLarge { actual, maximum } => {
+                if let Some(error) = T::counted_bytes_bound_error(*actual, *maximum) {
+                    return error;
+                }
+            }
+            crate::wire::DecodeError::CountTooSmall { actual, minimum } => {
+                if let Some(error) = T::counted_bytes_bound_error(*actual, *minimum) {
+                    return error;
+                }
+            }
+            _ => {}
+        }
+        map_event_decode_error(error, data.len(), original_len)
+    })?;
+    let len = data.len() - rest.len() - COUNT_LEN;
+    T::validate_counted_bytes_len(len)?;
+    Ok((value, rest))
 }
 
 fn decode_hci_event_counted_items<
@@ -460,6 +566,110 @@ where
         Item::from_hci_event_field,
     )
     .map_err(|error| map_event_decode_error(error, data.len(), original_len))
+}
+
+fn decode_hci_event_length_prefixed_records<
+    T,
+    RecordLen,
+    Length,
+    const RECORD_LEN_WIDTH: usize,
+    const LENGTH_WIDTH: usize,
+    const MIN_RECORD_LEN: usize,
+    const MAX_LEN: usize,
+>(
+    data: &[u8],
+    original_len: usize,
+) -> Result<(T, &[u8]), Error>
+where
+    T: HciEventRecordTarget<MIN_RECORD_LEN, MAX_LEN>,
+    RecordLen: HciEventField<RECORD_LEN_WIDTH> + HciCount<RECORD_LEN_WIDTH>,
+    Length: HciEventField<LENGTH_WIDTH> + HciCount<LENGTH_WIDTH>,
+{
+    let (record_len, records, rest) =
+        crate::wire::decode_prefixed_bytes::<usize, _, RECORD_LEN_WIDTH, LENGTH_WIDTH, MAX_LEN>(
+            data,
+            |bytes| RecordLen::from_hci_event_field(bytes).map(HciCount::to_usize),
+            |bytes| Length::from_hci_event_field(bytes).map(HciCount::to_usize),
+        )
+        .map_err(|error| {
+            let required = match &error {
+                crate::wire::DecodeError::Truncated { required } => Some(*required),
+                crate::wire::DecodeError::CountTooLarge { actual, .. } => RECORD_LEN_WIDTH
+                    .checked_add(LENGTH_WIDTH)
+                    .and_then(|prefix| prefix.checked_add(*actual)),
+                _ => None,
+            };
+            if let Some(error) =
+                required.and_then(|required| T::prefixed_record_length_error(data.len(), required))
+            {
+                return error;
+            }
+            map_event_decode_error(error, data.len(), original_len)
+        })?;
+
+    if record_len < MIN_RECORD_LEN || !records.len().is_multiple_of(record_len) {
+        return Err(T::invalid_record_layout());
+    }
+    Ok((T::from_event_records(record_len, records), rest))
+}
+
+fn decode_hci_event_prefixed_bytes<
+    T,
+    Tag,
+    Length,
+    const TAG_WIDTH: usize,
+    const LENGTH_WIDTH: usize,
+    const MAX_LEN: usize,
+>(
+    data: &[u8],
+    original_len: usize,
+) -> Result<(Tag, &[u8], &[u8]), Error>
+where
+    T: HciEventTaggedItemsTarget<Tag>,
+    Tag: HciEventField<TAG_WIDTH>,
+    Length: HciEventField<LENGTH_WIDTH> + HciCount<LENGTH_WIDTH>,
+{
+    crate::wire::decode_prefixed_bytes::<Tag, _, TAG_WIDTH, LENGTH_WIDTH, MAX_LEN>(
+        data,
+        Tag::from_hci_event_field,
+        |bytes| Length::from_hci_event_field(bytes).map(HciCount::to_usize),
+    )
+    .map_err(|error| {
+        let custom_error = match &error {
+            crate::wire::DecodeError::Truncated { required } => {
+                T::truncated_tagged_items_error(data.len(), *required)
+            }
+            _ => None,
+        };
+        if let Some(error) = custom_error {
+            return error;
+        }
+        map_event_decode_error(error, data.len(), original_len)
+    })
+}
+
+fn decode_hci_event_tagged_items_variant<
+    T,
+    Tag: Copy,
+    Item,
+    const ITEM_LEN: usize,
+    const MAX_ITEMS: usize,
+>(
+    tag: Tag,
+    records: &[u8],
+) -> Result<T, Error>
+where
+    T: HciEventTaggedItemsVariant<Tag, Item, ITEM_LEN, MAX_ITEMS>,
+    Item: Copy + HciEventField<ITEM_LEN>,
+{
+    crate::wire::decode_fixed_items(
+        records,
+        Item::from_hci_event_field,
+        || T::invalid_items(tag),
+        T::padding(),
+        |items, len| T::from_tagged_items(tag, items, len),
+    )
+    .map_err(|error| map_event_decode_error(error, records.len(), records.len()))
 }
 
 #[allow(dead_code)]
@@ -639,9 +849,9 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             _data: EmptyL2CapData => {
-                kind: payload,
-                min_len: 1,
-                max_len: 251,
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 250,
             },
         };
     }
@@ -695,9 +905,10 @@ stm32wb_hci_macros::vendor_event! {
             initial_credits: u16 => 2,
             result: u16 => 2,
             channel_indices: L2CapChannelIndices<0, 242> => {
-                kind: payload,
-                min_len: 1,
-                max_len: 243,
+                kind: counted_bytes,
+                count: u8 => 1,
+                min_len: 0,
+                max_len: 242,
             },
         };
     }
@@ -710,9 +921,10 @@ stm32wb_hci_macros::vendor_event! {
             mtu: u16 => 2,
             mps: u16 => 2,
             channel_indices: L2CapChannelIndices<1, 246> => {
-                kind: payload,
-                min_len: 2,
-                max_len: 247,
+                kind: counted_bytes,
+                count: u8 => 1,
+                min_len: 1,
+                max_len: 246,
             },
         };
     }
@@ -804,9 +1016,20 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             handle_uuid_pairs: HandleUuidPairs => {
-                kind: payload,
-                min_len: 2,
-                max_len: 251,
+                kind: tagged_items,
+                tag: u8 => 1,
+                length: u8 => 1,
+                variants: {
+                    0x01 => {
+                        item: HandleUuid16Pair => 4,
+                        max_items: 62,
+                    },
+                    0x02 => {
+                        item: HandleUuid128Pair => 18,
+                        max_items: 13,
+                    },
+                },
+                max_len: 249,
             },
         };
     }
@@ -827,9 +1050,11 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             pairs: HandleValuePairs => {
-                kind: payload,
-                min_len: 2,
-                max_len: 251,
+                kind: length_prefixed_records,
+                record_len: u8 => 1,
+                length: u8 => 1,
+                min_record_len: 2,
+                max_len: 249,
             },
         };
     }
@@ -876,9 +1101,11 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             groups: AttributeGroups => {
-                kind: payload,
-                min_len: 2,
-                max_len: 251,
+                kind: length_prefixed_records,
+                record_len: u8 => 1,
+                length: u8 => 1,
+                min_record_len: 4,
+                max_len: 249,
             },
         };
     }
@@ -1223,15 +1450,49 @@ fn to_l2cap_connection_update_accepted_result(
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptyL2CapData;
 
-impl EmptyL2CapData {
-    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
-        let Some((&count, rest)) = data.split_first() else {
-            return Err(Error::BadLength(0, 1));
-        };
-        if count != 0 {
-            return Err(Error::Vendor(VendorError::BadL2CapDataLength(count, 0)));
+impl HciDecodeCountedBytes<u8, 1, 250> for EmptyL2CapData {
+    fn from_counted_bytes(_bytes: &[u8]) -> Self {
+        Self
+    }
+}
+
+impl HciEventCountedBytesTarget<u8, 1, 0, 250> for EmptyL2CapData {
+    fn truncated_counted_bytes_error(
+        declared_len: Option<usize>,
+        actual: usize,
+        required: usize,
+    ) -> Option<Error> {
+        Some(if let Some(declared_len) = declared_len {
+            Error::Vendor(VendorError::BadL2CapDataLength(
+                declared_len
+                    .try_into()
+                    .expect("the declared u8 count cannot exceed u8::MAX"),
+                0,
+            ))
+        } else {
+            Error::BadLength(actual, required)
+        })
+    }
+
+    fn counted_bytes_bound_error(actual: usize, _bound: usize) -> Option<Error> {
+        Some(Error::Vendor(VendorError::BadL2CapDataLength(
+            actual
+                .try_into()
+                .expect("the declared u8 count cannot exceed u8::MAX"),
+            0,
+        )))
+    }
+
+    fn validate_counted_bytes_len(len: usize) -> Result<(), Error> {
+        if len == 0 {
+            Ok(())
+        } else {
+            Err(Error::Vendor(VendorError::BadL2CapDataLength(
+                len.try_into()
+                    .expect("the declared u8 count cannot exceed u8::MAX"),
+                0,
+            )))
         }
-        Ok((Self, rest))
     }
 }
 
@@ -1250,22 +1511,26 @@ impl<const MIN: usize, const MAX: usize> L2CapChannelIndices<MIN, MAX> {
     }
 }
 
-impl<const MIN: usize, const MAX: usize> L2CapChannelIndices<MIN, MAX> {
-    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
-        let Some((&count, data)) = data.split_first() else {
-            return Err(Error::BadLength(0, 1));
-        };
-        let len = usize::from(count);
-        if !(MIN..=MAX).contains(&len) {
-            return Err(Error::BadLength(len, if len < MIN { MIN } else { MAX }));
-        }
-        if data.len() < len {
-            return Err(Error::BadLength(data.len(), len));
-        }
-        let (value, rest) = data.split_at(len);
+impl<const MIN: usize, const MAX: usize> HciDecodeCountedBytes<u8, 1, MAX>
+    for L2CapChannelIndices<MIN, MAX>
+{
+    fn from_counted_bytes(value: &[u8]) -> Self {
+        let len = value.len();
         let mut indices = [0; MAX];
         indices[..len].copy_from_slice(value);
-        Ok((Self { indices, len }, rest))
+        Self { indices, len }
+    }
+}
+
+impl<const MIN: usize, const MAX: usize> HciEventCountedBytesTarget<u8, 1, MIN, MAX>
+    for L2CapChannelIndices<MIN, MAX>
+{
+    fn truncated_counted_bytes_error(
+        _declared_len: Option<usize>,
+        actual: usize,
+        required: usize,
+    ) -> Option<Error> {
+        Some(Error::BadLength(actual, required))
     }
 }
 
@@ -1557,6 +1822,26 @@ pub struct HandleUuid128Pair {
     pub uuid: Uuid128,
 }
 
+impl HciEventField<4> for HandleUuid16Pair {
+    fn from_hci_event_field(bytes: &[u8; 4]) -> Result<Self, Error> {
+        Ok(Self {
+            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
+            uuid: Uuid16(u16::from_le_bytes([bytes[2], bytes[3]])),
+        })
+    }
+}
+
+impl HciEventField<18> for HandleUuid128Pair {
+    fn from_hci_event_field(bytes: &[u8; 18]) -> Result<Self, Error> {
+        let mut uuid = [0; 16];
+        uuid.copy_from_slice(&bytes[2..]);
+        Ok(Self {
+            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
+            uuid: Uuid128(uuid),
+        })
+    }
+}
+
 /// Newtype for the 16-bit UUID buffer.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1575,27 +1860,59 @@ pub enum HandleUuidPairs {
     Format128(usize, [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT]),
 }
 
-impl HandleUuidPairs {
-    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
-        if data.len() < 2 {
-            return Err(Error::BadLength(data.len(), 2));
+impl HciEventTaggedItemsTarget<u8> for HandleUuidPairs {
+    fn unknown_tag(tag: u8) -> Error {
+        Error::Vendor(VendorError::BadAttFindInformationResponseFormat(tag))
+    }
+
+    fn truncated_tagged_items_error(actual: usize, required: usize) -> Option<Error> {
+        Some(Error::BadLength(actual, required))
+    }
+}
+
+impl HciEventTaggedItemsVariant<u8, HandleUuid16Pair, 4, MAX_FORMAT16_PAIR_COUNT>
+    for HandleUuidPairs
+{
+    fn padding() -> HandleUuid16Pair {
+        HandleUuid16Pair {
+            handle: AttributeHandle(0),
+            uuid: Uuid16(0),
         }
-        let format = data[0];
-        let len = usize::from(data[1]);
-        if len > 249 {
-            return Err(Error::BadLength(len, 249));
+    }
+
+    fn invalid_items(_tag: u8) -> Error {
+        Error::Vendor(VendorError::AttFindInformationResponsePartialPair16)
+    }
+
+    fn from_tagged_items(
+        _tag: u8,
+        items: [HandleUuid16Pair; MAX_FORMAT16_PAIR_COUNT],
+        len: usize,
+    ) -> Self {
+        Self::Format16(len, items)
+    }
+}
+
+impl HciEventTaggedItemsVariant<u8, HandleUuid128Pair, 18, MAX_FORMAT128_PAIR_COUNT>
+    for HandleUuidPairs
+{
+    fn padding() -> HandleUuid128Pair {
+        HandleUuid128Pair {
+            handle: AttributeHandle(0),
+            uuid: Uuid128([0; 16]),
         }
-        if data.len() < 2 + len {
-            return Err(Error::BadLength(data.len(), 2 + len));
-        }
-        let (pairs, rest) = data[2..].split_at(len);
-        let value = match format {
-            1 => to_handle_uuid16_pairs(pairs),
-            2 => to_handle_uuid128_pairs(pairs),
-            value => Err(VendorError::BadAttFindInformationResponseFormat(value)),
-        }
-        .map_err(Error::Vendor)?;
-        Ok((value, rest))
+    }
+
+    fn invalid_items(_tag: u8) -> Error {
+        Error::Vendor(VendorError::AttFindInformationResponsePartialPair128)
+    }
+
+    fn from_tagged_items(
+        _tag: u8,
+        items: [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT],
+        len: usize,
+    ) -> Self {
+        Self::Format128(len, items)
     }
 }
 
@@ -1678,57 +1995,11 @@ impl<'a> Iterator for HandleUuid128PairIterator<'a> {
     }
 }
 
-// [0x4, 0xc, 0x1, 0x8, 0x1, 0x8, 0x12, 0x0, 0x3, 0x5, 0x13, 0x0, 0x2, 0x29]
-
-fn to_handle_uuid16_pairs(buffer: &[u8]) -> Result<HandleUuidPairs, VendorError> {
-    const PAIR_LEN: usize = 4;
-    if !buffer.len().is_multiple_of(PAIR_LEN) {
-        return Err(VendorError::AttFindInformationResponsePartialPair16);
-    }
-
-    let count = buffer.len() / PAIR_LEN;
-    let mut pairs = [HandleUuid16Pair {
-        handle: AttributeHandle(0),
-        uuid: Uuid16(0),
-    }; MAX_FORMAT16_PAIR_COUNT];
-    for (i, pair) in pairs.iter_mut().enumerate().take(count) {
-        let index = i * PAIR_LEN;
-        pair.handle = AttributeHandle(LittleEndian::read_u16(&buffer[index..]));
-        pair.uuid = Uuid16(LittleEndian::read_u16(&buffer[2 + index..]));
-    }
-
-    Ok(HandleUuidPairs::Format16(count, pairs))
-}
-
-fn to_handle_uuid128_pairs(buffer: &[u8]) -> Result<HandleUuidPairs, VendorError> {
-    const PAIR_LEN: usize = 18;
-    if !buffer.len().is_multiple_of(PAIR_LEN) {
-        return Err(VendorError::AttFindInformationResponsePartialPair128);
-    }
-
-    let count = buffer.len() / PAIR_LEN;
-    let mut pairs = [HandleUuid128Pair {
-        handle: AttributeHandle(0),
-        uuid: Uuid128([0; 16]),
-    }; MAX_FORMAT128_PAIR_COUNT];
-    for (i, pair) in pairs.iter_mut().enumerate().take(count) {
-        let index = i * PAIR_LEN;
-        let next_index = (i + 1) * PAIR_LEN;
-        pair.handle = AttributeHandle(LittleEndian::read_u16(&buffer[index..]));
-        pair.uuid.0.copy_from_slice(&buffer[2 + index..next_index]);
-    }
-
-    Ok(HandleUuidPairs::Format128(count, pairs))
-}
-
 impl AttFindByTypeValueResponse {
     /// Returns an iterator over the Handles Information List as defined in Bluetooth Core v4.1
     /// spec.
-    pub fn handle_pairs_iter(&self) -> HandleInfoPairIterator<'_> {
-        HandleInfoPairIterator {
-            event: self,
-            next_index: 0,
-        }
+    pub fn handle_pairs_iter(&self) -> impl Iterator<Item = HandleInfoPair> + '_ {
+        self.handles.as_slice().iter().copied()
     }
 }
 
@@ -1768,28 +2039,6 @@ impl crate::vendor::command::HciDecodeField<4> for HandleInfoPair {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupEndHandle(pub u16);
 
-/// Iterator into valid [`HandleInfoPair`] structs returned in the
-/// [ATT Find By Type Value Response](AttFindByTypeValueResponse) event.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HandleInfoPairIterator<'a> {
-    event: &'a AttFindByTypeValueResponse,
-    next_index: usize,
-}
-
-impl<'a> Iterator for HandleInfoPairIterator<'a> {
-    type Item = HandleInfoPair;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.event.handles.len() {
-            return None;
-        }
-
-        let index = self.next_index;
-        self.next_index += 1;
-        Some(self.event.handles.as_slice()[index])
-    }
-}
-
 /// Owned ATT handle-value records decoded from a Read By Type response.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1799,68 +2048,37 @@ pub struct HandleValuePairs {
     value_len: usize,
 }
 
-impl HandleValuePairs {
-    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
-        if data.len() < 2 {
-            return Err(Error::BadLength(data.len(), 2));
-        }
-        let pair_len = usize::from(data[0]);
-        let len = usize::from(data[1]);
-        if len > 249 || data.len() < 2 + len {
-            return Err(Error::BadLength(data.len(), 2 + len));
-        }
-        if pair_len < 2 || !len.is_multiple_of(pair_len) {
-            return Err(Error::Vendor(VendorError::AttReadByTypeResponsePartial));
-        }
-        let (records, rest) = data[2..].split_at(len);
+impl HciEventRecordTarget<2, 249> for HandleValuePairs {
+    fn invalid_record_layout() -> Error {
+        Error::Vendor(VendorError::AttReadByTypeResponsePartial)
+    }
+
+    fn prefixed_record_length_error(actual: usize, required: usize) -> Option<Error> {
+        Some(Error::BadLength(actual, required))
+    }
+
+    fn from_event_records(pair_len: usize, records: &[u8]) -> Self {
+        let len = records.len();
         let mut value = [0; 249];
         value[..len].copy_from_slice(records);
-        Ok((
-            Self {
-                data: value,
-                len,
-                value_len: pair_len - 2,
-            },
-            rest,
-        ))
+        Self {
+            data: value,
+            len,
+            value_len: pair_len - 2,
+        }
     }
 }
 
 impl AttReadByTypeResponse {
     /// Return an iterator over all valid handle-value pairs returned with the response.
-    pub fn handle_value_pair_iter(&self) -> HandleValuePairIterator<'_> {
-        HandleValuePairIterator {
-            event: self,
-            index: 0,
-        }
-    }
-}
-
-/// Iterator over the valid handle-value pairs returned with the
-/// [ATT Read by Type response](AttReadByTypeResponse).
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HandleValuePairIterator<'a> {
-    event: &'a AttReadByTypeResponse,
-    index: usize,
-}
-
-impl<'a> Iterator for HandleValuePairIterator<'a> {
-    type Item = HandleValuePair<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.event.pairs.len {
-            return None;
-        }
-
-        let handle_index = self.index;
-        let value_index = self.index + 2;
-        self.index += 2 + self.event.pairs.value_len;
-        let next_index = self.index;
-        Some(HandleValuePair {
-            handle: AttributeHandle(LittleEndian::read_u16(
-                &self.event.pairs.data[handle_index..],
-            )),
-            value: &self.event.pairs.data[value_index..next_index],
-        })
+    pub fn handle_value_pair_iter(&self) -> impl Iterator<Item = HandleValuePair<'_>> {
+        let record_len = self.pairs.value_len + 2;
+        self.pairs.data[..self.pairs.len]
+            .chunks_exact(record_len)
+            .map(|record| HandleValuePair {
+                handle: AttributeHandle(u16::from_le_bytes([record[0], record[1]])),
+                value: &record[2..],
+            })
     }
 }
 
@@ -1876,7 +2094,7 @@ pub struct HandleValuePair<'a> {
 
 impl<'a> HandleValuePair<'a> {
     pub fn uuid(&self) -> u16 {
-        LittleEndian::read_u16(&self.value[3..])
+        u16::from_le_bytes([self.value[3], self.value[4]])
     }
 }
 
@@ -1910,72 +2128,37 @@ pub struct AttributeGroups {
     group_len: usize,
 }
 
-impl AttributeGroups {
-    fn decode_hci_event_payload(data: &[u8]) -> Result<(Self, &[u8]), Error> {
-        if data.len() < 2 {
-            return Err(Error::BadLength(data.len(), 2));
-        }
-        let group_len = usize::from(data[0]);
-        let len = usize::from(data[1]);
-        if len > 249 || data.len() < 2 + len {
-            return Err(Error::BadLength(data.len(), 2 + len));
-        }
-        if group_len < 4 || !len.is_multiple_of(group_len) {
-            return Err(Error::Vendor(
-                VendorError::AttReadByGroupTypeResponsePartial,
-            ));
-        }
-        let (records, rest) = data[2..].split_at(len);
+impl HciEventRecordTarget<4, 249> for AttributeGroups {
+    fn invalid_record_layout() -> Error {
+        Error::Vendor(VendorError::AttReadByGroupTypeResponsePartial)
+    }
+
+    fn prefixed_record_length_error(actual: usize, required: usize) -> Option<Error> {
+        Some(Error::BadLength(actual, required))
+    }
+
+    fn from_event_records(group_len: usize, records: &[u8]) -> Self {
+        let len = records.len();
         let mut value = [0; 249];
         value[..len].copy_from_slice(records);
-        Ok((
-            Self {
-                data: value,
-                len,
-                group_len,
-            },
-            rest,
-        ))
+        Self {
+            data: value,
+            len,
+            group_len,
+        }
     }
 }
 
 impl AttReadByGroupTypeResponse {
     /// Create and return an iterator for the attribute data returned with the response.
-    pub fn attribute_data_iter(&self) -> AttributeDataIterator<'_> {
-        AttributeDataIterator {
-            event: self,
-            next_index: 0,
-        }
-    }
-}
-
-/// Iterator over the attribute data returned in the [`AttReadByGroupTypeResponse`].
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttributeDataIterator<'a> {
-    event: &'a AttReadByGroupTypeResponse,
-    next_index: usize,
-}
-
-impl<'a> Iterator for AttributeDataIterator<'a> {
-    type Item = AttributeData<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.event.groups.len {
-            return None;
-        }
-
-        let attr_handle_index = self.next_index;
-        let group_end_index = 2 + attr_handle_index;
-        let value_index = 2 + group_end_index;
-        self.next_index += self.event.groups.group_len;
-        Some(AttributeData {
-            attribute_handle: AttributeHandle(LittleEndian::read_u16(
-                &self.event.groups.data[attr_handle_index..],
-            )),
-            attribute_end_handle: AttributeHandle(LittleEndian::read_u16(
-                &self.event.groups.data[group_end_index..],
-            )),
-            value: &self.event.groups.data[value_index..self.next_index],
-        })
+    pub fn attribute_data_iter(&self) -> impl Iterator<Item = AttributeData<'_>> {
+        self.groups.data[..self.groups.len]
+            .chunks_exact(self.groups.group_len)
+            .map(|record| AttributeData {
+                attribute_handle: AttributeHandle(u16::from_le_bytes([record[0], record[1]])),
+                attribute_end_handle: AttributeHandle(u16::from_le_bytes([record[2], record[3]])),
+                value: &record[4..],
+            })
     }
 }
 
@@ -1992,7 +2175,7 @@ pub struct AttributeData<'a> {
 
 impl<'a> AttributeData<'a> {
     pub fn uuid(&self) -> u16 {
-        LittleEndian::read_u16(&self.value[0..])
+        u16::from_le_bytes([self.value[0], self.value[1]])
     }
 }
 
@@ -2679,7 +2862,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_payload_decodes_within_its_declared_bounds() {
+    fn ranged_counted_bytes_decode_within_their_declared_bounds() {
         let bytes = [
             0x12, 0x08, // event code
             0x23, 0x01, // connection handle
@@ -2688,7 +2871,7 @@ mod tests {
             0x01, // channel count
             0x07, // channel index
         ];
-        let event = VendorEvent::new(&bytes).expect("valid semantic payload");
+        let event = VendorEvent::new(&bytes).expect("valid ranged counted bytes");
         let VendorEvent::L2CapCocReconfig(event) = event else {
             panic!("unexpected event variant");
         };
@@ -2696,7 +2879,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_payload_enforces_its_declared_count_bounds() {
+    fn ranged_counted_bytes_enforce_their_declared_bounds() {
         let mut bytes = [
             0x12, 0x08, // event code
             0x23, 0x01, // connection handle
@@ -2713,7 +2896,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_empty_payload_rejects_a_nonzero_count() {
+    fn empty_l2cap_data_rejects_a_nonzero_count() {
         let bytes = [
             0x01, 0x08, // event code
             0x23, 0x01, // connection handle
@@ -2721,6 +2904,16 @@ mod tests {
         ];
         let error = VendorEvent::new(&bytes).expect_err("timeout data count must be zero");
         assert_eq!(error, Error::Vendor(VendorError::BadL2CapDataLength(1, 0)));
+    }
+
+    #[test]
+    fn empty_l2cap_data_preserves_its_missing_count_diagnostic() {
+        let bytes = [
+            0x01, 0x08, // event code
+            0x23, 0x01, // connection handle
+        ];
+        let error = VendorEvent::new(&bytes).expect_err("timeout data count is required");
+        assert_eq!(error, Error::BadLength(0, 1));
     }
 
     #[test]
@@ -2753,6 +2946,134 @@ mod tests {
     }
 
     #[test]
+    fn tagged_items_decode_both_find_information_formats() {
+        let format16 = [
+            0x04, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x01, 0x08, // 16-bit UUID format and byte length
+            0x34, 0x12, 0x0D, 0x18, // first handle and UUID
+            0x78, 0x56, 0x0F, 0x18, // second handle and UUID
+        ];
+        let VendorEvent::AttFindInformationResponse(event) =
+            VendorEvent::new(&format16).expect("two 16-bit handle-UUID pairs")
+        else {
+            panic!("unexpected event variant");
+        };
+        let HandleUuidPairIterator::Format16(mut pairs) = event.handle_uuid_pair_iter() else {
+            panic!("unexpected UUID format");
+        };
+        let first = pairs.next().expect("first pair");
+        assert_eq!(first.handle, AttributeHandle(0x1234));
+        assert_eq!(first.uuid, Uuid16(0x180D));
+        let second = pairs.next().expect("second pair");
+        assert_eq!(second.handle, AttributeHandle(0x5678));
+        assert_eq!(second.uuid, Uuid16(0x180F));
+        assert!(pairs.next().is_none());
+
+        let format128 = [
+            0x04, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x02, 0x12, // 128-bit UUID format and byte length
+            0xBC, 0x9A, // handle
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // UUID
+            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        ];
+        let VendorEvent::AttFindInformationResponse(event) =
+            VendorEvent::new(&format128).expect("one 128-bit handle-UUID pair")
+        else {
+            panic!("unexpected event variant");
+        };
+        let HandleUuidPairIterator::Format128(mut pairs) = event.handle_uuid_pair_iter() else {
+            panic!("unexpected UUID format");
+        };
+        let pair = pairs.next().expect("128-bit pair");
+        assert_eq!(pair.handle, AttributeHandle(0x9ABC));
+        assert_eq!(
+            pair.uuid,
+            Uuid128([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+        );
+        assert!(pairs.next().is_none());
+    }
+
+    #[test]
+    fn tagged_items_preserve_find_information_diagnostics() {
+        let missing_length = [0x04, 0x0C, 0x23, 0x01, 0x01];
+        assert_eq!(
+            VendorEvent::new(&missing_length).unwrap_err(),
+            Error::BadLength(1, 2)
+        );
+
+        let unknown_format = [0x04, 0x0C, 0x23, 0x01, 0x03, 0x00];
+        assert_eq!(
+            VendorEvent::new(&unknown_format).unwrap_err(),
+            Error::Vendor(VendorError::BadAttFindInformationResponseFormat(0x03))
+        );
+
+        let partial16 = [0x04, 0x0C, 0x23, 0x01, 0x01, 0x03, 0x34, 0x12, 0x0D];
+        assert_eq!(
+            VendorEvent::new(&partial16).unwrap_err(),
+            Error::Vendor(VendorError::AttFindInformationResponsePartialPair16)
+        );
+
+        let mut partial128 = [0; 6 + 17];
+        partial128[..6].copy_from_slice(&[0x04, 0x0C, 0x23, 0x01, 0x02, 17]);
+        assert_eq!(
+            VendorEvent::new(&partial128).unwrap_err(),
+            Error::Vendor(VendorError::AttFindInformationResponsePartialPair128)
+        );
+    }
+
+    #[test]
+    fn length_prefixed_records_decode_read_by_type_values() {
+        let bytes = [
+            0x06, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x04, 0x08, // record length and total byte length
+            0x34, 0x12, 0xAA, 0xBB, // first handle-value record
+            0x78, 0x56, 0xCC, 0xDD, // second handle-value record
+        ];
+        let VendorEvent::AttReadByTypeResponse(event) =
+            VendorEvent::new(&bytes).expect("two handle-value records")
+        else {
+            panic!("unexpected event variant");
+        };
+        let mut pairs = event.handle_value_pair_iter();
+        let first = pairs.next().expect("first pair");
+        assert_eq!(first.handle, AttributeHandle(0x1234));
+        assert_eq!(first.value, &[0xAA, 0xBB]);
+        let second = pairs.next().expect("second pair");
+        assert_eq!(second.handle, AttributeHandle(0x5678));
+        assert_eq!(second.value, &[0xCC, 0xDD]);
+        assert!(pairs.next().is_none());
+    }
+
+    #[test]
+    fn length_prefixed_records_decode_read_by_group_values() {
+        let bytes = [
+            0x0A, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x06, 0x0C, // record length and total byte length
+            0x01, 0x00, 0x05, 0x00, 0x0D, 0x18, // first group
+            0x06, 0x00, 0x09, 0x00, 0x0F, 0x18, // second group
+        ];
+        let VendorEvent::AttReadByGroupTypeResponse(event) =
+            VendorEvent::new(&bytes).expect("two attribute groups")
+        else {
+            panic!("unexpected event variant");
+        };
+        let mut groups = event.attribute_data_iter();
+        let first = groups.next().expect("first group");
+        assert_eq!(first.attribute_handle, AttributeHandle(0x0001));
+        assert_eq!(first.attribute_end_handle, AttributeHandle(0x0005));
+        assert_eq!(first.value, &[0x0D, 0x18]);
+        let second = groups.next().expect("second group");
+        assert_eq!(second.attribute_handle, AttributeHandle(0x0006));
+        assert_eq!(second.attribute_end_handle, AttributeHandle(0x0009));
+        assert_eq!(second.value, &[0x0F, 0x18]);
+        assert!(groups.next().is_none());
+    }
+
+    #[test]
     fn bond_lost_has_no_payload() {
         assert!(matches!(
             VendorEvent::new(&[0x05, 0x04]).unwrap(),
@@ -2771,6 +3092,21 @@ mod tests {
         assert_eq!(
             error,
             Error::Vendor(VendorError::AttReadByTypeResponsePartial)
+        );
+    }
+
+    #[test]
+    fn length_prefixed_records_preserve_their_length_diagnostics() {
+        let missing_length = [0x06, 0x0C, 0x23, 0x01, 0x02];
+        assert_eq!(
+            VendorEvent::new(&missing_length).unwrap_err(),
+            Error::BadLength(1, 2)
+        );
+
+        let oversized_length = [0x06, 0x0C, 0x23, 0x01, 0x02, 250];
+        assert_eq!(
+            VendorEvent::new(&oversized_length).unwrap_err(),
+            Error::BadLength(2, 252)
         );
     }
 

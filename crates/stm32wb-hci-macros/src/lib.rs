@@ -68,9 +68,8 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
 /// schema. Unit payloads generate unit `VendorEvent` variants; inline payloads
 /// generate an owned public payload structure and a tuple variant carrying it.
 /// Fixed fields use `field: Type => width`. Owned variable payload fields may
-/// use `counted_bytes`, `counted_items`, `trailing_bytes`, or `payload`; the
-/// latter delegates to the semantic type's bounded `decode_hci_event_payload`
-/// implementation.
+/// use `counted_bytes`, `counted_items`, `length_prefixed_records`,
+/// `tagged_items`, or `trailing_bytes`.
 ///
 /// The generated `VendorEvent::new` requires the two-byte event code, decodes
 /// every declared field in order, and rejects both truncated and trailing
@@ -224,12 +223,19 @@ fn expand_event_field_decoder(
             }
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len } => {
+            VariableEncodingShape::CountedBytes {
+                count,
+                min_len,
+                max_len,
+            } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
+                let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
                 quote! {
-                    decode_hci_event_counted_bytes::<#ty, #count_ty, #count_width, #max_len>(
+                    decode_hci_event_counted_bytes::<
+                        #ty, #count_ty, #count_width, #min_len, #max_len
+                    >(
                         #cursor,
                         #original_len,
                     )
@@ -263,21 +269,61 @@ fn expand_event_field_decoder(
                     decode_hci_event_trailing_bytes::<#ty, #min_len, #max_len>(#cursor)
                 }
             }
-            VariableEncodingShape::SemanticPayload { min_len, max_len } => {
-                let min_len = &min_len.literal;
+            VariableEncodingShape::LengthPrefixedRecords {
+                record_len,
+                length,
+                min_record_len,
+                max_len,
+            } => {
+                let record_len_ty = &record_len.ty;
+                let record_len_width = &record_len.width.literal;
+                let length_ty = &length.ty;
+                let length_width = &length.width.literal;
+                let min_record_len = &min_record_len.literal;
                 let max_len = &max_len.literal;
-                let field_original_len =
-                    format_ident!("__stm32wb_field_original_len", span = Span::mixed_site());
-                let value = format_ident!("__stm32wb_field_value", span = Span::mixed_site());
-                let rest = format_ident!("__stm32wb_field_rest", span = Span::mixed_site());
-                let consumed = format_ident!("__stm32wb_field_consumed", span = Span::mixed_site());
-                quote! {{
-                    let #field_original_len = #cursor.len();
-                    let (#value, #rest) = <#ty>::decode_hci_event_payload(#cursor)?;
-                    let #consumed = #field_original_len - #rest.len();
-                    if !(#min_len..=#max_len).contains(&#consumed) {
-                        return Err(Error::BadLength(#consumed, #max_len));
+                quote! {
+                    decode_hci_event_length_prefixed_records::<
+                        #ty,
+                        #record_len_ty,
+                        #length_ty,
+                        #record_len_width,
+                        #length_width,
+                        #min_record_len,
+                        #max_len,
+                    >(#cursor, #original_len)
+                }
+            }
+            VariableEncodingShape::TaggedItems(tagged) => {
+                let tag_ty = &tagged.tag.ty;
+                let tag_width = &tagged.tag.width.literal;
+                let length_ty = &tagged.length.ty;
+                let length_width = &tagged.length.width.literal;
+                let max_len = &tagged.max_len.literal;
+                let tag_value = format_ident!("__stm32wb_tag", span = Span::mixed_site());
+                let records = format_ident!("__stm32wb_records", span = Span::mixed_site());
+                let rest = format_ident!("__stm32wb_tagged_rest", span = Span::mixed_site());
+                let value = format_ident!("__stm32wb_tagged_value", span = Span::mixed_site());
+                let variants = tagged.variants.iter().map(|variant| {
+                    let tag = &variant.tag.literal;
+                    let item_ty = &variant.item.ty;
+                    let item_width = &variant.item.width.literal;
+                    let max_items = &variant.max_items.literal;
+                    quote! {
+                        #tag => decode_hci_event_tagged_items_variant::<
+                            #ty, #tag_ty, #item_ty, #item_width, #max_items
+                        >(#tag_value, #records),
                     }
+                });
+                quote! {{
+                    let (#tag_value, #records, #rest) = decode_hci_event_prefixed_bytes::<
+                        #ty, #tag_ty, #length_ty, #tag_width, #length_width, #max_len
+                    >(#cursor, #original_len)?;
+                    let #value = match #tag_value {
+                        #(#variants)*
+                        _ => Err(<#ty as HciEventTaggedItemsTarget<#tag_ty>>::unknown_tag(
+                            #tag_value,
+                        )),
+                    }?;
                     Ok::<(#ty, &[u8]), Error>((#value, #rest))
                 }}
             }
@@ -828,7 +874,7 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
             }
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len } => {
+            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
                 let max_len = &max_len.literal;
@@ -865,7 +911,8 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
             }
             VariableEncodingShape::Tagged(_)
             | VariableEncodingShape::BitmapItems { .. }
-            | VariableEncodingShape::SemanticPayload { .. } => {
+            | VariableEncodingShape::LengthPrefixedRecords { .. }
+            | VariableEncodingShape::TaggedItems(_) => {
                 unreachable!("the shared parser rejects variable returns without owned decoders")
             }
         },
@@ -890,7 +937,7 @@ fn encoded_field_type(field: &Field) -> TokenStream2 {
             quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField<#ty, #width>)
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len } => {
+            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
                 let max_len = &max_len.literal;
@@ -927,8 +974,9 @@ fn encoded_field_type(field: &Field) -> TokenStream2 {
                 let max_items = &max_items.literal;
                 quote!(crate::vendor::command::BitmapItems<#ty, #item_ty, #item_width, #max_items>)
             }
-            VariableEncodingShape::SemanticPayload { .. } => {
-                unreachable!("the shared parser rejects removed payload fields")
+            VariableEncodingShape::LengthPrefixedRecords { .. }
+            | VariableEncodingShape::TaggedItems(_) => {
+                unreachable!("the shared parser rejects event-only command fields")
             }
         },
     }
@@ -950,7 +998,7 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
             quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField::<_, #width>(#name))
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len } => {
+            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
                 let max_len = &max_len.literal;
@@ -994,8 +1042,9 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
                     _, #item_ty, #item_width, #max_items
                 >::try_new(#name, #bitmap, #mask)?)
             }
-            VariableEncodingShape::SemanticPayload { .. } => {
-                unreachable!("the shared parser rejects removed payload fields")
+            VariableEncodingShape::LengthPrefixedRecords { .. }
+            | VariableEncodingShape::TaggedItems(_) => {
+                unreachable!("the shared parser rejects event-only command fields")
             }
         },
     }
@@ -1048,7 +1097,7 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
             return None;
         };
         match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len } => {
+            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
                 let max_len = &max_len.literal;
@@ -1072,10 +1121,9 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
             }
             VariableEncodingShape::Tagged(_)
             | VariableEncodingShape::TrailingBytes { .. }
-            | VariableEncodingShape::BitmapItems { .. } => None,
-            VariableEncodingShape::SemanticPayload { .. } => {
-                unreachable!("the shared parser rejects removed payload fields")
-            }
+            | VariableEncodingShape::BitmapItems { .. }
+            | VariableEncodingShape::LengthPrefixedRecords { .. }
+            | VariableEncodingShape::TaggedItems(_) => None,
         }
     });
     quote!(#(#validations)*)
@@ -1336,16 +1384,32 @@ mod tests {
                     },
                 };
             }
-            Semantic(0x0003) {
+            Records(0x0003) {
                 Payload = {
-                    value: SemanticValue => {
-                        kind: payload,
-                        min_len: 1,
-                        max_len: 4,
+                    value: Records => {
+                        kind: length_prefixed_records,
+                        record_len: u8 => 1,
+                        length: u8 => 1,
+                        min_record_len: 2,
+                        max_len: 8,
                     },
                 };
             }
-            Trailing(0x0004) {
+            Tagged(0x0004) {
+                Payload = {
+                    value: Tagged => {
+                        kind: tagged_items,
+                        tag: u8 => 1,
+                        length: u8 => 1,
+                        variants: {
+                            1 => { item: Short => 2, max_items: 4, },
+                            2 => { item: Long => 4, max_items: 2, },
+                        },
+                        max_len: 8,
+                    },
+                };
+            }
+            Trailing(0x0005) {
                 Payload = {
                     value: BoundedBytes<4> => {
                         kind: trailing_bytes,
@@ -1358,7 +1422,8 @@ mod tests {
         let generated = expand_vendor_events(&events).to_string();
         assert!(generated.contains("decode_hci_event_counted_bytes"));
         assert!(generated.contains("decode_hci_event_counted_items"));
-        assert!(generated.contains("decode_hci_event_payload"));
+        assert!(generated.contains("decode_hci_event_length_prefixed_records"));
+        assert!(generated.contains("decode_hci_event_tagged_items_variant"));
         assert!(generated.contains("decode_hci_event_trailing_bytes"));
         assert!(generated.contains("__stm32wb_event_data"));
         assert!(!generated.contains("vendor_event !"));
