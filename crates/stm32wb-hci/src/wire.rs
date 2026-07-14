@@ -1,5 +1,76 @@
 //! Internal declarations for semantic values with canonical HCI wire forms.
 
+mod decode;
+
+pub use decode::{
+    BoundedBytes, BoundedItems, HciDecodeCountedBytes, HciDecodeCountedItems,
+    HciDecodeTrailingBytes,
+};
+pub(crate) use decode::{
+    DecodeError, decode_counted_bytes, decode_counted_items, decode_fixed_field,
+    decode_trailing_bytes,
+};
+
+/// A value with an exact, canonical representation in an HCI request.
+///
+/// `N` is part of the trait so a declarative field whose schema says
+/// `field: Type => N` only compiles when `Type` explicitly supports that wire
+/// width. Implementations must not rely on Rust structure layout or native
+/// endianness.
+pub trait HciEncodeField<const N: usize> {
+    /// Write exactly `N` bytes to a synchronous HCI writer.
+    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
+
+    /// Write exactly `N` bytes to an asynchronous HCI writer.
+    async fn write_hci_field_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error>;
+}
+
+/// A value decoded from an exact-width HCI field.
+///
+/// Implementations receive exactly `N` bytes and must apply the protocol's
+/// validity rules rather than interpreting arbitrary Rust memory.
+pub trait HciDecodeField<const N: usize>: Sized {
+    /// Decode one exact-width field.
+    fn from_hci_field(bytes: &[u8; N]) -> Result<Self, bt_hci::FromHciBytesError>;
+}
+
+/// An integer type that can prefix a counted declarative field.
+#[doc(hidden)]
+pub trait HciCount<const N: usize>: HciEncodeField<N> + Copy {
+    const MAX: usize;
+
+    fn from_usize(value: usize) -> Option<Self>;
+
+    fn to_usize(self) -> usize;
+}
+
+impl HciCount<1> for u8 {
+    const MAX: usize = u8::MAX as usize;
+
+    fn from_usize(value: usize) -> Option<Self> {
+        value.try_into().ok()
+    }
+
+    fn to_usize(self) -> usize {
+        usize::from(self)
+    }
+}
+
+impl HciCount<2> for u16 {
+    const MAX: usize = u16::MAX as usize;
+
+    fn from_usize(value: usize) -> Option<Self> {
+        value.try_into().ok()
+    }
+
+    fn to_usize(self) -> usize {
+        usize::from(self)
+    }
+}
+
 /// Declare a fieldless HCI enum and its exact-width wire encoding.
 ///
 /// The generated decoder rejects values that are not one of the declared

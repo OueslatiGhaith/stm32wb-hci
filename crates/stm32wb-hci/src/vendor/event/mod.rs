@@ -13,7 +13,8 @@ use core::time::Duration;
 use crate::types::PeerAddrType;
 pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
 use crate::vendor::command::gap::EventFlags;
-pub use crate::vendor::command::{BoundedBytes, BoundedItems};
+pub use crate::wire::{BoundedBytes, BoundedItems};
+use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
 use bt_hci::param::{BdAddr, ConnHandle};
 
 /// Enumeration of vendor-specific status codes.
@@ -394,17 +395,31 @@ fn decode_hci_event_field<T, const N: usize>(
 where
     T: HciEventField<N>,
 {
-    if data.len() < N {
-        return Err(Error::BadLength(
+    crate::wire::decode_fixed_field(data, T::from_hci_event_field)
+        .map_err(|error| map_event_decode_error(error, data.len(), original_len))
+}
+
+fn map_event_decode_error(
+    error: crate::wire::DecodeError<Error>,
+    field_input_len: usize,
+    original_len: usize,
+) -> Error {
+    match error {
+        crate::wire::DecodeError::Field(error) => error,
+        crate::wire::DecodeError::Truncated { required } => Error::BadLength(
             original_len,
-            original_len - data.len() + N,
-        ));
+            (original_len - field_input_len).saturating_add(required),
+        ),
+        crate::wire::DecodeError::CountTooLarge { actual, maximum }
+        | crate::wire::DecodeError::SizeOverflow { actual, maximum } => {
+            Error::BadLength(actual, maximum)
+        }
+        crate::wire::DecodeError::LengthOutOfRange {
+            actual,
+            minimum,
+            maximum,
+        } => Error::BadLength(actual, if actual < minimum { minimum } else { maximum }),
     }
-    let (field, rest) = data.split_at(N);
-    let field = field
-        .try_into()
-        .expect("split_at returned the declared width");
-    T::from_hci_event_field(field).map(|value| (value, rest))
 }
 
 fn decode_hci_event_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize>(
@@ -412,26 +427,15 @@ fn decode_hci_event_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_LEN: u
     original_len: usize,
 ) -> Result<(T, &[u8]), Error>
 where
-    T: crate::vendor::command::HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
-    C: HciEventField<COUNT_LEN>
-        + crate::vendor::command::HciDecodeField<COUNT_LEN>
-        + crate::vendor::command::HciCount<COUNT_LEN>,
+    T: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
+    C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
-    let (count, after_count) = decode_hci_event_field::<C, COUNT_LEN>(data, original_len)?;
-    let len = crate::vendor::command::HciCount::to_usize(count);
-    if len > MAX_LEN {
-        return Err(Error::BadLength(len, MAX_LEN));
-    }
-    if after_count.len() < len {
-        return Err(Error::BadLength(
-            original_len,
-            original_len - after_count.len() + len,
-        ));
-    }
-    <T as crate::vendor::command::HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::decode_counted_bytes(
+    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MAX_LEN>(
         data,
+        |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
+        <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,
     )
-    .map_err(|_| Error::BadLength(original_len, COUNT_LEN + len))
+    .map_err(|error| map_event_decode_error(error, data.len(), original_len))
 }
 
 fn decode_hci_event_counted_items<
@@ -446,34 +450,16 @@ fn decode_hci_event_counted_items<
     original_len: usize,
 ) -> Result<(T, &[u8]), Error>
 where
-    T: crate::vendor::command::HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
-    Item: Copy + crate::vendor::command::HciDecodeField<ITEM_LEN>,
-    C: HciEventField<COUNT_LEN>
-        + crate::vendor::command::HciDecodeField<COUNT_LEN>
-        + crate::vendor::command::HciCount<COUNT_LEN>,
+    T: HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
+    Item: Copy + HciEventField<ITEM_LEN>,
+    C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
-    let (count, after_count) = decode_hci_event_field::<C, COUNT_LEN>(data, original_len)?;
-    let count = crate::vendor::command::HciCount::to_usize(count);
-    if count > MAX_ITEMS {
-        return Err(Error::BadLength(count, MAX_ITEMS));
-    }
-    let len = count
-        .checked_mul(ITEM_LEN)
-        .ok_or(Error::BadLength(count, MAX_ITEMS))?;
-    if after_count.len() < len {
-        return Err(Error::BadLength(
-            original_len,
-            original_len - after_count.len() + len,
-        ));
-    }
-    <T as crate::vendor::command::HciDecodeCountedItems<
-        Item,
-        C,
-        COUNT_LEN,
-        ITEM_LEN,
-        MAX_ITEMS,
-    >>::decode_counted_items(data)
-    .map_err(|_| Error::BadLength(original_len, COUNT_LEN + len))
+    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MAX_ITEMS>(
+        data,
+        |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
+        Item::from_hci_event_field,
+    )
+    .map_err(|error| map_event_decode_error(error, data.len(), original_len))
 }
 
 #[allow(dead_code)]
@@ -481,20 +467,13 @@ fn decode_hci_event_trailing_bytes<T, const MIN_LEN: usize, const MAX_LEN: usize
     data: &[u8],
 ) -> Result<(T, &[u8]), Error>
 where
-    T: crate::vendor::command::HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>,
+    T: HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>,
 {
-    if !(MIN_LEN..=MAX_LEN).contains(&data.len()) {
-        let expected = if data.len() < MIN_LEN {
-            MIN_LEN
-        } else {
-            MAX_LEN
-        };
-        return Err(Error::BadLength(data.len(), expected));
-    }
-    <T as crate::vendor::command::HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>>::decode_trailing_bytes(
+    crate::wire::decode_trailing_bytes::<T, Error, MIN_LEN, MAX_LEN>(
         data,
+        <T as HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>>::from_trailing_bytes,
     )
-    .map_err(|_| Error::BadLength(data.len(), MAX_LEN))
+    .map_err(|error| map_event_decode_error(error, data.len(), data.len()))
 }
 
 stm32wb_hci_macros::vendor_event! {
@@ -1763,12 +1742,24 @@ pub struct HandleInfoPair {
     pub group_end: GroupEndHandle,
 }
 
-impl crate::vendor::command::HciDecodeField<4> for HandleInfoPair {
-    fn from_hci_field(bytes: &[u8; 4]) -> Result<Self, bt_hci::FromHciBytesError> {
-        Ok(Self {
+impl HandleInfoPair {
+    fn from_wire_bytes(bytes: &[u8; 4]) -> Self {
+        Self {
             attribute: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
             group_end: GroupEndHandle(u16::from_le_bytes([bytes[2], bytes[3]])),
-        })
+        }
+    }
+}
+
+impl HciEventField<4> for HandleInfoPair {
+    fn from_hci_event_field(bytes: &[u8; 4]) -> Result<Self, Error> {
+        Ok(Self::from_wire_bytes(bytes))
+    }
+}
+
+impl crate::vendor::command::HciDecodeField<4> for HandleInfoPair {
+    fn from_hci_field(bytes: &[u8; 4]) -> Result<Self, bt_hci::FromHciBytesError> {
+        Ok(Self::from_wire_bytes(bytes))
     }
 }
 

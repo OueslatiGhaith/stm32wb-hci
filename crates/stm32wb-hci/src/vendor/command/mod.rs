@@ -9,38 +9,19 @@
 
 use bt_hci::WriteHci;
 
+pub use crate::wire::{BoundedBytes, BoundedItems};
+#[doc(hidden)]
+pub use crate::wire::{
+    HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes,
+};
+pub use crate::wire::{HciDecodeField, HciEncodeField};
+
 /// Build the ten-bit vendor OCF from STM32's three-bit command-group ID and
 /// seven-bit command ID.
 const fn vendor_ocf(cgid: u16, cid: u16) -> u16 {
     ::core::assert!(cgid <= 0b111, "vendor command-group ID exceeds three bits");
     ::core::assert!(cid <= 0b111_1111, "vendor command ID exceeds seven bits");
     (cgid << 7) | cid
-}
-
-/// A value with an exact, canonical representation in an HCI request.
-///
-/// `N` is part of the trait so a declarative command field whose schema says
-/// `field: Type => N` only compiles when `Type` explicitly supports that wire
-/// width. Implementations must not rely on Rust structure layout or native
-/// endianness.
-pub trait HciEncodeField<const N: usize> {
-    /// Write exactly `N` bytes to a synchronous HCI writer.
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
-
-    /// Write exactly `N` bytes to an asynchronous HCI writer.
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error>;
-}
-
-/// A value decoded from an exact-width field in an HCI response.
-///
-/// Implementations receive exactly `N` bytes and must apply the protocol's
-/// validity rules rather than interpreting arbitrary Rust memory.
-pub trait HciDecodeField<const N: usize>: Sized {
-    /// Decode one exact-width field.
-    fn from_hci_field(bytes: &[u8; N]) -> Result<Self, bt_hci::FromHciBytesError>;
 }
 
 macro_rules! impl_hci_integer_field {
@@ -444,39 +425,6 @@ where
 }
 
 #[doc(hidden)]
-pub trait HciCount<const N: usize>: HciEncodeField<N> + Copy {
-    const MAX: usize;
-
-    fn from_usize(value: usize) -> Option<Self>;
-
-    fn to_usize(self) -> usize;
-}
-
-impl HciCount<1> for u8 {
-    const MAX: usize = u8::MAX as usize;
-
-    fn from_usize(value: usize) -> Option<Self> {
-        value.try_into().ok()
-    }
-
-    fn to_usize(self) -> usize {
-        usize::from(self)
-    }
-}
-
-impl HciCount<2> for u16 {
-    const MAX: usize = u16::MAX as usize;
-
-    fn from_usize(value: usize) -> Option<Self> {
-        value.try_into().ok()
-    }
-
-    fn to_usize(self) -> usize {
-        usize::from(self)
-    }
-}
-
-#[doc(hidden)]
 pub struct CountedBytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize> {
     value: T,
     count: C,
@@ -551,72 +499,6 @@ where
     }
 }
 
-/// Owned, bounded bytes decoded from a variable-length HCI response field.
-#[derive(Clone, Copy)]
-pub struct BoundedBytes<const MAX_LEN: usize> {
-    bytes: [u8; MAX_LEN],
-    len: usize,
-}
-
-impl<const MAX_LEN: usize> BoundedBytes<MAX_LEN> {
-    /// Returns only the bytes present on the wire.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.bytes[..self.len]
-    }
-}
-
-impl<const MAX_LEN: usize> AsRef<[u8]> for BoundedBytes<MAX_LEN> {
-    fn as_ref(&self) -> &[u8] {
-        self.as_slice()
-    }
-}
-
-impl<const MAX_LEN: usize> core::fmt::Debug for BoundedBytes<MAX_LEN> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_list().entries(self.as_slice()).finish()
-    }
-}
-
-/// Owned, allocation-free items decoded from a counted HCI response field.
-#[derive(Clone, Copy)]
-pub struct BoundedItems<T: Copy, const MAX_ITEMS: usize> {
-    items: [core::mem::MaybeUninit<T>; MAX_ITEMS],
-    len: usize,
-}
-
-impl<T: Copy, const MAX_ITEMS: usize> BoundedItems<T, MAX_ITEMS> {
-    /// Number of initialized items decoded from the wire.
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Whether the wire collection was empty.
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Returns only the initialized items present on the wire.
-    pub fn as_slice(&self) -> &[T] {
-        // SAFETY: constructors initialize every element in `0..len`, `len`
-        // never exceeds `MAX_ITEMS`, and `T: Copy` cannot require drop glue.
-        unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len) }
-    }
-}
-
-impl<T: Copy, const MAX_ITEMS: usize> AsRef<[T]> for BoundedItems<T, MAX_ITEMS> {
-    fn as_ref(&self) -> &[T] {
-        self.as_slice()
-    }
-}
-
-impl<T: Copy + core::fmt::Debug, const MAX_ITEMS: usize> core::fmt::Debug
-    for BoundedItems<T, MAX_ITEMS>
-{
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_list().entries(self.as_slice()).finish()
-    }
-}
-
 #[doc(hidden)]
 pub fn decode_declarative_fixed_field<T, const N: usize>(
     data: &[u8],
@@ -624,36 +506,19 @@ pub fn decode_declarative_fixed_field<T, const N: usize>(
 where
     T: HciDecodeField<N>,
 {
-    if data.len() < N {
-        return Err(bt_hci::FromHciBytesError::InvalidSize);
+    crate::wire::decode_fixed_field(data, T::from_hci_field).map_err(map_declarative_decode_error)
+}
+
+fn map_declarative_decode_error(
+    error: crate::wire::DecodeError<bt_hci::FromHciBytesError>,
+) -> bt_hci::FromHciBytesError {
+    match error {
+        crate::wire::DecodeError::Field(error) => error,
+        crate::wire::DecodeError::CountTooLarge { .. } => bt_hci::FromHciBytesError::InvalidValue,
+        crate::wire::DecodeError::Truncated { .. }
+        | crate::wire::DecodeError::LengthOutOfRange { .. }
+        | crate::wire::DecodeError::SizeOverflow { .. } => bt_hci::FromHciBytesError::InvalidSize,
     }
-    let (field, rest) = data.split_at(N);
-    let field: &[u8; N] = field
-        .try_into()
-        .map_err(|_| bt_hci::FromHciBytesError::InvalidSize)?;
-    T::from_hci_field(field).map(|value| (value, rest))
-}
-
-#[doc(hidden)]
-pub trait HciDecodeCountedBytes<C, const COUNT_LEN: usize, const MAX_LEN: usize>: Sized {
-    fn decode_counted_bytes(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError>;
-}
-
-#[doc(hidden)]
-pub trait HciDecodeTrailingBytes<const MIN_LEN: usize, const MAX_LEN: usize>: Sized {
-    fn decode_trailing_bytes(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError>;
-}
-
-#[doc(hidden)]
-pub trait HciDecodeCountedItems<
-    Item,
-    C,
-    const COUNT_LEN: usize,
-    const ITEM_LEN: usize,
-    const MAX_ITEMS: usize,
->: Sized
-{
-    fn decode_counted_items(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError>;
 }
 
 #[doc(hidden)]
@@ -662,8 +527,14 @@ pub fn decode_declarative_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_
 ) -> Result<(T, &[u8]), bt_hci::FromHciBytesError>
 where
     T: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
+    C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
 {
-    T::decode_counted_bytes(data)
+    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MAX_LEN>(
+        data,
+        |bytes| C::from_hci_field(bytes).map(HciCount::to_usize),
+        <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,
+    )
+    .map_err(map_declarative_decode_error)
 }
 
 #[doc(hidden)]
@@ -673,7 +544,11 @@ pub fn decode_declarative_trailing_bytes<T, const MIN_LEN: usize, const MAX_LEN:
 where
     T: HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>,
 {
-    T::decode_trailing_bytes(data)
+    crate::wire::decode_trailing_bytes::<T, bt_hci::FromHciBytesError, MIN_LEN, MAX_LEN>(
+        data,
+        <T as HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>>::from_trailing_bytes,
+    )
+    .map_err(map_declarative_decode_error)
 }
 
 #[doc(hidden)]
@@ -689,86 +564,15 @@ pub fn decode_declarative_counted_items<
 ) -> Result<(T, &[u8]), bt_hci::FromHciBytesError>
 where
     T: HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
-{
-    T::decode_counted_items(data)
-}
-
-impl<C, const COUNT_LEN: usize, const MAX_LEN: usize> HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>
-    for BoundedBytes<MAX_LEN>
-where
-    C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
-{
-    fn decode_counted_bytes(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError> {
-        let (count, data) = decode_declarative_fixed_field::<C, COUNT_LEN>(data)?;
-        let len = count.to_usize();
-        if len > MAX_LEN {
-            return Err(bt_hci::FromHciBytesError::InvalidValue);
-        }
-        if data.len() < len {
-            return Err(bt_hci::FromHciBytesError::InvalidSize);
-        }
-        let (value, rest) = data.split_at(len);
-        let mut bytes = [0; MAX_LEN];
-        bytes[..len].copy_from_slice(value);
-        Ok((Self { bytes, len }, rest))
-    }
-}
-
-impl<const MIN_LEN: usize, const MAX_LEN: usize> HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>
-    for BoundedBytes<MAX_LEN>
-{
-    fn decode_trailing_bytes(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError> {
-        let len = data.len();
-        if !(MIN_LEN..=MAX_LEN).contains(&len) {
-            return Err(bt_hci::FromHciBytesError::InvalidSize);
-        }
-        let mut bytes = [0; MAX_LEN];
-        bytes[..len].copy_from_slice(data);
-        Ok((Self { bytes, len }, &[]))
-    }
-}
-
-impl<Item, C, const COUNT_LEN: usize, const ITEM_LEN: usize, const MAX_ITEMS: usize>
-    HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS> for BoundedItems<Item, MAX_ITEMS>
-where
     Item: Copy + HciDecodeField<ITEM_LEN>,
     C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
 {
-    fn decode_counted_items(data: &[u8]) -> Result<(Self, &[u8]), bt_hci::FromHciBytesError> {
-        let (count, mut data) = decode_declarative_fixed_field::<C, COUNT_LEN>(data)?;
-        let len = count.to_usize();
-        if len > MAX_ITEMS {
-            return Err(bt_hci::FromHciBytesError::InvalidValue);
-        }
-        let required = ITEM_LEN
-            .checked_mul(len)
-            .ok_or(bt_hci::FromHciBytesError::InvalidSize)?;
-        if data.len() < required {
-            return Err(bt_hci::FromHciBytesError::InvalidSize);
-        }
-
-        let mut items = [core::mem::MaybeUninit::uninit(); MAX_ITEMS];
-        for slot in items.iter_mut().take(len) {
-            let (item, rest) = decode_declarative_fixed_field::<Item, ITEM_LEN>(data)?;
-            slot.write(item);
-            data = rest;
-        }
-        Ok((Self { items, len }, data))
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl<const MAX_LEN: usize> defmt::Format for BoundedBytes<MAX_LEN> {
-    fn format(&self, formatter: defmt::Formatter) {
-        defmt::write!(formatter, "{=[u8]}", self.as_slice());
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl<T: Copy + defmt::Format, const MAX_ITEMS: usize> defmt::Format for BoundedItems<T, MAX_ITEMS> {
-    fn format(&self, formatter: defmt::Formatter) {
-        defmt::write!(formatter, "{=[?]}", self.as_slice());
-    }
+    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MAX_ITEMS>(
+        data,
+        |bytes| C::from_hci_field(bytes).map(HciCount::to_usize),
+        Item::from_hci_field,
+    )
+    .map_err(map_declarative_decode_error)
 }
 
 #[doc(hidden)]
