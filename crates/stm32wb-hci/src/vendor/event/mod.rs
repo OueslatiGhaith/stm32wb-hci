@@ -1368,28 +1368,19 @@ stm32wb_hci_macros::vendor_event! {
     }
 }
 
-/// Potential firmware kinds for [`CoprocessorReady`](VendorEvent::CoprocessorReady)
-/// event.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum FirmwareKind {
-    /// Wireless firmware (BLE, Thread, etc.)
-    Wireless,
-
-    /// RCC firmware.
-    Rcc,
-}
-
-impl TryFrom<u8> for FirmwareKind {
-    type Error = VendorError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(FirmwareKind::Wireless),
-            1 => Ok(FirmwareKind::Rcc),
-            _ => Err(VendorError::UnknownFirmwareKind(value)),
-        }
+hci_event_enum! {
+    /// Potential firmware kinds for [`CoprocessorReady`](VendorEvent::CoprocessorReady)
+    /// event.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum FirmwareKind: u8 => 1 {
+        /// Wireless firmware (BLE, Thread, etc.)
+        Wireless = 0,
+        /// RCC firmware.
+        Rcc = 1,
     }
+    TryFromError = VendorError => VendorError::UnknownFirmwareKind;
+    EventError = Error::Vendor;
 }
 
 /// Reasons why an L2CAP command was rejected. see the Bluetooth specification, v4.1, Vol 3, Part A,
@@ -1660,34 +1651,22 @@ pub enum GapProcedure {
     Observation,
 }
 
-/// GAP procedure discriminator carried by the procedure-complete event.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GapProcedureKind {
-    LimitedDiscovery,
-    GeneralDiscovery,
-    NameDiscovery,
-    AutoConnectionEstablishment,
-    GeneralConnectionEstablishment,
-    SelectiveConnectionEstablishment,
-    DirectConnectionEstablishment,
-    Observation,
-}
-
-impl HciEventField<1> for GapProcedureKind {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        match bytes[0] {
-            0x01 => Ok(Self::LimitedDiscovery),
-            0x02 => Ok(Self::GeneralDiscovery),
-            0x04 => Ok(Self::NameDiscovery),
-            0x08 => Ok(Self::AutoConnectionEstablishment),
-            0x10 => Ok(Self::GeneralConnectionEstablishment),
-            0x20 => Ok(Self::SelectiveConnectionEstablishment),
-            0x40 => Ok(Self::DirectConnectionEstablishment),
-            0x80 => Ok(Self::Observation),
-            value => Err(Error::Vendor(VendorError::BadGapProcedure(value))),
-        }
+hci_event_enum! {
+    /// GAP procedure discriminator carried by the procedure-complete event.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum GapProcedureKind: u8 => 1 {
+        LimitedDiscovery = 0x01,
+        GeneralDiscovery = 0x02,
+        NameDiscovery = 0x04,
+        AutoConnectionEstablishment = 0x08,
+        GeneralConnectionEstablishment = 0x10,
+        SelectiveConnectionEstablishment = 0x20,
+        DirectConnectionEstablishment = 0x40,
+        Observation = 0x80,
     }
+    TryFromError = VendorError => VendorError::BadGapProcedure;
+    EventError = Error::Vendor;
 }
 
 impl GapProcedureComplete {
@@ -1722,29 +1701,20 @@ impl GapProcedureComplete {
     }
 }
 
-/// Possible results of a [GAP procedure](VendorEvent::GapProcedureComplete).
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GapProcedureStatus {
-    /// BLE Status Success.
-    Success,
-    /// BLE Status Failed.
-    Failed,
-    /// Procedure failed due to authentication requirements.
-    AuthFailure,
-}
-
-impl TryFrom<u8> for GapProcedureStatus {
-    type Error = VendorError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(GapProcedureStatus::Success),
-            0x41 => Ok(GapProcedureStatus::Failed),
-            0x05 => Ok(GapProcedureStatus::AuthFailure),
-            _ => Err(VendorError::BadGapProcedureStatus(value)),
-        }
+hci_event_enum! {
+    /// Possible results of a [GAP procedure](VendorEvent::GapProcedureComplete).
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum GapProcedureStatus: u8 => 1 {
+        /// BLE Status Success.
+        Success = 0x00,
+        /// BLE Status Failed.
+        Failed = 0x41,
+        /// Procedure failed due to authentication requirements.
+        AuthFailure = 0x05,
     }
+    TryFromError = VendorError => VendorError::BadGapProcedureStatus;
+    EventError = Error::Vendor;
 }
 
 impl GattAttributeModified {
@@ -2209,36 +2179,28 @@ impl_attribute_value_accessor!(
     GattNotificationExt,
 );
 
-/// Allowed status codes for the [GATT Procedure Complete](VendorEvent::GattProcedureComplete)
-/// event.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GattProcedureStatus {
-    /// BLE Status Success
-    Success,
-    /// BLE Status Failed
-    Failed,
-}
-
-impl TryFrom<u8> for GattProcedureStatus {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(GattProcedureStatus::Success),
-            0x41 => Ok(GattProcedureStatus::Failed),
-            _ => Err(Error::Vendor(VendorError::BadGattProcedureStatus(value))),
-        }
+hci_event_enum! {
+    /// Allowed status codes for the [GATT Procedure Complete](VendorEvent::GattProcedureComplete)
+    /// event.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum GattProcedureStatus: u8 => 1 {
+        /// BLE Status Success
+        Success = 0x00,
+        /// BLE Status Failed
+        Failed = 0x41,
     }
+    TryFromError = Error => |value| Error::Vendor(VendorError::BadGattProcedureStatus(value));
+    EventError = core::convert::identity;
 }
 
-/// Potential error codes for the [ATT Error Response](VendorEvent::AttErrorResponse). See Table
-/// 3.3 in the Bluetooth Core Specification, v4.1, Vol 3, Part F, Section 3.4.1.1 and The Bluetooth
-/// Core Specification Supplement, Table 1.1.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AttError {
+hci_event_enum! {
+    /// Potential error codes for the [ATT Error Response](VendorEvent::AttErrorResponse). See
+    /// Table 3.3 in the Bluetooth Core Specification, v4.1, Vol 3, Part F, Section 3.4.1.1 and
+    /// The Bluetooth Core Specification Supplement, Table 1.1.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AttError: u8 => 1 {
     /// The attribute handle given was not valid on this server.
     InvalidHandle = 0x01,
     /// The attribute cannot be read.
@@ -2352,78 +2314,18 @@ pub enum AttError {
     /// previously triggered is still in progress.
     ProcedureAlreadyInProgress = 0xFE,
     /// An attribute value is out of range as defined by a profile or service specification.
-    OutOfRange = 0xFF,
-}
-
-impl TryFrom<u8> for AttError {
-    type Error = u8;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x01 => Ok(AttError::InvalidHandle),
-            0x02 => Ok(AttError::ReadNotPermitted),
-            0x03 => Ok(AttError::WriteNotPermitted),
-            0x04 => Ok(AttError::InvalidPdu),
-            0x05 => Ok(AttError::InsufficientAuthentication),
-            0x06 => Ok(AttError::RequestNotSupported),
-            0x07 => Ok(AttError::InvalidOffset),
-            0x08 => Ok(AttError::InsufficientAuthorization),
-            0x09 => Ok(AttError::PrepareQueueFull),
-            0x0A => Ok(AttError::AttributeNotFound),
-            0x0B => Ok(AttError::AttributeNotLong),
-            0x0C => Ok(AttError::InsufficientEncryptionKeySize),
-            0x0D => Ok(AttError::InvalidAttributeValueLength),
-            0x0E => Ok(AttError::UnlikelyError),
-            0x0F => Ok(AttError::InsufficientEncryption),
-            0x10 => Ok(AttError::UnsupportedGroupType),
-            0x11 => Ok(AttError::InsufficientResources),
-            0x80 => Ok(AttError::ApplicationError0x80),
-            0x81 => Ok(AttError::ApplicationError0x81),
-            0x82 => Ok(AttError::ApplicationError0x82),
-            0x83 => Ok(AttError::ApplicationError0x83),
-            0x84 => Ok(AttError::ApplicationError0x84),
-            0x85 => Ok(AttError::ApplicationError0x85),
-            0x86 => Ok(AttError::ApplicationError0x86),
-            0x87 => Ok(AttError::ApplicationError0x87),
-            0x88 => Ok(AttError::ApplicationError0x88),
-            0x89 => Ok(AttError::ApplicationError0x89),
-            0x8A => Ok(AttError::ApplicationError0x8A),
-            0x8B => Ok(AttError::ApplicationError0x8B),
-            0x8C => Ok(AttError::ApplicationError0x8C),
-            0x8D => Ok(AttError::ApplicationError0x8D),
-            0x8E => Ok(AttError::ApplicationError0x8E),
-            0x8F => Ok(AttError::ApplicationError0x8F),
-            0x90 => Ok(AttError::ApplicationError0x90),
-            0x91 => Ok(AttError::ApplicationError0x91),
-            0x92 => Ok(AttError::ApplicationError0x92),
-            0x93 => Ok(AttError::ApplicationError0x93),
-            0x94 => Ok(AttError::ApplicationError0x94),
-            0x95 => Ok(AttError::ApplicationError0x95),
-            0x96 => Ok(AttError::ApplicationError0x96),
-            0x97 => Ok(AttError::ApplicationError0x97),
-            0x98 => Ok(AttError::ApplicationError0x98),
-            0x99 => Ok(AttError::ApplicationError0x99),
-            0x9A => Ok(AttError::ApplicationError0x9A),
-            0x9B => Ok(AttError::ApplicationError0x9B),
-            0x9C => Ok(AttError::ApplicationError0x9C),
-            0x9D => Ok(AttError::ApplicationError0x9D),
-            0x9E => Ok(AttError::ApplicationError0x9E),
-            0x9F => Ok(AttError::ApplicationError0x9F),
-            0xFC => Ok(AttError::WriteRequestRejected),
-            0xFD => Ok(AttError::ClientCharacteristicConfigurationDescriptorImproperlyConfigured),
-            0xFE => Ok(AttError::ProcedureAlreadyInProgress),
-            0xFF => Ok(AttError::OutOfRange),
-            _ => Err(value),
-        }
+        OutOfRange = 0xFF,
     }
+    TryFromError = u8 => core::convert::identity;
+    EventError = |value| Error::Vendor(VendorError::BadAttError(value));
 }
 
-/// Possible ATT requests.  See Table 3.37 in the Bluetooth Core Spec v4.1, Vol 3, Part F, Section
-/// 3.4.8.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AttRequest {
+hci_event_enum! {
+    /// Possible ATT requests. See Table 3.37 in the Bluetooth Core Spec v4.1, Vol 3, Part F,
+    /// Section 3.4.8.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum AttRequest: u8 => 1 {
     /// Section 3.4.1.1
     ErrorResponse = 0x01,
     /// Section 3.4.2.1
@@ -2480,44 +2382,9 @@ pub enum AttRequest {
     HandleValueIndication = 0x1D,
     /// Section 3.4.7.3
     HandleValueConfirmation = 0x1E,
-}
-
-impl TryFrom<u8> for AttRequest {
-    type Error = VendorError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x01 => Ok(AttRequest::ErrorResponse),
-            0x02 => Ok(AttRequest::ExchangeMtuRequest),
-            0x03 => Ok(AttRequest::ExchangeMtuResponse),
-            0x04 => Ok(AttRequest::FindInformationRequest),
-            0x05 => Ok(AttRequest::FindInformationResponse),
-            0x06 => Ok(AttRequest::FindByTypeValueRequest),
-            0x07 => Ok(AttRequest::FindByTypeValueResponse),
-            0x08 => Ok(AttRequest::ReadByTypeRequest),
-            0x09 => Ok(AttRequest::ReadByTypeResponse),
-            0x0A => Ok(AttRequest::ReadRequest),
-            0x0B => Ok(AttRequest::ReadResponse),
-            0x0C => Ok(AttRequest::ReadBlobRequest),
-            0x0D => Ok(AttRequest::ReadBlobResponse),
-            0x0E => Ok(AttRequest::ReadMultipleRequest),
-            0x0F => Ok(AttRequest::ReadMultipleResponse),
-            0x10 => Ok(AttRequest::ReadByGroupTypeRequest),
-            0x11 => Ok(AttRequest::ReadByGroupTypeResponse),
-            0x12 => Ok(AttRequest::WriteRequest),
-            0x13 => Ok(AttRequest::WriteResponse),
-            0x52 => Ok(AttRequest::WriteCommand),
-            0xD2 => Ok(AttRequest::SignedWriteCommand),
-            0x16 => Ok(AttRequest::PrepareWriteRequest),
-            0x17 => Ok(AttRequest::PrepareWriteResponse),
-            0x18 => Ok(AttRequest::ExecuteWriteRequest),
-            0x19 => Ok(AttRequest::ExecuteWriteResponse),
-            0x1B => Ok(AttRequest::HandleValueNotification),
-            0x1D => Ok(AttRequest::HandleValueIndication),
-            0x1E => Ok(AttRequest::HandleValueConfirmation),
-            _ => Err(VendorError::BadAttRequestOpcode(value)),
-        }
     }
+    TryFromError = VendorError => VendorError::BadAttRequestOpcode;
+    EventError = Error::Vendor;
 }
 
 impl AttReadMultiplePermitRequest {
@@ -2569,90 +2436,57 @@ impl HciEventField<1> for KeypressNotificationType {
 /// Preferred spelling alias kept for API ergonomics.
 pub type GattEattBearer = GattEattBrearer;
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Enhanced ATT bearer state.
-pub enum EabState {
-    AttBearerCreated = 0x00,
-    AttBearerTerminated = 0x01,
-}
-
-impl TryFrom<u8> for EabState {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(EabState::AttBearerCreated),
-            0x01 => Ok(EabState::AttBearerTerminated),
-            err => Err(Error::Vendor(VendorError::BadEabState(err))),
-        }
+hci_event_enum! {
+    /// Enhanced ATT bearer state.
+    #[derive(Debug, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum EabState: u8 => 1 {
+        AttBearerCreated = 0x00,
+        AttBearerTerminated = 0x01,
     }
+    TryFromError = Error => |value| Error::Vendor(VendorError::BadEabState(value));
+    EventError = core::convert::identity;
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum RadioEvent {
-    Idle = 0x00,
-    Advertising = 0x01,
-    PeripheralConnection = 0x02,
-    Scanning = 0x03,
-    CentralConnection = 0x05,
-    TxTestMode = 0x06,
-    RxTestMode = 0x07,
-}
-
-impl TryFrom<u8> for RadioEvent {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(RadioEvent::Idle),
-            0x01 => Ok(RadioEvent::Advertising),
-            0x02 => Ok(RadioEvent::PeripheralConnection),
-            0x03 => Ok(RadioEvent::Scanning),
-            0x05 => Ok(RadioEvent::CentralConnection),
-            0x06 => Ok(RadioEvent::TxTestMode),
-            0x07 => Ok(RadioEvent::RxTestMode),
-            x => Err(Error::Vendor(VendorError::BadRadioEvent(x))),
-        }
+hci_event_enum! {
+    /// Radio state reported by the end-of-radio-activity event.
+    #[derive(Debug, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum RadioEvent: u8 => 1 {
+        Idle = 0x00,
+        Advertising = 0x01,
+        PeripheralConnection = 0x02,
+        Scanning = 0x03,
+        CentralConnection = 0x05,
+        TxTestMode = 0x06,
+        RxTestMode = 0x07,
     }
+    TryFromError = Error => |value| Error::Vendor(VendorError::BadRadioEvent(value));
+    EventError = core::convert::identity;
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Defines error types returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event
-pub enum FirmwareError {
-    /// L2CAP recombination failure
-    L2capRecombination = 0x01,
-    /// GATT unexpected peer message
-    GattUnexpectedPeerMsg = 0x02,
-    /// NVM level warning
-    NvmLevelWarning = 0x03,
-    /// COC Rx data length too large
-    CocRxDataTooLarge = 0x04,
-    /// COC already assigned DCID
-    COCAlreadyAssignedDCID = 0x05,
-    /// SMP unexpected LTK request
-    SmpUnexpectedLTKRequest = 0x06,
-    /// GATT bearer not allocated
-    GattBearerNotAllocated = 0x07,
-}
-
-impl TryFrom<u8> for FirmwareError {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x01 => Ok(FirmwareError::L2capRecombination),
-            0x02 => Ok(FirmwareError::GattUnexpectedPeerMsg),
-            0x03 => Ok(FirmwareError::NvmLevelWarning),
-            0x04 => Ok(FirmwareError::CocRxDataTooLarge),
-            0x05 => Ok(FirmwareError::COCAlreadyAssignedDCID),
-            0x06 => Ok(FirmwareError::SmpUnexpectedLTKRequest),
-            0x07 => Ok(FirmwareError::GattBearerNotAllocated),
-            x => Err(Error::Vendor(VendorError::BadFirmwareError(x))),
-        }
+hci_event_enum! {
+    /// Defines error types returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event.
+    #[derive(Debug, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum FirmwareError: u8 => 1 {
+        /// L2CAP recombination failure
+        L2capRecombination = 0x01,
+        /// GATT unexpected peer message
+        GattUnexpectedPeerMsg = 0x02,
+        /// NVM level warning
+        NvmLevelWarning = 0x03,
+        /// COC Rx data length too large
+        CocRxDataTooLarge = 0x04,
+        /// COC already assigned DCID
+        COCAlreadyAssignedDCID = 0x05,
+        /// SMP unexpected LTK request
+        SmpUnexpectedLTKRequest = 0x06,
+        /// GATT bearer not allocated
+        GattBearerNotAllocated = 0x07,
     }
+    TryFromError = Error => |value| Error::Vendor(VendorError::BadFirmwareError(value));
+    EventError = core::convert::identity;
 }
 
 impl HalFirmwareError {
@@ -2664,18 +2498,6 @@ impl HalFirmwareError {
 impl HciEventField<2> for usize {
     fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         Ok(usize::from(u16::from_le_bytes(*bytes)))
-    }
-}
-
-impl HciEventField<1> for FirmwareKind {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into().map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<1> for RadioEvent {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into()
     }
 }
 
@@ -2691,21 +2513,9 @@ impl HciEventField<7> for PeerAddrType {
     }
 }
 
-impl HciEventField<1> for FirmwareError {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into()
-    }
-}
-
 impl HciEventField<2> for GapPairingStatus {
     fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
         to_gap_pairing_status(bytes[0], bytes[1].try_into()).map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<1> for GapProcedureStatus {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into().map_err(Error::Vendor)
     }
 }
 
@@ -2721,33 +2531,6 @@ impl HciEventField<8> for ConnectionInterval {
         Self::from_bytes(bytes)
             .map_err(VendorError::BadConnectionInterval)
             .map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<1> for GattProcedureStatus {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into()
-    }
-}
-
-impl HciEventField<1> for AttRequest {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into().map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<1> for AttError {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0]
-            .try_into()
-            .map_err(VendorError::BadAttError)
-            .map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<1> for EabState {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        bytes[0].try_into()
     }
 }
 
@@ -2833,6 +2616,69 @@ mod tests {
                 assert_eq!(e.status, GattProcedureStatus::Success);
             }
             _ => panic!("unexpected event variant"),
+        }
+    }
+
+    #[test]
+    fn declarative_event_enums_preserve_their_invalid_value_errors() {
+        assert_eq!(
+            FirmwareKind::try_from(2).unwrap_err(),
+            VendorError::UnknownFirmwareKind(2)
+        );
+        assert_eq!(
+            GapProcedureKind::try_from(3).unwrap_err(),
+            VendorError::BadGapProcedure(3)
+        );
+        assert_eq!(
+            GapProcedureStatus::try_from(0x42).unwrap_err(),
+            VendorError::BadGapProcedureStatus(0x42)
+        );
+        assert_eq!(
+            GattProcedureStatus::try_from(0x42).unwrap_err(),
+            Error::Vendor(VendorError::BadGattProcedureStatus(0x42))
+        );
+        assert_eq!(
+            AttRequest::try_from(0).unwrap_err(),
+            VendorError::BadAttRequestOpcode(0)
+        );
+        assert_eq!(AttError::try_from(0x14).unwrap_err(), 0x14);
+        assert_eq!(
+            EabState::try_from(2).unwrap_err(),
+            Error::Vendor(VendorError::BadEabState(2))
+        );
+        assert_eq!(
+            RadioEvent::try_from(4).unwrap_err(),
+            Error::Vendor(VendorError::BadRadioEvent(4))
+        );
+        assert_eq!(
+            FirmwareError::try_from(0).unwrap_err(),
+            Error::Vendor(VendorError::BadFirmwareError(0))
+        );
+        assert_eq!(
+            <AttError as HciEventField<1>>::from_hci_event_field(&[0x14]).unwrap_err(),
+            Error::Vendor(VendorError::BadAttError(0x14))
+        );
+    }
+
+    #[test]
+    fn att_error_response_accepts_every_declared_core_error() {
+        for (value, expected) in [
+            (0x12, AttError::DatabaseOutOfSync),
+            (0x13, AttError::ValueNotAllowed),
+        ] {
+            let bytes = [
+                0x11, 0x0C, // event code
+                0x23, 0x01, // connection handle
+                0x0A, // read request
+                0x34, 0x12, // attribute handle
+                value,
+            ];
+            let VendorEvent::AttErrorResponse(event) =
+                VendorEvent::new(&bytes).expect("declared ATT error")
+            else {
+                panic!("unexpected event variant");
+            };
+            assert_eq!(event.error, expected);
         }
     }
 

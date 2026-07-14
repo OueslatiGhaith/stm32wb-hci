@@ -141,6 +141,58 @@ macro_rules! hci_enum {
     };
 }
 
+/// Declare a closed vendor-event enum and its exact-width decoder.
+///
+/// The discriminants are the single source of truth for both `TryFrom` and
+/// [`HciEventField`](crate::vendor::event::HciEventField). The two error
+/// expressions keep the enum's public conversion error and the event decoder's
+/// structured error explicit when those types differ.
+macro_rules! hci_event_enum {
+    (
+        $(#[$enum_attr:meta])*
+        $vis:vis enum $name:ident : $repr:ty => $len:literal {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr,
+            )+
+        }
+        TryFromError = $error_ty:ty => $invalid_value:expr;
+        EventError = $event_error:expr;
+    ) => {
+        $(#[$enum_attr])*
+        #[repr($repr)]
+        $vis enum $name {
+            $(
+                $(#[$variant_attr])*
+                $variant = $value,
+            )+
+        }
+
+        impl core::convert::TryFrom<$repr> for $name {
+            type Error = $error_ty;
+
+            fn try_from(value: $repr) -> Result<Self, Self::Error> {
+                $(
+                    if value == $value {
+                        return Ok(Self::$variant);
+                    }
+                )+
+                Err(($invalid_value)(value))
+            }
+        }
+
+        impl crate::vendor::event::HciEventField<$len> for $name {
+            fn from_hci_event_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, crate::vendor::event::Error> {
+                let value = <$repr>::from_le_bytes(*bytes);
+                <Self as core::convert::TryFrom<$repr>>::try_from(value)
+                    .map_err($event_error)
+            }
+        }
+    };
+}
+
 macro_rules! hci_ranged_error {
     ($actual:expr, $minimum:expr, $maximum:expr) => {
         crate::vendor::command::HciValueError::new(
