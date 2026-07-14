@@ -4,18 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// Keep the build script and the compliance checker on one implementation of
-// feature discovery and version comparison. If these two paths disagree, the
-// checker could report a feature surface that rustc did not actually compile.
-#[path = "tools/compliance/src/firmware.rs"]
-#[allow(dead_code)]
-mod firmware;
-
-use firmware::FirmwareVersion;
+use stm32wb_hci_schema::FirmwareVersion;
 
 fn main() {
     println!("cargo::rerun-if-changed=Cargo.toml");
-    println!("cargo::rerun-if-changed=tools/compliance/src/firmware.rs");
 
     let manifest_path = manifest_path();
     let crate_dir = manifest_path

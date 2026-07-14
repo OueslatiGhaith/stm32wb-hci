@@ -2,7 +2,7 @@ extern crate stm32wb_hci as hci;
 
 mod vendor;
 
-use bt_hci::cmd::{AsyncCmd, SyncCmd};
+use bt_hci::cmd::{AsyncCmd, Cmd, SyncCmd};
 use hci::types::{AdvertisingFilterPolicy, AdvertisingType};
 use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::{
@@ -833,8 +833,13 @@ async fn declarative_gap_nondiscoverable_has_no_wire_parameters() {
 }
 
 #[tokio::test]
-async fn declarative_gap_io_capability_matches_cubewb() {
+async fn proc_macro_gap_io_capability_preserves_the_legacy_contract() {
     let sink = RecordingSink::new();
+
+    assert_eq!(GapSetIoCapability::CGID, 0x1);
+    assert_eq!(GapSetIoCapability::CID, 0x05);
+    assert_eq!(GapSetIoCapability::OCF, 0x085);
+    assert_eq!(<GapSetIoCapability as Cmd>::OPCODE.to_raw(), 0xFC85);
 
     GapSetIoCapability::new(IoCapability::KeyboardDisplay)
         .exec(&sink)

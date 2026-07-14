@@ -1,56 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["examples/*", "tools/compliance"]
-# Keep ordinary builds of this no_std crate independent of the host-only
-# compliance CLI, especially for embedded cross-compilation targets.
-default-members = ["."]
+members = ["crates/*", "examples/*"]
+# Keep ordinary builds of the no_std library independent of the host-only
+# compliance CLI and proc-macro support crates.
+default-members = ["crates/stm32wb-hci"]
 
-[package]
-name = "stm32wb-hci"
-build = "build.rs"
-edition = "2024"
-version = "0.18.0"
-authors = [
-    "Daniel Gallagher <pdanielgallagher@gmail.com>",
-    "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
-]
-categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
-description = "Implementation of the Bluetooth HCI for the STM32WB family"
-keywords = ["ble", "bluetooth", "stm32"]
-license = "MIT/Apache-2.0"
-repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
-readme = "README.md"
-exclude = ["tests"]
-
-[dependencies]
-bitflags = "2"
+[workspace.dependencies]
 bt-hci = "0.9.0"
-byteorder = { version = "1", default-features = false }
-defmt = { version = "1", optional = true }
+defmt = "1"
 embedded-io = "0.7.1"
-embedded-io-async = "0.7.0"
-
-[target.'cfg(windows)'.dependencies]
-critical-section = { version = "1.2", features = ["std"] }
-
-[target.'cfg(unix)'.dependencies]
-critical-section = { version = "1.2", features = ["std"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-
-[build-dependencies]
-# `build.rs` shares firmware feature discovery with the host-only compliance
-# tool, so both paths use a real TOML parser rather than line-based parsing.
-toml = "1"
-
-[features]
-default = ["fw_0_17_1"]
-defmt = ["dep:defmt", "bt-hci/defmt"]
-fw_0_15_0 = []
-fw_0_16_0 = []
-fw_0_17_0 = []
-fw_0_17_1 = []
+proc-macro2 = "1"
+stm32wb-hci-schema = { version = "0.1.0", path = "crates/stm32wb-hci-schema" }
+syn = "2"
 
 [profile.dev]
 debug = 2

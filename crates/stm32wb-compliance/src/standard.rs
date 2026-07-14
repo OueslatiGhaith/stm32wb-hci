@@ -105,7 +105,12 @@ fn find_bt_hci_source(crate_dir: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    let version = locked_bt_hci_version(&crate_dir.join("Cargo.lock"))?;
+    let lockfile = crate_dir
+        .ancestors()
+        .map(|path| path.join("Cargo.lock"))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| crate_dir.join("Cargo.lock"));
+    let version = locked_bt_hci_version(&lockfile)?;
     let cargo_home = env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))

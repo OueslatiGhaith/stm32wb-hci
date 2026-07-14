@@ -7,7 +7,6 @@ mod c_preprocessor;
 mod catalog;
 mod diff;
 mod envelope;
-mod firmware;
 mod json;
 mod model;
 mod rust_source;
@@ -24,12 +23,12 @@ pub use diff::{
     CatalogIdentity, ChangedCommand, ChangedEvent, CommandChanges, CommandKey, EventChanges,
     EventKey, VersionDiff, VersionDiffError, diff_catalogs,
 };
-pub use firmware::FirmwareVersion;
 pub use json::CheckReportJson;
 pub use model::{
     CheckReport, CoverageDifference, CoverageEntry, CoverageOrigin, ProtocolCoverage,
     StandardHciCoverage,
 };
+pub use stm32wb_hci_schema::FirmwareVersion;
 pub use wire::{WireDifference, WireReport, WireUnavailable};
 
 use std::collections::BTreeMap;
@@ -126,15 +125,38 @@ pub fn load_catalog(
 pub fn find_crate_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
-        .find(|path| path.join("src/vendor/command").is_dir() && path.join("Cargo.toml").is_file())
-        .map(Path::to_path_buf)
+        .find_map(|path| {
+            if is_hci_crate(path) {
+                return Some(path.to_path_buf());
+            }
+
+            let workspace_member = path.join("crates/stm32wb-hci");
+            is_hci_crate(&workspace_member).then_some(workspace_member)
+        })
         .or_else(|| {
-            let bundled_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-            bundled_root
+            let bundled_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
+            bundled_crate
                 .canonicalize()
                 .ok()
-                .filter(|path| path.join("src/vendor/command").is_dir())
+                .filter(|path| is_hci_crate(path))
         })
+}
+
+fn is_hci_crate(path: &Path) -> bool {
+    path.join("src/vendor/command").is_dir() && path.join("Cargo.toml").is_file()
+}
+
+/// Locate the workspace containing the library crate.
+///
+/// A standalone checkout of the package may have its lockfile beside the
+/// package manifest, while this repository keeps it at the virtual-workspace
+/// root. Choosing the nearest lockfile supports both layouts.
+pub fn workspace_root(crate_dir: &Path) -> PathBuf {
+    crate_dir
+        .ancestors()
+        .find(|path| path.join("Cargo.lock").is_file())
+        .unwrap_or(crate_dir)
+        .to_path_buf()
 }
 
 fn cargo_check(crate_dir: &Path, feature: &str) -> Result<(), ComplianceError> {

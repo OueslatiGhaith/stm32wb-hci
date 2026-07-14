@@ -1168,9 +1168,9 @@ dependencies = [
  "proc-macro2",
  "serde",
  "serde_json",
+ "stm32wb-hci-schema",
  "syn 2.0.117",
  "thiserror",
- "toml",
  "tree-sitter",
  "tree-sitter-c",
 ]
@@ -1182,11 +1182,30 @@ dependencies = [
  "bitflags 2.11.1",
  "bt-hci",
  "byteorder",
- "critical-section",
  "defmt 1.1.0",
  "embedded-io",
  "embedded-io-async",
+ "stm32wb-hci-macros",
+ "stm32wb-hci-schema",
  "tokio",
+]
+
+[[package]]
+name = "stm32wb-hci-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "stm32wb-hci-schema",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "stm32wb-hci-schema"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.117",
  "toml",
 ]
 

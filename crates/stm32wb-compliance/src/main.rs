@@ -11,10 +11,10 @@ use serde::Serialize;
 use stm32wb_compliance::{
     CATALOG_SCHEMA_VERSION, CheckOptions, CheckReport, CheckReportJson, CommandChanges, CommandKey,
     CommandScope, EventChanges, EventPayloadLayout, EventScope, FirmwareVersion, VersionDiff,
-    check, diff_catalogs, find_crate_root, load_catalog,
+    check, diff_catalogs, find_crate_root, load_catalog, workspace_root,
 };
 
-const DEFAULT_POLICY_PATH: &str = "tools/compliance/exclusions.policy";
+const DEFAULT_POLICY_PATH: &str = "crates/stm32wb-compliance/exclusions.policy";
 const POLICY_FORMAT_VERSION: u32 = 2;
 
 fn main() -> ExitCode {
@@ -87,14 +87,15 @@ fn run_check(cli: &Cli, crate_dir: PathBuf) -> Result<ExitCode, String> {
         vec![firmware]
     };
 
+    let workspace_dir = workspace_root(&crate_dir);
     let cube_dir = cli
         .cube_dir
         .clone()
-        .unwrap_or_else(|| crate_dir.join("STM32CubeWB"));
+        .unwrap_or_else(|| workspace_dir.join("STM32CubeWB"));
     let policy_path = cli
         .policy_path
         .clone()
-        .unwrap_or_else(|| crate_dir.join(DEFAULT_POLICY_PATH));
+        .unwrap_or_else(|| workspace_dir.join(DEFAULT_POLICY_PATH));
     let policy = ExclusionPolicy::load(policy_path)?;
     policy.validate_for(&declared_firmwares)?;
 
@@ -156,10 +157,11 @@ fn run_diff(cli: &Cli, current_dir: &Path) -> Result<ExitCode, String> {
         .crate_dir
         .clone()
         .or_else(|| find_crate_root(current_dir));
+    let workspace_dir = crate_dir.as_deref().map(workspace_root);
     let cube_dir = cli
         .cube_dir
         .clone()
-        .or_else(|| crate_dir.as_ref().map(|path| path.join("STM32CubeWB")))
+        .or_else(|| workspace_dir.as_ref().map(|path| path.join("STM32CubeWB")))
         .ok_or_else(|| {
             "could not locate the stm32wb-hci crate for the default CubeWB path; pass --cube <path>"
                 .to_owned()
@@ -1175,7 +1177,7 @@ struct Cli {
         long = "crate",
         global = true,
         value_name = "PATH",
-        help = "stm32wb-hci checkout (defaults to the current/containing checkout)"
+        help = "stm32wb-hci package directory (defaults to the current/containing workspace member)"
     )]
     crate_dir: Option<PathBuf>,
 
@@ -1183,7 +1185,7 @@ struct Cli {
         long = "cube",
         global = true,
         value_name = "PATH",
-        help = "STM32CubeWB git checkout (defaults to <crate>/STM32CubeWB)"
+        help = "STM32CubeWB git checkout (defaults to <workspace>/STM32CubeWB)"
     )]
     cube_dir: Option<PathBuf>,
 
@@ -1191,7 +1193,7 @@ struct Cli {
         long = "policy",
         global = true,
         value_name = "PATH",
-        help = "Checked-in exclusion policy (defaults to tools/compliance/exclusions.policy)"
+        help = "Checked-in exclusion policy (defaults to crates/stm32wb-compliance/exclusions.policy)"
     )]
     policy_path: Option<PathBuf>,
 

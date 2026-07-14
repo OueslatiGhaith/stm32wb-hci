@@ -199,7 +199,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetIoCapability(cgid = 0x1, cid = 0x05) {
         Params = {
             io_capability: IoCapability => 1,

@@ -8,13 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use stm32wb_hci_schema::{Completion as SchemaCompletion, Fields as SchemaFields, VendorCommand};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::visit::{self, Visit};
-use syn::{
-    Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath, Type,
-};
+use syn::{Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath};
 
 use crate::FirmwareVersion;
 use crate::envelope::WireEnvelope;
@@ -347,747 +344,43 @@ fn collect_descriptors(
 }
 
 fn parse_vendor_descriptor(item: &ItemMacro, path: &Path) -> Result<DescriptorDefinition, String> {
-    syn::parse2::<VendorCommandInvocation>(item.mac.tokens.clone())
-        .map_err(|error| {
-            format!(
-                "{}: unsupported vendor_cmd! declaration: {error}",
-                path.display()
-            )
-        })
-        .and_then(|definition| parse_descriptor_definition(definition, path))
-}
-
-fn parse_descriptor_definition(
-    invocation: VendorCommandInvocation,
-    path: &Path,
-) -> Result<DescriptorDefinition, String> {
-    let mut input = invocation.body.into_iter().peekable();
-    let mut saw_params = false;
-    let mut request = None;
-    let mut saw_return = false;
-    let mut response = None;
-    let mut completion = None;
-    let mut param_names = BTreeSet::new();
-    let mut constraint_names = None;
-
-    while input.peek().is_some() {
-        let Some(TokenTree::Ident(label)) = input.next() else {
-            return Err(format!(
-                "{}: expected a field name in vendor_cmd! body for `{}`",
-                path.display(),
-                invocation.name
-            ));
-        };
-
-        // `Params<'a> = ...` has generic tokens between the label and `=`.
-        // Groups are a single token tree, so an `=` inside a type body cannot
-        // accidentally terminate this scan.
-        let mut found_equals = false;
-        for token in input.by_ref() {
-            if matches!(&token, TokenTree::Punct(punctuation) if punctuation.as_char() == '=') {
-                found_equals = true;
-                break;
-            }
-        }
-        if !found_equals {
-            return Err(format!(
-                "{}: field `{label}` in vendor_cmd! `{}` has no `=`",
-                path.display(),
-                invocation.name
-            ));
-        }
-
-        let mut value = TokenStream::new();
-        let mut terminated = false;
-        for token in input.by_ref() {
-            if matches!(&token, TokenTree::Punct(punctuation) if punctuation.as_char() == ';') {
-                terminated = true;
-                break;
-            }
-            value.extend([token]);
-        }
-        if !terminated {
-            return Err(format!(
-                "{}: field `{label}` in vendor_cmd! `{}` is missing `;`",
-                path.display(),
-                invocation.name
-            ));
-        }
-
-        if label == "Params" {
-            if saw_params {
-                return Err(format!(
-                    "{}: vendor_cmd! `{}` declares `Params` more than once",
-                    path.display(),
-                    invocation.name
-                ));
-            }
-            saw_params = true;
-            let params = parse_params_shape(value, &invocation.name, path)?;
-            request = Some(params.envelope);
-            param_names = params.names;
-        } else if label == "Return" {
-            if saw_return {
-                return Err(format!(
-                    "{}: vendor_cmd! `{}` declares `Return` more than once",
-                    path.display(),
-                    invocation.name
-                ));
-            }
-            saw_return = true;
-            response = Some(parse_return_shape(value, &invocation.name, path)?);
-        } else if label == "Completion" {
-            if completion.is_some() {
-                return Err(format!(
-                    "{}: vendor_cmd! `{}` declares `Completion` more than once",
-                    path.display(),
-                    invocation.name
-                ));
-            }
-            completion = Some(parse_completion_shape(value, &invocation.name, path)?);
-        } else if label == "Constraints" {
-            if constraint_names.is_some() {
-                return Err(format!(
-                    "{}: vendor_cmd! `{}` declares `Constraints` more than once",
-                    path.display(),
-                    invocation.name
-                ));
-            }
-            constraint_names = Some(parse_constraints_shape(value, &invocation.name, path)?);
-        } else {
-            return Err(format!(
-                "{}: vendor_cmd! `{}` contains unknown declaration `{label}`",
-                path.display(),
-                invocation.name
-            ));
-        }
-    }
-
-    if !saw_params {
-        return Err(format!(
-            "{}: vendor_cmd! `{}` is missing a `Params = ...` declaration",
-            path.display(),
-            invocation.name
-        ));
-    }
-
-    if let Some(constraint_names) = constraint_names {
-        let unknown = constraint_names
-            .difference(&param_names)
-            .cloned()
-            .collect::<Vec<_>>();
-        if !unknown.is_empty() {
-            return Err(format!(
-                "{}: vendor_cmd! `{}` constraints reference unknown parameter(s): {}",
-                path.display(),
-                invocation.name,
-                unknown.join(", ")
-            ));
-        }
-    }
-
-    let completion = completion.ok_or_else(|| {
+    let command = syn::parse2::<VendorCommand>(item.mac.tokens.clone()).map_err(|error| {
         format!(
-            "{}: vendor_cmd! `{}` is missing a `Completion = ...` declaration",
-            path.display(),
-            invocation.name
+            "{}: unsupported vendor_cmd! declaration: {error}",
+            path.display()
         )
     })?;
-    let completion = match completion {
-        ParsedCompletion::CommandComplete if saw_return => DescriptorCompletion::CommandComplete {
-            returns: response.expect("Return was parsed when saw_return is true"),
-        },
-        ParsedCompletion::CommandComplete => {
-            return Err(format!(
-                "{}: vendor_cmd! `{}` declares CommandComplete but has no Return declaration",
-                path.display(),
-                invocation.name
-            ));
+
+    let request = wire_envelope(
+        command.params.min_len(),
+        command.params.max_len().min(usize::from(u8::MAX)),
+    );
+    let completion = match command.completion {
+        SchemaCompletion::CommandComplete => {
+            let returns = command
+                .returns
+                .as_ref()
+                .expect("the shared parser requires Return for CommandComplete");
+            DescriptorCompletion::CommandComplete {
+                returns: wire_envelope(returns.min_len(), returns.max_len()),
+            }
         }
-        ParsedCompletion::CommandStatus if saw_return => {
-            return Err(format!(
-                "{}: vendor_cmd! `{}` declares CommandStatus and must not declare Return",
-                path.display(),
-                invocation.name
-            ));
-        }
-        ParsedCompletion::CommandStatus => DescriptorCompletion::CommandStatus,
+        SchemaCompletion::CommandStatus => DescriptorCompletion::CommandStatus,
     };
 
     Ok(DescriptorDefinition {
-        name: invocation.name.to_string(),
-        code: (invocation.cgid << 7) | invocation.cid,
+        name: command.name.to_string(),
+        code: command.ocf(),
         completion,
-        request: request.expect("presence checked above"),
+        request,
     })
 }
 
-struct ParsedParamsShape {
-    envelope: WireEnvelope,
-    names: BTreeSet<String>,
-}
-
-fn parse_params_shape(
-    value: TokenStream,
-    descriptor: &syn::Ident,
-    path: &Path,
-) -> Result<ParsedParamsShape, String> {
-    let mut tokens = value.clone().into_iter();
-    if let (Some(TokenTree::Group(group)), None) = (tokens.next(), tokens.next())
-        && group.delimiter() == Delimiter::Brace
-    {
-        let fields = syn::parse2::<DeclarativeFields>(group.stream()).map_err(|error| {
-            format!(
-                "{}: descriptor `{descriptor}` has an unsupported declarative Params shape: {error}",
-                path.display()
-            )
-        })?;
-        if fields.contains_payload_field {
-            return Err(format!(
-                "{}: descriptor `{descriptor}` uses removed `kind: payload` in Params; inline the wire schema instead",
-                path.display()
-            ));
-        }
-        if fields.min_len > usize::from(u8::MAX) {
-            return Err(format!(
-                "{}: descriptor `{descriptor}` has a {}-byte minimum Params envelope, exceeding the HCI 255-byte parameter limit",
-                path.display(),
-                fields.min_len,
-            ));
-        }
-        return Ok(ParsedParamsShape {
-            envelope: if fields.min_len == fields.total_len {
-                WireEnvelope::fixed(fields.total_len)
-            } else {
-                // `vendor_cmd!` rejects an aggregate encoded request above the
-                // one-byte HCI parameter-length limit, even when the sum of
-                // independent field capacities is larger.
-                WireEnvelope::bounded(fields.min_len, fields.total_len.min(usize::from(u8::MAX)))
-            },
-            names: fields.names,
-        });
-    }
-
-    let ty = syn::parse2::<Type>(value).map_err(|error| {
-        format!(
-            "{}: descriptor `{descriptor}` has an unsupported Params shape: {error}",
-            path.display()
-        )
-    })?;
-    Ok(ParsedParamsShape {
-        envelope: match ty {
-            Type::Tuple(tuple) if tuple.elems.is_empty() => WireEnvelope::fixed(0),
-            _ => {
-                return Err(format!(
-                    "{}: descriptor `{descriptor}` has an unsupported Params shape; expected `()` or an inline named field body",
-                    path.display()
-                ));
-            }
-        },
-        names: BTreeSet::new(),
-    })
-}
-
-fn parse_constraints_shape(
-    value: TokenStream,
-    descriptor: &syn::Ident,
-    path: &Path,
-) -> Result<BTreeSet<String>, String> {
-    let mut tokens = value.into_iter();
-    let Some(TokenTree::Group(group)) = tokens.next() else {
-        return Err(format!(
-            "{}: descriptor `{descriptor}` Constraints must be a declarative field body",
-            path.display()
-        ));
-    };
-    if tokens.next().is_some() || group.delimiter() != Delimiter::Brace {
-        return Err(format!(
-            "{}: descriptor `{descriptor}` Constraints must be a declarative field body",
-            path.display()
-        ));
-    }
-    syn::parse2::<DeclarativeConstraints>(group.stream())
-        .map(|constraints| constraints.fields)
-        .map_err(|error| {
-            format!(
-                "{}: descriptor `{descriptor}` has unsupported declarative Constraints: {error}",
-                path.display()
-            )
-        })
-}
-
-fn parse_return_shape(
-    value: TokenStream,
-    descriptor: &syn::Ident,
-    path: &Path,
-) -> Result<WireEnvelope, String> {
-    if let Ok(shape) = syn::parse2::<DeclarativeReturn>(value.clone()) {
-        if shape.fields.contains_payload_field {
-            return Err(format!(
-                "{}: descriptor `{descriptor}` uses removed `kind: payload` in Return; inline the wire schema instead",
-                path.display()
-            ));
-        }
-        return Ok(shape.fields.envelope());
-    }
-
-    let ty = syn::parse2::<Type>(value).map_err(|error| {
-        format!(
-            "{}: descriptor `{descriptor}` has an unsupported Return shape: {error}",
-            path.display()
-        )
-    })?;
-    match ty {
-        Type::Tuple(tuple) if tuple.elems.is_empty() => Ok(WireEnvelope::fixed(0)),
-        _ => Err(format!(
-            "{}: descriptor `{descriptor}` has an unsupported Return shape; expected `()` or an inline named field body",
-            path.display()
-        )),
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ParsedCompletion {
-    CommandComplete,
-    CommandStatus,
-}
-
-fn parse_completion_shape(
-    value: TokenStream,
-    descriptor: &syn::Ident,
-    path: &Path,
-) -> Result<ParsedCompletion, String> {
-    let completion = syn::parse2::<syn::Ident>(value).map_err(|error| {
-        format!(
-            "{}: descriptor `{descriptor}` has an unsupported Completion shape: {error}",
-            path.display()
-        )
-    })?;
-    if completion == "CommandComplete" {
-        Ok(ParsedCompletion::CommandComplete)
-    } else if completion == "CommandStatus" {
-        Ok(ParsedCompletion::CommandStatus)
+fn wire_envelope(minimum: usize, maximum: usize) -> WireEnvelope {
+    if minimum == maximum {
+        WireEnvelope::fixed(maximum)
     } else {
-        Err(format!(
-            "{}: descriptor `{descriptor}` has unknown Completion `{completion}`",
-            path.display()
-        ))
-    }
-}
-
-/// Parser-side mirror of the `vendor_cmd!` constraint grammar.
-///
-/// It records every referenced parameter so compliance can reject stale or
-/// misspelled field names before comparing wire envelopes. The runtime meaning
-/// of each form is documented alongside `declarative_constraint_checks!` in
-/// `src/vendor/command/mod.rs`. Keep both grammars and their tests in lockstep
-/// until they are replaced by the planned shared proc-macro parser.
-struct DeclarativeConstraints {
-    fields: BTreeSet<String>,
-}
-
-impl Parse for DeclarativeConstraints {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut fields = BTreeSet::new();
-        while !input.is_empty() {
-            let kind = input.parse::<syn::Ident>()?;
-            let arguments;
-            syn::parenthesized!(arguments in input);
-
-            if kind == "ordered" || kind == "len_at_most" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-            } else if kind == "ordered_when_in_range" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "range" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "one_of" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                let allowed;
-                syn::bracketed!(allowed in arguments);
-                let values = Punctuated::<Expr, syn::Token![,]>::parse_terminated(&allowed)?;
-                if values.is_empty() {
-                    return Err(allowed.error("one_of must declare at least one allowed value"));
-                }
-            } else if kind == "one_of_or_range" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                let allowed;
-                syn::bracketed!(allowed in arguments);
-                let values = Punctuated::<Expr, syn::Token![,]>::parse_terminated(&allowed)?;
-                if values.is_empty() {
-                    return Err(
-                        allowed.error("one_of_or_range must declare at least one allowed value")
-                    );
-                }
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "paired_value" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "implies_eq" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "implies_range" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-                arguments.parse::<syn::Token![,]>()?;
-                arguments.parse::<Expr>()?;
-            } else if kind == "pawr_subevents_fit" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                arguments.parse::<syn::Token![,]>()?;
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-            } else if kind == "pawr_response_slots_fit" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                for _ in 0..4 {
-                    arguments.parse::<syn::Token![,]>()?;
-                    fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-                }
-            } else if kind == "non_empty" {
-                fields.insert(arguments.parse::<syn::Ident>()?.to_string());
-            } else {
-                return Err(syn::Error::new_spanned(
-                    kind,
-                    "unknown declarative constraint",
-                ));
-            }
-
-            if !arguments.is_empty() {
-                return Err(arguments.error("unexpected tokens in declarative constraint"));
-            }
-            input.parse::<syn::Token![;]>()?;
-        }
-        Ok(Self { fields })
-    }
-}
-
-struct DeclarativeFields {
-    names: BTreeSet<String>,
-    min_len: usize,
-    total_len: usize,
-    contains_payload_field: bool,
-}
-
-impl DeclarativeFields {
-    fn envelope(&self) -> WireEnvelope {
-        if self.min_len == self.total_len {
-            WireEnvelope::fixed(self.total_len)
-        } else {
-            WireEnvelope::bounded(self.min_len, self.total_len)
-        }
-    }
-}
-
-impl Parse for DeclarativeFields {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut names = BTreeSet::new();
-        let mut min_len = 0usize;
-        let mut total_len = 0usize;
-        let mut consumes_remainder = false;
-        let mut contains_payload_field = false;
-        while !input.is_empty() {
-            if consumes_remainder {
-                return Err(input.error("trailing_bytes must be the final declarative field"));
-            }
-            let name = input.parse::<syn::Ident>()?;
-            if !names.insert(name.to_string()) {
-                return Err(syn::Error::new_spanned(name, "duplicate declarative field"));
-            }
-            input.parse::<syn::Token![:]>()?;
-            input.parse::<Type>()?;
-            input.parse::<syn::Token![=>]>()?;
-            let (minimum, width, payload_field, field_consumes_remainder) = if input.peek(LitInt) {
-                let width = input.parse::<LitInt>()?;
-                let width = parse_usize_literal(&width).map_err(|error| input.error(error))?;
-                (width, width, false, false)
-            } else if input.peek(syn::token::Brace) {
-                let shape;
-                syn::braced!(shape in input);
-                let shape = shape.parse::<DeclarativeVariableShape>()?;
-                (
-                    shape.min_len,
-                    shape.max_len,
-                    shape.payload_field,
-                    shape.consumes_remainder,
-                )
-            } else {
-                return Err(input.error("expected a fixed width or variable field shape"));
-            };
-            consumes_remainder = field_consumes_remainder;
-            contains_payload_field |= payload_field;
-            total_len = total_len
-                .checked_add(width)
-                .ok_or_else(|| input.error("declarative field length overflows usize"))?;
-            min_len = min_len
-                .checked_add(minimum)
-                .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
-            input.parse::<syn::Token![,]>()?;
-        }
-        Ok(Self {
-            names,
-            min_len,
-            total_len,
-            contains_payload_field,
-        })
-    }
-}
-
-struct DeclarativeVariableShape {
-    min_len: usize,
-    max_len: usize,
-    payload_field: bool,
-    consumes_remainder: bool,
-}
-
-impl Parse for DeclarativeVariableShape {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        parse_declarative_label(input, "kind")?;
-        let kind = input.parse::<syn::Ident>()?;
-        input.parse::<syn::Token![,]>()?;
-
-        let mut payload_field = false;
-        let mut consumes_remainder = false;
-        let (min_len, max_len) = if kind == "counted_bytes" {
-            let count_len = parse_declarative_type_width(input, "count")?;
-            let max_value = parse_declarative_integer(input, "max_len")?;
-            (Some(count_len), count_len.checked_add(max_value))
-        } else if kind == "counted_items" {
-            let count_len = parse_declarative_type_width(input, "count")?;
-            let item_len = parse_declarative_type_width(input, "item")?;
-            let max_items = parse_declarative_integer(input, "max_items")?;
-            (
-                Some(count_len),
-                item_len
-                    .checked_mul(max_items)
-                    .and_then(|items| count_len.checked_add(items)),
-            )
-        } else if kind == "tagged" {
-            parse_declarative_tagged_shape(input)?
-        } else if kind == "payload" {
-            let min_len = parse_declarative_integer(input, "min_len")?;
-            let max_len = parse_declarative_integer(input, "max_len")?;
-            if min_len > max_len {
-                return Err(input.error(format!(
-                    "payload minimum {min_len} exceeds maximum {max_len}"
-                )));
-            }
-            payload_field = true;
-            (Some(min_len), Some(max_len))
-        } else if kind == "trailing_bytes" {
-            let min_len = parse_declarative_integer(input, "min_len")?;
-            let max_len = parse_declarative_integer(input, "max_len")?;
-            if min_len > max_len {
-                return Err(input.error(format!(
-                    "trailing_bytes minimum {min_len} exceeds maximum {max_len}"
-                )));
-            }
-            consumes_remainder = true;
-            (Some(min_len), Some(max_len))
-        } else if kind == "bitmap_items" {
-            parse_declarative_label(input, "bitmap")?;
-            input.parse::<syn::Ident>()?;
-            input.parse::<syn::Token![,]>()?;
-            let mask = parse_declarative_integer(input, "mask")?;
-            let item_len = parse_declarative_type_width(input, "item")?;
-            let max_items = parse_declarative_integer(input, "max_items")?;
-            if mask.count_ones() as usize != max_items {
-                return Err(input.error(format!(
-                    "bitmap mask selects {} bits but max_items is {max_items}",
-                    mask.count_ones()
-                )));
-            }
-            (Some(0), item_len.checked_mul(max_items))
-        } else {
-            return Err(input.error(format!("unknown declarative variable kind `{kind}`")));
-        };
-        let min_len = min_len
-            .ok_or_else(|| input.error("declarative variable minimum length overflows usize"))?;
-        let max_len = max_len
-            .ok_or_else(|| input.error("declarative variable field length overflows usize"))?;
-
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after declarative variable field"));
-        }
-        Ok(Self {
-            min_len,
-            max_len,
-            payload_field,
-            consumes_remainder,
-        })
-    }
-}
-
-fn parse_declarative_tagged_shape(
-    input: ParseStream<'_>,
-) -> syn::Result<(Option<usize>, Option<usize>)> {
-    let tag_len = parse_declarative_type_width(input, "tag")?;
-    parse_declarative_label(input, "variants")?;
-    let variants;
-    syn::braced!(variants in input);
-    input.parse::<syn::Token![,]>()?;
-
-    let mut tags = BTreeSet::new();
-    let mut variant_min = None::<usize>;
-    let mut variant_max = None::<usize>;
-    while !variants.is_empty() {
-        let pattern = variants.call(syn::Pat::parse_single)?;
-        let mut bindings = PatternBindings::default();
-        bindings.visit_pat(&pattern);
-        variants.parse::<syn::Token![=>]>()?;
-        let body;
-        syn::braced!(body in variants);
-
-        let tag = parse_declarative_integer(&body, "tag")?;
-        if !tags.insert(tag) {
-            return Err(variants.error(format!("duplicate tagged variant value {tag:#x}")));
-        }
-        if tag_len < core::mem::size_of::<usize>()
-            && tag >= (1usize << (tag_len * u8::BITS as usize))
-        {
-            return Err(variants.error(format!(
-                "tag value {tag:#x} does not fit in {tag_len} bytes"
-            )));
-        }
-
-        parse_declarative_label(&body, "fields")?;
-        let fields;
-        syn::braced!(fields in body);
-        body.parse::<syn::Token![,]>()?;
-        if !body.is_empty() {
-            return Err(body.error("unexpected tokens after tagged variant fields"));
-        }
-        let payload = parse_declarative_fixed_fields(&fields)?;
-        for field in &payload.names {
-            if !bindings.names.contains(field) {
-                return Err(fields.error(format!(
-                    "tagged payload field `{field}` is not bound by its variant pattern"
-                )));
-            }
-        }
-        let wire_len = tag_len
-            .checked_add(payload.len)
-            .ok_or_else(|| variants.error("tagged variant length overflows usize"))?;
-        variant_min = Some(variant_min.map_or(wire_len, |value| value.min(wire_len)));
-        variant_max = Some(variant_max.map_or(wire_len, |value| value.max(wire_len)));
-        variants.parse::<syn::Token![,]>()?;
-    }
-
-    let Some(computed_min) = variant_min else {
-        return Err(input.error("tagged field must declare at least one variant"));
-    };
-    let computed_max = variant_max.expect("minimum and maximum are populated together");
-    let declared_min = parse_declarative_integer(input, "min_len")?;
-    let declared_max = parse_declarative_integer(input, "max_len")?;
-    if (declared_min, declared_max) != (computed_min, computed_max) {
-        return Err(input.error(format!(
-            "tagged field declares lengths {declared_min}..={declared_max}, but its variants require {computed_min}..={computed_max}"
-        )));
-    }
-    Ok((Some(computed_min), Some(computed_max)))
-}
-
-#[derive(Default)]
-struct PatternBindings {
-    names: BTreeSet<String>,
-}
-
-impl<'ast> Visit<'ast> for PatternBindings {
-    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
-        self.names.insert(pattern.ident.to_string());
-        visit::visit_pat_ident(self, pattern);
-    }
-}
-
-struct DeclarativeFixedFields {
-    len: usize,
-    names: Vec<String>,
-}
-
-fn parse_declarative_fixed_fields(input: ParseStream<'_>) -> syn::Result<DeclarativeFixedFields> {
-    let mut total = 0usize;
-    let mut names = Vec::new();
-    while !input.is_empty() {
-        names.push(input.parse::<syn::Ident>()?.to_string());
-        input.parse::<syn::Token![:]>()?;
-        input.parse::<Type>()?;
-        input.parse::<syn::Token![=>]>()?;
-        let width = input.parse::<LitInt>()?;
-        let width = parse_usize_literal(&width).map_err(|error| input.error(error))?;
-        total = total
-            .checked_add(width)
-            .ok_or_else(|| input.error("tagged variant field length overflows usize"))?;
-        input.parse::<syn::Token![,]>()?;
-    }
-    Ok(DeclarativeFixedFields { len: total, names })
-}
-
-fn parse_declarative_label(input: ParseStream<'_>, expected: &str) -> syn::Result<()> {
-    let label = input.parse::<syn::Ident>()?;
-    if label != expected {
-        return Err(input.error(format!("expected `{expected}`, found `{label}`")));
-    }
-    input.parse::<syn::Token![:]>().map(|_| ())
-}
-
-fn parse_declarative_type_width(input: ParseStream<'_>, label: &str) -> syn::Result<usize> {
-    parse_declarative_label(input, label)?;
-    input.parse::<Type>()?;
-    input.parse::<syn::Token![=>]>()?;
-    let width = input.parse::<LitInt>()?;
-    input.parse::<syn::Token![,]>()?;
-    parse_usize_literal(&width).map_err(|error| input.error(error))
-}
-
-fn parse_declarative_integer(input: ParseStream<'_>, label: &str) -> syn::Result<usize> {
-    parse_declarative_label(input, label)?;
-    let value = input.parse::<LitInt>()?;
-    input.parse::<syn::Token![,]>()?;
-    parse_usize_literal(&value).map_err(|error| input.error(error))
-}
-
-struct DeclarativeReturn {
-    fields: DeclarativeFields,
-}
-
-impl Parse for DeclarativeReturn {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        input.parse::<SynPath>()?;
-        let content;
-        syn::braced!(content in input);
-        let fields = content.parse::<DeclarativeFields>()?;
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after declarative Return body"));
-        }
-        Ok(Self { fields })
+        WireEnvelope::bounded(minimum, maximum)
     }
 }
 
@@ -1127,12 +420,12 @@ fn parse_vendor_event_declarations(
         if !attrs_active(&definition.attrs, firmware, path)? {
             continue;
         }
-        if definition.payload.total_len > 253 {
+        if definition.payload.max_len() > 253 {
             return Err(format!(
                 "{}: event `{}` declares a maximum {}-byte payload; vendor event payloads cannot exceed 253 bytes after the two-byte event code",
                 path.display(),
                 definition.name,
-                definition.payload.total_len
+                definition.payload.max_len()
             ));
         }
         if !names.insert(definition.name.to_string()) {
@@ -1145,7 +438,7 @@ fn parse_vendor_event_declarations(
         let event = EventMetadata {
             name: definition.name.to_string(),
             code: definition.code,
-            payload: definition.payload.envelope(),
+            payload: wire_envelope(definition.payload.min_len(), definition.payload.max_len()),
             location: path.to_path_buf(),
         };
         if let Some(previous) = metadata.insert(event.code, event.clone()) {
@@ -1204,7 +497,7 @@ struct VendorEventDefinition {
     attrs: Vec<Attribute>,
     name: syn::Ident,
     code: u16,
-    payload: DeclarativeFields,
+    payload: SchemaFields,
 }
 
 impl Parse for VendorEventsInvocation {
@@ -1231,19 +524,14 @@ impl Parse for VendorEventsInvocation {
             let payload = if body.peek(syn::token::Brace) {
                 let payload;
                 syn::braced!(payload in body);
-                payload.parse::<DeclarativeFields>()?
+                payload.parse::<SchemaFields>()?
             } else if body.peek(syn::token::Paren) {
                 let unit;
                 syn::parenthesized!(unit in body);
                 if !unit.is_empty() {
                     return Err(unit.error("unit event payload must be `()`"));
                 }
-                DeclarativeFields {
-                    names: BTreeSet::new(),
-                    min_len: 0,
-                    total_len: 0,
-                    contains_payload_field: false,
-                }
+                SchemaFields::empty()
             } else {
                 return Err(body.error("event Payload must be `()` or a declarative field body"));
             };
@@ -1477,76 +765,9 @@ fn cfg_path_name(path: &SynPath) -> String {
         .join("::")
 }
 
-struct VendorCommandInvocation {
-    name: syn::Ident,
-    cgid: u16,
-    cid: u16,
-    body: TokenStream,
-}
-
-impl Parse for VendorCommandInvocation {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let name = input.parse::<syn::Ident>()?;
-        let arguments;
-        syn::parenthesized!(arguments in input);
-        let cgid_label = arguments.parse::<syn::Ident>()?;
-        if cgid_label != "cgid" {
-            return Err(syn::Error::new_spanned(cgid_label, "expected `cgid`"));
-        }
-        arguments.parse::<syn::Token![=]>()?;
-        let cgid_literal = arguments.parse::<LitInt>()?;
-        let cgid = parse_u16_literal(&cgid_literal).map_err(|error| {
-            syn::Error::new_spanned(&cgid_literal, format!("invalid command group ID: {error}"))
-        })?;
-        if cgid > 0b111 {
-            return Err(syn::Error::new_spanned(
-                cgid_literal,
-                "vendor command group ID must fit in three bits",
-            ));
-        }
-        arguments.parse::<syn::Token![,]>()?;
-        let cid_label = arguments.parse::<syn::Ident>()?;
-        if cid_label != "cid" {
-            return Err(syn::Error::new_spanned(cid_label, "expected `cid`"));
-        }
-        arguments.parse::<syn::Token![=]>()?;
-        let cid_literal = arguments.parse::<LitInt>()?;
-        let cid = parse_u16_literal(&cid_literal).map_err(|error| {
-            syn::Error::new_spanned(&cid_literal, format!("invalid command ID: {error}"))
-        })?;
-        if cid > 0b111_1111 {
-            return Err(syn::Error::new_spanned(
-                cid_literal,
-                "vendor command ID must fit in seven bits",
-            ));
-        }
-        if !arguments.is_empty() {
-            return Err(arguments.error("unexpected tokens after vendor command IDs"));
-        }
-        let body;
-        syn::braced!(body in input);
-        let body = body.parse::<TokenStream>()?;
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after vendor_cmd! body"));
-        }
-        Ok(Self {
-            name,
-            cgid,
-            cid,
-            body,
-        })
-    }
-}
-
 fn parse_u16_literal(literal: &LitInt) -> Result<u16, String> {
     parse_integer_literal(literal)
         .and_then(|value| u16::try_from(value).map_err(|_| format!("{value} does not fit in u16")))
-}
-
-fn parse_usize_literal(literal: &LitInt) -> Result<usize, String> {
-    parse_integer_literal(literal).and_then(|value| {
-        usize::try_from(value).map_err(|_| format!("{value} does not fit in usize"))
-    })
 }
 
 fn parse_integer_literal(literal: &LitInt) -> Result<u128, String> {
@@ -1663,6 +884,29 @@ mod tests {
             }
         );
         assert_eq!(descriptor.request, WireEnvelope::fixed(3));
+    }
+
+    #[test]
+    fn parses_the_qualified_proc_macro_with_the_same_descriptor_contract() {
+        let source = r#"
+            stm32wb_hci_macros::vendor_cmd! {
+                GapSetIoCapability(cgid = 0x1, cid = 0x05) {
+                    Params = { io_capability: IoCapability => 1, };
+                    Completion = CommandComplete;
+                    Return = ();
+                }
+            }
+        "#;
+        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 1));
+        let descriptor = descriptors.get("GapSetIoCapability").unwrap();
+        assert_eq!(descriptor.code, 0x085);
+        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        assert_eq!(
+            descriptor.completion,
+            DescriptorCompletion::CommandComplete {
+                returns: WireEnvelope::fixed(0),
+            }
+        );
     }
 
     #[test]
@@ -2112,7 +1356,7 @@ mod tests {
 
     #[test]
     fn loads_declarative_variable_shapes_from_the_real_crate() {
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
         let coverage = load_crate_coverage(&crate_dir, version(0, 17, 1)).unwrap();
 
         let update = coverage
@@ -2212,7 +1456,7 @@ mod tests {
 
     #[test]
     fn loads_unique_command_ids_for_every_declared_firmware() {
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
         for firmware in FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
             load_crate_coverage(&crate_dir, firmware).unwrap();
         }
