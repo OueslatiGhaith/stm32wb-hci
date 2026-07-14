@@ -682,7 +682,14 @@ stm32wb_hci_macros::vendor_cmd! {
         };
         Constraints = {
             implies_eq(write_status, WriteStatus::Allowed, error_code, 0);
-            implies_range(write_status, WriteStatus::Rejected, error_code, 1, u8::MAX);
+            implies_one_of_or_range(
+                write_status,
+                WriteStatus::Rejected,
+                error_code,
+                [0x08],
+                0x80,
+                0x9F
+            );
         };
         Completion = CommandComplete;
         Return = ();
@@ -705,9 +712,26 @@ stm32wb_hci_macros::vendor_cmd! {
     GattPermitRead(cgid = 0x2, cid = 0x27) {
         Params = {
             conn_handle: ConnHandle => 2,
-            read_status: bool => 1,
+            read_status: ReadStatus => 1,
             error_code: u8 => 1,
             attribute_handle: AttributeHandle => 2,
+        };
+        Constraints = {
+            implies_eq(read_status, ReadStatus::Allowed, error_code, 0);
+            implies_eq(
+                read_status,
+                ReadStatus::Allowed,
+                attribute_handle,
+                AttributeHandle(0)
+            );
+            implies_one_of_or_range(
+                read_status,
+                ReadStatus::Rejected,
+                error_code,
+                [0x08],
+                0x80,
+                0x9F
+            );
         };
         Completion = CommandComplete;
         Return = ();
@@ -863,8 +887,7 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             signed_mode: bool => 1,
-            data_len: u16 => 2,
-            data_pointer: u32 => 4,
+            data: ExtraDataReference => 6,
         };
         Completion = CommandComplete;
         Return = ();
@@ -879,8 +902,7 @@ stm32wb_hci_macros::vendor_cmd! {
             attribute_handle: AttributeHandle => 2,
             write_mode: WriteMode => 1,
             value_offset: u16 => 2,
-            data_len: u16 => 2,
-            data_pointer: u32 => 4,
+            data: ExtraDataReference => 6,
         };
         Completion = CommandStatus;
     }
@@ -895,6 +917,80 @@ hci_enum! {
         Allowed = 0x00,
         /// Reject the requested attribute write and return its ATT error code.
         Rejected = 0x01,
+    }
+}
+
+#[cfg(since_fw_0_24_0)]
+hci_enum! {
+    /// Application decision returned for a pending attribute read.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ReadStatus: u8 => 1 {
+        /// Allow all reads described by the permission event.
+        Allowed = 0x00,
+        /// Reject one or all reads described by the permission event.
+        Rejected = 0x01,
+    }
+}
+
+/// Invalid range into the controller's extra-data buffer.
+#[cfg(since_fw_0_24_0)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ExtraDataRangeError {
+    /// The range ended before it started.
+    Inverted { start: u32, end: u32 },
+    /// The range length cannot be represented by the command's 16-bit field.
+    TooLong { length: u32 },
+}
+
+/// A validated range in the controller's pre-filled extra-data buffer.
+#[cfg(since_fw_0_24_0)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ExtraDataReference {
+    length: u16,
+    offset: u32,
+}
+
+#[cfg(since_fw_0_24_0)]
+impl ExtraDataReference {
+    /// Construct a reference from the occupied byte range in the extra-data buffer.
+    pub fn try_new(range: core::ops::Range<u32>) -> Result<Self, ExtraDataRangeError> {
+        let Some(length) = range.end.checked_sub(range.start) else {
+            return Err(ExtraDataRangeError::Inverted {
+                start: range.start,
+                end: range.end,
+            });
+        };
+        let length = u16::try_from(length).map_err(|_| ExtraDataRangeError::TooLong { length })?;
+        Ok(Self {
+            length,
+            offset: range.start,
+        })
+    }
+
+    /// Byte offset from the start of the extra-data buffer.
+    pub const fn offset(self) -> u32 {
+        self.offset
+    }
+
+    /// Number of bytes occupied by this reference.
+    pub const fn length(self) -> u16 {
+        self.length
+    }
+}
+
+#[cfg(since_fw_0_24_0)]
+hci_command_composite! {
+    ExtraDataReference => 6 {
+        Fields = {
+            length: u16 => 2,
+            offset: u32 => 4,
+        };
+        Encode = |value| {
+            (value.length, value.offset)
+        };
     }
 }
 

@@ -250,6 +250,9 @@ stm32wb_hci_macros::vendor_cmd! {
                 max_len: 228,
             },
         };
+        Constraints = {
+            implies_len_at_least(mode, EadMode::Decrypt, data, 9);
+        };
         Completion = CommandComplete;
         Return = HalEadEncryptDecryptReturn {
             data: BoundedBytes<249> => {
@@ -264,7 +267,7 @@ stm32wb_hci_macros::vendor_cmd! {
 #[cfg(since_fw_0_20_0)]
 hci_enum! {
     /// Operation selected by [`HalEadEncryptDecrypt`].
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum EadMode: u8 => 1 {
         /// Encrypt the supplied advertising data.

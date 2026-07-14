@@ -431,6 +431,29 @@ pub enum Constraint {
         minimum: Expr,
         maximum: Expr,
     },
+    /// Require a dependent field to be in a sparse set or range when selected.
+    ImpliesOneOfOrRange {
+        selector: syn::Ident,
+        selected: Expr,
+        field: syn::Ident,
+        allowed: Vec<Expr>,
+        minimum: Expr,
+        maximum: Expr,
+    },
+    /// Require a dependent collection's minimum length when selected.
+    ImpliesLenAtLeast {
+        selector: syn::Ident,
+        selected: Expr,
+        field: syn::Ident,
+        minimum: Expr,
+    },
+    /// Require a dependent collection's exact length when selected.
+    ImpliesLenEq {
+        selector: syn::Ident,
+        selected: Expr,
+        field: syn::Ident,
+        required: Expr,
+    },
     /// Require a collection's runtime length not to exceed another field.
     LenAtMost {
         field: syn::Ident,
@@ -746,7 +769,7 @@ impl Parse for VendorEvents {
                      `before_fw_*` and `since_fw_*` cfg attributes",
                 ));
             }
-            previous_partitions.push(partition.clone());
+            previous_partitions.push(partition);
 
             let arguments;
             syn::parenthesized!(arguments in input);
@@ -1122,6 +1145,55 @@ impl Parse for Constraints {
                         field,
                         minimum,
                         maximum,
+                    }
+                }
+                "implies_one_of_or_range" => {
+                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let selected = arguments.parse::<Expr>()?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let allowed =
+                        parse_nonempty_expression_list(&arguments, "implies_one_of_or_range")?;
+                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
+                    Constraint::ImpliesOneOfOrRange {
+                        selector,
+                        selected,
+                        field,
+                        allowed,
+                        minimum,
+                        maximum,
+                    }
+                }
+                "implies_len_at_least" => {
+                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let selected = arguments.parse::<Expr>()?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let minimum = arguments.parse::<Expr>()?;
+                    Constraint::ImpliesLenAtLeast {
+                        selector,
+                        selected,
+                        field,
+                        minimum,
+                    }
+                }
+                "implies_len_eq" => {
+                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let selected = arguments.parse::<Expr>()?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let required = arguments.parse::<Expr>()?;
+                    Constraint::ImpliesLenEq {
+                        selector,
+                        selected,
+                        field,
+                        required,
                     }
                 }
                 "len_at_most" => {
@@ -1815,6 +1887,51 @@ mod tests {
         assert!(matches!(
             constraints.nodes()[2],
             Constraint::NonEmpty { .. }
+        ));
+    }
+
+    #[test]
+    fn parses_selector_dependent_domain_and_length_constraints() {
+        let command = syn::parse_str::<VendorCommand>(
+            r#"
+                Conditional(cgid = 0x0, cid = 0x04) {
+                    Params<'a> = {
+                        mode: u8 => 1,
+                        error: u8 => 1,
+                        data: &'a [u8] => {
+                            kind: counted_bytes,
+                            count: u8 => 1,
+                            max_len: 16,
+                        },
+                    };
+                    Constraints = {
+                        implies_one_of_or_range(mode, 1, error, [8], 0x80, 0x9F);
+                        implies_len_at_least(mode, 2, data, 9);
+                        implies_len_eq(mode, 3, data, 6);
+                    };
+                    Completion = CommandComplete;
+                    Return = ();
+                }
+            "#,
+        )
+        .unwrap();
+
+        let constraints = command.constraints.as_ref().unwrap();
+        assert_eq!(
+            constraints.referenced_fields(),
+            &BTreeSet::from(["data".to_owned(), "error".to_owned(), "mode".to_owned()])
+        );
+        assert!(matches!(
+            constraints.nodes()[0],
+            Constraint::ImpliesOneOfOrRange { .. }
+        ));
+        assert!(matches!(
+            constraints.nodes()[1],
+            Constraint::ImpliesLenAtLeast { .. }
+        ));
+        assert!(matches!(
+            constraints.nodes()[2],
+            Constraint::ImpliesLenEq { .. }
         ));
     }
 

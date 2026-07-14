@@ -43,7 +43,11 @@ use hci::vendor::command::{
         HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
         HalStartTone, HalWriteRadioReg, PowerLevel, RadioActivityFlags, ToneChannel,
     },
-    l2cap::{L2CocConnectConfirm, L2CocReconfig, L2CocTxData},
+    l2cap::{
+        L2CocConnectConfirm, L2CocConnectionResult, L2CocCreditIncrement, L2CocMaximumChannelCount,
+        L2CocMps, L2CocMtu, L2CocReconfig, L2CocReconfigurationResult, L2CocRequestedChannelCount,
+        L2CocSpsm, L2CocTxData,
+    },
 };
 use vendor::RecordingSink;
 
@@ -127,6 +131,38 @@ async fn semantic_scan_domains_encode_their_declared_values() {
     );
 }
 
+#[cfg(since_fw_0_18_0)]
+#[test]
+fn extended_scan_requires_at_least_one_declared_phy() {
+    use core::time::Duration;
+    use hci::vendor::command::gap::{ExtScanMode, ExtScanPhyParams, GapExtStartScan, ScanningPhy};
+
+    let phy_params = || ExtScanPhyParams {
+        scan_type: ScanType::Passive,
+        scan_window: hci::types::ScanWindow::start_every(Duration::from_millis(10))
+            .unwrap()
+            .open_for(Duration::from_millis(5))
+            .unwrap(),
+    };
+
+    assert!(ScanningPhy::from_bits(0x02).is_none());
+    assert!(
+        GapExtStartScan::try_new(
+            ExtScanMode::Default,
+            Procedure::OBSERVATION,
+            AddressType::Public,
+            false,
+            0,
+            0,
+            ScanningFilterPolicy::BasicUnfiltered,
+            ScanningPhy::empty(),
+            phy_params(),
+            phy_params(),
+        )
+        .is_err()
+    );
+}
+
 #[tokio::test]
 async fn gatt_write_response_uses_a_closed_write_status() {
     let sink = RecordingSink::new();
@@ -135,7 +171,7 @@ async fn gatt_write_response_uses_a_closed_write_status() {
         hci::bt_hci::param::ConnHandle(0x1234),
         AttributeHandle(0x5678),
         WriteStatus::Rejected,
-        0x0E,
+        0x08,
         &[0xAA],
     )
     .unwrap()
@@ -145,7 +181,7 @@ async fn gatt_write_response_uses_a_closed_write_status() {
 
     assert_eq!(
         sink.written_data(),
-        [1, 0x26, 0xFD, 8, 0x34, 0x12, 0x78, 0x56, 1, 0x0E, 1, 0xAA,]
+        [1, 0x26, 0xFD, 8, 0x34, 0x12, 0x78, 0x56, 1, 0x08, 1, 0xAA,]
     );
     assert!(
         <WriteStatus as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x02]).is_err()
@@ -1416,10 +1452,10 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
         hci::bt_hci::param::ConnHandle(0x0123),
-        0x4567,
-        0x0089,
+        L2CocMtu::try_new(0x4567).unwrap(),
+        L2CocMps::try_new(0x0089).unwrap(),
         0xABCD,
-        0x0002,
+        L2CocConnectionResult::try_new(0x0002).unwrap(),
     )
     .exec(&sink)
     .await;
@@ -1440,11 +1476,11 @@ async fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
         hci::bt_hci::param::ConnHandle(0x0123),
-        0x4567,
-        0x0089,
+        L2CocMtu::try_new(0x4567).unwrap(),
+        L2CocMps::try_new(0x0089).unwrap(),
         0xABCD,
-        0x0002,
-        5,
+        L2CocConnectionResult::try_new(0x0002).unwrap(),
+        L2CocMaximumChannelCount::try_new(5).unwrap(),
     )
     .exec(&sink)
     .await;
@@ -1462,8 +1498,8 @@ async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
     let sink = RecordingSink::new();
     L2CocReconfig::try_new(
         hci::bt_hci::param::ConnHandle(0x0123),
-        0x4567,
-        0x0089,
+        L2CocMtu::try_new(0x4567).unwrap(),
+        L2CocMps::try_new(0x0089).unwrap(),
         &[0xAA, 0xBB],
     )
     .unwrap()
@@ -1475,6 +1511,144 @@ async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
         sink.written_data(),
         [
             1, 0x8A, 0xFD, 9, 0x23, 0x01, 0x67, 0x45, 0x89, 0x00, 2, 0xAA, 0xBB,
+        ]
+    );
+}
+
+#[test]
+fn l2cap_credit_based_domains_reject_controller_invalid_values() {
+    assert!(L2CocMtu::try_new(22).is_err());
+    assert!(L2CocMps::try_new(22).is_err());
+    assert!(L2CocMps::try_new(249).is_err());
+    assert!(L2CocConnectionResult::try_new(0x10).is_err());
+    assert!(L2CocMaximumChannelCount::try_new(0).is_err());
+    assert!(L2CocMaximumChannelCount::try_new(6).is_err());
+    assert!(L2CocSpsm::try_new(0).is_err());
+    assert!(L2CocSpsm::try_new(0x0100).is_err());
+    assert!(L2CocRequestedChannelCount::try_new(6).is_err());
+    assert!(L2CocReconfigurationResult::try_new(5).is_err());
+    assert!(L2CocCreditIncrement::try_new(0).is_err());
+}
+
+#[cfg(since_fw_0_20_0)]
+#[test]
+fn ead_decryption_requires_randomizer_and_mic_overhead() {
+    use hci::vendor::command::hal::{EadMode, HalEadEncryptDecrypt};
+
+    let key = [0; 16];
+    let iv = [0; 8];
+    assert!(HalEadEncryptDecrypt::try_new(EadMode::Encrypt, &key, &iv, &[]).is_ok());
+    assert!(HalEadEncryptDecrypt::try_new(EadMode::Decrypt, &key, &iv, &[0; 8]).is_err());
+    assert!(HalEadEncryptDecrypt::try_new(EadMode::Decrypt, &key, &iv, &[0; 9]).is_ok());
+}
+
+#[cfg(since_fw_0_23_0)]
+#[test]
+fn system_reset_options_follow_the_selected_reset_mode() {
+    use hci::vendor::command::sys::{
+        SysReset, SysResetMode, SysResetOptions, SysWritableConfigOffset, SysWriteConfigData,
+    };
+
+    assert!(SysReset::try_new(SysResetMode::NoOptionsChange, SysResetOptions::empty()).is_ok());
+    assert!(
+        SysReset::try_new(
+            SysResetMode::NoOptionsChange,
+            SysResetOptions::EXTENDED_ADVERTISING,
+        )
+        .is_err()
+    );
+    assert!(
+        SysReset::try_new(
+            SysResetMode::WithOptionsChange,
+            SysResetOptions::EXTENDED_ADVERTISING | SysResetOptions::ENHANCED_ATT,
+        )
+        .is_ok()
+    );
+
+    assert!(SysWriteConfigData::try_new(SysWritableConfigOffset::PublicAddress, &[0; 5]).is_err());
+    assert!(SysWriteConfigData::try_new(SysWritableConfigOffset::PublicAddress, &[0; 6]).is_ok());
+    assert!(
+        SysWriteConfigData::try_new(
+            SysWritableConfigOffset::LinkLayerMaximumDataLengthExtension,
+            &[0; 7],
+        )
+        .is_err()
+    );
+    assert!(
+        SysWriteConfigData::try_new(
+            SysWritableConfigOffset::LinkLayerMaximumDataLengthExtension,
+            &[0; 8],
+        )
+        .is_ok()
+    );
+}
+
+#[cfg(since_fw_0_24_0)]
+#[tokio::test]
+async fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
+    use hci::vendor::command::gatt::{
+        ExtraDataRangeError, ExtraDataReference, GattPermitRead, GattPermitWrite,
+        GattWriteWithoutRespExt, ReadStatus,
+    };
+
+    let conn_handle = hci::bt_hci::param::ConnHandle(0x0123);
+    let attribute_handle = AttributeHandle(0x4567);
+
+    assert!(
+        GattPermitWrite::try_new(
+            conn_handle,
+            attribute_handle,
+            WriteStatus::Rejected,
+            0x09,
+            &[],
+        )
+        .is_err()
+    );
+    assert!(
+        GattPermitWrite::try_new(
+            conn_handle,
+            attribute_handle,
+            WriteStatus::Rejected,
+            0x80,
+            &[],
+        )
+        .is_ok()
+    );
+    assert!(
+        GattPermitRead::try_new(conn_handle, ReadStatus::Allowed, 0, AttributeHandle(0)).is_ok()
+    );
+    assert!(
+        GattPermitRead::try_new(conn_handle, ReadStatus::Allowed, 0x08, AttributeHandle(0))
+            .is_err()
+    );
+    assert!(
+        GattPermitRead::try_new(conn_handle, ReadStatus::Rejected, 0x7F, attribute_handle,)
+            .is_err()
+    );
+
+    let inverted_start = 20;
+    let inverted_end = 10;
+    assert!(matches!(
+        ExtraDataReference::try_new(inverted_start..inverted_end),
+        Err(ExtraDataRangeError::Inverted { .. })
+    ));
+    assert!(matches!(
+        ExtraDataReference::try_new(0..65_536),
+        Err(ExtraDataRangeError::TooLong { .. })
+    ));
+
+    let data = ExtraDataReference::try_new(0x1020_3040..0x1020_3044).unwrap();
+    assert_eq!((data.offset(), data.length()), (0x1020_3040, 4));
+
+    let sink = RecordingSink::new();
+    GattWriteWithoutRespExt::new(conn_handle, attribute_handle, false, data)
+        .exec(&sink)
+        .await
+        .unwrap();
+    assert_eq!(
+        sink.written_data(),
+        [
+            1, 0x40, 0xFD, 11, 0x23, 0x01, 0x67, 0x45, 0, 4, 0, 0x40, 0x30, 0x20, 0x10,
         ]
     );
 }
@@ -1493,9 +1667,26 @@ async fn declarative_l2cap_tx_data_writes_only_the_declared_data() {
 
 #[test]
 fn declarative_l2cap_rejects_lengths_beyond_the_wire_bounds() {
-    let reconfig = [0; 247];
+    let reconfig = [0; 6];
     let tx = [0; 253];
 
-    assert!(L2CocReconfig::try_new(hci::bt_hci::param::ConnHandle(0), 0, 0, &reconfig).is_err());
+    assert!(
+        L2CocReconfig::try_new(
+            hci::bt_hci::param::ConnHandle(0),
+            L2CocMtu::try_new(23).unwrap(),
+            L2CocMps::try_new(23).unwrap(),
+            &[],
+        )
+        .is_err()
+    );
+    assert!(
+        L2CocReconfig::try_new(
+            hci::bt_hci::param::ConnHandle(0),
+            L2CocMtu::try_new(23).unwrap(),
+            L2CocMps::try_new(23).unwrap(),
+            &reconfig,
+        )
+        .is_err()
+    );
     assert!(L2CocTxData::try_new(0, &tx).is_err());
 }

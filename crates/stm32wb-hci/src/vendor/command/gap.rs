@@ -644,7 +644,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     GapCheckBondedDevice(cgid = 0x1, cid = 0x24) {
         Params = {
-            address: PeerAddrType => 7,
+            address: BdAddrType => 7,
         };
         Completion = CommandComplete;
         Return = GapCheckBondedDeviceReturn {
@@ -927,7 +927,11 @@ stm32wb_hci_macros::vendor_cmd! {
                 Procedure::SELECTIVE_CONNECTION_ESTABLISHMENT,
                 Procedure::OBSERVATION,
             ]);
-            non_empty(scanning_phys);
+            one_of(scanning_phys, [
+                ScanningPhy::LE_1M,
+                ScanningPhy::LE_CODED,
+                ScanningPhy::LE_1M | ScanningPhy::LE_CODED,
+            ]);
         };
         Completion = CommandStatus;
     }
@@ -959,7 +963,15 @@ stm32wb_hci_macros::vendor_cmd! {
                 AddressType::Random,
                 AddressType::ResolvablePrivate,
             ]);
-            non_empty(initiating_phys);
+            one_of(initiating_phys, [
+                InitiatingPhy::LE_1M,
+                InitiatingPhy::LE_2M,
+                InitiatingPhy::LE_CODED,
+                InitiatingPhy::LE_1M | InitiatingPhy::LE_2M,
+                InitiatingPhy::LE_1M | InitiatingPhy::LE_CODED,
+                InitiatingPhy::LE_2M | InitiatingPhy::LE_CODED,
+                InitiatingPhy::LE_1M | InitiatingPhy::LE_2M | InitiatingPhy::LE_CODED,
+            ]);
         };
         Completion = CommandStatus;
     }
@@ -1334,10 +1346,8 @@ hci_ranged! {
 pub struct ExtScanPhyParams {
     /// Passive or active scanning for this PHY.
     pub scan_type: ScanType,
-    /// Scan interval in 0.625 ms units.
-    pub scan_interval: u16,
-    /// Scan window in 0.625 ms units.
-    pub scan_window: u16,
+    /// Validated scan interval and window for this PHY.
+    pub scan_window: ScanWindow,
 }
 
 #[cfg(since_fw_0_18_0)]
@@ -1345,11 +1355,10 @@ hci_command_composite! {
     ExtScanPhyParams => 5 {
         Fields = {
             scan_type: ScanType => 1,
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
+            scan_window: ScanWindow => 4,
         };
         Encode = |value| {
-            (value.scan_type, value.scan_interval, value.scan_window)
+            (value.scan_type, value.scan_window.clone())
         };
     }
 }
@@ -1357,47 +1366,27 @@ hci_command_composite! {
 /// One of the three fixed extended-connection PHY parameter records.
 #[cfg(since_fw_0_18_0)]
 pub struct ExtConnectionPhyParams {
-    /// Scan interval in 0.625 ms units.
-    pub scan_interval: u16,
-    /// Scan window in 0.625 ms units.
-    pub scan_window: u16,
-    /// Minimum connection interval in 1.25 ms units.
-    pub connection_interval_min: u16,
-    /// Maximum connection interval in 1.25 ms units.
-    pub connection_interval_max: u16,
-    /// Maximum connection latency in connection events.
-    pub max_latency: u16,
-    /// Supervision timeout in 10 ms units.
-    pub supervision_timeout: u16,
-    /// Minimum connection-event length in 0.625 ms units.
-    pub min_ce_length: u16,
-    /// Maximum connection-event length in 0.625 ms units.
-    pub max_ce_length: u16,
+    /// Validated scan interval and window for this PHY.
+    pub scan_window: ScanWindow,
+    /// Validated connection interval, latency, and supervision timeout.
+    pub connection_interval: ConnectionInterval,
+    /// Validated expected connection-event length range.
+    pub expected_connection_length: ExpectedConnectionLength,
 }
 
 #[cfg(since_fw_0_18_0)]
 hci_command_composite! {
     ExtConnectionPhyParams => 16 {
         Fields = {
-            scan_interval: u16 => 2,
-            scan_window: u16 => 2,
-            connection_interval_min: u16 => 2,
-            connection_interval_max: u16 => 2,
-            max_latency: u16 => 2,
-            supervision_timeout: u16 => 2,
-            min_ce_length: u16 => 2,
-            max_ce_length: u16 => 2,
+            scan_window: ScanWindow => 4,
+            connection_interval: ConnectionInterval => 8,
+            expected_connection_length: ExpectedConnectionLength => 4,
         };
         Encode = |value| {
             (
-                value.scan_interval,
-                value.scan_window,
-                value.connection_interval_min,
-                value.connection_interval_max,
-                value.max_latency,
-                value.supervision_timeout,
-                value.min_ce_length,
-                value.max_ce_length,
+                value.scan_window.clone(),
+                value.connection_interval,
+                value.expected_connection_length.clone(),
             )
         };
     }

@@ -33,7 +33,8 @@ use stm32wb_hci_schema::{
 /// `field: Type => width`. Borrowing or variable fields use `Params<'a>` and
 /// one of these typed schemas:
 ///
-/// - `counted_bytes`: a count field followed by up to `max_len` bytes.
+/// - `counted_bytes`: a count field followed by `min_len` through `max_len`
+///   bytes; `min_len` defaults to zero.
 /// - `counted_items`: a count field followed by fixed-width items.
 /// - `tagged`: a fixed-width discriminator and one fixed-width variant body.
 /// - `trailing_bytes`: a bounded field that consumes the remaining bytes.
@@ -50,9 +51,15 @@ use stm32wb_hci_schema::{
 /// `Constraints` are evaluated in declaration order and stop at the first
 /// failure. Supported relationships are `ordered`, `ordered_when_in_range`,
 /// `range`, `one_of`, `one_of_or_range`, `paired_value`, `implies_eq`,
-/// `implies_range`, `len_at_most`, and `non_empty`. Intrinsic validity should
+/// `implies_range`, `implies_one_of_or_range`, `implies_len_at_least`,
+/// `implies_len_eq`, `len_at_most`, and `non_empty`. Intrinsic validity should
 /// remain in the semantic field type; constraints describe relationships or
 /// command-specific subsets.
+///
+/// Selector-dependent checks use
+/// `implies_*(selector, selected_value, dependent_field, ...)`. Length checks
+/// call `.len()` on their field. Sparse domains use a nonempty `[value, ...]`
+/// list followed, for `*_one_of_or_range`, by inclusive range endpoints.
 #[proc_macro]
 pub fn vendor_cmd(input: TokenStream) -> TokenStream {
     match syn::parse::<VendorCommand>(input) {
@@ -674,6 +681,80 @@ fn expand_constraint_check(command: &syn::Ident, constraint: &Constraint) -> Tok
                 ));
             }
         },
+        Constraint::ImpliesOneOfOrRange {
+            selector,
+            selected,
+            field,
+            allowed,
+            minimum,
+            maximum,
+        } => quote! {
+            if #selector == #selected
+                && ![#(#allowed),*].contains(&#field)
+                && !((#minimum)..=(#maximum)).contains(&#field)
+            {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#selector),
+                        " == ",
+                        stringify!(#selected),
+                        " implies ",
+                        stringify!(#field),
+                        " in ",
+                        stringify!([#(#allowed),*]),
+                        " or ",
+                        stringify!(#minimum),
+                        " <= ",
+                        stringify!(#field),
+                        " <= ",
+                        stringify!(#maximum),
+                    ),
+                ));
+            }
+        },
+        Constraint::ImpliesLenAtLeast {
+            selector,
+            selected,
+            field,
+            minimum,
+        } => quote! {
+            if #selector == #selected && #field.len() < (#minimum as usize) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#selector),
+                        " == ",
+                        stringify!(#selected),
+                        " implies ",
+                        stringify!(#field),
+                        ".len() >= ",
+                        stringify!(#minimum),
+                    ),
+                ));
+            }
+        },
+        Constraint::ImpliesLenEq {
+            selector,
+            selected,
+            field,
+            required,
+        } => quote! {
+            if #selector == #selected && #field.len() != (#required as usize) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#selector),
+                        " == ",
+                        stringify!(#selected),
+                        " implies ",
+                        stringify!(#field),
+                        ".len() == ",
+                        stringify!(#required),
+                    ),
+                ));
+            }
+        },
         Constraint::LenAtMost { field, maximum } => quote! {
             if #field.len() > usize::from(#maximum) {
                 return Err(crate::vendor::command::HciConstraintError::new(
@@ -804,13 +885,18 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
             }
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
+            VariableEncodingShape::CountedBytes {
+                count,
+                min_len,
+                max_len,
+            } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
+                let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
                 quote! {
                     crate::vendor::command::decode_declarative_counted_bytes::<
-                        #ty, #count_ty, #count_width, #max_len
+                        #ty, #count_ty, #count_width, #min_len, #max_len
                     >(#cursor)
                 }
             }
@@ -867,11 +953,18 @@ fn encoded_field_type(field: &Field) -> TokenStream2 {
             quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField<#ty, #width>)
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
+            VariableEncodingShape::CountedBytes {
+                count,
+                min_len,
+                max_len,
+            } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
+                let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
-                quote!(crate::vendor::command::CountedBytes<#ty, #count_ty, #count_width, #max_len>)
+                quote!(crate::vendor::command::CountedBytes<
+                    #ty, #count_ty, #count_width, #min_len, #max_len
+                >)
             }
             VariableEncodingShape::CountedItems {
                 count,
@@ -928,12 +1021,17 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
             quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField::<_, #width>(#name))
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
+            VariableEncodingShape::CountedBytes {
+                count,
+                min_len,
+                max_len,
+            } => {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
+                let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
                 quote!(crate::vendor::command::CountedBytes::<
-                    _, #count_ty, #count_width, #max_len
+                    _, #count_ty, #count_width, #min_len, #max_len
                 >::try_new(#name)?)
             }
             VariableEncodingShape::CountedItems {

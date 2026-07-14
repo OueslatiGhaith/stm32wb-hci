@@ -5,12 +5,12 @@ mod vendor;
 use hci::bt_hci::cmd::{AsyncCmd, SyncCmd};
 #[cfg(since_fw_0_17_0)]
 use hci::standard::LeGenerateDhkeyV2;
-#[cfg(since_fw_0_23_0)]
-use hci::standard::LeSetResolvablePrivateAddressTimeoutV2;
 use hci::standard::{
     LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadPeerResolvableAddress, LeReceiverTest,
     LeReceiverTestV2, LeTransmitterTest, LeTransmitterTestV2,
 };
+#[cfg(since_fw_0_23_0)]
+use hci::standard::{LeSetResolvablePrivateAddressTimeoutV2, ResolvablePrivateAddressTimeoutRange};
 use vendor::RecordingSink;
 
 #[tokio::test]
@@ -88,10 +88,16 @@ async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
 async fn resolvable_private_address_timeout_v2_uses_its_full_opcode() {
     let sink = RecordingSink::new();
 
-    LeSetResolvablePrivateAddressTimeoutV2::new([1, 2, 3, 4])
-        .exec(&sink)
-        .await
-        .unwrap();
+    LeSetResolvablePrivateAddressTimeoutV2::new(
+        ResolvablePrivateAddressTimeoutRange::try_new(1, 0x0403).unwrap(),
+    )
+    .exec(&sink)
+    .await
+    .unwrap();
 
-    assert_eq!(sink.written_data(), [1, 0x9E, 0x20, 4, 1, 2, 3, 4]);
+    assert_eq!(sink.written_data(), [1, 0x9E, 0x20, 4, 1, 0, 3, 4]);
+
+    assert!(ResolvablePrivateAddressTimeoutRange::try_new(0, 10).is_err());
+    assert!(ResolvablePrivateAddressTimeoutRange::try_new(10, 9).is_err());
+    assert!(ResolvablePrivateAddressTimeoutRange::try_new(1, 0x0E11).is_err());
 }

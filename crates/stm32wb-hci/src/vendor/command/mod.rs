@@ -425,12 +425,13 @@ where
 }
 
 #[doc(hidden)]
-pub struct CountedBytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize> {
+pub struct CountedBytes<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize> {
     value: T,
     count: C,
 }
 
-impl<T, C, const COUNT_LEN: usize, const MAX_LEN: usize> CountedBytes<T, C, COUNT_LEN, MAX_LEN>
+impl<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
+    CountedBytes<T, C, COUNT_LEN, MIN_LEN, MAX_LEN>
 where
     T: AsRef<[u8]>,
     C: HciCount<COUNT_LEN>,
@@ -438,9 +439,9 @@ where
     pub fn try_new(value: T) -> Result<Self, HciLengthError> {
         let actual = value.as_ref().len();
         let maximum = core::cmp::min(MAX_LEN, C::MAX);
-        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, 0, maximum))?;
-        if actual > MAX_LEN {
-            return Err(HciLengthError::new(actual, 0, maximum));
+        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_LEN, maximum))?;
+        if !(MIN_LEN..=maximum).contains(&actual) {
+            return Err(HciLengthError::new(actual, MIN_LEN, maximum));
         }
         Ok(Self { value, count })
     }
@@ -523,14 +524,20 @@ fn map_declarative_decode_error(
 }
 
 #[doc(hidden)]
-pub fn decode_declarative_counted_bytes<T, C, const COUNT_LEN: usize, const MAX_LEN: usize>(
+pub fn decode_declarative_counted_bytes<
+    T,
+    C,
+    const COUNT_LEN: usize,
+    const MIN_LEN: usize,
+    const MAX_LEN: usize,
+>(
     data: &[u8],
 ) -> Result<(T, &[u8]), bt_hci::FromHciBytesError>
 where
     T: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>,
     C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
 {
-    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, 0, MAX_LEN>(
+    crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MIN_LEN, MAX_LEN>(
         data,
         |bytes| C::from_hci_field(bytes).map(HciCount::to_usize),
         <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,
@@ -633,8 +640,8 @@ impl<T, const MAX_LEN: usize> DeclarativeEncodedField for TaggedField<T, MAX_LEN
     }
 }
 
-impl<T, C, const COUNT_LEN: usize, const MAX_LEN: usize> DeclarativeEncodedField
-    for CountedBytes<T, C, COUNT_LEN, MAX_LEN>
+impl<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
+    DeclarativeEncodedField for CountedBytes<T, C, COUNT_LEN, MIN_LEN, MAX_LEN>
 where
     T: AsRef<[u8]>,
     C: HciCount<COUNT_LEN>,
@@ -840,6 +847,21 @@ mod tests {
     }
 
     stm32wb_hci_macros::vendor_cmd! {
+        MinimumLengthFixture(cgid = 0x1, cid = 0x0F) {
+            Params<'a> = {
+                data: &'a [u8] => {
+                    kind: counted_bytes,
+                    count: u8 => 1,
+                    min_len: 3,
+                    max_len: 4,
+                },
+            };
+            Completion = CommandComplete;
+            Return = ();
+        }
+    }
+
+    stm32wb_hci_macros::vendor_cmd! {
         FixedConstraintFixture(cgid = 0x1, cid = 0x10) {
             Params = {
                 mode: u8 => 1,
@@ -889,6 +911,18 @@ mod tests {
         };
         assert_eq!(error.actual(), 256);
         assert_eq!(error.maximum(), 255);
+    }
+
+    #[test]
+    fn counted_bytes_enforce_the_declared_minimum_length() {
+        let error = match MinimumLengthFixture::try_new(&[0; 2]) {
+            Ok(_) => panic!("short counted byte field was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.actual(), 2);
+        assert_eq!(error.minimum(), 3);
+        assert_eq!(error.maximum(), 4);
+        assert!(MinimumLengthFixture::try_new(&[0; 3]).is_ok());
     }
 
     #[test]

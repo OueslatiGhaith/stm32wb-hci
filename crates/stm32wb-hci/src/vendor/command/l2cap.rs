@@ -7,6 +7,81 @@ use crate::{
     vendor::command::BoundedBytes,
 };
 
+hci_ranged! {
+    /// Maximum transmission unit accepted by credit-based channel procedures.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMtu: u16 => 2 {
+        minimum: 23,
+        maximum: u16::MAX,
+    }
+}
+
+hci_ranged! {
+    /// Maximum payload size accepted by credit-based channel procedures.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMps: u16 => 2 {
+        minimum: 23,
+        maximum: 248,
+    }
+}
+
+hci_ranged! {
+    /// Credit-based connection response result defined by the Bluetooth Core.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocConnectionResult: u16 => 2 {
+        minimum: 0,
+        maximum: 0x000F,
+    }
+}
+
+hci_ranged! {
+    /// Maximum number of credit-based channels accepted in one response.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMaximumChannelCount: u8 => 1 {
+        minimum: 1,
+        maximum: 5,
+    }
+}
+
+hci_ranged! {
+    /// Simplified Protocol/Service Multiplexer for a credit-based connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocSpsm: u16 => 2 {
+        minimum: 1,
+        maximum: 0x00FF,
+    }
+}
+
+hci_ranged! {
+    /// Number of channels requested by a credit-based connection procedure.
+    ///
+    /// Zero requests one LE credit-based channel; one through five request
+    /// that many enhanced credit-based channels.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocRequestedChannelCount: u8 => 1 {
+        minimum: 0,
+        maximum: 5,
+    }
+}
+
+hci_ranged! {
+    /// Credit-based reconfiguration response result defined by the Bluetooth Core.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocReconfigurationResult: u16 => 2 {
+        minimum: 0,
+        maximum: 0x0004,
+    }
+}
+
+hci_ranged! {
+    /// Nonzero credit increment sent by a flow-control procedure.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocCreditIncrement: u16 => 2 {
+        minimum: 1,
+        maximum: u16::MAX,
+    }
+}
+
 stm32wb_hci_macros::vendor_cmd! {
     L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
         Params = {
@@ -35,11 +110,11 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocConnect(cgid = 0x3, cid = 0x08) {
         Params = {
             conn_handle: ConnHandle => 2,
-            spsm: u16 => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
+            spsm: L2CocSpsm => 2,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
             initial_credits: u16 => 2,
-            channel_number: u8 => 1,
+            channel_number: L2CocRequestedChannelCount => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -51,10 +126,10 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
             conn_handle: ConnHandle => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
             initial_credits: u16 => 2,
-            result: u16 => 2,
+            result: L2CocConnectionResult => 2,
         };
         Completion = CommandComplete;
         Return = L2CapCocConnectConfirmWire {
@@ -72,11 +147,11 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
             conn_handle: ConnHandle => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
             initial_credits: u16 => 2,
-            result: u16 => 2,
-            max_channel_number: u8 => 1,
+            result: L2CocConnectionResult => 2,
+            max_channel_number: L2CocMaximumChannelCount => 1,
         };
         Completion = CommandComplete;
         Return = L2CapCocConnectConfirmWire {
@@ -93,12 +168,13 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfig(cgid = 0x3, cid = 0x0A) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
             channel_indices: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
-                max_len: 246,
+                min_len: 1,
+                max_len: 5,
             },
         };
         Completion = CommandComplete;
@@ -110,7 +186,7 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
         Params = {
             conn_handle: ConnHandle => 2,
-            result: u16 => 2,
+            result: L2CocReconfigurationResult => 2,
         };
         Completion = CommandComplete;
         Return = ();
@@ -131,7 +207,7 @@ stm32wb_hci_macros::vendor_cmd! {
     L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
         Params = {
             channel_index: u8 => 1,
-            credits: u16 => 2,
+            credits: L2CocCreditIncrement => 2,
         };
         Completion = CommandComplete;
         Return = ();
