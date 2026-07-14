@@ -8,8 +8,8 @@ use core::cmp::PartialEq;
 use core::convert::TryInto;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 
+use crate::types::{AttributeHandle, PeerAddrType, to_peer_addr_type};
 pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
-use crate::types::{PeerAddrType, to_peer_addr_type};
 use crate::vendor::command::gap::EventFlags;
 pub use crate::wire::{BoundedBytes, BoundedItems};
 use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
@@ -211,14 +211,6 @@ pub enum Error {
 impl From<VendorError> for Error {
     fn from(error: VendorError) -> Self {
         Self::Vendor(error)
-    }
-}
-
-fn first_16<T>(buffer: &[T]) -> &[T] {
-    if buffer.len() < 16 {
-        buffer
-    } else {
-        &buffer[..16]
     }
 }
 
@@ -1439,62 +1431,6 @@ hci_try_from_enum! {
     TryFromError = VendorError => VendorError::BadGapPairingErrorReason;
 }
 
-/// Maximum length of the name returned in the [`NameDiscovery`](GapProcedure::NameDiscovery)
-/// procedure.
-pub const MAX_NAME_LEN: usize = 248;
-
-/// Newtype for the name buffer returned after successful
-/// [`NameDiscovery`](GapProcedure::NameDiscovery).
-#[derive(Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NameBuffer(pub [u8; MAX_NAME_LEN]);
-
-impl Debug for NameBuffer {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        first_16(&self.0).fmt(f)
-    }
-}
-
-impl PartialEq<NameBuffer> for NameBuffer {
-    fn eq(&self, other: &Self) -> bool {
-        if self.0.len() != other.0.len() {
-            return false;
-        }
-
-        for (a, b) in self.0.iter().zip(other.0.iter()) {
-            if a != b {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
-/// Procedures whose completion may be reported by
-/// [`GapProcedureComplete`](VendorEvent::GapProcedureComplete).
-#[allow(clippy::large_enum_variant)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GapProcedure {
-    /// See Vol 3, Part C, section 9.2.5.
-    LimitedDiscovery,
-    /// See Vol 3, Part C, section 9.2.6.
-    GeneralDiscovery,
-    /// See Vol 3, Part C, section 9.2.7. Contains the number of valid bytes and buffer with enough
-    /// space for the maximum length of the name that can be retuned.
-    NameDiscovery(usize, NameBuffer),
-    /// See Vol 3, Part C, section 9.3.5.
-    AutoConnectionEstablishment,
-    /// See Vol 3, Part C, section 9.3.6. Contains the reconnection address.
-    GeneralConnectionEstablishment,
-    /// See Vol 3, Part C, section 9.3.7.
-    SelectiveConnectionEstablishment,
-    /// See Vol 3, Part C, section 9.3.8.
-    DirectConnectionEstablishment,
-    Observation,
-}
-
 hci_event_enum! {
     /// GAP procedure discriminator carried by the procedure-complete event.
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1511,38 +1447,6 @@ hci_event_enum! {
     }
     TryFromError = VendorError => VendorError::BadGapProcedure;
     EventError = Error::Vendor;
-}
-
-impl GapProcedureComplete {
-    /// Converts the declarative discriminator and data field to the legacy combined value.
-    pub fn legacy_procedure(&self) -> Result<GapProcedure, Error> {
-        Ok(match self.procedure {
-            GapProcedureKind::LimitedDiscovery => GapProcedure::LimitedDiscovery,
-            GapProcedureKind::GeneralDiscovery => GapProcedure::GeneralDiscovery,
-            GapProcedureKind::NameDiscovery => {
-                let data = self.data.as_slice();
-                if data.len() > MAX_NAME_LEN {
-                    return Err(Error::BadLength(data.len(), MAX_NAME_LEN));
-                }
-                let mut name = NameBuffer([0; MAX_NAME_LEN]);
-                name.0[..data.len()].copy_from_slice(data);
-                GapProcedure::NameDiscovery(data.len(), name)
-            }
-            GapProcedureKind::AutoConnectionEstablishment => {
-                GapProcedure::AutoConnectionEstablishment
-            }
-            GapProcedureKind::GeneralConnectionEstablishment => {
-                GapProcedure::GeneralConnectionEstablishment
-            }
-            GapProcedureKind::SelectiveConnectionEstablishment => {
-                GapProcedure::SelectiveConnectionEstablishment
-            }
-            GapProcedureKind::DirectConnectionEstablishment => {
-                GapProcedure::DirectConnectionEstablishment
-            }
-            GapProcedureKind::Observation => GapProcedure::Observation,
-        })
-    }
 }
 
 hci_event_enum! {
@@ -1573,12 +1477,6 @@ impl GattAttributeModified {
         self.data.as_slice()
     }
 }
-
-/// Newtype for an attribute handle. These handles are IDs, not general integers, and should not be
-/// manipulated as such.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttributeHandle(pub u16);
 
 impl AttFindInformationResponse {
     /// The Find Information Response shall have complete handle-UUID pairs. Such pairs shall not be

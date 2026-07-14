@@ -3,46 +3,41 @@ extern crate stm32wb_hci as hci;
 mod vendor;
 
 use bt_hci::cmd::{AsyncCmd, Cmd, SyncCmd};
-use hci::types::{AdvertisingFilterPolicy, AdvertisingType};
+use hci::types::{AdvertisingFilterPolicy, AdvertisingType, AttributeHandle};
 use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
-use hci::vendor::{
-    command::{
-        gap::{
-            AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle,
-            AdvertisingIntervalBound, AdvertisingSid, CmdGapInit, GapAddDevicesToList,
-            GapAdditionalBeaconSetData, GapAdditionalBeaconStart, GapAdvSetConfig, GapAdvSetEnable,
-            GapConfigureWhitelist, GapGetBondedDevices, GapInit, GapPassKeyResponse,
-            GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
-            GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
-            GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable,
-            GapSetNonDiscoverable, GapSetOobData, GapSetUnidirectedConnectable, GapTerminate,
-            GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataLength,
-            OobDataType, OobDeviceType, OptionalAdvertisingIntervalBound, PassKey,
-            PowerAmplifierOutputLevel, Procedure, Role, ScanType, ScanningFilterPolicy,
-            SecureConnectionSupport, TerminationReason,
-        },
-        gatt::{
-            AccessPermission, CharacteristicEvent, CharacteristicPermission,
-            CharacteristicProperty, DescriptorPermission, DescriptorValueMaxLength,
-            EncryptionKeySize, GattAddCharacteristic, GattAddCharacteristicDescriptor,
-            GattAddService, GattCharacteristic, GattCharacteristicDescriptor,
-            GattDiscoverCharacteristicsByUUID, GattDiscoverPrimaryServicesByUUID,
-            GattFindByTypeValueRequest, GattHandleValue, GattIncludeService,
-            GattReadByGroupTypeRequest, GattReadByTypeRequest, GattReadCharacteristicUsingUUID,
-            GattReadHandleValue, GattReadMultipleVarCharValue, GattService, GattSetEventMask,
-            GattWriteResponse, ServiceType, Uuid, WriteStatus,
-        },
-        hal::{
-            HalEventFlags, HalFirmwareRevision, HalGetFirmwareRevision, HalGetLinkStatus,
-            HalGetPmDebugInfo, HalGetTxTestPacketCount, HalPmDebugInfo, HalRadioRegisterValue,
-            HalRawRssi, HalReadRadioReg, HalReadRawRssi, HalReadRssi, HalRssi, HalRxStart,
-            HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
-            HalStartTone, HalTxTestPacketCount, HalWriteRadioReg, PowerLevel, RadioActivityFlags,
-            ToneChannel,
-        },
-        l2cap::{L2CocConnectConfirm, L2CocReconfig, L2CocTxData},
+use hci::vendor::command::{
+    gap::{
+        AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle,
+        AdvertisingIntervalBound, AdvertisingSid, CmdGapInit, GapAddDevicesToList,
+        GapAdditionalBeaconSetData, GapAdditionalBeaconStart, GapAdvSetConfig, GapAdvSetEnable,
+        GapConfigureWhitelist, GapGetBondedDevices, GapInit, GapPassKeyResponse,
+        GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
+        GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
+        GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable, GapSetNonDiscoverable,
+        GapSetOobData, GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
+        GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
+        OptionalAdvertisingIntervalBound, PassKey, PowerAmplifierOutputLevel, Procedure, Role,
+        ScanType, ScanningFilterPolicy, SecureConnectionSupport, TerminationReason,
     },
-    event::AttributeHandle,
+    gatt::{
+        AccessPermission, CharacteristicEvent, CharacteristicPermission, CharacteristicProperty,
+        DescriptorPermission, DescriptorValueMaxLength, EncryptionKeySize, GattAddCharacteristic,
+        GattAddCharacteristicDescriptor, GattAddService, GattCharacteristic,
+        GattCharacteristicDescriptor, GattDiscoverCharacteristicsByUUID,
+        GattDiscoverPrimaryServicesByUUID, GattFindByTypeValueRequest, GattHandleValue,
+        GattIncludeService, GattReadByGroupTypeRequest, GattReadByTypeRequest,
+        GattReadCharacteristicUsingUUID, GattReadHandleValue, GattReadMultipleVarCharValue,
+        GattService, GattSetEventMask, GattWriteResponse, ServiceType, Uuid, WriteStatus,
+    },
+    hal::{
+        HalEventFlags, HalFirmwareRevision, HalGetFirmwareRevision, HalGetLinkStatus,
+        HalGetPmDebugInfo, HalGetTxTestPacketCount, HalPmDebugInfo, HalRadioRegisterValue,
+        HalRawRssi, HalReadRadioReg, HalReadRawRssi, HalReadRssi, HalRssi, HalRxStart,
+        HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
+        HalStartTone, HalTxTestPacketCount, HalWriteRadioReg, PowerLevel, RadioActivityFlags,
+        ToneChannel,
+    },
+    l2cap::{L2CocConnectConfirm, L2CocReconfig, L2CocTxData},
 };
 use vendor::RecordingSink;
 

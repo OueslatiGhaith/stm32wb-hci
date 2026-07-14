@@ -2,7 +2,8 @@
 
 use bt_hci::param::ConnHandle;
 
-use crate::vendor::{command::BoundedBytes, event::AttributeHandle};
+use crate::types::AttributeHandle;
+use crate::vendor::command::BoundedBytes;
 
 hci_ranged! {
     /// Maximum characteristic-descriptor value length accepted by

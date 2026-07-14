@@ -1,7 +1,5 @@
 use core::time::Duration;
 
-use byteorder::{ByteOrder, LittleEndian};
-
 hci_bitflags! {
     /// Extended advertising modes
     pub struct AdvertisingMode: u8 => 1 {
@@ -104,8 +102,8 @@ impl ExtendedAdvertisingInterval {
     /// - If the provided buffer is not at least 8 bytes long.
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
         let (minimum, maximum) = self.hci_fields();
-        LittleEndian::write_u32(&mut bytes[0..], minimum);
-        LittleEndian::write_u32(&mut bytes[4..], maximum);
+        bytes[0..4].copy_from_slice(&minimum.to_le_bytes());
+        bytes[4..8].copy_from_slice(&maximum.to_le_bytes());
     }
 
     fn hci_fields(&self) -> (u32, u32) {

@@ -1,6 +1,5 @@
 //! Types related to the expected connection length range.
 
-use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
 /// Define an expected connection length range
@@ -47,8 +46,8 @@ impl ExpectedConnectionLength {
         assert!(bytes.len() >= 4);
 
         let (minimum, maximum) = self.hci_fields();
-        LittleEndian::write_u16(&mut bytes[0..2], minimum);
-        LittleEndian::write_u16(&mut bytes[2..4], maximum);
+        bytes[0..2].copy_from_slice(&minimum.to_le_bytes());
+        bytes[2..4].copy_from_slice(&maximum.to_le_bytes());
     }
 
     fn duration_as_u16(d: Duration) -> u16 {

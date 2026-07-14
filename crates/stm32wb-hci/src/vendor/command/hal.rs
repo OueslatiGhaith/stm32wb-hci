@@ -1,7 +1,5 @@
 //! Vendor-specific HCI commands and types needed for those commands.
 
-use byteorder::{ByteOrder, LittleEndian};
-
 use crate::vendor::command::BoundedBytes;
 
 hci_ranged! {
@@ -16,7 +14,8 @@ hci_ranged! {
 impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
     fn from_hci_field(bytes: &[u8; 16]) -> Result<Self, bt_hci::FromHciBytesError> {
         Ok(core::array::from_fn(|index| {
-            LittleEndian::read_u16(&bytes[index * 2..index * 2 + 2])
+            let offset = index * 2;
+            u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
         }))
     }
 }
@@ -24,7 +23,8 @@ impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
 impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
     fn from_hci_field(bytes: &[u8; 44]) -> Result<Self, bt_hci::FromHciBytesError> {
         Ok(core::array::from_fn(|index| {
-            LittleEndian::read_u16(&bytes[index * 2..index * 2 + 2])
+            let offset = index * 2;
+            u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
         }))
     }
 }
@@ -408,7 +408,7 @@ impl ConfigData {
             length: 2,
             value_buf: [0; Self::MAX_LENGTH],
         };
-        LittleEndian::write_u16(&mut data.value_buf[0..2], d);
+        data.value_buf[0..2].copy_from_slice(&d.to_le_bytes());
 
         ConfigDataEncryptionRootBuilder { data }
     }
@@ -488,7 +488,7 @@ impl ConfigDataDiversifierBuilder {
     /// Specify the diversifier and continue building.
     pub fn diversifier(mut self, d: u16) -> ConfigDataEncryptionRootBuilder {
         let len = self.data.length as usize;
-        LittleEndian::write_u16(&mut self.data.value_buf[len..2 + len], d);
+        self.data.value_buf[len..2 + len].copy_from_slice(&d.to_le_bytes());
         self.data.length += 2;
 
         ConfigDataEncryptionRootBuilder { data: self.data }

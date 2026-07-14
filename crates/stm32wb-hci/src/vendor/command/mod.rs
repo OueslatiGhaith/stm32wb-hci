@@ -154,7 +154,7 @@ macro_rules! impl_hci_newtype_field {
 
 impl_hci_newtype_field!(bt_hci::param::ConnHandle, u16, 2);
 impl_hci_newtype_field!(bt_hci::param::BdAddr, [u8; 6], 6);
-impl_hci_newtype_field!(crate::vendor::event::AttributeHandle, u16, 2);
+impl_hci_newtype_field!(crate::types::AttributeHandle, u16, 2);
 
 impl HciEncodeField<7> for crate::types::BdAddrType {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {

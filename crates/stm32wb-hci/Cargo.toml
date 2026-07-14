@@ -18,7 +18,6 @@ exclude = ["tests"]
 [dependencies]
 bitflags = "2"
 bt-hci.workspace = true
-byteorder = { version = "1", default-features = false }
 defmt = { workspace = true, optional = true }
 embedded-io.workspace = true
 embedded-io-async = "0.7.0"

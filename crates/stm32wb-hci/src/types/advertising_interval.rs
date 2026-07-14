@@ -1,7 +1,6 @@
 //! Types related to the LE advertising interval.
 
 use bt_hci::param::AdvKind;
-use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
 /// Define an advertising interval range.
@@ -49,8 +48,8 @@ impl AdvertisingInterval {
         if self._advertising_type == AdvertisingType::ConnectableDirectedHighDutyCycle {
             bytes[0..4].copy_from_slice(&[0; 4]);
         } else {
-            LittleEndian::write_u16(&mut bytes[0..2], Self::duration_as_u16(self.interval.0));
-            LittleEndian::write_u16(&mut bytes[2..4], Self::duration_as_u16(self.interval.1));
+            bytes[0..2].copy_from_slice(&Self::duration_as_u16(self.interval.0).to_le_bytes());
+            bytes[2..4].copy_from_slice(&Self::duration_as_u16(self.interval.1).to_le_bytes());
         }
         bytes[4] = self._advertising_type as u8;
     }

@@ -1,6 +1,5 @@
 //! Types related to the LE scanning window.
 
-use byteorder::{ByteOrder, LittleEndian};
 use core::time::Duration;
 
 /// Define a scanning window.
@@ -38,8 +37,8 @@ impl ScanWindow {
         assert!(bytes.len() >= 4);
 
         let (interval, window) = self.hci_fields();
-        LittleEndian::write_u16(&mut bytes[0..2], interval);
-        LittleEndian::write_u16(&mut bytes[2..4], window);
+        bytes[0..2].copy_from_slice(&interval.to_le_bytes());
+        bytes[2..4].copy_from_slice(&window.to_le_bytes());
     }
 
     /// Begins building a [ScanWindow]. The scan window has the given interval. Returns a

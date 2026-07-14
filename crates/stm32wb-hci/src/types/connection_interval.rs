@@ -1,6 +1,5 @@
 //! Types related to the connection interval.
 
-use byteorder::{ByteOrder, LittleEndian};
 use core::cmp;
 use core::time::Duration;
 
@@ -45,10 +44,10 @@ impl ConnectionInterval {
         assert!(bytes.len() >= 8);
 
         let (interval_min, interval_max, latency, timeout) = self.hci_fields();
-        LittleEndian::write_u16(&mut bytes[0..2], interval_min);
-        LittleEndian::write_u16(&mut bytes[2..4], interval_max);
-        LittleEndian::write_u16(&mut bytes[4..6], latency);
-        LittleEndian::write_u16(&mut bytes[6..8], timeout);
+        bytes[0..2].copy_from_slice(&interval_min.to_le_bytes());
+        bytes[2..4].copy_from_slice(&interval_max.to_le_bytes());
+        bytes[4..6].copy_from_slice(&latency.to_le_bytes());
+        bytes[6..8].copy_from_slice(&timeout.to_le_bytes());
     }
 
     /// Deserializes the connection interval from the given byte buffer.
@@ -70,10 +69,10 @@ impl ConnectionInterval {
         assert!(bytes.len() >= 8);
 
         Self::from_hci_fields(
-            LittleEndian::read_u16(&bytes[0..2]),
-            LittleEndian::read_u16(&bytes[2..4]),
-            LittleEndian::read_u16(&bytes[4..6]),
-            LittleEndian::read_u16(&bytes[6..8]),
+            u16::from_le_bytes([bytes[0], bytes[1]]),
+            u16::from_le_bytes([bytes[2], bytes[3]]),
+            u16::from_le_bytes([bytes[4], bytes[5]]),
+            u16::from_le_bytes([bytes[6], bytes[7]]),
         )
     }
 
@@ -343,9 +342,10 @@ impl FixedConnectionInterval {
         // Do the error checking with the standard connection interval builder. The min and max of
         // the interval range are allowed to be equal.
         let interval =
-            Duration::from_micros(1_250) * u32::from(LittleEndian::read_u16(&bytes[0..2]));
-        let latency = LittleEndian::read_u16(&bytes[2..4]);
-        let timeout = Duration::from_millis(10) * u32::from(LittleEndian::read_u16(&bytes[4..6]));
+            Duration::from_micros(1_250) * u32::from(u16::from_le_bytes([bytes[0], bytes[1]]));
+        let latency = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let timeout =
+            Duration::from_millis(10) * u32::from(u16::from_le_bytes([bytes[4], bytes[5]]));
         ConnectionIntervalBuilder::new()
             .with_range(interval, interval)
             .with_latency(latency)

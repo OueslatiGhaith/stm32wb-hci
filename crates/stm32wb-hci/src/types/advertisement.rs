@@ -1,7 +1,5 @@
 //! Types for LE advertisements
 
-use byteorder::{ByteOrder, LittleEndian};
-
 use super::CommonDataType;
 
 /// LE Advertisement Type
@@ -80,15 +78,15 @@ impl Advertisement<'_> {
                 bytes[2..2 + n.len()].copy_from_slice(n.as_bytes());
             }
             ServiceData16BitUuid(u, b) | ManufacturerSpecificData(u, b) => {
-                LittleEndian::write_u16(&mut bytes[2..], *u);
+                bytes[2..4].copy_from_slice(&u.to_le_bytes());
                 bytes[4..4 + b.len()].copy_from_slice(b);
             }
             ServiceData32BitUuid(u, b) => {
-                LittleEndian::write_u32(&mut bytes[2..], *u);
+                bytes[2..6].copy_from_slice(&u.to_le_bytes());
                 bytes[6..6 + b.len()].copy_from_slice(b);
             }
             ServiceData128BitUuid(u, b) => {
-                LittleEndian::write_u128(&mut bytes[2..], *u);
+                bytes[2..18].copy_from_slice(&u.to_le_bytes());
                 bytes[18..18 + b.len()].copy_from_slice(b);
             }
         }

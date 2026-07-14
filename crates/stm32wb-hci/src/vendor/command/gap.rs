@@ -1,7 +1,6 @@
 //! GAP commands and types needed for those commands.
 
 pub use crate::types::BdAddrType;
-use crate::types::PeerAddrType;
 pub use crate::types::extended_advertisement::AdvertisingHandle;
 use crate::types::extended_advertisement::{
     AdvSet, AdvertisingEvent, AdvertisingMode, AdvertisingOperation, AdvertisingPhy,
@@ -11,8 +10,8 @@ pub use crate::types::{
     AdvertisingFilterPolicy, AdvertisingType, ConnectionInterval, ExpectedConnectionLength,
     OwnAddressType, ScanWindow,
 };
+use crate::types::{AttributeHandle, PeerAddrType};
 use crate::vendor::command::BoundedItems;
-use crate::vendor::event::AttributeHandle;
 use bt_hci::param::{BdAddr, ConnHandle};
 
 hci_ranged! {
@@ -284,8 +283,6 @@ stm32wb_hci_macros::vendor_cmd! {
         Return = ();
     }
 }
-
-// TODO: verify these return parameters
 
 stm32wb_hci_macros::vendor_cmd! {
     CmdGapInit(cgid = 0x1, cid = 0x0A) {
