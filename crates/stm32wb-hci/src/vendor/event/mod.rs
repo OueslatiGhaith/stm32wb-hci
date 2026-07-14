@@ -5,7 +5,7 @@
 //! deserialize buffers into them.
 
 use core::cmp::PartialEq;
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryInto;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::time::Duration;
 
@@ -16,11 +16,11 @@ pub use crate::wire::{BoundedBytes, BoundedItems};
 use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
 use bt_hci::param::{BdAddr, ConnHandle};
 
-/// Enumeration of vendor-specific status codes.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[repr(u8)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VendorStatus {
+hci_try_from_enum! {
+    /// Enumeration of vendor-specific status codes.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum VendorStatus: u8 {
     /// The command cannot be executed due to the current state of the device.
     Failed = 0x41,
     /// Some parameters are invalid.
@@ -93,61 +93,15 @@ pub enum VendorStatus {
     /// MCU library: profile already initialized.
     ProfileAlreadyInitialized = 0xF0,
     /// MCU library: A parameter was null.
-    NullParameter = 0xF1,
-}
-
-impl TryFrom<u8> for VendorStatus {
-    type Error = BadVendorStatusError;
-
-    fn try_from(value: u8) -> Result<Self, <Self as TryFrom<u8>>::Error> {
-        match value {
-            0x41 => Ok(VendorStatus::Failed),
-            0x42 => Ok(VendorStatus::InvalidParameters),
-            0x46 => Ok(VendorStatus::NotAllowed),
-            0x47 => Ok(VendorStatus::Error),
-            0x48 => Ok(VendorStatus::AddressNotResolved),
-            0x49 => Ok(VendorStatus::FlashReadFailed),
-            0x4A => Ok(VendorStatus::FlashWriteFailed),
-            0x4B => Ok(VendorStatus::FlashEraseFailed),
-            0x50 => Ok(VendorStatus::InvalidCid),
-            0x54 => Ok(VendorStatus::TimerNotValidLayer),
-            0x55 => Ok(VendorStatus::TimerInsufficientResources),
-            0x5A => Ok(VendorStatus::CsrkNotFound),
-            0x5B => Ok(VendorStatus::IrkNotFound),
-            0x5C => Ok(VendorStatus::DeviceNotFoundInDatabase),
-            0x5D => Ok(VendorStatus::SecurityDatabaseFull),
-            0x5E => Ok(VendorStatus::DeviceNotBonded),
-            0x5F => Ok(VendorStatus::DeviceInBlacklist),
-            0x60 => Ok(VendorStatus::InvalidHandle),
-            0x61 => Ok(VendorStatus::InvalidParameter),
-            0x62 => Ok(VendorStatus::OutOfHandle),
-            0x63 => Ok(VendorStatus::InvalidOperation),
-            0x64 => Ok(VendorStatus::InsufficientResources),
-            0x65 => Ok(VendorStatus::InsufficientEncryptionKeySize),
-            0x66 => Ok(VendorStatus::CharacteristicAlreadyExists),
-            0x82 => Ok(VendorStatus::NoValidSlot),
-            0x83 => Ok(VendorStatus::ScanWindowTooShort),
-            0x84 => Ok(VendorStatus::NewIntervalFailed),
-            0x85 => Ok(VendorStatus::IntervalTooLarge),
-            0x86 => Ok(VendorStatus::LengthFailed),
-            0xFF => Ok(VendorStatus::Timeout),
-            0xF0 => Ok(VendorStatus::ProfileAlreadyInitialized),
-            0xF1 => Ok(VendorStatus::NullParameter),
-            _ => Err(BadVendorStatusError(value)),
-        }
+        NullParameter = 0xF1,
     }
+    TryFromError = BadVendorStatusError => BadVendorStatusError;
 }
 
 /// A byte that does not identify an STM32WB vendor status.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BadVendorStatusError(pub u8);
-
-impl From<VendorStatus> for u8 {
-    fn from(val: VendorStatus) -> Self {
-        val as u8
-    }
-}
 
 /// Enumeration of potential errors when sending commands or deserializing events.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1383,31 +1337,22 @@ hci_event_enum! {
     EventError = Error::Vendor;
 }
 
-/// Reasons why an L2CAP command was rejected. see the Bluetooth specification, v4.1, Vol 3, Part A,
-/// Section 4.1.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum L2CapRejectionReason {
-    /// The controller sent an unknown command.
-    CommandNotUnderstood,
-    /// When multiple commands are included in an L2CAP packet and the packet exceeds the signaling
-    /// MTU (MTUsig) of the receiver, a single Command Reject packet shall be sent in response.
-    SignalingMtuExceeded,
-    /// Invalid CID in request
-    InvalidCid,
-}
-
-impl TryFrom<u16> for L2CapRejectionReason {
-    type Error = VendorError;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(L2CapRejectionReason::CommandNotUnderstood),
-            1 => Ok(L2CapRejectionReason::SignalingMtuExceeded),
-            2 => Ok(L2CapRejectionReason::InvalidCid),
-            _ => Err(VendorError::BadL2CapRejectionReason(value)),
-        }
+hci_try_from_enum! {
+    /// Reasons why an L2CAP command was rejected. See the Bluetooth specification, v4.1, Vol 3,
+    /// Part A, Section 4.1.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum L2CapRejectionReason: u16 {
+        /// The controller sent an unknown command.
+        CommandNotUnderstood = 0,
+        /// When multiple commands are included in an L2CAP packet and the packet exceeds the
+        /// signaling MTU (MTUsig) of the receiver, a single Command Reject packet shall be sent in
+        /// response.
+        SignalingMtuExceeded = 1,
+        /// Invalid CID in request
+        InvalidCid = 2,
     }
+    TryFromError = VendorError => VendorError::BadL2CapRejectionReason;
 }
 
 /// Potential results that can be used in the L2CAP connection update response.
@@ -1553,46 +1498,26 @@ fn to_gap_pairing_status(
     }
 }
 
-/// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event failed.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GapPairingReason {
-    PasskeyEntryFailed = 0x01,
-    OobNotAvailable = 0x02,
-    AuthRequirements = 0x03,
-    ConfirmValueFailed = 0x04,
-    PairingNotSupported = 0x05,
-    EncryptionKeySize = 0x06,
-    CommandNotSupported = 0x07,
-    Unspecified = 0x08,
-    RepeatedAttemptes = 0x09,
-    InvalidParams = 0x0A,
-    DHKeyCheckFailed = 0x0B,
-    NumericComparisonFailed = 0x0C,
-    KeyRejected = 0x0F,
-}
-
-impl TryFrom<u8> for GapPairingReason {
-    type Error = VendorError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x01 => Ok(GapPairingReason::PasskeyEntryFailed),
-            0x02 => Ok(GapPairingReason::OobNotAvailable),
-            0x03 => Ok(GapPairingReason::AuthRequirements),
-            0x04 => Ok(GapPairingReason::ConfirmValueFailed),
-            0x05 => Ok(GapPairingReason::PairingNotSupported),
-            0x06 => Ok(GapPairingReason::EncryptionKeySize),
-            0x07 => Ok(GapPairingReason::CommandNotSupported),
-            0x08 => Ok(GapPairingReason::Unspecified),
-            0x09 => Ok(GapPairingReason::RepeatedAttemptes),
-            0x0A => Ok(GapPairingReason::InvalidParams),
-            0x0B => Ok(GapPairingReason::DHKeyCheckFailed),
-            0x0C => Ok(GapPairingReason::NumericComparisonFailed),
-            0x0F => Ok(GapPairingReason::KeyRejected),
-            _ => Err(VendorError::BadGapPairingErrorReason(value)),
-        }
+hci_try_from_enum! {
+    /// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event failed.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum GapPairingReason: u8 {
+        PasskeyEntryFailed = 0x01,
+        OobNotAvailable = 0x02,
+        AuthRequirements = 0x03,
+        ConfirmValueFailed = 0x04,
+        PairingNotSupported = 0x05,
+        EncryptionKeySize = 0x06,
+        CommandNotSupported = 0x07,
+        Unspecified = 0x08,
+        RepeatedAttemptes = 0x09,
+        InvalidParams = 0x0A,
+        DHKeyCheckFailed = 0x0B,
+        NumericComparisonFailed = 0x0C,
+        KeyRejected = 0x0F,
     }
+    TryFromError = VendorError => VendorError::BadGapPairingErrorReason;
 }
 
 /// Maximum length of the name returned in the [`NameDiscovery`](GapProcedure::NameDiscovery)
@@ -2658,6 +2583,27 @@ mod tests {
             <AttError as HciEventField<1>>::from_hci_event_field(&[0x14]).unwrap_err(),
             Error::Vendor(VendorError::BadAttError(0x14))
         );
+    }
+
+    #[test]
+    fn declarative_conversion_enums_are_bidirectional_and_closed() {
+        assert_eq!(
+            VendorStatus::try_from(0).unwrap_err(),
+            BadVendorStatusError(0)
+        );
+        assert_eq!(u8::from(VendorStatus::InsufficientResources), 0x64);
+
+        assert_eq!(
+            L2CapRejectionReason::try_from(3).unwrap_err(),
+            VendorError::BadL2CapRejectionReason(3)
+        );
+        assert_eq!(u16::from(L2CapRejectionReason::InvalidCid), 2);
+
+        assert_eq!(
+            GapPairingReason::try_from(0x0D).unwrap_err(),
+            VendorError::BadGapPairingErrorReason(0x0D)
+        );
+        assert_eq!(u8::from(GapPairingReason::KeyRejected), 0x0F);
     }
 
     #[test]

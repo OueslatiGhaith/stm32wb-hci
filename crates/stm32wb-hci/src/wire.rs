@@ -71,15 +71,15 @@ impl HciCount<2> for u16 {
     }
 }
 
-/// Declare a fieldless HCI enum and its exact-width wire encoding.
+/// Emit one closed enum, then delegate its protocol adapters to a callback.
 ///
-/// The generated decoder rejects values that are not one of the declared
-/// discriminants, so the enum remains a closed protocol value in both
-/// directions.
-macro_rules! hci_enum {
+/// Keeping enum emission here ensures command, event, and conversion-only
+/// declarations all derive their Rust variants from the same macro backend.
+macro_rules! hci_closed_enum {
     (
+        Adapters = $adapters:ident { $($adapter_args:tt)* };
         $(#[$enum_attr:meta])*
-        $vis:vis enum $name:ident : $repr:ty => $len:literal {
+        $vis:vis enum $name:ident : $repr:ty {
             $(
                 $(#[$variant_attr:meta])*
                 $variant:ident = $value:expr,
@@ -95,6 +95,23 @@ macro_rules! hci_enum {
             )+
         }
 
+        $adapters! {
+            Enum = $name: $repr {
+                $($variant = $value,)+
+            }
+            $($adapter_args)*
+        }
+    };
+}
+
+/// Add the fixed-width command encoder and decoder to an emitted closed enum.
+macro_rules! hci_command_enum_adapters {
+    (
+        Enum = $name:ident: $repr:ty {
+            $($variant:ident = $value:expr,)+
+        }
+        WireWidth = $len:literal;
+    ) => {
         impl crate::vendor::command::HciEncodeField<$len> for $name {
             fn write_hci_field<W: embedded_io::Write>(
                 &self,
@@ -141,6 +158,120 @@ macro_rules! hci_enum {
     };
 }
 
+/// Add canonical bidirectional conversions to an emitted closed enum.
+///
+/// The invalid-value expression maps the raw representation into the enum's
+/// public conversion error, preserving the diagnostic chosen by each type.
+macro_rules! hci_try_from_enum_adapters {
+    (
+        Enum = $name:ident: $repr:ty {
+            $($variant:ident = $value:expr,)+
+        }
+        TryFromError = $error_ty:ty => $invalid_value:expr;
+    ) => {
+        impl core::convert::TryFrom<$repr> for $name {
+            type Error = $error_ty;
+
+            fn try_from(value: $repr) -> Result<Self, $error_ty> {
+                $(
+                    if value == $value {
+                        return Ok(Self::$variant);
+                    }
+                )+
+                Err(($invalid_value)(value))
+            }
+        }
+
+        impl From<$name> for $repr {
+            fn from(value: $name) -> Self {
+                match value {
+                    $($name::$variant => $value,)+
+                }
+            }
+        }
+    };
+}
+
+/// Add closed scalar conversion and fixed-width event decoding to an emitted
+/// enum, translating conversion failures into the surrounding event error.
+macro_rules! hci_event_enum_adapters {
+    (
+        Enum = $name:ident: $repr:ty {
+            $($variant:ident = $value:expr,)+
+        }
+        WireWidth = $len:literal;
+        TryFromError = $error_ty:ty => $invalid_value:expr;
+        EventError = $event_error:expr;
+    ) => {
+        hci_try_from_enum_adapters! {
+            Enum = $name: $repr {
+                $($variant = $value,)+
+            }
+            TryFromError = $error_ty => $invalid_value;
+        }
+
+        impl crate::vendor::event::HciEventField<$len> for $name {
+            fn from_hci_event_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, crate::vendor::event::Error> {
+                let value = <$repr>::from_le_bytes(*bytes);
+                <Self as core::convert::TryFrom<$repr>>::try_from(value)
+                    .map_err($event_error)
+            }
+        }
+    };
+}
+
+/// Declare a fieldless HCI enum and its exact-width command encoding.
+///
+/// The generated decoder rejects values that are not one of the declared
+/// discriminants, so the enum remains a closed protocol value in both
+/// directions.
+macro_rules! hci_enum {
+    (
+        $(#[$enum_attr:meta])*
+        $vis:vis enum $name:ident : $repr:ty => $len:literal {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr,
+            )+
+        }
+    ) => {
+        hci_closed_enum! {
+            Adapters = hci_command_enum_adapters { WireWidth = $len; };
+            $(#[$enum_attr])*
+            $vis enum $name: $repr {
+                $($(#[$variant_attr])* $variant = $value,)+
+            }
+        }
+    };
+}
+
+/// Declare a closed enum with canonical conversions to and from its wire
+/// representation.
+macro_rules! hci_try_from_enum {
+    (
+        $(#[$enum_attr:meta])*
+        $vis:vis enum $name:ident : $repr:ty {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr,
+            )+
+        }
+        TryFromError = $error_ty:ty => $invalid_value:expr;
+    ) => {
+        hci_closed_enum! {
+            Adapters = hci_try_from_enum_adapters {
+                TryFromError = $error_ty => $invalid_value;
+            };
+            $(#[$enum_attr])*
+            $vis enum $name: $repr {
+                $($(#[$variant_attr])* $variant = $value,)+
+            }
+        }
+    };
+}
+
 /// Declare a closed vendor-event enum and its exact-width decoder.
 ///
 /// The discriminants are the single source of truth for both `TryFrom` and
@@ -159,35 +290,15 @@ macro_rules! hci_event_enum {
         TryFromError = $error_ty:ty => $invalid_value:expr;
         EventError = $event_error:expr;
     ) => {
-        $(#[$enum_attr])*
-        #[repr($repr)]
-        $vis enum $name {
-            $(
-                $(#[$variant_attr])*
-                $variant = $value,
-            )+
-        }
-
-        impl core::convert::TryFrom<$repr> for $name {
-            type Error = $error_ty;
-
-            fn try_from(value: $repr) -> Result<Self, Self::Error> {
-                $(
-                    if value == $value {
-                        return Ok(Self::$variant);
-                    }
-                )+
-                Err(($invalid_value)(value))
-            }
-        }
-
-        impl crate::vendor::event::HciEventField<$len> for $name {
-            fn from_hci_event_field(
-                bytes: &[u8; $len],
-            ) -> Result<Self, crate::vendor::event::Error> {
-                let value = <$repr>::from_le_bytes(*bytes);
-                <Self as core::convert::TryFrom<$repr>>::try_from(value)
-                    .map_err($event_error)
+        hci_closed_enum! {
+            Adapters = hci_event_enum_adapters {
+                WireWidth = $len;
+                TryFromError = $error_ty => $invalid_value;
+                EventError = $event_error;
+            };
+            $(#[$enum_attr])*
+            $vis enum $name: $repr {
+                $($(#[$variant_attr])* $variant = $value,)+
             }
         }
     };
