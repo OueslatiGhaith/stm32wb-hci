@@ -904,7 +904,7 @@ stm32wb_hci_macros::vendor_event! {
     AttExchangeMtuResponse(0x0C03) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            server_rx_mtu: usize => 2,
+            server_rx_mtu: u16 => 2,
         };
     }
     /// This event is generated in response to a Find Information Request. See Find Information
@@ -1012,7 +1012,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            offset: usize => 2,
+            offset: u16 => 2,
             value: BoundedBytes<246> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -1122,7 +1122,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            offset: usize => 2,
+            offset: u16 => 2,
         };
     }
     /// This event is given to the application when a read multiple request or read by type request
@@ -1151,7 +1151,7 @@ stm32wb_hci_macros::vendor_event! {
     GattTxPoolAvailable(0x0C16) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            available_buffers: usize => 2,
+            available_buffers: u16 => 2,
         };
     }
     /// This event is raised on the server when the client confirms the reception of an indication.
@@ -1171,7 +1171,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            offset: usize => 2,
+            offset: u16 => 2,
             value: BoundedBytes<246> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -2358,12 +2358,6 @@ impl HalFirmwareError {
     }
 }
 
-impl HciEventField<2> for usize {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
-        Ok(usize::from(u16::from_le_bytes(*bytes)))
-    }
-}
-
 hci_event_composite! {
     PeerAddrType => 7 {
         Fields = {
@@ -2632,6 +2626,60 @@ mod tests {
                 ConnectionIntervalError::IntervalTooShort(core::time::Duration::ZERO)
             ))
         );
+    }
+
+    #[test]
+    fn fixed_two_byte_event_scalars_use_their_wire_type() {
+        let VendorEvent::AttExchangeMtuResponse(event) =
+            VendorEvent::new(&[0x03, 0x0C, 0x23, 0x01, 0x00, 0x02]).expect("exchange MTU response")
+        else {
+            panic!("unexpected event variant");
+        };
+        let server_rx_mtu: u16 = event.server_rx_mtu;
+        assert_eq!(server_rx_mtu, 0x0200);
+
+        let VendorEvent::AttPrepareWriteResponse(event) = VendorEvent::new(&[
+            0x0C, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x34, 0x12, // attribute handle
+            0x78, 0x56, // offset
+            0x00, // empty value
+        ])
+        .expect("prepare write response") else {
+            panic!("unexpected event variant");
+        };
+        let offset: u16 = event.offset;
+        assert_eq!(offset, 0x5678);
+
+        let VendorEvent::AttReadPermitRequest(event) =
+            VendorEvent::new(&[0x14, 0x0C, 0x23, 0x01, 0x34, 0x12, 0x78, 0x56])
+                .expect("read permit request")
+        else {
+            panic!("unexpected event variant");
+        };
+        let offset: u16 = event.offset;
+        assert_eq!(offset, 0x5678);
+
+        let VendorEvent::GattTxPoolAvailable(event) =
+            VendorEvent::new(&[0x16, 0x0C, 0x23, 0x01, 0x78, 0x56]).expect("TX pool available")
+        else {
+            panic!("unexpected event variant");
+        };
+        let available_buffers: u16 = event.available_buffers;
+        assert_eq!(available_buffers, 0x5678);
+
+        let VendorEvent::AttPrepareWritePermitRequest(event) = VendorEvent::new(&[
+            0x18, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x34, 0x12, // attribute handle
+            0x78, 0x56, // offset
+            0x00, // empty value
+        ])
+        .expect("prepare write permit request") else {
+            panic!("unexpected event variant");
+        };
+        let offset: u16 = event.offset;
+        assert_eq!(offset, 0x5678);
     }
 
     #[test]
