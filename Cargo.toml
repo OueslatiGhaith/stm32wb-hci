@@ -12,6 +12,7 @@ embedded-io = "0.7.1"
 proc-macro2 = "1"
 stm32wb-hci-schema = { version = "0.1.0", path = "crates/stm32wb-hci-schema" }
 syn = "2"
+toml = "1"
 
 [profile.dev]
 debug = 2

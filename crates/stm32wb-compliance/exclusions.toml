@@ -1,0 +1,21 @@
+# stm32wb-compliance exclusion policy, format version 1.
+#
+# Every exclusion declares a scope, numeric wire code, firmware selector, and
+# reviewable reason. `firmware = "*"` selects every declared firmware; an exact
+# version such as `"0.17.0"` selects only that version.
+#
+# Transport-only events must also declare their payload envelope after the
+# two-byte vendor event code. The checker rejects overlaps, unknown firmware
+# versions, invalid envelopes, and exclusions which no longer suppress a real
+# difference.
+
+version = 1
+
+# This event is emitted by the coprocessor transport but is not listed in the
+# generated STM32CubeWB `hci_vs_event_table` catalog.
+[[exclusions]]
+scope = "transport-event"
+code = 0x9200
+firmware = "*"
+reason = "transport-only coprocessor-ready event (not in CubeWB auto source)"
+payload = { minimum = 1, maximum = 1 }

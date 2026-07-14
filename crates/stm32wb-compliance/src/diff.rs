@@ -247,7 +247,7 @@ mod tests {
     use super::*;
     use crate::{
         CATALOG_SCHEMA_VERSION, CatalogCommandKind, CatalogCompletion, CatalogEventKind,
-        EventPayloadLayout, RequestLayout, ReturnLayout,
+        ExtractedEnvelope,
     };
 
     fn command(ocf: u16, name: &str) -> CatalogCommand {
@@ -257,16 +257,16 @@ mod tests {
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
             completion: CatalogCompletion::CommandComplete {
-                returns: ReturnLayout::Fixed(0),
+                returns: ExtractedEnvelope::fixed(0),
             },
-            request: RequestLayout::Empty,
+            request: ExtractedEnvelope::fixed(0),
         }
     }
 
     fn event(code: u16, name: &str) -> CatalogEvent {
         CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: EventPayloadLayout::Fixed(0),
+                payload: ExtractedEnvelope::fixed(0),
             },
             code,
             name: name.to_owned(),
@@ -296,7 +296,7 @@ mod tests {
         moved.source_offset = 99;
         new.commands = vec![moved, command(3, "added")];
         new.commands[0].completion = CatalogCompletion::CommandComplete {
-            returns: ReturnLayout::Fixed(3),
+            returns: ExtractedEnvelope::fixed(3),
         };
         new.events = vec![event(0x400, "renamed_event"), event(0x402, "added_event")];
         new.events[0].source_name = "new_events.c".to_owned();

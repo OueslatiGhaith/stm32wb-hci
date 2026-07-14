@@ -61,11 +61,11 @@ adding a firmware feature automatically puts it in the compliance and CI loops.
 
 The checker reports the requested CubeWB tag, the tag object, and the resolved commit, making a
 result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
-checked-in [policy](crates/stm32wb-compliance/exclusions.policy). The policy requires a reason for every
-exception and rejects malformed, overlapping, unsupported-version, or stale entries; an exception
-must actively suppress a real coverage difference. Transport-only events can additionally declare
-a fixed or bounded payload envelope, which is checked against the Rust event schema. Pass
-`--policy <path>` only when evaluating a deliberate alternative policy.
+checked-in [TOML policy](crates/stm32wb-compliance/exclusions.toml). The policy requires a reason
+for every exception and rejects malformed, overlapping, unsupported-version, or stale entries; an
+exception must actively suppress a real coverage difference. Transport-only events additionally
+declare their minimum and maximum payload lengths, which are checked against the Rust event
+schema. Pass `--policy <path>` only when evaluating a deliberate alternative policy.
 
 The checker parses both the Rust crate and CubeWB's generated C sources as syntax trees, and
 evaluates the selected firmware cfgs, so module-, trait-, impl-, method-, and branch-level gates

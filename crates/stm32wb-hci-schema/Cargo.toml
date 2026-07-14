@@ -9,4 +9,4 @@ repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
 [dependencies]
 proc-macro2.workspace = true
 syn = { workspace = true, features = ["full", "parsing", "visit"] }
-toml = "1"
+toml.workspace = true

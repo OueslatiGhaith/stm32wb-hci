@@ -1,21 +1,23 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fmt::Write as _;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::str::FromStr;
+
+mod output;
+mod policy;
+
+use output::{
+    batch_to_human, batch_to_json, checked_run_to_human, checked_run_to_json, diff_to_human,
+    version_diff_to_json,
+};
+use policy::{ExclusionPolicy, PolicyAudit};
 
 use clap::{CommandFactory, Parser, Subcommand};
-use serde::Serialize;
 use stm32wb_compliance::{
-    CATALOG_SCHEMA_VERSION, CheckOptions, CheckReport, CheckReportJson, CommandChanges, CommandKey,
-    CommandScope, EventChanges, EventPayloadLayout, EventScope, FirmwareVersion, VersionDiff,
-    check, diff_catalogs, find_crate_root, load_catalog, workspace_root,
+    CheckOptions, CheckReport, FirmwareVersion, check, diff_catalogs, find_crate_root,
+    load_catalog, workspace_root,
 };
 
-const DEFAULT_POLICY_PATH: &str = "crates/stm32wb-compliance/exclusions.policy";
-const POLICY_FORMAT_VERSION: u32 = 2;
+const DEFAULT_POLICY_PATH: &str = "crates/stm32wb-compliance/exclusions.toml";
 
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
@@ -121,9 +123,9 @@ fn run_check(cli: &Cli, crate_dir: PathBuf) -> Result<ExitCode, String> {
         match result {
             BatchResult::Success(result) => {
                 if cli.json {
-                    println!("{}", result.to_json(&policy, &crate_dir));
+                    println!("{}", checked_run_to_json(&result, &policy, &crate_dir));
                 } else {
-                    print!("{}", result.to_human(&policy, &crate_dir));
+                    print!("{}", checked_run_to_human(&result, &policy, &crate_dir));
                 }
                 return Ok(report_exit_code(cli.deny, &result.report));
             }
@@ -177,23 +179,14 @@ fn run_diff(cli: &Cli, current_dir: &Path) -> Result<ExitCode, String> {
     if cli.json {
         println!(
             "{}",
-            serde_json::to_string(&VersionDiffJson {
-                mode: "version-diff",
-                catalog_schema_version: CATALOG_SCHEMA_VERSION,
-                from: DiffEndpointJson {
-                    firmware: from.to_string(),
-                    feature: from.feature_name(),
-                    cube_provenance: from_provenance.json(display_root),
-                },
-                to: DiffEndpointJson {
-                    firmware: to.to_string(),
-                    feature: to.feature_name(),
-                    cube_provenance: to_provenance.json(display_root),
-                },
-                commands: &diff.commands,
-                events: &diff.events,
-            })
-            .expect("a version diff JSON DTO can always serialize to JSON")
+            version_diff_to_json(
+                &diff,
+                from,
+                to,
+                &from_provenance,
+                &to_provenance,
+                display_root,
+            )
         );
     } else {
         print!(
@@ -214,168 +207,6 @@ fn run_diff(cli: &Cli, current_dir: &Path) -> Result<ExitCode, String> {
     } else {
         ExitCode::SUCCESS
     })
-}
-
-#[derive(Serialize)]
-struct VersionDiffJson<'a> {
-    mode: &'static str,
-    catalog_schema_version: u16,
-    from: DiffEndpointJson<'a>,
-    to: DiffEndpointJson<'a>,
-    commands: &'a CommandChanges,
-    events: &'a EventChanges,
-}
-
-#[derive(Serialize)]
-struct DiffEndpointJson<'a> {
-    firmware: String,
-    feature: String,
-    cube_provenance: CubeProvenanceJson<'a>,
-}
-
-fn diff_to_human(
-    diff: &VersionDiff,
-    from: FirmwareVersion,
-    to: FirmwareVersion,
-    from_provenance: &CubeProvenance,
-    to_provenance: &CubeProvenance,
-    display_root: &Path,
-) -> String {
-    let mut output = String::new();
-    let _ = writeln!(
-        output,
-        "STM32CubeWB version diff: {from} ({}) -> {to} ({})",
-        diff.from.cube_tag, diff.to.cube_tag
-    );
-    let _ = writeln!(
-        output,
-        "CubeWB checkout: {}",
-        from_provenance.display_path(display_root)
-    );
-    let _ = writeln!(
-        output,
-        "  from: {} ({})",
-        from_provenance.tag, from_provenance.commit
-    );
-    let _ = writeln!(
-        output,
-        "  to: {} ({})",
-        to_provenance.tag, to_provenance.commit
-    );
-    write_command_changes(&mut output, &diff.commands);
-    write_event_changes(&mut output, &diff.events);
-    let _ = writeln!(
-        output,
-        "result: {}",
-        if diff.has_changes() {
-            "differences found"
-        } else {
-            "no differences"
-        }
-    );
-    output
-}
-
-fn write_command_changes(output: &mut String, changes: &CommandChanges) {
-    let _ = writeln!(
-        output,
-        "commands: {} added / {} removed / {} changed",
-        changes.added.len(),
-        changes.removed.len(),
-        changes.changed.len()
-    );
-    for command in &changes.added {
-        let _ = writeln!(
-            output,
-            "  + {} 0x{:04X}: {}",
-            command_scope_name(command.scope()),
-            command.code(),
-            command.name
-        );
-    }
-    for command in &changes.removed {
-        let _ = writeln!(
-            output,
-            "  - {} 0x{:04X}: {}",
-            command_scope_name(command.scope()),
-            command.code(),
-            command.name
-        );
-    }
-    for changed in &changes.changed {
-        write_changed_command(output, changed.key, &changed.from.name, &changed.to.name);
-    }
-}
-
-fn write_changed_command(output: &mut String, key: CommandKey, from: &str, to: &str) {
-    if from == to {
-        let _ = writeln!(
-            output,
-            "  ~ {} 0x{:04X}: {from} (wire metadata changed)",
-            command_scope_name(key.scope),
-            key.code,
-        );
-    } else {
-        let _ = writeln!(
-            output,
-            "  ~ {} 0x{:04X}: {from} -> {to}",
-            command_scope_name(key.scope),
-            key.code,
-        );
-    }
-}
-
-fn write_event_changes(output: &mut String, changes: &EventChanges) {
-    let _ = writeln!(
-        output,
-        "events: {} added / {} removed / {} changed",
-        changes.added.len(),
-        changes.removed.len(),
-        changes.changed.len()
-    );
-    for event in &changes.added {
-        let _ = writeln!(
-            output,
-            "  + {} 0x{:04X}: {}",
-            event_scope_name(event.scope()),
-            event.code,
-            event.name
-        );
-    }
-    for event in &changes.removed {
-        let _ = writeln!(
-            output,
-            "  - {} 0x{:04X}: {}",
-            event_scope_name(event.scope()),
-            event.code,
-            event.name
-        );
-    }
-    for changed in &changes.changed {
-        let _ = writeln!(
-            output,
-            "  ~ {} 0x{:04X}: {} -> {}",
-            event_scope_name(changed.key.scope),
-            changed.key.code,
-            changed.from.name,
-            changed.to.name
-        );
-    }
-}
-
-fn command_scope_name(scope: CommandScope) -> &'static str {
-    match scope {
-        CommandScope::VendorAci => "vendor ACI OCF",
-        CommandScope::StandardHci => "standard HCI opcode",
-    }
-}
-
-fn event_scope_name(scope: EventScope) -> &'static str {
-    match scope {
-        EventScope::VendorAci => "vendor ACI event",
-        EventScope::StandardHci => "standard HCI event",
-        EventScope::LeMeta => "LE Meta subevent",
-    }
 }
 
 fn run_one_check(
@@ -419,60 +250,6 @@ struct CheckedRun {
     policy_audit: PolicyAudit,
 }
 
-impl CheckedRun {
-    fn to_human(&self, policy: &ExclusionPolicy, crate_dir: &Path) -> String {
-        let report = self.report.to_human();
-        let (heading, remainder) = report.split_once('\n').unwrap_or((&report, ""));
-        let mut output = String::new();
-        let _ = writeln!(output, "{heading}");
-        let _ = writeln!(output, "CubeWB provenance:");
-        let _ = writeln!(
-            output,
-            "  checkout: {}",
-            self.provenance.display_path(crate_dir)
-        );
-        let _ = writeln!(
-            output,
-            "  tag: {} (tag object {})",
-            self.provenance.tag, self.provenance.tag_object
-        );
-        let _ = writeln!(output, "  resolved commit: {}", self.provenance.commit);
-        let _ = writeln!(
-            output,
-            "exclusion policy: {} (format {}; {} command + {} event entries, all actively suppress a difference)",
-            policy.display_path(crate_dir),
-            POLICY_FORMAT_VERSION,
-            self.policy_audit.command_entries,
-            self.policy_audit.event_entries,
-        );
-        output.push_str(remainder);
-        output
-    }
-
-    fn to_json(&self, policy: &ExclusionPolicy, crate_dir: &Path) -> String {
-        serde_json::to_string(&self.json(policy, crate_dir))
-            .expect("a checked compliance result can always serialize to JSON")
-    }
-
-    fn json<'a>(&'a self, policy: &ExclusionPolicy, crate_dir: &Path) -> CheckedRunJson<'a> {
-        CheckedRunJson {
-            report: self.report.json(),
-            firmware_feature: self.firmware.feature_name(),
-            cube_provenance: self.provenance.json(crate_dir),
-            exclusion_policy: self.policy_audit.json(policy, crate_dir),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct CheckedRunJson<'a> {
-    #[serde(flatten)]
-    report: CheckReportJson<'a>,
-    firmware_feature: String,
-    cube_provenance: CubeProvenanceJson<'a>,
-    exclusion_policy: PolicyAuditJson,
-}
-
 #[derive(Debug)]
 enum BatchResult {
     Success(Box<CheckedRun>),
@@ -490,113 +267,6 @@ impl BatchResult {
     fn is_noncompliant(&self) -> bool {
         matches!(self, Self::Success(result) if !result.report.is_compliant())
     }
-}
-
-fn batch_to_human(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: &Path) -> String {
-    let mut output = String::new();
-    let mut successful = 0usize;
-    let mut noncompliant = 0usize;
-    let mut errors = 0usize;
-
-    for result in results {
-        match result {
-            BatchResult::Success(result) => {
-                successful += 1;
-                noncompliant += usize::from(!result.report.is_compliant());
-                let _ = writeln!(
-                    output,
-                    "=== {} ({}) ===",
-                    result.firmware,
-                    result.firmware.feature_name()
-                );
-                output.push_str(&result.to_human(policy, crate_dir));
-            }
-            BatchResult::Error { firmware, error } => {
-                errors += 1;
-                let _ = writeln!(output, "=== {firmware} ({}) ===", firmware.feature_name());
-                let _ = writeln!(output, "error: {error}");
-            }
-        }
-    }
-
-    let _ = writeln!(
-        output,
-        "all-supported summary: {successful} checked, {noncompliant} non-compliant, {errors} errors"
-    );
-    output
-}
-
-fn batch_to_json(results: &[BatchResult], policy: &ExclusionPolicy, crate_dir: &Path) -> String {
-    let successful = results
-        .iter()
-        .filter(|result| matches!(result, BatchResult::Success(_)))
-        .count();
-    let errors = results.len() - successful;
-    let noncompliant = results
-        .iter()
-        .filter(|result| result.is_noncompliant())
-        .count();
-
-    let results = results
-        .iter()
-        .map(|result| match result {
-            BatchResult::Success(result) => BatchResultJson::Success {
-                firmware: result.firmware.to_string(),
-                feature: result.firmware.feature_name(),
-                report: Box::new(result.json(policy, crate_dir)),
-            },
-            BatchResult::Error { firmware, error } => BatchResultJson::Error {
-                firmware: firmware.to_string(),
-                feature: firmware.feature_name(),
-                error,
-            },
-        })
-        .collect();
-    let report = BatchJson {
-        mode: "all-supported",
-        compliant: errors == 0 && noncompliant == 0,
-        exclusion_policy: PolicyMetadataJson::from_policy(policy, crate_dir),
-        results,
-        summary: BatchSummary {
-            checked: successful,
-            noncompliant_reports: noncompliant,
-            errors,
-        },
-    };
-    serde_json::to_string(&report).expect("a batch compliance result can always serialize to JSON")
-}
-
-#[derive(Serialize)]
-struct BatchJson<'a> {
-    mode: &'static str,
-    compliant: bool,
-    exclusion_policy: PolicyMetadataJson,
-    results: Vec<BatchResultJson<'a>>,
-    summary: BatchSummary,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "status")]
-enum BatchResultJson<'a> {
-    #[serde(rename = "ok")]
-    Success {
-        firmware: String,
-        feature: String,
-        report: Box<CheckedRunJson<'a>>,
-    },
-    #[serde(rename = "error")]
-    Error {
-        firmware: String,
-        feature: String,
-        error: &'a str,
-    },
-}
-
-#[derive(Serialize)]
-struct BatchSummary {
-    checked: usize,
-    noncompliant_reports: usize,
-    errors: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -625,23 +295,6 @@ impl CubeProvenance {
     fn display_path(&self, crate_dir: &Path) -> String {
         display_path(&self.cube_dir, crate_dir)
     }
-
-    fn json(&self, crate_dir: &Path) -> CubeProvenanceJson<'_> {
-        CubeProvenanceJson {
-            checkout: self.display_path(crate_dir),
-            tag: &self.tag,
-            tag_object: &self.tag_object,
-            commit: &self.commit,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct CubeProvenanceJson<'a> {
-    checkout: String,
-    tag: &'a str,
-    tag_object: &'a str,
-    commit: &'a str,
 }
 
 fn git_rev_parse(cube_dir: &Path, revision: &str) -> Result<String, String> {
@@ -667,444 +320,6 @@ fn git_rev_parse(cube_dir: &Path, revision: &str) -> Result<String, String> {
         ));
     }
     Ok(object_id.to_owned())
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum CoverageKind {
-    Command,
-    Event,
-}
-
-impl CoverageKind {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "command" => Some(Self::Command),
-            "event" => Some(Self::Event),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Command => "command",
-            Self::Event => "event",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum FirmwareSelector {
-    All,
-    Only(FirmwareVersion),
-}
-
-impl FirmwareSelector {
-    fn parse(value: &str) -> Result<Self, String> {
-        if value == "*" {
-            Ok(Self::All)
-        } else {
-            FirmwareVersion::from_str(value)
-                .map(Self::Only)
-                .map_err(|error| error.to_string())
-        }
-    }
-
-    fn matches(self, firmware: FirmwareVersion) -> bool {
-        match self {
-            Self::All => true,
-            Self::Only(selected) => selected == firmware,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct PolicyEntry {
-    kind: CoverageKind,
-    code: u16,
-    selector: FirmwareSelector,
-    external_event_payload: Option<EventPayloadLayout>,
-    reason: String,
-    line: usize,
-}
-
-#[derive(Clone, Debug)]
-struct ExclusionPolicy {
-    path: PathBuf,
-    entries: Vec<PolicyEntry>,
-}
-
-impl ExclusionPolicy {
-    fn load(path: PathBuf) -> Result<Self, String> {
-        let source = fs::read_to_string(&path).map_err(|error| {
-            format!(
-                "could not read exclusion policy {}: {error}",
-                path.display()
-            )
-        })?;
-        Self::parse(path, &source)
-    }
-
-    fn parse(path: PathBuf, source: &str) -> Result<Self, String> {
-        let mut version = None;
-        let mut entries = Vec::new();
-        let mut raw_entries = BTreeSet::new();
-
-        for (index, raw_line) in source.lines().enumerate() {
-            let line_number = index + 1;
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once('=')
-                && key.trim() == "version"
-            {
-                if version.is_some() {
-                    return Err(policy_error(
-                        &path,
-                        line_number,
-                        "policy format version is declared more than once",
-                    ));
-                }
-                let parsed = value.trim().parse::<u32>().map_err(|_| {
-                    policy_error(
-                        &path,
-                        line_number,
-                        "policy format version must be an unsigned integer",
-                    )
-                })?;
-                if parsed != POLICY_FORMAT_VERSION {
-                    return Err(policy_error(
-                        &path,
-                        line_number,
-                        &format!(
-                            "unsupported policy format version {parsed}; expected {POLICY_FORMAT_VERSION}"
-                        ),
-                    ));
-                }
-                version = Some(parsed);
-                continue;
-            }
-
-            let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
-            let (kind, code_field, selector_field, external_event_payload, reason) = match fields
-                .as_slice()
-            {
-                [scope, code, selector, reason] => {
-                    let kind = CoverageKind::parse(scope).ok_or_else(|| {
-                        policy_error(
-                            &path,
-                            line_number,
-                            "scope must be `command`, `event`, or `transport-event`",
-                        )
-                    })?;
-                    (kind, *code, *selector, None, *reason)
-                }
-                [scope, code, selector, envelope, reason] if *scope == "transport-event" => {
-                    let payload = parse_policy_event_envelope(envelope).map_err(|error| {
-                        policy_error(
-                            &path,
-                            line_number,
-                            &format!("invalid transport-event payload envelope: {error}"),
-                        )
-                    })?;
-                    (
-                        CoverageKind::Event,
-                        *code,
-                        *selector,
-                        Some(payload),
-                        *reason,
-                    )
-                }
-                _ => {
-                    return Err(policy_error(
-                        &path,
-                        line_number,
-                        "expected `command|0xNNNN|firmware-selector|reason`, `event|0xNNNN|firmware-selector|reason`, or `transport-event|0xNNNN|firmware-selector|payload-envelope|reason`",
-                    ));
-                }
-            };
-            let code = parse_wire_code(code_field).map_err(|error| {
-                policy_error(&path, line_number, &format!("invalid wire code: {error}"))
-            })?;
-            let selector = FirmwareSelector::parse(selector_field).map_err(|error| {
-                policy_error(
-                    &path,
-                    line_number,
-                    &format!("invalid firmware selector: {error}"),
-                )
-            })?;
-            if reason.is_empty() {
-                return Err(policy_error(
-                    &path,
-                    line_number,
-                    "exclusion reason must not be empty",
-                ));
-            }
-            if !raw_entries.insert((kind, code, selector)) {
-                return Err(policy_error(
-                    &path,
-                    line_number,
-                    "this scope, wire code, and firmware selector are declared more than once",
-                ));
-            }
-            entries.push(PolicyEntry {
-                kind,
-                code,
-                selector,
-                external_event_payload,
-                reason: reason.to_owned(),
-                line: line_number,
-            });
-        }
-
-        if version.is_none() {
-            return Err(format!(
-                "exclusion policy {} has no `version = {POLICY_FORMAT_VERSION}` header",
-                path.display()
-            ));
-        }
-        Ok(Self { path, entries })
-    }
-
-    /// Validate selectors against the exact set of feature flags in the crate.
-    /// This rejects stale version-specific exceptions and conflicting wildcard
-    /// and exact entries before any CubeWB source is inspected.
-    fn validate_for(&self, declared: &[FirmwareVersion]) -> Result<(), String> {
-        let mut expanded = BTreeMap::<(CoverageKind, u16, FirmwareVersion), usize>::new();
-        for entry in &self.entries {
-            if let FirmwareSelector::Only(firmware) = entry.selector
-                && !declared.contains(&firmware)
-            {
-                return Err(policy_error(
-                    &self.path,
-                    entry.line,
-                    &format!(
-                        "firmware selector {firmware} is not declared by this crate's [features] table"
-                    ),
-                ));
-            }
-            for firmware in declared
-                .iter()
-                .copied()
-                .filter(|firmware| entry.selector.matches(*firmware))
-            {
-                let key = (entry.kind, entry.code, firmware);
-                if let Some(previous_line) = expanded.insert(key, entry.line) {
-                    return Err(policy_error(
-                        &self.path,
-                        entry.line,
-                        &format!(
-                            "overlaps line {previous_line}: {} 0x{:04X} would be excluded twice for firmware {firmware}",
-                            entry.kind.as_str(),
-                            entry.code
-                        ),
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn active_for(&self, firmware: FirmwareVersion) -> ActiveExclusions {
-        let mut active = ActiveExclusions::default();
-        for entry in self
-            .entries
-            .iter()
-            .filter(|entry| entry.selector.matches(firmware))
-        {
-            match entry.kind {
-                CoverageKind::Command => {
-                    active.commands.insert(entry.code, entry.reason.clone());
-                }
-                CoverageKind::Event => {
-                    active.events.insert(entry.code, entry.reason.clone());
-                    if let Some(payload) = &entry.external_event_payload {
-                        active
-                            .external_event_payloads
-                            .insert(entry.code, payload.clone());
-                    }
-                }
-            }
-        }
-        active
-    }
-
-    fn display_path(&self, crate_dir: &Path) -> String {
-        display_path(&self.path, crate_dir)
-    }
-}
-
-fn policy_error(path: &Path, line: usize, message: &str) -> String {
-    format!("{}:{line}: {message}", path.display())
-}
-
-fn parse_wire_code(value: &str) -> Result<u16, String> {
-    let Some(value) = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-    else {
-        return Err("wire codes must use hexadecimal `0xNNNN` notation".to_owned());
-    };
-    if value.is_empty() || value.len() > 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("wire codes must contain one to four hexadecimal digits".to_owned());
-    }
-    u16::from_str_radix(value, 16).map_err(|error| error.to_string())
-}
-
-fn parse_policy_event_envelope(value: &str) -> Result<EventPayloadLayout, String> {
-    const MAX_VENDOR_EVENT_PAYLOAD: u32 = u8::MAX as u32 - 2;
-
-    let parse_length = |value: &str| {
-        value
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| "lengths must be decimal unsigned integers".to_owned())
-    };
-    let layout = if let Some(length) = value.strip_prefix("fixed:") {
-        let length = parse_length(length)?;
-        EventPayloadLayout::Fixed(length)
-    } else if let Some(bounds) = value.strip_prefix("bounded:") {
-        let (minimum, maximum) = bounds
-            .split_once("..=")
-            .ok_or_else(|| "bounded envelopes must use `bounded:MIN..=MAX`".to_owned())?;
-        let minimum = parse_length(minimum)?;
-        let maximum = parse_length(maximum)?;
-        if minimum >= maximum {
-            return Err(
-                "a bounded envelope requires MIN < MAX; use `fixed:N` when equal".to_owned(),
-            );
-        }
-        EventPayloadLayout::Variable { minimum, maximum }
-    } else {
-        return Err("expected `fixed:N` or `bounded:MIN..=MAX`".to_owned());
-    };
-
-    let maximum = match layout {
-        EventPayloadLayout::Fixed(length) => length,
-        EventPayloadLayout::Variable { maximum, .. } => maximum,
-        EventPayloadLayout::Unresolved(_) => {
-            unreachable!("policy parser always creates a concrete envelope")
-        }
-    };
-    if maximum > MAX_VENDOR_EVENT_PAYLOAD {
-        return Err(format!(
-            "payload maximum {maximum} exceeds the {MAX_VENDOR_EVENT_PAYLOAD}-byte vendor-event envelope"
-        ));
-    }
-    Ok(layout)
-}
-
-#[derive(Clone, Debug, Default)]
-struct ActiveExclusions {
-    commands: BTreeMap<u16, String>,
-    events: BTreeMap<u16, String>,
-    external_event_payloads: BTreeMap<u16, EventPayloadLayout>,
-}
-
-impl ActiveExclusions {
-    fn audit(
-        &self,
-        report: &CheckReport,
-        firmware: FirmwareVersion,
-    ) -> Result<PolicyAudit, String> {
-        let reported_commands = report
-            .excluded_commands
-            .iter()
-            .map(|entry| (entry.code, entry.reason.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let reported_events = report
-            .excluded_events
-            .iter()
-            .map(|entry| (entry.code, entry.reason.clone()))
-            .collect::<BTreeMap<_, _>>();
-        if reported_commands != self.commands || reported_events != self.events {
-            return Err(format!(
-                "checker exclusions for firmware {firmware} do not match the active exclusion policy"
-            ));
-        }
-
-        audit_exclusion_codes(
-            CoverageKind::Command,
-            &self.commands,
-            &report.vendor.command_codes(),
-            &report.active_api.command_codes(),
-            firmware,
-        )?;
-        audit_exclusion_codes(
-            CoverageKind::Event,
-            &self.events,
-            &report.vendor.event_codes(),
-            &report.active_api.event_codes(),
-            firmware,
-        )?;
-        Ok(PolicyAudit {
-            command_entries: self.commands.len(),
-            event_entries: self.events.len(),
-        })
-    }
-}
-
-fn audit_exclusion_codes(
-    kind: CoverageKind,
-    exclusions: &BTreeMap<u16, String>,
-    expected: &BTreeSet<u16>,
-    observed: &BTreeSet<u16>,
-    firmware: FirmwareVersion,
-) -> Result<(), String> {
-    for code in exclusions.keys() {
-        if expected.contains(code) == observed.contains(code) {
-            return Err(format!(
-                "exclusion policy for {} 0x{code:04X} on firmware {firmware} is stale: it no longer suppresses a coverage difference",
-                kind.as_str(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PolicyAudit {
-    command_entries: usize,
-    event_entries: usize,
-}
-
-impl PolicyAudit {
-    fn json(&self, policy: &ExclusionPolicy, crate_dir: &Path) -> PolicyAuditJson {
-        PolicyAuditJson {
-            path: policy.display_path(crate_dir),
-            format_version: POLICY_FORMAT_VERSION,
-            active_command_entries: self.command_entries,
-            active_event_entries: self.event_entries,
-            all_entries_suppress_differences: true,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct PolicyAuditJson {
-    path: String,
-    format_version: u32,
-    active_command_entries: usize,
-    active_event_entries: usize,
-    all_entries_suppress_differences: bool,
-}
-
-#[derive(Serialize)]
-struct PolicyMetadataJson {
-    path: String,
-    format_version: u32,
-    entries: usize,
-}
-
-impl PolicyMetadataJson {
-    fn from_policy(policy: &ExclusionPolicy, crate_dir: &Path) -> Self {
-        Self {
-            path: policy.display_path(crate_dir),
-            format_version: POLICY_FORMAT_VERSION,
-            entries: policy.entries.len(),
-        }
-    }
 }
 
 fn display_path(path: &Path, crate_dir: &Path) -> String {
@@ -1193,7 +408,7 @@ struct Cli {
         long = "policy",
         global = true,
         value_name = "PATH",
-        help = "Checked-in exclusion policy (defaults to crates/stm32wb-compliance/exclusions.policy)"
+        help = "Checked-in exclusion policy (defaults to crates/stm32wb-compliance/exclusions.toml)"
     )]
     policy_path: Option<PathBuf>,
 
@@ -1289,13 +504,6 @@ mod tests {
         Ok(cli)
     }
 
-    fn supported() -> Vec<FirmwareVersion> {
-        vec![
-            FirmwareVersion::new(0, 15, 0),
-            FirmwareVersion::new(0, 16, 0),
-        ]
-    }
-
     #[test]
     fn parses_single_firmware_check_arguments_in_any_order() {
         let cli = parse_cli(&["--deny", "check", "--firmware", "v1.15.0", "--skip-build"]).unwrap();
@@ -1354,99 +562,12 @@ mod tests {
     }
 
     #[test]
-    fn policy_expands_version_selectors_and_rejects_overlaps() {
-        let policy = ExclusionPolicy::parse(
-            "test.policy".into(),
-            "version = 2\ntransport-event|0x9200|*|fixed:1|transport event\ntransport-event|0x9201|0.15.0|bounded:1..=3|bounded transport event\ncommand|0x0001|0.15.0|legacy command\n",
-        )
-        .unwrap();
-        policy.validate_for(&supported()).unwrap();
-        let old = policy.active_for(FirmwareVersion::new(0, 15, 0));
-        assert_eq!(old.events.get(&0x9200), Some(&"transport event".to_owned()));
-        assert_eq!(
-            old.external_event_payloads.get(&0x9200),
-            Some(&EventPayloadLayout::Fixed(1))
-        );
-        assert_eq!(
-            old.external_event_payloads.get(&0x9201),
-            Some(&EventPayloadLayout::Variable {
-                minimum: 1,
-                maximum: 3,
-            })
-        );
-        assert_eq!(
-            old.commands.get(&0x0001),
-            Some(&"legacy command".to_owned())
-        );
-        let new = policy.active_for(FirmwareVersion::new(0, 16, 0));
-        assert!(!new.commands.contains_key(&0x0001));
-        assert!(!new.external_event_payloads.contains_key(&0x9201));
-
-        let overlapping = ExclusionPolicy::parse(
-            "test.policy".into(),
-            "version = 2\ntransport-event|0x9200|*|fixed:1|transport event\nevent|0x9200|0.15.0|same event\n",
-        )
-        .unwrap();
-        assert!(overlapping.validate_for(&supported()).is_err());
-    }
-
-    #[test]
-    fn policy_rejects_unknown_versions_and_bad_codes() {
-        let policy = ExclusionPolicy::parse(
-            "test.policy".into(),
-            "version = 2\nevent|0x9200|0.99.0|future event\n",
-        )
-        .unwrap();
-        assert!(policy.validate_for(&supported()).is_err());
-
-        let error = ExclusionPolicy::parse(
-            "test.policy".into(),
-            "version = 2\nevent|9200|*|missing hex prefix\n",
-        )
-        .unwrap_err();
-        assert!(error.contains("wire codes"));
-    }
-
-    #[test]
-    fn policy_requires_a_version_header() {
-        let error =
-            ExclusionPolicy::parse("test.policy".into(), "event|0x9200|*|transport event\n")
-                .unwrap_err();
-        assert!(error.contains("no `version = 2` header"));
-    }
-
-    #[test]
-    fn policy_rejects_invalid_transport_event_envelopes() {
-        for envelope in [
-            "fixed:nope",
-            "fixed:254",
-            "bounded:2..=1",
-            "bounded:1..=254",
-            "unknown:1",
-        ] {
-            let source =
-                format!("version = 2\ntransport-event|0x9200|*|{envelope}|transport event\n");
-            let error = ExclusionPolicy::parse("test.policy".into(), &source).unwrap_err();
-            assert!(error.contains("invalid transport-event payload envelope"));
-        }
-    }
-
-    #[test]
-    fn wire_codes_are_strict_16_bit_hexadecimal() {
-        assert_eq!(parse_wire_code("0x0"), Ok(0));
-        assert_eq!(parse_wire_code("0xFFFF"), Ok(u16::MAX));
-        assert!(parse_wire_code("0x10000").is_err());
-        assert!(parse_wire_code("0xGG").is_err());
-    }
-
-    #[test]
     fn deny_fails_when_wire_evidence_is_unavailable() {
         let firmware = FirmwareVersion::new(0, 17, 1);
         let report = CheckReport {
             firmware,
             cube_tag: firmware.cube_tag(),
             vendor: ProtocolCoverage::default(),
-            descriptors: ProtocolCoverage::default(),
             active_api: ProtocolCoverage::default(),
             standard_hci: StandardHciCoverage::default(),
             standard_hci_provider: StandardHciCoverage::default(),
@@ -1472,58 +593,5 @@ mod tests {
 
         assert_eq!(report_exit_code(false, &report), ExitCode::SUCCESS);
         assert_eq!(report_exit_code(true, &report), ExitCode::FAILURE);
-    }
-
-    #[test]
-    fn batch_json_is_serialized_as_structured_data() {
-        let firmware = FirmwareVersion::new(0, 15, 0);
-        let report = CheckReport {
-            firmware,
-            cube_tag: "v1.15.0".to_owned(),
-            vendor: ProtocolCoverage::default(),
-            descriptors: ProtocolCoverage::default(),
-            active_api: ProtocolCoverage::default(),
-            standard_hci: StandardHciCoverage::default(),
-            standard_hci_provider: StandardHciCoverage::default(),
-            missing_commands: Vec::new(),
-            extraneous_commands: Vec::new(),
-            missing_events: Vec::new(),
-            extraneous_events: Vec::new(),
-            missing_standard_hci_commands: Vec::new(),
-            missing_standard_hci_events: Vec::new(),
-            missing_standard_hci_le_meta_events: Vec::new(),
-            wire: WireReport::default(),
-            excluded_commands: Vec::new(),
-            excluded_events: Vec::new(),
-        };
-        let policy = ExclusionPolicy {
-            path: PathBuf::from("policy"),
-            entries: Vec::new(),
-        };
-        let results = [BatchResult::Success(Box::new(CheckedRun {
-            firmware,
-            report,
-            provenance: CubeProvenance {
-                cube_dir: PathBuf::from("cube"),
-                tag: "v1.15.0".to_owned(),
-                tag_object: "tag-object".to_owned(),
-                commit: "commit".to_owned(),
-            },
-            policy_audit: PolicyAudit {
-                command_entries: 0,
-                event_entries: 0,
-            },
-        }))];
-
-        let output = batch_to_json(&results, &policy, Path::new("."));
-        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(value["mode"], "all-supported");
-        assert_eq!(value["summary"]["checked"], 1);
-        assert_eq!(value["summary"]["noncompliant_reports"], 0);
-        assert_eq!(value["results"][0]["status"], "ok");
-        assert_eq!(
-            value["results"][0]["report"]["cube_provenance"]["commit"],
-            "commit"
-        );
     }
 }

@@ -10,10 +10,11 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use syn::{Attribute, Item};
+use syn::Item;
 
 use crate::FirmwareVersion;
 use crate::model::{CoverageEntry, CoverageOrigin};
+use crate::rust_cfg::attrs_active;
 
 /// The standard HCI API surface that callers can access through this crate.
 #[derive(Clone, Debug, Default)]
@@ -47,7 +48,7 @@ pub(crate) fn load_standard_provider_coverage(
     )?);
 
     // `bt-hci` does not currently define a handful of STM32WB-supported LE
-    // commands. These are public raw command descriptors in the crate itself.
+    // commands. These are public raw command declarations in the crate itself.
     coverage.commands.extend(load_local_command_macros(
         &crate_dir.join("src/standard.rs"),
         firmware,
@@ -144,34 +145,23 @@ fn find_bt_hci_source(crate_dir: &Path) -> Result<PathBuf, String> {
 fn locked_bt_hci_version(lockfile: &Path) -> Result<String, String> {
     let lock = fs::read_to_string(lockfile)
         .map_err(|error| format!("could not read {}: {error}", lockfile.display()))?;
-    for package in lock.split("[[package]]").skip(1) {
-        let mut name = None;
-        let mut version = None;
-        for line in package.lines() {
-            let line = line.trim();
-            if let Some(value) = quoted_toml_value(line, "name") {
-                name = Some(value);
-            } else if let Some(value) = quoted_toml_value(line, "version") {
-                version = Some(value);
-            }
-        }
-        if name.as_deref() == Some("bt-hci") {
-            return version.ok_or_else(|| "bt-hci package in Cargo.lock has no version".to_owned());
-        }
-    }
-    Err(format!(
-        "{} does not contain a bt-hci package",
-        lockfile.display()
-    ))
-}
-
-fn quoted_toml_value(line: &str, key: &str) -> Option<String> {
-    let value = line
-        .strip_prefix(key)?
-        .trim_start()
-        .strip_prefix('=')?
-        .trim();
-    Some(value.strip_prefix('"')?.strip_suffix('"')?.to_owned())
+    let document = lock
+        .parse::<toml::Table>()
+        .map_err(|error| format!("could not parse {} as TOML: {error}", lockfile.display()))?;
+    let packages = document
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| format!("{} has no package array", lockfile.display()))?;
+    let package = packages
+        .iter()
+        .filter_map(toml::Value::as_table)
+        .find(|package| package.get("name").and_then(toml::Value::as_str) == Some("bt-hci"))
+        .ok_or_else(|| format!("{} does not contain a bt-hci package", lockfile.display()))?;
+    package
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "bt-hci package in Cargo.lock has no string version".to_owned())
 }
 
 fn load_bt_hci_commands(bt_hci_dir: &Path) -> Result<Vec<CoverageEntry>, String> {
@@ -249,7 +239,8 @@ fn load_command_macros_from_file(
         let Item::Macro(item) = item else {
             continue;
         };
-        if !macro_name_is(&item.mac, "cmd") || (honor_cfg && !attrs_active(&item.attrs, firmware)?)
+        if !macro_name_is(&item.mac, "cmd")
+            || (honor_cfg && !attrs_active(&item.attrs, firmware, path)?)
         {
             continue;
         }
@@ -258,7 +249,7 @@ fn load_command_macros_from_file(
         };
         let Some(ogf) = standard_ogf(&header.group) else {
             // `BASE` macro implementation details and non-standard groups are
-            // deliberately not treated as public standard command descriptors.
+            // deliberately not treated as public standard command declarations.
             continue;
         };
         if header.ocf > 0x03ff {
@@ -433,75 +424,6 @@ fn parse_event_macro_headers(tokens: &str) -> Vec<(String, u16)> {
     entries
 }
 
-fn attrs_active(attributes: &[Attribute], firmware: FirmwareVersion) -> Result<bool, String> {
-    attributes
-        .iter()
-        .filter(|attribute| attribute.path().is_ident("cfg"))
-        .try_fold(true, |active, attribute| {
-            let meta = attribute
-                .meta
-                .require_list()
-                .map_err(|error| format!("malformed cfg attribute: {error}"))?;
-            Ok(active && eval_cfg_meta(&meta.tokens.to_string(), firmware)?)
-        })
-}
-
-fn eval_cfg_meta(expression: &str, firmware: FirmwareVersion) -> Result<bool, String> {
-    let expression = expression.trim();
-    if let Some(inner) = wrapped_expression(expression, "all") {
-        return split_top_level(inner, ',')
-            .into_iter()
-            .try_fold(true, |active, part| {
-                Ok(active && eval_cfg_meta(part, firmware)?)
-            });
-    }
-    if let Some(inner) = wrapped_expression(expression, "any") {
-        let mut result = false;
-        for part in split_top_level(inner, ',') {
-            result |= eval_cfg_meta(part, firmware)?;
-        }
-        return Ok(result);
-    }
-    if let Some(inner) = wrapped_expression(expression, "not") {
-        return Ok(!eval_cfg_meta(inner, firmware)?);
-    }
-    if let Some((key, value)) = expression.split_once('=') {
-        return Ok(
-            key.trim() == "feature" && value.trim().trim_matches('"') == firmware.feature_name()
-        );
-    }
-    firmware.matches_version_cfg(expression).ok_or_else(|| {
-        format!("unsupported cfg predicate {expression:?} while reading standard command coverage")
-    })
-}
-
-fn wrapped_expression<'a>(expression: &'a str, name: &str) -> Option<&'a str> {
-    let rest = expression
-        .strip_prefix(name)?
-        .trim_start()
-        .strip_prefix('(')?;
-    rest.strip_suffix(')')
-}
-
-fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
-    let mut values = Vec::new();
-    let mut start = 0;
-    let mut depth = 0usize;
-    for (index, character) in input.char_indices() {
-        match character {
-            '(' | '[' | '{' | '<' => depth += 1,
-            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
-            character if character == delimiter && depth == 0 => {
-                values.push(input[start..index].trim());
-                start = index + character.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    values.push(input[start..].trim());
-    values
-}
-
 fn standard_ogf(group: &str) -> Option<u8> {
     match group {
         "LINK_CONTROL" => Some(0x01),
@@ -650,10 +572,38 @@ mod tests {
     }
 
     #[test]
-    fn honors_firmware_cfg_on_local_extension() {
-        let old = FirmwareVersion::new(0, 16, 0);
-        let new = FirmwareVersion::new(0, 17, 0);
-        assert!(!eval_cfg_meta("since_fw_0_17_0", old).unwrap());
-        assert!(eval_cfg_meta("since_fw_0_17_0", new).unwrap());
+    fn parses_the_locked_bt_hci_version_as_toml() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "stm32wb-compliance-lock-{}-{unique}.toml",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"
+                version = 4
+
+                [[package]]
+                name = "other"
+                version = "1.0.0"
+
+                [[package]]
+                name = "bt-hci"
+                version = "0.9.0"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(locked_bt_hci_version(&path).unwrap(), "0.9.0");
+
+        fs::write(&path, "[[package]\nname = \"bt-hci\"").unwrap();
+        assert!(
+            locked_bt_hci_version(&path)
+                .unwrap_err()
+                .contains("as TOML")
+        );
+        fs::remove_file(path).unwrap();
     }
 }

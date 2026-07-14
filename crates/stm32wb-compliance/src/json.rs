@@ -10,13 +10,17 @@ use serde::Serialize;
 use crate::model::{CheckReport, CoverageDifference, ExcludedCode};
 use crate::wire::{WireDifference, WireReport, WireUnavailable};
 
+/// Schema version of the machine-readable compliance report.
+pub const REPORT_SCHEMA_VERSION: u16 = 1;
+
 /// The stable machine-readable representation of one compliance report.
 ///
-/// The fields intentionally preserve the previous CLI JSON schema. Use
-/// [`CheckReport::json`] to obtain this view instead of serializing the domain
-/// model directly.
+/// Breaking changes to this DTO require incrementing
+/// [`REPORT_SCHEMA_VERSION`]. Use [`CheckReport::json`] instead of serializing
+/// the domain model directly.
 #[derive(Serialize)]
 pub struct CheckReportJson<'a> {
+    schema_version: u16,
     firmware: String,
     cube_tag: &'a str,
     compliant: bool,
@@ -36,6 +40,7 @@ pub struct CheckReportJson<'a> {
 impl<'a> From<&'a CheckReport> for CheckReportJson<'a> {
     fn from(report: &'a CheckReport) -> Self {
         Self {
+            schema_version: REPORT_SCHEMA_VERSION,
             firmware: report.firmware.to_string(),
             cube_tag: &report.cube_tag,
             compliant: report.is_compliant(),
@@ -77,7 +82,6 @@ struct CatalogCounts {
     vendor_event_ids: usize,
     active_command_ids: usize,
     active_event_ids: usize,
-    descriptor_command_ids: usize,
     standard_hci_command_opcodes: usize,
     standard_hci_event_codes: usize,
     standard_hci_le_meta_event_codes: usize,
@@ -93,7 +97,6 @@ impl From<&CheckReport> for CatalogCounts {
             vendor_event_ids: report.vendor.event_codes().len(),
             active_command_ids: report.active_api.command_codes().len(),
             active_event_ids: report.active_api.event_codes().len(),
-            descriptor_command_ids: report.descriptors.command_codes().len(),
             standard_hci_command_opcodes: report.standard_hci.commands.len(),
             standard_hci_event_codes: report.standard_hci.events.len(),
             standard_hci_le_meta_event_codes: report.standard_hci.le_meta_events.len(),

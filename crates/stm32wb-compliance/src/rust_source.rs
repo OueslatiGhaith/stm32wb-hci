@@ -11,30 +11,61 @@ use std::path::{Path, PathBuf};
 use stm32wb_hci_schema::{
     Completion as SchemaCompletion, VendorCommand, VendorEvents as SchemaVendorEvents,
 };
-use syn::punctuated::Punctuated;
-use syn::{Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
+use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
 
 use crate::FirmwareVersion;
 use crate::envelope::WireEnvelope;
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
+use crate::rust_cfg::attrs_active;
 
-pub(crate) struct CrateCoverage {
-    pub(crate) descriptors: ProtocolCoverage,
-    pub(crate) active_api: ProtocolCoverage,
-    /// Command-envelope metadata declared by the active `vendor_cmd!` catalog.
-    pub(crate) descriptor_metadata: BTreeMap<String, DescriptorMetadata>,
-    /// Payload envelopes declared by the active `vendor_event!` catalog.
-    pub(crate) event_metadata: BTreeMap<u16, EventMetadata>,
+pub(crate) struct RustCatalog {
+    /// Active commands declared by the `vendor_cmd!` catalog, keyed by name.
+    pub(crate) commands: BTreeMap<String, CommandDeclaration>,
+    /// Active events declared by the `vendor_event!` catalog, keyed by code.
+    pub(crate) events: BTreeMap<u16, EventDeclaration>,
+}
+
+impl RustCatalog {
+    /// Derive coverage from the same command and event values used for wire
+    /// validation. No second inventory can drift from the declarative catalog.
+    pub(crate) fn coverage(&self) -> ProtocolCoverage {
+        let mut coverage = ProtocolCoverage {
+            commands: self
+                .commands
+                .values()
+                .map(CommandDeclaration::coverage_entry)
+                .collect(),
+            events: self
+                .events
+                .values()
+                .map(EventDeclaration::coverage_entry)
+                .collect(),
+        };
+        coverage
+            .commands
+            .sort_by_key(|entry| (entry.code, entry.name.clone()));
+        coverage
+            .events
+            .sort_by_key(|entry| (entry.code, entry.name.clone()));
+        coverage
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DescriptorMetadata {
+pub(crate) struct CommandDeclaration {
     pub(crate) name: String,
     pub(crate) code: u16,
-    pub(crate) completion: DescriptorCompletion,
+    pub(crate) completion: CommandCompletion,
     /// Command parameter bytes, excluding the HCI command header.
     pub(crate) request: WireEnvelope,
     pub(crate) location: PathBuf,
+}
+
+impl CommandDeclaration {
+    fn coverage_entry(&self) -> CoverageEntry {
+        CoverageEntry::new(self.code, &self.name, CoverageOrigin::VendorCommandCatalog)
+            .at(self.location.clone())
+    }
 }
 
 /// Completion shape declared by one Rust `vendor_cmd!` invocation.
@@ -43,13 +74,13 @@ pub(crate) struct DescriptorMetadata {
 /// carry one, so invalid completion/return combinations are unrepresentable
 /// after parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DescriptorCompletion {
+pub(crate) enum CommandCompletion {
     CommandComplete { returns: WireEnvelope },
     CommandStatus,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct EventMetadata {
+pub(crate) struct EventDeclaration {
     pub(crate) name: String,
     pub(crate) code: u16,
     /// Vendor event payload bytes, excluding the two-byte vendor event code.
@@ -57,27 +88,25 @@ pub(crate) struct EventMetadata {
     pub(crate) location: PathBuf,
 }
 
-#[derive(Clone, Debug)]
-struct DescriptorDefinition {
-    name: String,
-    code: u16,
-    completion: DescriptorCompletion,
-    request: WireEnvelope,
+impl EventDeclaration {
+    fn coverage_entry(&self) -> CoverageEntry {
+        CoverageEntry::new(self.code, &self.name, CoverageOrigin::VendorEventCatalog)
+            .at(self.location.clone())
+    }
 }
 
 #[derive(Clone)]
 struct SourceUnit {
     path: PathBuf,
-    active: bool,
     file: File,
 }
 
 /// Load the declarative vendor command and event catalogs for one selected
 /// firmware feature.
-pub(crate) fn load_crate_coverage(
+pub(crate) fn load_rust_catalog(
     crate_dir: &Path,
     firmware: FirmwareVersion,
-) -> Result<CrateCoverage, String> {
+) -> Result<RustCatalog, String> {
     let command_root = crate_dir.join("src/vendor/command/mod.rs");
     let command_root_file = read_rust_file(&command_root)?;
     let mut command_sources = Vec::new();
@@ -85,63 +114,18 @@ pub(crate) fn load_crate_coverage(
     collect_command_sources(
         command_root,
         command_root_file,
-        true,
         firmware,
         &mut visited,
         &mut command_sources,
     )?;
 
-    let descriptors = collect_descriptors(&command_sources, firmware)?;
-    let active_commands = descriptor_coverage(&descriptors);
+    let commands = collect_commands(&command_sources, firmware)?;
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
     let event_file = read_rust_file(&event_path)?;
-    let (active_events, event_metadata) =
-        parse_vendor_event_declarations(&event_file, firmware, &event_path)?;
+    let events = parse_vendor_event_declarations(&event_file, firmware, &event_path)?;
 
-    let mut descriptor_coverage = ProtocolCoverage::default();
-    let mut descriptor_metadata = BTreeMap::new();
-    for descriptor in descriptors.values() {
-        descriptor_coverage.commands.push(
-            CoverageEntry::new(
-                descriptor.code,
-                &descriptor.name,
-                CoverageOrigin::VendorCommandDescriptor,
-            )
-            .at(descriptor.location.clone()),
-        );
-        descriptor_metadata.insert(descriptor.name.clone(), descriptor.clone());
-    }
-
-    descriptor_coverage
-        .commands
-        .sort_by_key(|entry| (entry.code, entry.name.clone()));
-
-    Ok(CrateCoverage {
-        descriptors: descriptor_coverage,
-        active_api: ProtocolCoverage {
-            commands: active_commands,
-            events: active_events,
-        },
-        descriptor_metadata,
-        event_metadata,
-    })
-}
-
-fn descriptor_coverage(descriptors: &BTreeMap<String, DescriptorMetadata>) -> Vec<CoverageEntry> {
-    let mut commands = descriptors
-        .values()
-        .map(|descriptor| {
-            CoverageEntry::new(
-                descriptor.code,
-                &descriptor.name,
-                CoverageOrigin::VendorCommandDescriptor,
-            )
-            .at(descriptor.location.clone())
-        })
-        .collect::<Vec<_>>();
-    commands.sort_by_key(|entry| (entry.code, entry.name.clone()));
-    commands
+    Ok(RustCatalog { commands, events })
 }
 
 fn read_rust_file(path: &Path) -> Result<File, String> {
@@ -158,13 +142,11 @@ fn read_rust_file(path: &Path) -> Result<File, String> {
 fn collect_command_sources(
     path: PathBuf,
     file: File,
-    inherited_active: bool,
     firmware: FirmwareVersion,
     visited: &mut BTreeSet<PathBuf>,
     sources: &mut Vec<SourceUnit>,
 ) -> Result<(), String> {
-    let active = inherited_active && attrs_active(&file.attrs, firmware, &path)?;
-    if !active {
+    if !attrs_active(&file.attrs, firmware, &path)? {
         return Ok(());
     }
 
@@ -180,8 +162,7 @@ fn collect_command_sources(
         let Item::Mod(module) = item else {
             continue;
         };
-        let module_active = active && attrs_active(&module.attrs, firmware, &path)?;
-        if !module_active {
+        if !attrs_active(&module.attrs, firmware, &path)? {
             continue;
         }
 
@@ -194,7 +175,6 @@ fn collect_command_sources(
                     attrs: Vec::new(),
                     items: items.clone(),
                 },
-                module_active,
                 firmware,
                 visited,
                 sources,
@@ -202,18 +182,11 @@ fn collect_command_sources(
         } else {
             let module_path = external_module_path(&path, module)?;
             let module_file = read_rust_file(&module_path)?;
-            collect_command_sources(
-                module_path,
-                module_file,
-                module_active,
-                firmware,
-                visited,
-                sources,
-            )?;
+            collect_command_sources(module_path, module_file, firmware, visited, sources)?;
         }
     }
 
-    sources.push(SourceUnit { path, active, file });
+    sources.push(SourceUnit { path, file });
     Ok(())
 }
 
@@ -287,17 +260,14 @@ fn module_path_override(module: &ItemMod) -> Result<Option<String>, String> {
     Ok(Some(path.value()))
 }
 
-fn collect_descriptors(
+fn collect_commands(
     sources: &[SourceUnit],
     firmware: FirmwareVersion,
-) -> Result<BTreeMap<String, DescriptorMetadata>, String> {
-    let mut descriptors = BTreeMap::<String, DescriptorMetadata>::new();
-    let mut codes = BTreeMap::<u16, DescriptorMetadata>::new();
+) -> Result<BTreeMap<String, CommandDeclaration>, String> {
+    let mut commands = BTreeMap::<String, CommandDeclaration>::new();
+    let mut codes = BTreeMap::<u16, CommandDeclaration>::new();
 
     for source in sources {
-        if !source.active {
-            continue;
-        }
         for item in &source.file.items {
             let Item::Macro(item) = item else {
                 continue;
@@ -308,43 +278,36 @@ fn collect_descriptors(
                 continue;
             }
 
-            let definition = parse_vendor_descriptor(item, &source.path)?;
-            let metadata = DescriptorMetadata {
-                name: definition.name.clone(),
-                code: definition.code,
-                completion: definition.completion,
-                request: definition.request,
-                location: source.path.clone(),
-            };
+            let command = parse_vendor_command(item, &source.path)?;
 
-            if let Some(previous) = descriptors.get(&definition.name) {
+            if let Some(previous) = commands.get(&command.name) {
                 return Err(format!(
-                    "{}: descriptor `{}` is active more than once (also declared in {})",
+                    "{}: declaration `{}` is active more than once (also declared in {})",
                     source.path.display(),
-                    definition.name,
+                    command.name,
                     previous.location.display()
                 ));
             }
-            if let Some(previous) = codes.insert(definition.code, metadata.clone()) {
+            if let Some(previous) = codes.insert(command.code, command.clone()) {
                 return Err(format!(
-                    "{}: descriptors `{}` and `{}` both declare active vendor OCF 0x{:03X}",
+                    "{}: declarations `{}` and `{}` both declare active vendor OCF 0x{:03X}",
                     source.path.display(),
                     previous.name,
-                    definition.name,
-                    definition.code,
+                    command.name,
+                    command.code,
                 ));
             }
-            descriptors.insert(definition.name, metadata);
+            commands.insert(command.name.clone(), command);
         }
     }
 
-    if descriptors.is_empty() {
-        return Err("no active vendor_cmd! command descriptors were found".to_owned());
+    if commands.is_empty() {
+        return Err("no active vendor_cmd! command declarations were found".to_owned());
     }
-    Ok(descriptors)
+    Ok(commands)
 }
 
-fn parse_vendor_descriptor(item: &ItemMacro, path: &Path) -> Result<DescriptorDefinition, String> {
+fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclaration, String> {
     let command = syn::parse2::<VendorCommand>(item.mac.tokens.clone()).map_err(|error| {
         format!(
             "{}: unsupported vendor_cmd! declaration: {error}",
@@ -362,18 +325,19 @@ fn parse_vendor_descriptor(item: &ItemMacro, path: &Path) -> Result<DescriptorDe
                 .returns
                 .as_ref()
                 .expect("the shared parser requires Return for CommandComplete");
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: wire_envelope(returns.min_len(), returns.max_len()),
             }
         }
-        SchemaCompletion::CommandStatus => DescriptorCompletion::CommandStatus,
+        SchemaCompletion::CommandStatus => CommandCompletion::CommandStatus,
     };
 
-    Ok(DescriptorDefinition {
+    Ok(CommandDeclaration {
         name: command.name.to_string(),
         code: command.ocf(),
         completion,
         request,
+        location: path.to_path_buf(),
     })
 }
 
@@ -389,7 +353,7 @@ fn parse_vendor_event_declarations(
     file: &File,
     firmware: FirmwareVersion,
     path: &Path,
-) -> Result<(Vec<CoverageEntry>, BTreeMap<u16, EventMetadata>), String> {
+) -> Result<BTreeMap<u16, EventDeclaration>, String> {
     if !attrs_active(&file.attrs, firmware, path)? {
         return Err(format!(
             "{}: VendorEvent source is disabled for selected firmware {firmware}",
@@ -414,23 +378,26 @@ fn parse_vendor_event_declarations(
             )
         })?;
 
-    let mut events = Vec::new();
-    let mut metadata = BTreeMap::new();
+    let mut events = BTreeMap::new();
     for definition in invocation.events {
         if !attrs_active(&definition.attrs, firmware, path)? {
             continue;
         }
-        let event = EventMetadata {
+        let event = EventDeclaration {
             name: definition.name.to_string(),
             code: definition.code,
             payload: wire_envelope(definition.payload.min_len(), definition.payload.max_len()),
             location: path.to_path_buf(),
         };
-        metadata.insert(event.code, event.clone());
-        events.push(
-            CoverageEntry::new(event.code, &event.name, CoverageOrigin::VendorEventDispatch)
-                .at(path.to_path_buf()),
-        );
+        if let Some(previous) = events.insert(event.code, event.clone()) {
+            return Err(format!(
+                "{}: events `{}` and `{}` both declare active vendor code 0x{:04X}",
+                path.display(),
+                previous.name,
+                event.name,
+                event.code,
+            ));
+        }
     }
     if events.is_empty() {
         return Err(format!(
@@ -438,8 +405,7 @@ fn parse_vendor_event_declarations(
             path.display()
         ));
     }
-    events.sort_by_key(|entry| (entry.code, entry.name.clone()));
-    Ok((events, metadata))
+    Ok(events)
 }
 
 fn collect_vendor_event_macros<'ast>(
@@ -489,196 +455,10 @@ fn item_is_active(item: &Item, firmware: FirmwareVersion, path: &Path) -> Result
     attrs_active(attributes, firmware, path)
 }
 
-/// Evaluate all `#[cfg]` / `#[cfg_attr]` attributes attached to one syntax
-/// node. Unknown predicates are errors rather than false: silently treating an
-/// unsupported condition as disabled would turn an incomplete parser into a
-/// false compliance success.
-fn attrs_active(
-    attributes: &[Attribute],
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<bool, String> {
-    let mut active = true;
-    for attribute in attributes {
-        if attribute.path().is_ident("cfg") {
-            active &= eval_cfg_attribute(&attribute.meta, firmware, path)?;
-        } else if attribute.path().is_ident("cfg_attr") {
-            active &= eval_cfg_attr_attribute(&attribute.meta, firmware, path)?;
-        }
-    }
-    Ok(active)
-}
-
-fn eval_cfg_attribute(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
-    let Meta::List(list) = meta else {
-        return Err(format!("{}: #[cfg] must use parentheses", path.display()));
-    };
-    let conditions = list
-        .parse_args_with(Punctuated::<Meta, syn::Token![,]>::parse_terminated)
-        .map_err(|error| {
-            format!(
-                "{}: could not parse #[cfg(...)] condition: {error}",
-                path.display()
-            )
-        })?;
-    let conditions = conditions.into_iter().collect::<Vec<_>>();
-    let [condition] = conditions.as_slice() else {
-        return Err(format!(
-            "{}: #[cfg(...)] requires exactly one condition",
-            path.display()
-        ));
-    };
-    eval_cfg_meta(condition, firmware, path)
-}
-
-fn eval_cfg_attr_attribute(
-    meta: &Meta,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<bool, String> {
-    let Meta::List(list) = meta else {
-        return Err(format!(
-            "{}: #[cfg_attr] must use parentheses",
-            path.display()
-        ));
-    };
-    let values = list
-        .parse_args_with(Punctuated::<Meta, syn::Token![,]>::parse_terminated)
-        .map_err(|error| {
-            format!(
-                "{}: could not parse #[cfg_attr(...)] condition: {error}",
-                path.display()
-            )
-        })?;
-    let mut values = values.into_iter();
-    let Some(condition) = values.next() else {
-        return Err(format!("{}: #[cfg_attr] has no condition", path.display()));
-    };
-    if !eval_cfg_meta(&condition, firmware, path)? {
-        return Ok(true);
-    }
-    let mut active = true;
-    for generated in values {
-        active &= eval_generated_cfg_attribute(&generated, firmware, path)?;
-    }
-    Ok(active)
-}
-
-fn eval_generated_cfg_attribute(
-    generated: &Meta,
-    firmware: FirmwareVersion,
-    path: &Path,
-) -> Result<bool, String> {
-    if generated.path().is_ident("cfg") {
-        return eval_cfg_attribute(generated, firmware, path);
-    }
-    if generated.path().is_ident("cfg_attr") {
-        return eval_cfg_attr_attribute(generated, firmware, path);
-    }
-    Ok(true)
-}
-
-fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
-    match meta {
-        Meta::Path(path_meta) => {
-            let name = path_meta
-                .get_ident()
-                .map(ToString::to_string)
-                .ok_or_else(|| {
-                    format!(
-                        "{}: unsupported multi-segment cfg path `{}`",
-                        path.display(),
-                        cfg_path_name(path_meta)
-                    )
-                })?;
-            if let Some(value) = firmware.matches_version_cfg(&name) {
-                return Ok(value);
-            }
-            match name.as_str() {
-                // The checker invokes `cargo check`, not `cargo test` or rustdoc.
-                "test" | "doctest" | "doc" => Ok(false),
-                // `cargo check` uses the development profile unless the caller
-                // explicitly changes it, matching this conservative default.
-                "debug_assertions" => Ok(true),
-                _ => Err(format!(
-                    "{}: unsupported cfg predicate `{name}`; add it to the compliance cfg evaluator",
-                    path.display()
-                )),
-            }
-        }
-        Meta::NameValue(value) if value.path.is_ident("feature") => {
-            let Expr::Lit(literal) = &value.value else {
-                return Err(format!(
-                    "{}: cfg(feature = ...) must use a string literal",
-                    path.display()
-                ));
-            };
-            let Lit::Str(feature) = &literal.lit else {
-                return Err(format!(
-                    "{}: cfg(feature = ...) must use a string literal",
-                    path.display()
-                ));
-            };
-            Ok(feature.value() == firmware.feature_name())
-        }
-        Meta::NameValue(value) => Err(format!(
-            "{}: unsupported cfg key `{}`",
-            path.display(),
-            cfg_path_name(&value.path)
-        )),
-        Meta::List(list) if list.path.is_ident("all") => {
-            let values = parse_cfg_list(list, path)?;
-            values
-                .iter()
-                .map(|value| eval_cfg_meta(value, firmware, path))
-                .try_fold(true, |active, value| value.map(|value| active && value))
-        }
-        Meta::List(list) if list.path.is_ident("any") => {
-            let values = parse_cfg_list(list, path)?;
-            values
-                .iter()
-                .map(|value| eval_cfg_meta(value, firmware, path))
-                .try_fold(false, |active, value| value.map(|value| active || value))
-        }
-        Meta::List(list) if list.path.is_ident("not") => {
-            let values = parse_cfg_list(list, path)?;
-            let values = values.iter().collect::<Vec<_>>();
-            let [value] = values.as_slice() else {
-                return Err(format!(
-                    "{}: cfg(not(...)) requires exactly one predicate",
-                    path.display()
-                ));
-            };
-            Ok(!eval_cfg_meta(value, firmware, path)?)
-        }
-        Meta::List(list) => Err(format!(
-            "{}: unsupported cfg combinator `{}`",
-            path.display(),
-            cfg_path_name(&list.path)
-        )),
-    }
-}
-
-fn parse_cfg_list(
-    list: &syn::MetaList,
-    path: &Path,
-) -> Result<Punctuated<Meta, syn::Token![,]>, String> {
-    list.parse_args_with(Punctuated::<Meta, syn::Token![,]>::parse_terminated)
-        .map_err(|error| format!("{}: could not parse cfg list: {error}", path.display()))
-}
-
 fn is_macro_named(path: &SynPath, name: &str) -> bool {
     path.segments
         .last()
         .is_some_and(|segment| segment.ident == name)
-}
-
-fn cfg_path_name(path: &SynPath) -> String {
-    path.segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::")
 }
 
 #[cfg(test)]
@@ -690,33 +470,20 @@ mod tests {
         FirmwareVersion::new(major, minor, patch)
     }
 
-    fn fixture_descriptors(
+    fn fixture_commands(
         source: &str,
         firmware: FirmwareVersion,
-    ) -> (Vec<CoverageEntry>, BTreeMap<String, DescriptorMetadata>) {
+    ) -> BTreeMap<String, CommandDeclaration> {
         let path = PathBuf::from("fixture.rs");
         let unit = SourceUnit {
             path: path.clone(),
-            active: true,
             file: syn::parse_file(source).unwrap(),
         };
-        let descriptors = collect_descriptors(std::slice::from_ref(&unit), firmware).unwrap();
-        let commands = descriptor_coverage(&descriptors);
-        (commands, descriptors)
+        collect_commands(std::slice::from_ref(&unit), firmware).unwrap()
     }
 
     #[test]
-    fn evaluates_nested_firmware_cfgs() {
-        let firmware = version(0, 17, 0);
-        let path = Path::new("fixture.rs");
-        let attribute: Attribute = syn::parse_quote!(
-            #[cfg(all(since_fw_0_17_0, not(since_fw_0_17_1)))]
-        );
-        assert!(attrs_active(&[attribute], firmware, path).unwrap());
-    }
-
-    #[test]
-    fn keeps_descriptor_return_metadata() {
+    fn keeps_declaration_return_metadata() {
         let source = r#"
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
@@ -730,16 +497,16 @@ mod tests {
                 hci_impl_params!(command, Params, Current);
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.code, 0x0003);
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
+        assert_eq!(declaration.code, 0x0003);
         assert_eq!(
-            descriptor.completion,
-            DescriptorCompletion::CommandComplete {
+            declaration.completion,
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::fixed(8),
             }
         );
-        assert_eq!(descriptor.request, WireEnvelope::fixed(0));
+        assert_eq!(declaration.request, WireEnvelope::fixed(0));
     }
 
     #[test]
@@ -765,19 +532,19 @@ mod tests {
                 async fn command(&self) { Current::try_new(); }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
         assert_eq!(
-            descriptor.completion,
-            DescriptorCompletion::CommandComplete {
+            declaration.completion,
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::fixed(6),
             }
         );
-        assert_eq!(descriptor.request, WireEnvelope::fixed(3));
+        assert_eq!(declaration.request, WireEnvelope::fixed(3));
     }
 
     #[test]
-    fn parses_the_qualified_proc_macro_with_the_same_descriptor_contract() {
+    fn parses_the_qualified_proc_macro_with_the_same_declaration_contract() {
         let source = r#"
             stm32wb_hci_macros::vendor_cmd! {
                 GapSetIoCapability(cgid = 0x1, cid = 0x05) {
@@ -787,13 +554,13 @@ mod tests {
                 }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 1));
-        let descriptor = descriptors.get("GapSetIoCapability").unwrap();
-        assert_eq!(descriptor.code, 0x085);
-        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        let declarations = fixture_commands(source, version(0, 17, 1));
+        let declaration = declarations.get("GapSetIoCapability").unwrap();
+        assert_eq!(declaration.code, 0x085);
+        assert_eq!(declaration.request, WireEnvelope::fixed(1));
         assert_eq!(
-            descriptor.completion,
-            DescriptorCompletion::CommandComplete {
+            declaration.completion,
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::fixed(0),
             }
         );
@@ -813,10 +580,10 @@ mod tests {
                 async fn command(&self) { Current::new(); }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.completion, DescriptorCompletion::CommandStatus);
-        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
+        assert_eq!(declaration.completion, CommandCompletion::CommandStatus);
+        assert_eq!(declaration.request, WireEnvelope::fixed(1));
     }
 
     #[test]
@@ -849,15 +616,15 @@ mod tests {
                 async fn command(&self) { Current::new(); }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
         assert_eq!(
-            descriptor.completion,
-            DescriptorCompletion::CommandComplete {
+            declaration.completion,
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(4, 253),
             }
         );
-        assert_eq!(descriptor.request, WireEnvelope::bounded(3, 255));
+        assert_eq!(declaration.request, WireEnvelope::bounded(3, 255));
     }
 
     #[test]
@@ -881,12 +648,12 @@ mod tests {
                 async fn command(&self) { Current::new(); }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.request, WireEnvelope::fixed(1));
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
+        assert_eq!(declaration.request, WireEnvelope::fixed(1));
         assert_eq!(
-            descriptor.completion,
-            DescriptorCompletion::CommandComplete {
+            declaration.completion,
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(1, 16),
             }
         );
@@ -913,7 +680,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("trailing_bytes must be the final declarative field"));
     }
 
@@ -934,13 +701,12 @@ mod tests {
             let Item::Macro(item) = &file.items[0] else {
                 panic!("expected vendor_cmd! macro item");
             };
-            let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+            let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
             assert!(error.contains(expected), "{error}");
         }
 
         let unit = SourceUnit {
             path: PathBuf::from("fixture.rs"),
-            active: true,
             file: syn::parse_file(
                 r#"
                     vendor_cmd! { First(cgid = 0x1, cid = 0x02) { Params = (); Completion = CommandStatus; } }
@@ -949,8 +715,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let error =
-            collect_descriptors(std::slice::from_ref(&unit), version(0, 17, 0)).unwrap_err();
+        let error = collect_commands(std::slice::from_ref(&unit), version(0, 17, 0)).unwrap_err();
         assert!(error.contains("both declare active vendor OCF 0x082"));
     }
 
@@ -993,10 +758,10 @@ mod tests {
                 async fn command(&self) { Current::try_new(); }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
-        let descriptor = descriptors.get("Current").unwrap();
-        assert_eq!(descriptor.completion, DescriptorCompletion::CommandStatus);
-        assert_eq!(descriptor.request, WireEnvelope::bounded(4, 28));
+        let declarations = fixture_commands(source, version(0, 17, 0));
+        let declaration = declarations.get("Current").unwrap();
+        assert_eq!(declaration.completion, CommandCompletion::CommandStatus);
+        assert_eq!(declaration.request, WireEnvelope::bounded(4, 28));
     }
 
     #[test]
@@ -1031,9 +796,9 @@ mod tests {
                 }
             }
         "#;
-        let (_, descriptors) = fixture_descriptors(source, version(0, 17, 0));
+        let declarations = fixture_commands(source, version(0, 17, 0));
         assert_eq!(
-            descriptors.get("Current").unwrap().request,
+            declarations.get("Current").unwrap().request,
             WireEnvelope::bounded(6, 22)
         );
 
@@ -1050,7 +815,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("unknown parameter(s): missing"), "{error}");
     }
 
@@ -1091,7 +856,7 @@ mod tests {
             let Item::Macro(item) = &file.items[0] else {
                 panic!("expected vendor_cmd! macro item");
             };
-            let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+            let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
             assert!(
                 error.contains("unknown declarative variable kind `payload`"),
                 "{error}"
@@ -1130,7 +895,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("variants require 3..=17"));
 
         let bad_bitmap = r#"
@@ -1154,7 +919,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("mask selects 2 bits but max_items is 3"));
     }
 
@@ -1185,7 +950,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("payload field `typo` is not bound"));
     }
 
@@ -1204,7 +969,7 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("CommandStatus and must not declare Return"));
     }
 
@@ -1217,7 +982,7 @@ mod tests {
         let Item::Macro(item) = &missing_completion.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("missing a `Completion = ...` declaration"));
 
         let return_buffer = syn::parse_file(
@@ -1235,107 +1000,89 @@ mod tests {
         let Item::Macro(item) = &return_buffer.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_descriptor(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
         assert!(error.contains("expected `()` or an inline named field body"));
     }
 
     #[test]
     fn loads_declarative_variable_shapes_from_the_real_crate() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
-        let coverage = load_crate_coverage(&crate_dir, version(0, 17, 1)).unwrap();
+        let coverage = load_rust_catalog(&crate_dir, version(0, 17, 1)).unwrap();
 
-        let update = coverage
-            .descriptor_metadata
-            .get("GapUpdateAdvertisingData")
-            .unwrap();
+        let update = coverage.commands.get("GapUpdateAdvertisingData").unwrap();
         assert_eq!(update.request, WireEnvelope::bounded(1, 32));
         assert_eq!(
             update.completion,
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::fixed(0),
             }
         );
 
-        let discoverable = coverage
-            .descriptor_metadata
-            .get("GapSetLimitedDiscoverable")
-            .unwrap();
+        let discoverable = coverage.commands.get("GapSetLimitedDiscoverable").unwrap();
         // Independent field capacities exceed one HCI command, but the
         // generated constructor rejects aggregate payloads above 255 bytes.
         assert_eq!(discoverable.request, WireEnvelope::bounded(13, 255));
 
-        let read = coverage
-            .descriptor_metadata
-            .get("GattReadHandleValue")
-            .unwrap();
+        let read = coverage.commands.get("GattReadHandleValue").unwrap();
         assert_eq!(read.request, WireEnvelope::fixed(6));
         assert_eq!(
             read.completion,
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(4, 251),
             }
         );
 
         assert!(
             coverage
-                .descriptor_metadata
+                .commands
                 .contains_key("GattReadMultipleVarCharValue")
         );
 
         let tagged = coverage
-            .descriptor_metadata
+            .commands
             .get("GattDiscoverPrimaryServicesByUUID")
             .unwrap();
         assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
-        assert_eq!(tagged.completion, DescriptorCompletion::CommandStatus);
+        assert_eq!(tagged.completion, CommandCompletion::CommandStatus);
 
-        let bitmap = coverage.descriptor_metadata.get("GapExtStartScan").unwrap();
+        let bitmap = coverage.commands.get("GapExtStartScan").unwrap();
         assert_eq!(bitmap.request, WireEnvelope::bounded(10, 20));
-        assert_eq!(bitmap.completion, DescriptorCompletion::CommandStatus);
+        assert_eq!(bitmap.completion, CommandCompletion::CommandStatus);
 
-        let bonded = coverage
-            .descriptor_metadata
-            .get("GapGetBondedDevices")
-            .unwrap();
+        let bonded = coverage.commands.get("GapGetBondedDevices").unwrap();
         // Count plus at most 35 seven-byte address records; status is framing.
         assert_eq!(
             bonded.completion,
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(1, 246),
             }
         );
 
-        let config = coverage
-            .descriptor_metadata
-            .get("HalReadConfigData")
-            .unwrap();
+        let config = coverage.commands.get("HalReadConfigData").unwrap();
         assert_eq!(
             config.completion,
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(1, 16),
             }
         );
 
-        let channels = coverage
-            .descriptor_metadata
-            .get("L2CocConnectConfirm")
-            .unwrap();
+        let channels = coverage.commands.get("L2CocConnectConfirm").unwrap();
         assert_eq!(
             channels.completion,
-            DescriptorCompletion::CommandComplete {
+            CommandCompletion::CommandComplete {
                 returns: WireEnvelope::bounded(1, 6),
             }
         );
 
-        assert_eq!(coverage.event_metadata.len(), 56);
-        let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();
+        assert_eq!(coverage.events.len(), 56);
+        let gap_procedure = coverage.events.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
         assert_eq!(gap_procedure.payload, WireEnvelope::bounded(3, 253));
 
-        let bond_lost = coverage.event_metadata.get(&0x0405).unwrap();
+        let bond_lost = coverage.events.get(&0x0405).unwrap();
         assert_eq!(bond_lost.payload, WireEnvelope::fixed(0));
 
-        let read_multiple = coverage.event_metadata.get(&0x0C15).unwrap();
+        let read_multiple = coverage.events.get(&0x0C15).unwrap();
         assert_eq!(read_multiple.payload, WireEnvelope::bounded(3, 253));
     }
 
@@ -1417,12 +1164,12 @@ mod tests {
     fn loads_unique_command_ids_for_every_declared_firmware() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
         for firmware in FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
-            load_crate_coverage(&crate_dir, firmware).unwrap();
+            load_rust_catalog(&crate_dir, firmware).unwrap();
         }
     }
 
     #[test]
-    fn selects_commands_from_descriptor_cfg() {
+    fn selects_commands_from_declaration_cfg() {
         let source = r#"
             vendor_cmd! { Current(cgid = 0x0, cid = 0x03) { Params = (); Completion = CommandStatus; } }
             #[cfg(since_fw_0_17_1)]
@@ -1436,18 +1183,15 @@ mod tests {
         let path = PathBuf::from("fixture.rs");
         let unit = SourceUnit {
             path,
-            active: true,
             file: syn::parse_file(source).unwrap(),
         };
         let firmware = version(0, 17, 0);
-        let descriptors = collect_descriptors(std::slice::from_ref(&unit), firmware).unwrap();
-        let active = descriptor_coverage(&descriptors);
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].name, "Current");
-        assert!(descriptors.contains_key("Current"));
-        assert!(!descriptors.contains_key("Retained"));
+        let declarations = collect_commands(std::slice::from_ref(&unit), firmware).unwrap();
+        assert_eq!(declarations.len(), 1);
+        assert!(declarations.contains_key("Current"));
+        assert!(!declarations.contains_key("Retained"));
 
-        let future = collect_descriptors(std::slice::from_ref(&unit), version(0, 18, 0)).unwrap();
+        let future = collect_commands(std::slice::from_ref(&unit), version(0, 18, 0)).unwrap();
         assert!(future.contains_key("Current"));
         assert!(future.contains_key("Retained"));
     }
@@ -1481,7 +1225,6 @@ mod tests {
         collect_command_sources(
             root.clone(),
             read_rust_file(&root).unwrap(),
-            true,
             version(0, 17, 0),
             &mut visited,
             &mut sources,

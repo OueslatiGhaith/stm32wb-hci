@@ -9,6 +9,7 @@ mod diff;
 mod envelope;
 mod json;
 mod model;
+mod rust_cfg;
 mod rust_source;
 mod standard;
 mod vendor;
@@ -16,14 +17,13 @@ mod wire;
 
 pub use catalog::{
     CATALOG_SCHEMA_VERSION, CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent,
-    CatalogEventKind, CatalogFamily, CatalogSchema, CommandScope, EventPayloadLayout, EventScope,
-    RequestLayout, ReturnLayout,
+    CatalogEventKind, CatalogFamily, CatalogSchema, CommandScope, EventScope, ExtractedEnvelope,
 };
 pub use diff::{
     CatalogIdentity, ChangedCommand, ChangedEvent, CommandChanges, CommandKey, EventChanges,
     EventKey, VersionDiff, VersionDiffError, diff_catalogs,
 };
-pub use json::CheckReportJson;
+pub use json::{CheckReportJson, REPORT_SCHEMA_VERSION};
 pub use model::{
     CheckReport, CoverageDifference, CoverageEntry, CoverageOrigin, ProtocolCoverage,
     StandardHciCoverage,
@@ -49,7 +49,7 @@ pub struct CheckOptions {
     pub excluded_events: BTreeMap<u16, String>,
     /// Payload layouts supplied by the checked-in policy for transport-only
     /// events which do not exist in CubeWB's generated event table.
-    pub external_event_payloads: BTreeMap<u16, EventPayloadLayout>,
+    pub external_event_payloads: BTreeMap<u16, ExtractedEnvelope>,
 }
 
 impl CheckOptions {
@@ -75,7 +75,7 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
 
     let tag = options.firmware.cube_tag();
     let catalog = load_catalog(&options.cube_dir, options.firmware)?;
-    let crate_coverage = rust_source::load_crate_coverage(&options.crate_dir, options.firmware)
+    let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.firmware)
         .map_err(ComplianceError::Source)?;
     let standard_provider =
         standard::load_standard_provider_coverage(&options.crate_dir, options.firmware)
@@ -84,18 +84,18 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     let wire = wire::compare_vendor_wire_with_external_events(
         &catalog.commands,
         &catalog.events,
-        &crate_coverage,
+        &rust_catalog,
         &options.external_event_payloads,
     );
     let vendor = catalog.vendor_coverage();
     let standard_hci = catalog.standard_hci_coverage();
+    let active_api = rust_catalog.coverage();
 
     let report = compare_coverage(
         options.firmware,
         tag,
         vendor,
-        crate_coverage.descriptors,
-        crate_coverage.active_api,
+        active_api,
         options.excluded_commands.clone(),
         options.excluded_events.clone(),
     );

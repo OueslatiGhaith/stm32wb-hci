@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
 /// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 8;
+pub const CATALOG_SCHEMA_VERSION: u16 = 9;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -36,13 +36,15 @@ pub enum EventScope {
     LeMeta,
 }
 
-/// Shape of the generated request payload.
+/// Wire envelope extracted from generated source evidence.
+///
+/// Zero-length requests and returns use `Known { minimum: 0, maximum: 0 }`;
+/// there is no separate empty representation. The same type is used for
+/// command requests, Command Complete returns, and vendor-event payloads.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum RequestLayout {
-    Empty,
-    Fixed(u32),
-    Variable {
+pub enum ExtractedEnvelope {
+    Known {
         minimum: u32,
         maximum: u32,
     },
@@ -50,33 +52,36 @@ pub enum RequestLayout {
     Unresolved(String),
 }
 
-/// Shape of the command-owned return payload.
-///
-/// The family adapter removes Command Complete framing, including its status
-/// byte, before constructing this value. A fixed zero-byte layout therefore
-/// represents a command whose generated response contains only status.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum ReturnLayout {
-    Fixed(u32),
-    Variable {
-        minimum: u32,
-        maximum: u32,
-    },
-    /// Source expression which cannot yet become a stable wire envelope.
-    Unresolved(String),
+impl ExtractedEnvelope {
+    pub const fn fixed(length: u32) -> Self {
+        Self::Known {
+            minimum: length,
+            maximum: length,
+        }
+    }
+
+    pub const fn known(minimum: u32, maximum: u32) -> Self {
+        Self::Known { minimum, maximum }
+    }
+
+    pub const fn bounds(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Known { minimum, maximum } => Some((*minimum, *maximum)),
+            Self::Unresolved(_) => None,
+        }
+    }
 }
 
 /// Generated command-completion behavior and its completion-specific data.
 ///
-/// Owning the return layout here makes it impossible to construct Command
+/// Owning the return envelope here makes it impossible to construct Command
 /// Status or asynchronous-event completions with a Command Complete return,
 /// or a Command Complete without one.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
 pub enum CatalogCompletion {
     CommandComplete {
-        returns: ReturnLayout,
+        returns: ExtractedEnvelope,
     },
     CommandStatus {},
     Event {
@@ -88,25 +93,12 @@ pub enum CatalogCompletion {
     },
 }
 
-/// Shape of a generated event payload after the two-byte vendor event code.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum EventPayloadLayout {
-    Fixed(u32),
-    Variable {
-        minimum: u32,
-        maximum: u32,
-    },
-    /// Source evidence which cannot yet become a stable wire envelope.
-    Unresolved(String),
-}
-
 /// Scope-specific event evidence. Vendor ACI events always carry a payload
 /// envelope; standard HCI and LE Meta events are inventory-only.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "scope")]
 pub enum CatalogEventKind {
-    VendorAci { payload: EventPayloadLayout },
+    VendorAci { payload: ExtractedEnvelope },
     StandardHci,
     LeMeta,
 }
@@ -167,7 +159,7 @@ impl CatalogEventKind {
         }
     }
 
-    pub const fn vendor_payload(&self) -> Option<&EventPayloadLayout> {
+    pub const fn vendor_payload(&self) -> Option<&ExtractedEnvelope> {
         match self {
             Self::VendorAci { payload } => Some(payload),
             Self::StandardHci | Self::LeMeta => None,
@@ -184,7 +176,7 @@ pub struct CatalogCommand {
     pub source_name: String,
     pub source_offset: u32,
     pub completion: CatalogCompletion,
-    pub request: RequestLayout,
+    pub request: ExtractedEnvelope,
 }
 
 impl CatalogCommand {
@@ -225,7 +217,7 @@ impl CatalogEvent {
         self.kind.scope()
     }
 
-    pub const fn vendor_payload(&self) -> Option<&EventPayloadLayout> {
+    pub const fn vendor_payload(&self) -> Option<&ExtractedEnvelope> {
         self.kind.vendor_payload()
     }
 }
@@ -385,12 +377,12 @@ mod tests {
                 source_name: "z.c".to_owned(),
                 source_offset: 9,
                 completion: CatalogCompletion::CommandComplete {
-                    returns: ReturnLayout::Variable {
+                    returns: ExtractedEnvelope::Known {
                         minimum: 1,
                         maximum: 251,
                     },
                 },
-                request: RequestLayout::Empty,
+                request: ExtractedEnvelope::fixed(0),
             },
             CatalogCommand {
                 kind: CatalogCommandKind::VendorAci { ocf: 1 },
@@ -398,7 +390,7 @@ mod tests {
                 source_name: "a.c".to_owned(),
                 source_offset: 4,
                 completion: CatalogCompletion::CommandStatus {},
-                request: RequestLayout::Variable {
+                request: ExtractedEnvelope::Known {
                     minimum: 3,
                     maximum: 255,
                 },
@@ -406,7 +398,7 @@ mod tests {
         ]);
         schema.events.push(CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: EventPayloadLayout::Fixed(0),
+                payload: ExtractedEnvelope::fixed(0),
             },
             code: 0x400,
             name: "gap_event".to_owned(),
@@ -440,7 +432,7 @@ mod tests {
         assert_eq!(
             value["commands"][0]["request"],
             serde_json::json!({
-                "kind": "variable",
+                "kind": "known",
                 "value": {
                     "minimum": 3,
                     "maximum": 255,
@@ -450,7 +442,7 @@ mod tests {
         assert_eq!(
             value["commands"][1]["completion"]["returns"],
             serde_json::json!({
-                "kind": "variable",
+                "kind": "known",
                 "value": {
                     "minimum": 1,
                     "maximum": 251,
@@ -460,11 +452,22 @@ mod tests {
         assert!(value["commands"][0].get("response").is_none());
         assert_eq!(value["commands"][0]["completion"]["kind"], "command_status");
         assert_eq!(
+            value["commands"][1]["request"],
+            serde_json::json!({
+                "kind": "known",
+                "value": {
+                    "minimum": 0,
+                    "maximum": 0,
+                },
+            })
+        );
+        assert_eq!(
             serde_json::from_value::<CatalogSchema>(value).unwrap(),
             schema
         );
         assert_eq!(
-            serde_json::to_value(RequestLayout::Unresolved("computed_size".to_owned())).unwrap(),
+            serde_json::to_value(ExtractedEnvelope::Unresolved("computed_size".to_owned()))
+                .unwrap(),
             serde_json::json!({
                 "kind": "unresolved",
                 "value": "computed_size",
@@ -480,7 +483,10 @@ mod tests {
     fn completion_deserialization_rejects_invalid_return_states() {
         let status_with_return = serde_json::json!({
             "kind": "command_status",
-            "returns": { "kind": "fixed", "value": 0 },
+            "returns": {
+                "kind": "known",
+                "value": { "minimum": 0, "maximum": 0 },
+            },
         });
         assert!(serde_json::from_value::<CatalogCompletion>(status_with_return).is_err());
 
