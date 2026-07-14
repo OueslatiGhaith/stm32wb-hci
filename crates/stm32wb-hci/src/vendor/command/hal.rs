@@ -29,7 +29,7 @@ impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
         Params = ();
         Completion = CommandComplete;
@@ -39,7 +39,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalWriteConfigData(cgid = 0x0, cid = 0x0C) {
         Params<'a> = {
             offset: u8 => 1,
@@ -54,7 +54,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalReadConfigData(cgid = 0x0, cid = 0x0D) {
         Params = {
             param: ConfigParameter => 1,
@@ -70,7 +70,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalSetTxPowerLevel(cgid = 0x0, cid = 0x0F) {
         Params = {
             high_power_mode: bool => 1,
@@ -81,7 +81,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetTxTestPacketCount(cgid = 0x0, cid = 0x14) {
         Params = ();
         Completion = CommandComplete;
@@ -91,7 +91,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalStartTone(cgid = 0x0, cid = 0x15) {
         Params = {
             channel: ToneChannel => 1,
@@ -102,7 +102,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalStopTone(cgid = 0x0, cid = 0x16) {
         Params = ();
         Completion = CommandComplete;
@@ -110,7 +110,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetLinkStatus(cgid = 0x0, cid = 0x17) {
         Params = ();
         Completion = CommandComplete;
@@ -121,7 +121,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalSetRadioActivityMask(cgid = 0x0, cid = 0x18) {
         Params = {
             mask: RadioActivityFlags => 2,
@@ -131,7 +131,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetAnchorPeriod(cgid = 0x0, cid = 0x19) {
         Params = ();
         Completion = CommandComplete;
@@ -142,7 +142,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalSetEventMask(cgid = 0x0, cid = 0x1A) {
         Params = {
             mask: HalEventFlags => 4,
@@ -152,7 +152,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetPmDebugInfo(cgid = 0x0, cid = 0x1C) {
         Params = ();
         Completion = CommandComplete;
@@ -164,7 +164,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalSetPeripheralLatency(cgid = 0x0, cid = 0x20) {
         Params = {
             enabled: bool => 1,
@@ -174,7 +174,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalReadRssi(cgid = 0x0, cid = 0x22) {
         Params = ();
         Completion = CommandComplete;
@@ -184,7 +184,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalReadRadioReg(cgid = 0x0, cid = 0x30) {
         Params = {
             address: u8 => 1,
@@ -196,7 +196,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalWriteRadioReg(cgid = 0x0, cid = 0x31) {
         Params = {
             address: u8 => 1,
@@ -207,7 +207,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalReadRawRssi(cgid = 0x0, cid = 0x32) {
         Params = ();
         Completion = CommandComplete;
@@ -217,7 +217,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalRxStart(cgid = 0x0, cid = 0x33) {
         Params = {
             rf_channel: u8 => 1,
@@ -227,7 +227,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalRxStop(cgid = 0x0, cid = 0x34) {
         Params = ();
         Completion = CommandComplete;
@@ -235,7 +235,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalStackReset(cgid = 0x0, cid = 0x3B) {
         Params = ();
         Completion = CommandComplete;
@@ -244,7 +244,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalGetLinkStatusV2(cgid = 0x0, cid = 0x1B) {
         Params = ();
         Completion = CommandComplete;
@@ -256,7 +256,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalSetSyncEventConfig(cgid = 0x0, cid = 0x21) {
         Params = {
             group_id: u8 => 1,
@@ -270,7 +270,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalContinuousTxStart(cgid = 0x0, cid = 0x2E) {
         Params = {
             rf_channel: u8 => 1,
@@ -283,7 +283,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {
             mode: EadMode => 1,

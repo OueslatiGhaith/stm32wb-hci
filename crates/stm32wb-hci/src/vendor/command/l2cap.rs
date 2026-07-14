@@ -7,7 +7,7 @@ use crate::{
     vendor::command::BoundedBytes,
 };
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -17,7 +17,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2ConnectionParameterUpdateResponse(cgid = 0x3, cid = 0x02) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -31,7 +31,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocConnect(cgid = 0x3, cid = 0x08) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -46,7 +46,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -66,7 +66,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfig(cgid = 0x3, cid = 0x0A) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -83,7 +83,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -94,7 +94,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocDisconnect(cgid = 0x3, cid = 0x0C) {
         Params = {
             channel_index: u8 => 1,
@@ -104,7 +104,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
         Params = {
             channel_index: u8 => 1,
@@ -115,7 +115,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     L2CocTxData(cgid = 0x3, cid = 0x0E) {
         Params<'a> = {
             channel_index: u8 => 1,

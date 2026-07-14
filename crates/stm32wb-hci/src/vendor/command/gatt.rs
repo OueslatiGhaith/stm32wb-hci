@@ -20,7 +20,7 @@ impl From<DescriptorValueMaxLength> for usize {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattInit(cgid = 0x2, cid = 0x01) {
         Params = ();
         Completion = CommandComplete;
@@ -28,7 +28,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattAddService(cgid = 0x2, cid = 0x02) {
         Params<'a> = {
             uuid: &'a Uuid => {
@@ -57,7 +57,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattIncludeService(cgid = 0x2, cid = 0x03) {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
@@ -87,7 +87,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattAddCharacteristic(cgid = 0x2, cid = 0x04) {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
@@ -121,7 +121,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattAddCharacteristicDescriptor(cgid = 0x2, cid = 0x05) {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
@@ -164,7 +164,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattUpdateCharacteristicValue(cgid = 0x2, cid = 0x06) {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
@@ -181,7 +181,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDeleteCharacterisitic(cgid = 0x2, cid = 0x07) {
         Params = {
             service: AttributeHandle => 2,
@@ -192,7 +192,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDeleteService(cgid = 0x2, cid = 0x08) {
         Params = {
             service: AttributeHandle => 2,
@@ -202,7 +202,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDeleteIncludedService(cgid = 0x2, cid = 0x09) {
         Params = {
             service: AttributeHandle => 2,
@@ -213,7 +213,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSetEventMask(cgid = 0x2, cid = 0x0A) {
         Params = {
             event_mask: Event => 4,
@@ -223,7 +223,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattExchageConfiguration(cgid = 0x2, cid = 0x0B) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -232,7 +232,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattFindInformationRequest(cgid = 0x2, cid = 0x0C) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -243,7 +243,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattFindByTypeValueRequest(cgid = 0x2, cid = 0x0D) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -260,7 +260,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadByTypeRequest(cgid = 0x2, cid = 0x0E) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -287,7 +287,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadByGroupTypeRequest(cgid = 0x2, cid = 0x0F) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -314,7 +314,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattPrepareWriteRequest(cgid = 0x2, cid = 0x10) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -330,7 +330,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattExecuteWriteRequest(cgid = 0x2, cid = 0x11) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -340,7 +340,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllPrimaryServices(cgid = 0x2, cid = 0x12) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -349,7 +349,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverPrimaryServicesByUUID(cgid = 0x2, cid = 0x13) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -374,7 +374,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattFindIncludedServices(cgid = 0x2, cid = 0x14) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -385,7 +385,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllCharacteristicsOfService(cgid = 0x2, cid = 0x15) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -396,7 +396,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverCharacteristicsByUUID(cgid = 0x2, cid = 0x16) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -423,7 +423,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllCharacteristicDescriptors(cgid = 0x2, cid = 0x17) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -434,7 +434,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicValue(cgid = 0x2, cid = 0x18) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -444,7 +444,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicUsingUUID(cgid = 0x2, cid = 0x19) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -471,7 +471,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicValue(cgid = 0x2, cid = 0x1A) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -482,7 +482,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadMultipleCharacteristicValues(cgid = 0x2, cid = 0x1B) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -497,7 +497,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicValue(cgid = 0x2, cid = 0x1C) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -512,7 +512,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicValue(cgid = 0x2, cid = 0x1D) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -528,7 +528,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicValueReliably(cgid = 0x2, cid = 0x1E) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -544,7 +544,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(cgid = 0x2, cid = 0x1F) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -560,7 +560,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicDescriptor(cgid = 0x2, cid = 0x20) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -571,7 +571,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicDescriptor(cgid = 0x2, cid = 0x21) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -586,7 +586,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicDescriptor(cgid = 0x2, cid = 0x22) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -596,7 +596,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithoutResponse(cgid = 0x2, cid = 0x23) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -612,7 +612,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSignedWriteWithoutResponse(cgid = 0x2, cid = 0x24) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -628,7 +628,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattConfirmIndication(cgid = 0x2, cid = 0x25) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -638,7 +638,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteResponse(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -660,7 +660,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattAllowRead(cgid = 0x2, cid = 0x27) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -670,7 +670,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSetSecurityPermission(cgid = 0x2, cid = 0x28) {
         Params = {
             service_handle: AttributeHandle => 2,
@@ -682,7 +682,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSetDescriptorValue(cgid = 0x2, cid = 0x29) {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
@@ -700,7 +700,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadHandleValue(cgid = 0x2, cid = 0x2A) {
         Params = {
             handle: AttributeHandle => 2,
@@ -730,7 +730,7 @@ impl GattHandleValue {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadHandleValueOffset(cgid = 0x2, cid = 0x2B) {
         Params = {
             handle: AttributeHandle => 2,
@@ -747,7 +747,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattUpdateLongCharacteristicValue(cgid = 0x2, cid = 0x2C) {
         Params<'a> = {
             conn_handle_to_notify: u16 => 2,
@@ -767,7 +767,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattDenyRead(cgid = 0x2, cid = 0x2D) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -778,7 +778,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSetAccessPermission(cgid = 0x2, cid = 0x2E) {
         Params = {
             service_handle: AttributeHandle => 2,
@@ -790,7 +790,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattStoreDatabase(cgid = 0x2, cid = 0x30) {
         Params = ();
         Completion = CommandComplete;
@@ -798,7 +798,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattSendMultipleNotification(cgid = 0x2, cid = 0x31) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -814,7 +814,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattReadMultipleVarCharValue(cgid = 0x2, cid = 0x32) {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
@@ -830,7 +830,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -845,7 +845,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
         Params = {
             conn_handle: ConnHandle => 2,

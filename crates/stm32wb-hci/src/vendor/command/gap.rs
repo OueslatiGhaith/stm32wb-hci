@@ -65,7 +65,7 @@ hci_enum! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetNonDiscoverable(cgid = 0x1, cid = 0x01) {
         Params = ();
         Completion = CommandComplete;
@@ -73,7 +73,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetLimitedDiscoverable(cgid = 0x1, cid = 0x02) {
         Params<'a> = {
             advertising_type: AdvertisingType => 1,
@@ -112,7 +112,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetDiscoverable(cgid = 0x1, cid = 0x03) {
         Params<'a> = {
             advertising_type: AdvertisingType => 1,
@@ -152,7 +152,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetDirectConnectable(cgid = 0x1, cid = 0x04) {
         Params = {
             own_address_type: AddressType => 1,
@@ -209,7 +209,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetAuthenticationRequirement(cgid = 0x1, cid = 0x06) {
         Params = {
             bonding_required: bool => 1,
@@ -233,7 +233,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetAuthorizationRequirement(cgid = 0x1, cid = 0x07) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -244,7 +244,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapPassKeyResponse(cgid = 0x1, cid = 0x08) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -255,7 +255,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAuthorizationResponse(cgid = 0x1, cid = 0x09) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -268,7 +268,7 @@ vendor_cmd! {
 
 // TODO: verify these return parameters
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     CmdGapInit(cgid = 0x1, cid = 0x0A) {
         Params = {
             role: Role => 1,
@@ -284,7 +284,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetNonConnectable(cgid = 0x1, cid = 0x0B) {
         Params = {
             advertising_type: AdvertisingType => 1,
@@ -301,7 +301,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetUnidirectedConnectable(cgid = 0x1, cid = 0x0C) {
         Params = {
             advertising_interval_min: u16 => 2,
@@ -323,7 +323,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -332,7 +332,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapUpdateAdvertisingData(cgid = 0x1, cid = 0x0E) {
         Params<'a> = {
             data: &'a [u8] => {
@@ -346,7 +346,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapDeleteAdType(cgid = 0x1, cid = 0x0F) {
         Params = {
             // Bluetooth AD types are an open registry, so this remains a raw
@@ -358,7 +358,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapGetSecurityLevel(cgid = 0x1, cid = 0x10) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -371,7 +371,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetEventMask(cgid = 0x1, cid = 0x11) {
         Params = {
             flags: EventFlags => 2,
@@ -381,7 +381,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapConfigureWhitelist(cgid = 0x1, cid = 0x12) {
         Params = ();
         Completion = CommandComplete;
@@ -389,7 +389,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapTerminate(cgid = 0x1, cid = 0x13) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -399,7 +399,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapClearSecurityDatabase(cgid = 0x1, cid = 0x14) {
         Params = ();
         Completion = CommandComplete;
@@ -407,7 +407,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAllowRebond(cgid = 0x1, cid = 0x15) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -417,7 +417,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(cgid = 0x1, cid = 0x16) {
         Params = {
             scan_window: ScanWindow => 4,
@@ -428,7 +428,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(cgid = 0x1, cid = 0x17) {
         Params = {
             scan_window: ScanWindow => 4,
@@ -439,7 +439,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x19) {
         Params<'a> = {
             scan_window: ScanWindow => 4,
@@ -457,7 +457,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1A) {
         Params = {
             scan_type: ScanType => 1,
@@ -470,7 +470,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1B) {
         Params<'a> = {
             scan_type: ScanType => 1,
@@ -489,7 +489,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapCreateConnection(cgid = 0x1, cid = 0x1C) {
         Params = {
             scan_window: ScanWindow => 4,
@@ -502,7 +502,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapTerminateProcedure(cgid = 0x1, cid = 0x1D) {
         Params = {
             procedure: Procedure => 1,
@@ -515,7 +515,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartConnectionUpdate(cgid = 0x1, cid = 0x1E) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -526,7 +526,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSendPairingRequest(cgid = 0x1, cid = 0x1F) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -536,7 +536,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     CmdGapResolvePrivateAddress(cgid = 0x1, cid = 0x20) {
         Params = {
             address: BdAddr => 6,
@@ -548,7 +548,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetBroadcastMode(cgid = 0x1, cid = 0x21) {
         Params<'a> = {
             advertising_interval_min: u16 => 2,
@@ -581,7 +581,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapStartObservationProcedure(cgid = 0x1, cid = 0x22) {
         Params = {
             scan_window: ScanWindow => 4,
@@ -594,7 +594,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapGetBondedDevices(cgid = 0x1, cid = 0x23) {
         Params = ();
         Completion = CommandComplete;
@@ -616,7 +616,7 @@ impl GapBondedDevices {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapIsDeviceBonded(cgid = 0x1, cid = 0x24) {
         Params = {
             address: PeerAddrType => 7,
@@ -626,7 +626,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapConfirmNumericComparisonValue(cgid = 0x1, cid = 0x25) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -637,7 +637,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapPasskeyInput(cgid = 0x1, cid = 0x26) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -647,7 +647,7 @@ vendor_cmd! {
         Return = ();
     }
 }
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapGetOobData(cgid = 0x1, cid = 0x27) {
         Params = {
             oob_data_type: OobDataType => 1,
@@ -663,7 +663,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapSetOobData(cgid = 0x1, cid = 0x28) {
         Params = {
             device_type: OobDeviceType => 1,
@@ -677,7 +677,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToResolvingList(cgid = 0x1, cid = 0x29) {
         Params<'a> = {
             whitelist_identities: &'a [PeerAddrType] => {
@@ -693,7 +693,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapRemoveBondedDevice(cgid = 0x1, cid = 0x2A) {
         Params = {
             address: BdAddrType => 7,
@@ -703,7 +703,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToList(cgid = 0x1, cid = 0x2B) {
         Params<'a> = {
             list_entries: &'a [BdAddrType] => {
@@ -719,7 +719,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconStart(cgid = 0x1, cid = 0x30) {
         Params = {
             advertising_interval_min: u16 => 2,
@@ -739,7 +739,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconStop(cgid = 0x1, cid = 0x31) {
         Params = ();
         Completion = CommandComplete;
@@ -747,7 +747,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconSetData(cgid = 0x1, cid = 0x32) {
         Params<'a> = {
             advertising_data: &'a [u8] => {
@@ -761,7 +761,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetConfig(cgid = 0x1, cid = 0x40) {
         Params<'a> = {
             adv_mode: AdvertisingMode => 1,
@@ -788,7 +788,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetEnable(cgid = 0x1, cid = 0x41) {
         Params<'a> = {
             enable: bool => 1,
@@ -804,7 +804,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetAdvertisingData(cgid = 0x1, cid = 0x42) {
         Params<'a> = {
             adv_handle: AdvertisingHandle => 1,
@@ -821,7 +821,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetScanResponseData(cgid = 0x1, cid = 0x43) {
         Params<'a> = {
             adv_handle: AdvertisingHandle => 1,
@@ -838,7 +838,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvRemoveSet(cgid = 0x1, cid = 0x44) {
         Params = {
             handle: AdvertisingHandle => 1,
@@ -848,7 +848,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvClearSets(cgid = 0x1, cid = 0x45) {
         Params = ();
         Completion = CommandComplete;
@@ -856,7 +856,7 @@ vendor_cmd! {
     }
 }
 
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetRandomAddress(cgid = 0x1, cid = 0x46) {
         Params = {
             handle: AdvertisingHandle => 1,
@@ -868,7 +868,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
         Params = {
             conn_handle: ConnHandle => 2,
@@ -880,7 +880,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetPeriodicParameters(cgid = 0x1, cid = 0x47) {
         Params = {
             advertising_handle: AdvertisingHandle => 1,
@@ -914,7 +914,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetPeriodicData(cgid = 0x1, cid = 0x48) {
         Params<'a> = {
             advertising_handle: AdvertisingHandle => 1,
@@ -931,7 +931,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetPeriodicEnable(cgid = 0x1, cid = 0x49) {
         Params = {
             enable: PeriodicAdvertisingEnable => 1,
@@ -943,7 +943,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetConfigurationV2(cgid = 0x1, cid = 0x4D) {
         Params = {
             adv_mode: AdvertisingMode => 1,
@@ -977,7 +977,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params<'a> = {
             scan_mode: ExtScanMode => 1,
@@ -1011,7 +1011,7 @@ vendor_cmd! {
 }
 
 #[cfg(since_fw_0_17_1)]
-vendor_cmd! {
+stm32wb_hci_macros::vendor_cmd! {
     GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params<'a> = {
             initiating_mode: ExtInitiatingMode => 1,

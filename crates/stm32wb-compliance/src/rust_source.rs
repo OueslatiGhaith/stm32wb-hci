@@ -1455,6 +1455,51 @@ mod tests {
     }
 
     #[test]
+    fn production_command_catalog_uses_the_proc_macro_entry_point() {
+        fn inspect(items: &[Item], path: &Path, command_count: &mut usize) {
+            for item in items {
+                match item {
+                    Item::Macro(item) if is_macro_named(&item.mac.path, "vendor_cmd") => {
+                        *command_count += 1;
+                        let macro_path = item
+                            .mac
+                            .path
+                            .segments
+                            .iter()
+                            .map(|segment| segment.ident.to_string())
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            macro_path,
+                            ["stm32wb_hci_macros", "vendor_cmd"],
+                            "{} contains a vendor command that bypasses the shared parser",
+                            path.display()
+                        );
+                    }
+                    Item::Mod(module) if module.content.is_some() => {
+                        let (_, nested) = module.content.as_ref().expect("checked above");
+                        inspect(nested, path, command_count);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let command_dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci/src/vendor/command");
+        let mut command_count = 0;
+        for entry in fs::read_dir(&command_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_some_and(|name| name != "mod.rs")
+            {
+                let file = read_rust_file(&path).unwrap();
+                inspect(&file.items, &path, &mut command_count);
+            }
+        }
+        assert_eq!(command_count, 147);
+    }
+
+    #[test]
     fn loads_unique_command_ids_for_every_declared_firmware() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
         for firmware in FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
