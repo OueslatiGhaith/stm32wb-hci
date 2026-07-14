@@ -1,7 +1,19 @@
 extern crate stm32wb_hci as hci;
 
 use hci::types::{ScanWindow, ScanWindowError};
+use hci::vendor::command::HciEncodeField;
 use std::time::Duration;
+
+fn encode<T, const N: usize>(value: &T) -> [u8; N]
+where
+    T: HciEncodeField<N>,
+{
+    let mut bytes = [0; N];
+    let mut writer = bytes.as_mut_slice();
+    value.write_hci_field(&mut writer).unwrap();
+    assert!(writer.is_empty());
+    bytes
+}
 
 #[test]
 fn valid() {
@@ -72,12 +84,11 @@ fn inverted_and_window_too_long() {
 }
 
 #[test]
-fn copy_into_slice() {
+fn encodes_with_the_canonical_wire_adapter() {
     let scan_window = ScanWindow::start_every(Duration::from_millis(10))
         .unwrap()
         .open_for(Duration::from_millis(5))
         .unwrap();
-    let mut bytes = [0; 4];
-    scan_window.copy_into_slice(&mut bytes);
+    let bytes: [u8; 4] = encode(&scan_window);
     assert_eq!(bytes, [0x10, 0x00, 0x08, 0x00]);
 }

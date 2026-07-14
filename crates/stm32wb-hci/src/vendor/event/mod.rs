@@ -1191,7 +1191,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             channel_index: L2CocChannelIndex => 1,
             eab_state: EabState => 1,
-            mtu: u16 => 2,
+            mtu: L2CocMtu => 2,
         };
     }
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
@@ -2368,7 +2368,7 @@ mod tests {
                 assert_eq!(e.conn_handle, ConnHandle::new(0x0123));
                 assert_eq!(e.channel_index, L2CocChannelIndex::new(2));
                 assert!(matches!(e.eab_state, EabState::AttBearerReconfigured));
-                assert_eq!(e.mtu, 64);
+                assert_eq!(e.mtu.value(), 64);
             }
             _ => panic!("unexpected event variant"),
         }

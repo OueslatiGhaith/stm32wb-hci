@@ -3,7 +3,19 @@ extern crate stm32wb_hci as hci;
 use hci::types::{
     ConnectionInterval, ConnectionIntervalBuilder, ConnectionIntervalError, FixedConnectionInterval,
 };
+use hci::vendor::command::HciEncodeField;
 use std::time::Duration;
+
+fn encode<T, const N: usize>(value: &T) -> [u8; N]
+where
+    T: HciEncodeField<N>,
+{
+    let mut bytes = [0; N];
+    let mut writer = bytes.as_mut_slice();
+    value.write_hci_field(&mut writer).unwrap();
+    assert!(writer.is_empty());
+    bytes
+}
 
 #[test]
 fn valid() {
@@ -13,8 +25,7 @@ fn valid() {
         .with_supervision_timeout(Duration::from_secs(15))
         .build()
         .unwrap();
-    let mut bytes = [0; 8];
-    interval.copy_into_slice(&mut bytes);
+    let bytes: [u8; 8] = encode(&interval);
 
     // 50 ms / 1.25 ms = 40 = 0x0028
     // 500 ms / 1.25 ms = 400 = 0x0190
@@ -188,8 +199,7 @@ fn impossible_supervision_timeout() {
 fn from_bytes_valid() {
     let valid_bytes = [0x90, 0x00, 0x90, 0x01, 0x0A, 0x00, 0xDC, 0x05];
     let interval = ConnectionInterval::from_bytes(&valid_bytes).unwrap();
-    let mut bytes = [0; 8];
-    interval.copy_into_slice(&mut bytes);
+    let bytes: [u8; 8] = encode(&interval);
     assert_eq!(bytes, valid_bytes);
 }
 

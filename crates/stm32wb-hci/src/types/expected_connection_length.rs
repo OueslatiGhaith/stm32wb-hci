@@ -37,19 +37,6 @@ impl ExpectedConnectionLength {
         Ok(ExpectedConnectionLength { range: (min, max) })
     }
 
-    /// Serializes the expected connection length range into the given byte buffer.
-    ///
-    /// # Panics
-    ///
-    /// The buffer must be at least 4 bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= 4);
-
-        let (minimum, maximum) = self.hci_fields();
-        bytes[0..2].copy_from_slice(&minimum.to_le_bytes());
-        bytes[2..4].copy_from_slice(&maximum.to_le_bytes());
-    }
-
     fn duration_as_u16(d: Duration) -> u16 {
         // T = 0.625 ms * N
         // so N = T / 0.625 ms

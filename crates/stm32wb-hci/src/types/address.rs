@@ -29,23 +29,6 @@ impl From<BdAddrType> for BdAddr {
     }
 }
 
-impl BdAddrType {
-    /// Serialize the address kind and address into a seven-byte buffer.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless `bytes` is exactly seven bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), 7);
-        let (kind, address) = match *self {
-            Self::Public(address) => (0, address),
-            Self::Random(address) => (1, address),
-        };
-        bytes[0] = kind;
-        bytes[1..].copy_from_slice(&address.0);
-    }
-}
-
 /// An unrecognized Bluetooth address-kind byte.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -170,18 +153,6 @@ impl From<PeerAddrType> for AddrKind {
 }
 
 impl PeerAddrType {
-    /// Serialize the address type and address into a seven-byte buffer.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless `bytes` is exactly seven bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert_eq!(bytes.len(), 7);
-        let (kind, addr) = self.hci_fields();
-        bytes[0] = kind;
-        bytes[1..].copy_from_slice(&addr.0);
-    }
-
     fn hci_fields(&self) -> (u8, BdAddr) {
         match *self {
             Self::PublicDeviceAddress(addr) => (0x00, addr),

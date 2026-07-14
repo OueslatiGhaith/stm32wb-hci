@@ -29,27 +29,6 @@ impl ConnectionInterval {
         self.supervision_timeout_
     }
 
-    /// Serializes the connection interval into the given byte buffer.
-    ///
-    /// The interval is serialized as:
-    /// - The minimum interval value, appropriately converted (2 bytes)
-    /// - The maximum interval value, appropriately converted (2 bytes)
-    /// - The connection latency (2 bytes)
-    /// - The supervision timeout, appropriately converted (2 bytes)
-    ///
-    /// # Panics
-    ///
-    /// The provided buffer must be at least 8 bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= 8);
-
-        let (interval_min, interval_max, latency, timeout) = self.hci_fields();
-        bytes[0..2].copy_from_slice(&interval_min.to_le_bytes());
-        bytes[2..4].copy_from_slice(&interval_max.to_le_bytes());
-        bytes[4..6].copy_from_slice(&latency.to_le_bytes());
-        bytes[6..8].copy_from_slice(&timeout.to_le_bytes());
-    }
-
     /// Deserializes the connection interval from the given byte buffer.
     ///
     /// - The minimum interval value, appropriately converted (2 bytes)

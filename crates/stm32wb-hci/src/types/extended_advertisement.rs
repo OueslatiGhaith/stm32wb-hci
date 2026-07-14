@@ -98,20 +98,6 @@ impl ExtendedAdvertisingInterval {
         1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)
     }
 
-    /// Serialize the interval into the given buffer.
-    ///
-    /// Serializes the minimum range of the interval (4 bytes), the maximum range of the
-    /// interval (4 bytees)
-    ///
-    /// # Panics
-    ///
-    /// - If the provided buffer is not at least 8 bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        let (minimum, maximum) = self.hci_fields();
-        bytes[0..4].copy_from_slice(&minimum.to_le_bytes());
-        bytes[4..8].copy_from_slice(&maximum.to_le_bytes());
-    }
-
     fn hci_fields(&self) -> (u32, u32) {
         (
             Self::duration_as_u32(self.interval.0),

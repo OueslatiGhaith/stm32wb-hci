@@ -28,19 +28,6 @@ impl ScanWindow {
         self.window_width
     }
 
-    /// Serializes the window into the given byte buffer.
-    ///
-    /// # Panics
-    ///
-    /// The buffer must be at least 4 bytes long.
-    pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        assert!(bytes.len() >= 4);
-
-        let (interval, window) = self.hci_fields();
-        bytes[0..2].copy_from_slice(&interval.to_le_bytes());
-        bytes[2..4].copy_from_slice(&window.to_le_bytes());
-    }
-
     /// Begins building a [ScanWindow]. The scan window has the given interval. Returns a
     /// [builder](ScanWindowBuilder) that can be used to set the window duration.
     ///
