@@ -10,7 +10,10 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use syn::Item;
+use cargo_metadata::MetadataCommand;
+use proc_macro2::TokenStream;
+use syn::parse::{Parse, ParseStream};
+use syn::{Attribute, Ident, Item, LitInt, Token, braced, parenthesized};
 
 use crate::FirmwareVersion;
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -106,62 +109,78 @@ fn find_bt_hci_source(crate_dir: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    let lockfile = crate_dir
-        .ancestors()
-        .map(|path| path.join("Cargo.lock"))
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| crate_dir.join("Cargo.lock"));
-    let version = locked_bt_hci_version(&lockfile)?;
-    let cargo_home = env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
-        .ok_or_else(|| {
-            "could not locate CARGO_HOME; set STM32WB_COMPLIANCE_BT_HCI_SOURCE explicitly"
-                .to_owned()
+    let manifest_path = crate_dir.join("Cargo.toml");
+    let metadata = MetadataCommand::new()
+        .manifest_path(&manifest_path)
+        .exec()
+        .map_err(|error| {
+            format!(
+                "could not resolve dependencies from {} with cargo metadata: {error}",
+                manifest_path.display()
+            )
         })?;
-    let registry_sources = cargo_home.join("registry/src");
-    let entries = fs::read_dir(&registry_sources).map_err(|error| {
-        format!(
-            "could not read {}; run cargo check first or set STM32WB_COMPLIANCE_BT_HCI_SOURCE: {error}",
-            registry_sources.display()
-        )
-    })?;
-
-    let directory_name = format!("bt-hci-{version}");
-    let mut candidates = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join(&directory_name))
-        .filter(|path| path.join("src/cmd.rs").is_file() && path.join("src/event.rs").is_file())
-        .collect::<Vec<_>>();
-    candidates.sort();
-    candidates.into_iter().next().ok_or_else(|| {
-        format!(
-            "could not find bt-hci {version} in {}; run cargo check first or set STM32WB_COMPLIANCE_BT_HCI_SOURCE",
-            registry_sources.display()
-        )
-    })
-}
-
-fn locked_bt_hci_version(lockfile: &Path) -> Result<String, String> {
-    let lock = fs::read_to_string(lockfile)
-        .map_err(|error| format!("could not read {}: {error}", lockfile.display()))?;
-    let document = lock
-        .parse::<toml::Table>()
-        .map_err(|error| format!("could not parse {} as TOML: {error}", lockfile.display()))?;
-    let packages = document
-        .get("package")
-        .and_then(toml::Value::as_array)
-        .ok_or_else(|| format!("{} has no package array", lockfile.display()))?;
-    let package = packages
+    let package = metadata
+        .packages
         .iter()
-        .filter_map(toml::Value::as_table)
-        .find(|package| package.get("name").and_then(toml::Value::as_str) == Some("bt-hci"))
-        .ok_or_else(|| format!("{} does not contain a bt-hci package", lockfile.display()))?;
-    package
-        .get("version")
-        .and_then(toml::Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| "bt-hci package in Cargo.lock has no string version".to_owned())
+        .find(|package| package.manifest_path.as_std_path() == manifest_path)
+        .or_else(|| {
+            let canonical = manifest_path.canonicalize().ok()?;
+            metadata.packages.iter().find(|package| {
+                package
+                    .manifest_path
+                    .as_std_path()
+                    .canonicalize()
+                    .is_ok_and(|path| path == canonical)
+            })
+        })
+        .ok_or_else(|| {
+            format!(
+                "cargo metadata did not return the package at {}",
+                manifest_path.display()
+            )
+        })?;
+    let resolve = metadata
+        .resolve
+        .as_ref()
+        .ok_or_else(|| "cargo metadata did not return a dependency graph".to_owned())?;
+    let node = resolve
+        .nodes
+        .iter()
+        .find(|node| node.id == package.id)
+        .ok_or_else(|| format!("cargo metadata has no dependency node for {}", package.name))?;
+    let mut bt_hci_packages = node
+        .deps
+        .iter()
+        .filter_map(|dependency| {
+            metadata
+                .packages
+                .iter()
+                .find(|candidate| candidate.id == dependency.pkg && candidate.name == "bt-hci")
+        })
+        .collect::<Vec<_>>();
+    bt_hci_packages.sort_by_key(|package| package.id.to_string());
+    bt_hci_packages.dedup_by_key(|package| package.id.clone());
+    let [bt_hci] = bt_hci_packages.as_slice() else {
+        return Err(format!(
+            "{} must have exactly one direct bt-hci dependency; cargo metadata found {}",
+            manifest_path.display(),
+            bt_hci_packages.len()
+        ));
+    };
+    let source = bt_hci
+        .manifest_path
+        .parent()
+        .ok_or_else(|| format!("bt-hci manifest {} has no parent", bt_hci.manifest_path))?
+        .as_std_path()
+        .to_path_buf();
+    if source.join("src/cmd.rs").is_file() && source.join("src/event.rs").is_file() {
+        Ok(source)
+    } else {
+        Err(format!(
+            "cargo metadata resolved bt-hci to {}, which is not a bt-hci source directory",
+            source.display()
+        ))
+    }
 }
 
 fn load_bt_hci_commands(bt_hci_dir: &Path) -> Result<Vec<CoverageEntry>, String> {
@@ -244,9 +263,13 @@ fn load_command_macros_from_file(
         {
             continue;
         }
-        let Some(header) = parse_command_macro_header(&item.mac.tokens.to_string()) else {
-            continue;
-        };
+        let header =
+            syn::parse2::<CommandMacroHeader>(item.mac.tokens.clone()).map_err(|error| {
+                format!(
+                    "{}: could not parse cmd! declaration structurally: {error}",
+                    path.display()
+                )
+            })?;
         let Some(ogf) = standard_ogf(&header.group) else {
             // `BASE` macro implementation details and non-standard groups are
             // deliberately not treated as public standard command declarations.
@@ -281,7 +304,15 @@ fn load_bt_hci_events(path: &Path, origin: CoverageOrigin) -> Result<Vec<Coverag
         if !macro_name_is(&item.mac, "events") && !macro_name_is(&item.mac, "le_events") {
             continue;
         }
-        for (name, code) in parse_event_macro_headers(&item.mac.tokens.to_string()) {
+        let declarations =
+            syn::parse2::<EventMacroDeclarations>(item.mac.tokens.clone()).map_err(|error| {
+                format!(
+                    "{}: could not parse {}! declarations structurally: {error}",
+                    path.display(),
+                    item.mac.path.segments.last().unwrap().ident
+                )
+            })?;
+        for EventMacroHeader { name, code } in declarations.0 {
             if code > u16::from(u8::MAX) {
                 return Err(format!(
                     "{}: HCI event {name} has out-of-range code 0x{code:X}",
@@ -313,115 +344,74 @@ struct CommandMacroHeader {
     ocf: u16,
 }
 
-/// Parse the stable header shared by `bt-hci::cmd!` invocations:
-/// `Name(GROUP, 0x0123) { ... }`.
-fn parse_command_macro_header(tokens: &str) -> Option<CommandMacroHeader> {
-    let tokens = strip_leading_attributes(tokens.trim())?;
-    // `bt-hci::cmd!` expands its convenient public forms through a second
-    // `cmd! { BASE ... }` invocation. We inventory source macro invocations,
-    // so recognize both the direct and BASE forms.
-    let tokens = strip_base_marker(tokens);
-    let tokens = strip_leading_attributes(tokens)?;
-    let open = tokens.find('(')?;
-    let name = tokens[..open].trim();
-    if !is_identifier(name) {
-        return None;
-    }
-    let close = matching_parenthesis(tokens, open)?;
-    let arguments = &tokens[open + 1..close];
-    let (group, ocf) = arguments.split_once(',')?;
-    let group = group.trim();
-    let ocf = parse_integer(ocf.trim())?;
-    Some(CommandMacroHeader {
-        name: name.to_owned(),
-        group: group.to_owned(),
-        ocf,
-    })
-}
-
-fn strip_base_marker(tokens: &str) -> &str {
-    let Some(rest) = tokens.strip_prefix("BASE") else {
-        return tokens;
-    };
-    if rest
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-    {
-        tokens
-    } else {
-        rest.trim_start()
+/// Small grammar for `[BASE] [attributes] Name(GROUP, OCF) { ... }`.
+impl Parse for CommandMacroHeader {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        if input.peek(Ident) {
+            let fork = input.fork();
+            let marker = fork.parse::<Ident>()?;
+            if marker == "BASE" {
+                input.parse::<Ident>()?;
+            }
+        }
+        let _attributes = input.call(Attribute::parse_outer)?;
+        let name = input.parse::<Ident>()?;
+        let arguments;
+        parenthesized!(arguments in input);
+        let group = arguments.parse::<Ident>()?;
+        arguments.parse::<Token![,]>()?;
+        let ocf = arguments.parse::<LitInt>()?.base10_parse::<u16>()?;
+        if !arguments.is_empty() {
+            return Err(arguments.error("unexpected command header tokens"));
+        }
+        let body;
+        braced!(body in input);
+        let _body = body.parse::<TokenStream>()?;
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after cmd! declaration"));
+        }
+        Ok(Self {
+            name: name.to_string(),
+            group: group.to_string(),
+            ocf,
+        })
     }
 }
 
-/// `syn::Macro::tokens` retains doc comments as `#[doc = ...]` attributes.
-/// They precede the command header in the public `bt-hci` sources, so remove
-/// them structurally rather than making command discovery depend on formatting.
-fn strip_leading_attributes(mut tokens: &str) -> Option<&str> {
-    loop {
-        tokens = tokens.trim_start();
-        if !tokens.starts_with('#') {
-            return Some(tokens);
-        }
-        let open = tokens.find('[')?;
-        let close = matching_delimiter(tokens, open, b'[', b']')?;
-        tokens = &tokens[close + 1..];
-    }
+struct EventMacroDeclarations(Vec<EventMacroHeader>);
+
+struct EventMacroHeader {
+    name: String,
+    code: u16,
 }
 
-/// Parse `struct Name(0xNN) { ... }` declarations inside `events!` macros.
-fn parse_event_macro_headers(tokens: &str) -> Vec<(String, u16)> {
-    let mut entries = Vec::new();
-    let mut cursor = 0;
-    while let Some(relative) = tokens[cursor..].find("struct ") {
-        let start = cursor + relative + "struct ".len();
-        let rest = &tokens[start..];
-        let name_end = rest
-            .bytes()
-            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-            .count();
-        let name = &rest[..name_end];
-        if !is_identifier(name) {
-            cursor = start;
-            continue;
+/// Small grammar for repeated `struct Name<'a>(CODE) { ... }` event records.
+impl Parse for EventMacroDeclarations {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut events = Vec::new();
+        while !input.is_empty() {
+            let _attributes = input.call(Attribute::parse_outer)?;
+            input.parse::<Token![struct]>()?;
+            let name = input.parse::<Ident>()?;
+            if input.peek(Token![<]) {
+                input.parse::<syn::Generics>()?;
+            }
+            let code_group;
+            parenthesized!(code_group in input);
+            let code = code_group.parse::<LitInt>()?.base10_parse::<u16>()?;
+            if !code_group.is_empty() {
+                return Err(code_group.error("unexpected event code tokens"));
+            }
+            let body;
+            braced!(body in input);
+            let _body = body.parse::<TokenStream>()?;
+            events.push(EventMacroHeader {
+                name: name.to_string(),
+                code,
+            });
         }
-        let mut after_name = start + name_end;
-        while tokens
-            .as_bytes()
-            .get(after_name)
-            .is_some_and(u8::is_ascii_whitespace)
-        {
-            after_name += 1;
-        }
-        // Lifetime parameters are irrelevant to the wire code.
-        if tokens.as_bytes().get(after_name) == Some(&b'<') {
-            let Some(close) = matching_angle(tokens, after_name) else {
-                cursor = after_name + 1;
-                continue;
-            };
-            after_name = close + 1;
-        }
-        while tokens
-            .as_bytes()
-            .get(after_name)
-            .is_some_and(u8::is_ascii_whitespace)
-        {
-            after_name += 1;
-        }
-        if tokens.as_bytes().get(after_name) != Some(&b'(') {
-            cursor = after_name;
-            continue;
-        }
-        let Some(close) = matching_parenthesis(tokens, after_name) else {
-            cursor = after_name + 1;
-            continue;
-        };
-        if let Some(code) = parse_integer(tokens[after_name + 1..close].trim()) {
-            entries.push((name.to_owned(), code));
-        }
-        cursor = close + 1;
+        Ok(Self(events))
     }
-    entries
 }
 
 fn standard_ogf(group: &str) -> Option<u8> {
@@ -437,87 +427,6 @@ fn standard_ogf(group: &str) -> Option<u8> {
     }
 }
 
-fn parse_integer(value: &str) -> Option<u16> {
-    let value = value.trim().trim_end_matches(['u', 'U', 'l', 'L']);
-    if let Some(value) = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-    {
-        u16::from_str_radix(value, 16).ok()
-    } else {
-        value.parse().ok()
-    }
-}
-
-fn matching_parenthesis(source: &str, open: usize) -> Option<usize> {
-    matching_delimiter(source, open, b'(', b')')
-}
-
-fn matching_angle(source: &str, open: usize) -> Option<usize> {
-    // Lifetime parameters (`<'a>`) contain apostrophes, which are not quoted
-    // strings. The generic delimiter parser deliberately skips quoted literals,
-    // so use this small angle-only matcher here instead.
-    let bytes = source.as_bytes();
-    let mut depth = 0usize;
-    for (index, byte) in bytes.iter().enumerate().skip(open) {
-        match byte {
-            b'<' => depth += 1,
-            b'>' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn matching_delimiter(source: &str, open: usize, opening: u8, closing: u8) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut depth = 0usize;
-    let mut index = open;
-    while index < bytes.len() {
-        match bytes[index] {
-            byte if byte == opening => depth += 1,
-            byte if byte == closing => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            b'\'' | b'"' => index = skip_quoted(bytes, index)?,
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-fn skip_quoted(bytes: &[u8], quote: usize) -> Option<usize> {
-    let delimiter = bytes[quote];
-    let mut index = quote + 1;
-    while index < bytes.len() {
-        if bytes[index] == b'\\' {
-            index += 2;
-            continue;
-        }
-        if bytes[index] == delimiter {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn is_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-}
-
 fn sort_and_deduplicate(entries: &mut Vec<CoverageEntry>) {
     entries.sort_by_key(|entry| (entry.code, entry.name.clone()));
     entries.dedup_by(|left, right| left.code == right.code && left.name == right.name);
@@ -529,7 +438,7 @@ mod tests {
 
     #[test]
     fn parses_standard_command_headers() {
-        let header = parse_command_macro_header(
+        let header = syn::parse_str::<CommandMacroHeader>(
             "LeSetAdvData ( LE , 0x0008 ) { Params = [u8 ; 32] ; Return = () ; }",
         )
         .unwrap();
@@ -540,7 +449,7 @@ mod tests {
 
     #[test]
     fn ignores_doc_attributes_before_a_command_header() {
-        let header = parse_command_macro_header(
+        let header = syn::parse_str::<CommandMacroHeader>(
             "# [ doc = \"command\" ] LeTest ( LE , 0x001F ) { Params = () ; }",
         )
         .unwrap();
@@ -549,7 +458,7 @@ mod tests {
 
     #[test]
     fn parses_bt_hci_base_command_headers() {
-        let header = parse_command_macro_header(
+        let header = syn::parse_str::<CommandMacroHeader>(
             "BASE # [ doc = \"command\" ] LeExtended ( LE , 0x0041 ) { Params = () ; }",
         )
         .unwrap();
@@ -559,9 +468,14 @@ mod tests {
 
     #[test]
     fn parses_event_macro_headers_with_lifetimes() {
-        let events = parse_event_macro_headers(
+        let events = syn::parse_str::<EventMacroDeclarations>(
             "struct ConnectionComplete ( 0x03 ) { } struct LeAdvertisingReport < 'a > ( 0x02 ) { }",
-        );
+        )
+        .unwrap()
+        .0
+        .into_iter()
+        .map(|event| (event.name, event.code))
+        .collect::<Vec<_>>();
         assert_eq!(
             events,
             vec![
@@ -569,41 +483,5 @@ mod tests {
                 ("LeAdvertisingReport".into(), 2),
             ]
         );
-    }
-
-    #[test]
-    fn parses_the_locked_bt_hci_version_as_toml() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "stm32wb-compliance-lock-{}-{unique}.toml",
-            std::process::id()
-        ));
-        fs::write(
-            &path,
-            r#"
-                version = 4
-
-                [[package]]
-                name = "other"
-                version = "1.0.0"
-
-                [[package]]
-                name = "bt-hci"
-                version = "0.9.0"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(locked_bt_hci_version(&path).unwrap(), "0.9.0");
-
-        fs::write(&path, "[[package]\nname = \"bt-hci\"").unwrap();
-        assert!(
-            locked_bt_hci_version(&path)
-                .unwrap_err()
-                .contains("as TOML")
-        );
-        fs::remove_file(path).unwrap();
     }
 }

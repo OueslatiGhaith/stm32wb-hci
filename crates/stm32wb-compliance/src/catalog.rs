@@ -1,22 +1,16 @@
-//! Versioned intermediate protocol catalog shared by source adapters.
+//! Intermediate protocol catalog shared by source adapters.
 //!
 //! A family-specific adapter (currently STM32CubeWB C) owns parsing. It emits
 //! this schema; coverage comparison, wire validation, JSON reporting, and a
 //! future STM32CubeWBA adapter consume it. Keeping that boundary explicit
 //! means parser changes do not silently change downstream assumptions.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
-
-/// Schema version of the normalized CubeWB catalog.
-///
-/// Version 9 replaced the separate request, return, and event-payload layout
-/// enums with [`ExtractedEnvelope`]. Known fixed lengths use identical minimum
-/// and maximum values, including `0..=0` for an empty wire envelope.
-///
-/// Increment only for a deliberate, documented incompatible schema change.
-pub const CATALOG_SCHEMA_VERSION: u16 = 9;
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -42,37 +36,111 @@ pub enum EventScope {
     LeMeta,
 }
 
-/// Wire envelope extracted from generated source evidence.
+/// A validated inclusive range of encoded wire lengths.
 ///
-/// Zero-length requests and returns use `Known { minimum: 0, maximum: 0 }`;
-/// there is no separate empty representation. The same type is used for
-/// command requests, Command Complete returns, and vendor-event payloads.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
-pub enum ExtractedEnvelope {
-    Known {
-        minimum: u32,
-        maximum: u32,
-    },
-    /// Source expression which cannot yet become a stable wire envelope.
-    Unresolved(String),
+/// The private fields make an inverted envelope unrepresentable. Zero-length
+/// requests and returns use `Envelope::fixed(0)`; there is no separate empty
+/// representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct Envelope {
+    minimum: u32,
+    maximum: u32,
 }
 
-impl ExtractedEnvelope {
+impl Envelope {
     pub const fn fixed(length: u32) -> Self {
-        Self::Known {
+        Self {
             minimum: length,
             maximum: length,
         }
     }
 
+    pub const fn bounded(minimum: u32, maximum: u32) -> Self {
+        assert!(minimum <= maximum, "wire envelope minimum exceeds maximum");
+        Self { minimum, maximum }
+    }
+
+    pub const fn try_bounded(minimum: u32, maximum: u32) -> Option<Self> {
+        if minimum <= maximum {
+            Some(Self { minimum, maximum })
+        } else {
+            None
+        }
+    }
+
+    pub const fn minimum(self) -> u32 {
+        self.minimum
+    }
+
+    pub const fn maximum(self) -> u32 {
+        self.maximum
+    }
+
+    pub const fn bounds(self) -> (u32, u32) {
+        (self.minimum, self.maximum)
+    }
+
+    pub const fn is_fixed(self) -> bool {
+        self.minimum == self.maximum
+    }
+}
+
+impl<'de> Deserialize<'de> for Envelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawEnvelope {
+            minimum: u32,
+            maximum: u32,
+        }
+
+        let raw = RawEnvelope::deserialize(deserializer)?;
+        Self::try_bounded(raw.minimum, raw.maximum).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "wire envelope minimum {} exceeds maximum {}",
+                raw.minimum, raw.maximum
+            ))
+        })
+    }
+}
+
+impl fmt::Display for Envelope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_fixed() {
+            write!(formatter, "{} bytes", self.maximum)
+        } else {
+            write!(formatter, "{}..={} bytes", self.minimum, self.maximum)
+        }
+    }
+}
+
+/// Evidence extracted from generated source.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum Evidence<T> {
+    Known(T),
+    /// Source expression which cannot yet become a stable wire envelope.
+    Unresolved(String),
+}
+
+/// Extracted evidence for a validated wire envelope.
+pub type EnvelopeEvidence = Evidence<Envelope>;
+
+impl Evidence<Envelope> {
+    pub const fn fixed(length: u32) -> Self {
+        Self::Known(Envelope::fixed(length))
+    }
+
     pub const fn known(minimum: u32, maximum: u32) -> Self {
-        Self::Known { minimum, maximum }
+        Self::Known(Envelope::bounded(minimum, maximum))
     }
 
     pub const fn bounds(&self) -> Option<(u32, u32)> {
         match self {
-            Self::Known { minimum, maximum } => Some((*minimum, *maximum)),
+            Self::Known(envelope) => Some(envelope.bounds()),
             Self::Unresolved(_) => None,
         }
     }
@@ -87,7 +155,7 @@ impl ExtractedEnvelope {
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
 pub enum CatalogCompletion {
     CommandComplete {
-        returns: ExtractedEnvelope,
+        returns: Evidence<Envelope>,
     },
     CommandStatus {},
     Event {
@@ -104,7 +172,7 @@ pub enum CatalogCompletion {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "scope")]
 pub enum CatalogEventKind {
-    VendorAci { payload: ExtractedEnvelope },
+    VendorAci { payload: Evidence<Envelope> },
     StandardHci,
     LeMeta,
 }
@@ -165,7 +233,7 @@ impl CatalogEventKind {
         }
     }
 
-    pub const fn vendor_payload(&self) -> Option<&ExtractedEnvelope> {
+    pub const fn vendor_payload(&self) -> Option<&Evidence<Envelope>> {
         match self {
             Self::VendorAci { payload } => Some(payload),
             Self::StandardHci | Self::LeMeta => None,
@@ -182,7 +250,7 @@ pub struct CatalogCommand {
     pub source_name: String,
     pub source_offset: u32,
     pub completion: CatalogCompletion,
-    pub request: ExtractedEnvelope,
+    pub request: Evidence<Envelope>,
 }
 
 impl CatalogCommand {
@@ -223,40 +291,74 @@ impl CatalogEvent {
         self.kind.scope()
     }
 
-    pub const fn vendor_payload(&self) -> Option<&ExtractedEnvelope> {
+    pub const fn vendor_payload(&self) -> Option<&Evidence<Envelope>> {
         self.kind.vendor_payload()
     }
 }
 
 /// Stable, normalized result of parsing one immutable firmware source tag.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogSchema {
-    #[serde(deserialize_with = "deserialize_schema_version")]
-    pub schema_version: u16,
     pub family: CatalogFamily,
     pub cube_tag: String,
     pub commands: Vec<CatalogCommand>,
     pub events: Vec<CatalogEvent>,
 }
 
-fn deserialize_schema_version<'de, D>(deserializer: D) -> Result<u16, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let version = u16::deserialize(deserializer)?;
-    if version == CATALOG_SCHEMA_VERSION {
-        Ok(version)
-    } else {
-        Err(serde::de::Error::custom(format!(
-            "unsupported catalog schema version {version}; expected {CATALOG_SCHEMA_VERSION}"
-        )))
+impl Serialize for CatalogSchema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.validate().map_err(serde::ser::Error::custom)?;
+
+        #[derive(Serialize)]
+        struct CatalogSchemaRef<'a> {
+            family: CatalogFamily,
+            cube_tag: &'a str,
+            commands: &'a [CatalogCommand],
+            events: &'a [CatalogEvent],
+        }
+
+        CatalogSchemaRef {
+            family: self.family,
+            cube_tag: &self.cube_tag,
+            commands: &self.commands,
+            events: &self.events,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CatalogSchema {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawCatalogSchema {
+            family: CatalogFamily,
+            cube_tag: String,
+            commands: Vec<CatalogCommand>,
+            events: Vec<CatalogEvent>,
+        }
+
+        let raw = RawCatalogSchema::deserialize(deserializer)?;
+        let schema = Self {
+            family: raw.family,
+            cube_tag: raw.cube_tag,
+            commands: raw.commands,
+            events: raw.events,
+        };
+        schema.validate().map_err(serde::de::Error::custom)?;
+        Ok(schema)
     }
 }
 
 impl CatalogSchema {
     pub(crate) fn new(family: CatalogFamily, cube_tag: impl Into<String>) -> Self {
         Self {
-            schema_version: CATALOG_SCHEMA_VERSION,
             family,
             cube_tag: cube_tag.into(),
             commands: Vec::new(),
@@ -266,7 +368,7 @@ impl CatalogSchema {
 
     /// Normalize ordering once at the adapter boundary so a serialized catalog
     /// is deterministic and all downstream consumers see the same ordering.
-    pub(crate) fn normalize(&mut self) {
+    pub(crate) fn normalize(&mut self) -> Result<(), String> {
         self.commands.sort_by_key(|command| {
             (
                 command_scope_order(command.scope()),
@@ -285,6 +387,82 @@ impl CatalogSchema {
                 event.source_offset,
             )
         });
+        self.validate()
+    }
+
+    /// Validate all cross-entry invariants at the catalog boundary.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut command_codes = BTreeMap::new();
+        let mut command_names = BTreeMap::new();
+        for command in &self.commands {
+            if let CatalogCommandKind::VendorAci { ocf } = command.kind
+                && ocf > 0x03ff
+            {
+                return Err(format!(
+                    "vendor command {} has OCF 0x{ocf:X}, which exceeds ten bits",
+                    command.name
+                ));
+            }
+            validate_evidence(&command.request, "command request", &command.name)?;
+            if let CatalogCompletion::CommandComplete { returns } = &command.completion {
+                validate_evidence(returns, "command return", &command.name)?;
+            }
+
+            let key = (command.scope(), command.code());
+            if let Some(previous) = command_codes.insert(key, command.name.as_str()) {
+                return Err(format!(
+                    "duplicate command ({:?}, 0x{:04X}): {previous} and {}",
+                    command.scope(),
+                    command.code(),
+                    command.name
+                ));
+            }
+            let name_key = (command.scope(), command.name.as_str());
+            if let Some(previous) = command_names.insert(name_key, command.code()) {
+                return Err(format!(
+                    "command name {} is inconsistent in {:?}: 0x{previous:04X} and 0x{:04X}",
+                    command.name,
+                    command.scope(),
+                    command.code()
+                ));
+            }
+        }
+
+        let mut event_codes = BTreeMap::new();
+        let mut event_names = BTreeMap::new();
+        for event in &self.events {
+            if matches!(event.scope(), EventScope::StandardHci | EventScope::LeMeta)
+                && event.code > u16::from(u8::MAX)
+            {
+                return Err(format!(
+                    "standard event {} has code 0x{:X}, which exceeds eight bits",
+                    event.name, event.code
+                ));
+            }
+            if let Some(payload) = event.vendor_payload() {
+                validate_evidence(payload, "event payload", &event.name)?;
+            }
+
+            let key = (event.scope(), event.code);
+            if let Some(previous) = event_codes.insert(key, event.name.as_str()) {
+                return Err(format!(
+                    "duplicate event ({:?}, 0x{:04X}): {previous} and {}",
+                    event.scope(),
+                    event.code,
+                    event.name
+                ));
+            }
+            let name_key = (event.scope(), event.name.as_str());
+            if let Some(previous) = event_names.insert(name_key, event.code) {
+                return Err(format!(
+                    "event name {} is inconsistent in {:?}: 0x{previous:04X} and 0x{:04X}",
+                    event.name,
+                    event.scope(),
+                    event.code
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn vendor_coverage(&self) -> ProtocolCoverage {
@@ -354,6 +532,15 @@ impl CatalogSchema {
     }
 }
 
+fn validate_evidence(evidence: &Evidence<Envelope>, label: &str, name: &str) -> Result<(), String> {
+    if let Evidence::Known(envelope) = evidence
+        && envelope.minimum() > envelope.maximum()
+    {
+        return Err(format!("inverted {label} envelope for {name}"));
+    }
+    Ok(())
+}
+
 fn command_scope_order(scope: CommandScope) -> u8 {
     match scope {
         CommandScope::VendorAci => 0,
@@ -374,7 +561,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_serialization_is_versioned_and_deterministic() {
+    fn schema_serialization_is_validated_and_deterministic() {
         let mut schema = CatalogSchema::new(CatalogFamily::Stm32Wb, "v1.17.1");
         schema.commands.extend([
             CatalogCommand {
@@ -383,12 +570,9 @@ mod tests {
                 source_name: "z.c".to_owned(),
                 source_offset: 9,
                 completion: CatalogCompletion::CommandComplete {
-                    returns: ExtractedEnvelope::Known {
-                        minimum: 1,
-                        maximum: 251,
-                    },
+                    returns: EnvelopeEvidence::known(1, 251),
                 },
-                request: ExtractedEnvelope::fixed(0),
+                request: EnvelopeEvidence::fixed(0),
             },
             CatalogCommand {
                 kind: CatalogCommandKind::VendorAci { ocf: 1 },
@@ -396,15 +580,12 @@ mod tests {
                 source_name: "a.c".to_owned(),
                 source_offset: 4,
                 completion: CatalogCompletion::CommandStatus {},
-                request: ExtractedEnvelope::Known {
-                    minimum: 3,
-                    maximum: 255,
-                },
+                request: EnvelopeEvidence::known(3, 255),
             },
         ]);
         schema.events.push(CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: ExtractedEnvelope::fixed(0),
+                payload: EnvelopeEvidence::fixed(0),
             },
             code: 0x400,
             name: "gap_event".to_owned(),
@@ -418,10 +599,9 @@ mod tests {
             source_name: "ble_events.c".to_owned(),
             source_offset: 18,
         });
-        schema.normalize();
+        schema.normalize().unwrap();
 
         let value = serde_json::to_value(&schema).unwrap();
-        assert_eq!(value["schema_version"], CATALOG_SCHEMA_VERSION);
         assert_eq!(value["family"], "stm32_wb");
         assert_eq!(value["commands"][0]["name"], "a_first");
         assert_eq!(value["commands"][0]["scope"], "vendor_aci");
@@ -472,17 +652,12 @@ mod tests {
             schema
         );
         assert_eq!(
-            serde_json::to_value(ExtractedEnvelope::Unresolved("computed_size".to_owned()))
-                .unwrap(),
+            serde_json::to_value(EnvelopeEvidence::Unresolved("computed_size".to_owned())).unwrap(),
             serde_json::json!({
                 "kind": "unresolved",
                 "value": "computed_size",
             })
         );
-
-        let mut unsupported = serde_json::to_value(&schema).unwrap();
-        unsupported["schema_version"] = serde_json::json!(CATALOG_SCHEMA_VERSION + 1);
-        assert!(serde_json::from_value::<CatalogSchema>(unsupported).is_err());
     }
 
     #[test]
@@ -500,5 +675,95 @@ mod tests {
             "kind": "command_complete",
         });
         assert!(serde_json::from_value::<CatalogCompletion>(complete_without_return).is_err());
+    }
+
+    #[test]
+    fn catalog_boundary_rejects_invalid_envelopes_and_identities() {
+        let command = |ocf, name: &str| CatalogCommand {
+            kind: CatalogCommandKind::VendorAci { ocf },
+            name: name.to_owned(),
+            source_name: "fixture.c".to_owned(),
+            source_offset: 0,
+            completion: CatalogCompletion::CommandComplete {
+                returns: EnvelopeEvidence::fixed(0),
+            },
+            request: EnvelopeEvidence::fixed(0),
+        };
+        let event = |kind, code, name: &str| CatalogEvent {
+            kind,
+            code,
+            name: name.to_owned(),
+            source_name: "events.c".to_owned(),
+            source_offset: 0,
+        };
+
+        let inverted = serde_json::json!({
+            "minimum": 4,
+            "maximum": 3,
+        });
+        assert!(
+            serde_json::from_value::<Envelope>(inverted)
+                .unwrap_err()
+                .to_string()
+                .contains("minimum 4 exceeds maximum 3")
+        );
+
+        let mut schema = CatalogSchema::new(CatalogFamily::Stm32Wb, "v1.17.1");
+        schema
+            .commands
+            .extend([command(1, "First"), command(1, "DuplicateCode")]);
+        assert!(schema.validate().unwrap_err().contains("duplicate command"));
+        assert!(serde_json::to_value(&schema).is_err());
+
+        schema.commands = vec![command(1, "First")];
+        let mut serialized = serde_json::to_value(&schema).unwrap();
+        let duplicate = serialized["commands"][0].clone();
+        serialized["commands"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        assert!(
+            serde_json::from_value::<CatalogSchema>(serialized)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate command")
+        );
+
+        schema.commands = vec![command(0x0400, "WideVendorOcf")];
+        assert!(schema.validate().unwrap_err().contains("exceeds ten bits"));
+
+        schema.commands = vec![command(1, "RepeatedName"), command(2, "RepeatedName")];
+        assert!(
+            schema
+                .validate()
+                .unwrap_err()
+                .contains("command name RepeatedName is inconsistent")
+        );
+
+        schema.commands.clear();
+        schema.events = vec![event(CatalogEventKind::StandardHci, 0x0100, "WideEvent")];
+        assert!(
+            schema
+                .validate()
+                .unwrap_err()
+                .contains("exceeds eight bits")
+        );
+
+        schema.events = vec![
+            event(CatalogEventKind::LeMeta, 1, "FirstEvent"),
+            event(CatalogEventKind::LeMeta, 1, "DuplicateEvent"),
+        ];
+        assert!(schema.validate().unwrap_err().contains("duplicate event"));
+
+        schema.events = vec![
+            event(CatalogEventKind::LeMeta, 1, "RepeatedEvent"),
+            event(CatalogEventKind::LeMeta, 2, "RepeatedEvent"),
+        ];
+        assert!(
+            schema
+                .validate()
+                .unwrap_err()
+                .contains("event name RepeatedEvent is inconsistent")
+        );
     }
 }

@@ -5,11 +5,11 @@ use std::path::Path;
 
 use serde::Serialize;
 use stm32wb_compliance::{
-    CATALOG_SCHEMA_VERSION, CheckReportJson, CommandChanges, CommandKey, CommandScope,
-    EventChanges, EventScope, FirmwareVersion, VersionDiff,
+    CheckReportJson, CommandChanges, CommandKey, CommandScope, EventChanges, EventScope,
+    FirmwareVersion, VersionDiff,
 };
 
-use super::policy::{ExclusionPolicy, POLICY_FORMAT_VERSION, PolicyAudit};
+use super::policy::{ExclusionPolicy, PolicyAudit};
 use super::{BatchResult, CheckedRun, CubeProvenance};
 
 pub(super) fn version_diff_to_json(
@@ -22,7 +22,6 @@ pub(super) fn version_diff_to_json(
 ) -> String {
     serde_json::to_string(&VersionDiffJson {
         mode: "version-diff",
-        catalog_schema_version: CATALOG_SCHEMA_VERSION,
         from: DiffEndpointJson {
             firmware: from.to_string(),
             feature: from.feature_name(),
@@ -42,7 +41,6 @@ pub(super) fn version_diff_to_json(
 #[derive(Serialize)]
 struct VersionDiffJson<'a> {
     mode: &'static str,
-    catalog_schema_version: u16,
     from: DiffEndpointJson<'a>,
     to: DiffEndpointJson<'a>,
     commands: &'a CommandChanges,
@@ -224,9 +222,8 @@ pub(super) fn checked_run_to_human(
     let _ = writeln!(output, "  resolved commit: {}", run.provenance.commit);
     let _ = writeln!(
         output,
-        "exclusion policy: {} (format {}; {} command + {} event entries, all actively suppress a difference)",
+        "exclusion policy: {} ({} command + {} event entries, all actively suppress a difference)",
         policy.display_path(crate_dir),
-        POLICY_FORMAT_VERSION,
         run.policy_audit.command_entries,
         run.policy_audit.event_entries,
     );
@@ -400,7 +397,6 @@ fn cube_provenance_json<'a>(provenance: &'a CubeProvenance, root: &Path) -> Cube
 #[derive(Serialize)]
 struct PolicyAuditJson {
     path: String,
-    format_version: u32,
     active_command_entries: usize,
     active_event_entries: usize,
     all_entries_suppress_differences: bool,
@@ -413,7 +409,6 @@ fn policy_audit_json(
 ) -> PolicyAuditJson {
     PolicyAuditJson {
         path: policy.display_path(crate_dir),
-        format_version: POLICY_FORMAT_VERSION,
         active_command_entries: audit.command_entries,
         active_event_entries: audit.event_entries,
         all_entries_suppress_differences: true,
@@ -423,7 +418,6 @@ fn policy_audit_json(
 #[derive(Serialize)]
 struct PolicyMetadataJson {
     path: String,
-    format_version: u32,
     entries: usize,
 }
 
@@ -431,7 +425,6 @@ impl PolicyMetadataJson {
     fn from_policy(policy: &ExclusionPolicy, crate_dir: &Path) -> Self {
         Self {
             path: policy.display_path(crate_dir),
-            format_version: POLICY_FORMAT_VERSION,
             entries: policy.entry_count(),
         }
     }
@@ -446,26 +439,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn batch_json_is_structured_and_versions_each_report() {
+    fn batch_json_is_structured() {
         let firmware = FirmwareVersion::new(0, 15, 0);
-        let report = CheckReport {
+        let report = CheckReport::new(
             firmware,
-            cube_tag: "v1.15.0".to_owned(),
-            vendor: ProtocolCoverage::default(),
-            active_api: ProtocolCoverage::default(),
-            standard_hci: StandardHciCoverage::default(),
-            standard_hci_provider: StandardHciCoverage::default(),
-            missing_commands: Vec::new(),
-            extraneous_commands: Vec::new(),
-            missing_events: Vec::new(),
-            extraneous_events: Vec::new(),
-            missing_standard_hci_commands: Vec::new(),
-            missing_standard_hci_events: Vec::new(),
-            missing_standard_hci_le_meta_events: Vec::new(),
-            wire: WireReport::default(),
-            excluded_commands: Vec::new(),
-            excluded_events: Vec::new(),
-        };
+            ProtocolCoverage::default(),
+            ProtocolCoverage::default(),
+            StandardHciCoverage::default(),
+            StandardHciCoverage::default(),
+            WireReport::default(),
+            Default::default(),
+            Default::default(),
+        );
         let policy = ExclusionPolicy::empty(PathBuf::from("policy"));
         let results = [BatchResult::Success(Box::new(CheckedRun {
             firmware,
@@ -487,10 +472,7 @@ mod tests {
         assert_eq!(value["mode"], "all-supported");
         assert_eq!(value["summary"]["checked"], 1);
         assert_eq!(value["results"][0]["status"], "ok");
-        assert_eq!(
-            value["results"][0]["report"]["schema_version"],
-            stm32wb_compliance::REPORT_SCHEMA_VERSION
-        );
+        assert_eq!(value["results"][0]["report"]["firmware"], "0.15.0");
         assert_eq!(
             value["results"][0]["report"]["cube_provenance"]["commit"],
             "commit"

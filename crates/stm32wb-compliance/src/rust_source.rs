@@ -14,7 +14,7 @@ use stm32wb_hci_schema::{
 use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
 
 use crate::FirmwareVersion;
-use crate::envelope::WireEnvelope;
+use crate::catalog::Envelope;
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
 use crate::rust_cfg::attrs_active;
 
@@ -57,7 +57,7 @@ pub(crate) struct CommandDeclaration {
     pub(crate) code: u16,
     pub(crate) completion: CommandCompletion,
     /// Command parameter bytes, excluding the HCI command header.
-    pub(crate) request: WireEnvelope,
+    pub(crate) request: Envelope,
     pub(crate) location: PathBuf,
 }
 
@@ -75,7 +75,7 @@ impl CommandDeclaration {
 /// after parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandCompletion {
-    CommandComplete { returns: WireEnvelope },
+    CommandComplete { returns: Envelope },
     CommandStatus,
 }
 
@@ -84,7 +84,7 @@ pub(crate) struct EventDeclaration {
     pub(crate) name: String,
     pub(crate) code: u16,
     /// Vendor event payload bytes, excluding the two-byte vendor event code.
-    pub(crate) payload: WireEnvelope,
+    pub(crate) payload: Envelope,
     pub(crate) location: PathBuf,
 }
 
@@ -341,11 +341,13 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
     })
 }
 
-fn wire_envelope(minimum: usize, maximum: usize) -> WireEnvelope {
+fn wire_envelope(minimum: usize, maximum: usize) -> Envelope {
+    let minimum = u32::try_from(minimum).expect("HCI envelopes fit in u32");
+    let maximum = u32::try_from(maximum).expect("HCI envelopes fit in u32");
     if minimum == maximum {
-        WireEnvelope::fixed(maximum)
+        Envelope::fixed(maximum)
     } else {
-        WireEnvelope::bounded(minimum, maximum)
+        Envelope::bounded(minimum, maximum)
     }
 }
 
@@ -503,10 +505,10 @@ mod tests {
         assert_eq!(
             declaration.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::fixed(8),
+                returns: Envelope::fixed(8),
             }
         );
-        assert_eq!(declaration.request, WireEnvelope::fixed(0));
+        assert_eq!(declaration.request, Envelope::fixed(0));
     }
 
     #[test]
@@ -537,10 +539,10 @@ mod tests {
         assert_eq!(
             declaration.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::fixed(6),
+                returns: Envelope::fixed(6),
             }
         );
-        assert_eq!(declaration.request, WireEnvelope::fixed(3));
+        assert_eq!(declaration.request, Envelope::fixed(3));
     }
 
     #[test]
@@ -557,11 +559,11 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 1));
         let declaration = declarations.get("GapSetIoCapability").unwrap();
         assert_eq!(declaration.code, 0x085);
-        assert_eq!(declaration.request, WireEnvelope::fixed(1));
+        assert_eq!(declaration.request, Envelope::fixed(1));
         assert_eq!(
             declaration.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::fixed(0),
+                returns: Envelope::fixed(0),
             }
         );
     }
@@ -583,7 +585,7 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.completion, CommandCompletion::CommandStatus);
-        assert_eq!(declaration.request, WireEnvelope::fixed(1));
+        assert_eq!(declaration.request, Envelope::fixed(1));
     }
 
     #[test]
@@ -621,10 +623,10 @@ mod tests {
         assert_eq!(
             declaration.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(4, 253),
+                returns: Envelope::bounded(4, 253),
             }
         );
-        assert_eq!(declaration.request, WireEnvelope::bounded(3, 255));
+        assert_eq!(declaration.request, Envelope::bounded(3, 255));
     }
 
     #[test]
@@ -650,11 +652,11 @@ mod tests {
         "#;
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
-        assert_eq!(declaration.request, WireEnvelope::fixed(1));
+        assert_eq!(declaration.request, Envelope::fixed(1));
         assert_eq!(
             declaration.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(1, 16),
+                returns: Envelope::bounded(1, 16),
             }
         );
     }
@@ -761,7 +763,7 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.completion, CommandCompletion::CommandStatus);
-        assert_eq!(declaration.request, WireEnvelope::bounded(4, 28));
+        assert_eq!(declaration.request, Envelope::bounded(4, 28));
     }
 
     #[test]
@@ -797,7 +799,7 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 0));
         assert_eq!(
             declarations.get("Current").unwrap().request,
-            WireEnvelope::bounded(6, 22)
+            Envelope::bounded(6, 22)
         );
 
         let source = r#"
@@ -1008,25 +1010,25 @@ mod tests {
         let coverage = load_rust_catalog(&crate_dir, version(0, 17, 1)).unwrap();
 
         let update = coverage.commands.get("GapUpdateAdvertisingData").unwrap();
-        assert_eq!(update.request, WireEnvelope::bounded(1, 32));
+        assert_eq!(update.request, Envelope::bounded(1, 32));
         assert_eq!(
             update.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::fixed(0),
+                returns: Envelope::fixed(0),
             }
         );
 
         let discoverable = coverage.commands.get("GapSetLimitedDiscoverable").unwrap();
         // Independent field capacities exceed one HCI command, but the
         // generated constructor rejects aggregate payloads above 255 bytes.
-        assert_eq!(discoverable.request, WireEnvelope::bounded(13, 255));
+        assert_eq!(discoverable.request, Envelope::bounded(13, 255));
 
         let read = coverage.commands.get("GattReadHandleValue").unwrap();
-        assert_eq!(read.request, WireEnvelope::fixed(6));
+        assert_eq!(read.request, Envelope::fixed(6));
         assert_eq!(
             read.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(4, 251),
+                returns: Envelope::bounded(4, 251),
             }
         );
 
@@ -1040,7 +1042,7 @@ mod tests {
             .commands
             .get("GattDiscoverPrimaryServicesByUUID")
             .unwrap();
-        assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
+        assert_eq!(tagged.request, Envelope::bounded(5, 19));
         assert_eq!(tagged.completion, CommandCompletion::CommandStatus);
 
         let bonded = coverage.commands.get("GapGetBondedDevices").unwrap();
@@ -1048,7 +1050,7 @@ mod tests {
         assert_eq!(
             bonded.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(1, 246),
+                returns: Envelope::bounded(1, 246),
             }
         );
 
@@ -1056,7 +1058,7 @@ mod tests {
         assert_eq!(
             config.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(1, 16),
+                returns: Envelope::bounded(1, 16),
             }
         );
 
@@ -1064,20 +1066,20 @@ mod tests {
         assert_eq!(
             channels.completion,
             CommandCompletion::CommandComplete {
-                returns: WireEnvelope::bounded(1, 6),
+                returns: Envelope::bounded(1, 6),
             }
         );
 
         assert_eq!(coverage.events.len(), 55);
         let gap_procedure = coverage.events.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
-        assert_eq!(gap_procedure.payload, WireEnvelope::bounded(3, 253));
+        assert_eq!(gap_procedure.payload, Envelope::bounded(3, 253));
 
         let bond_lost = coverage.events.get(&0x0405).unwrap();
-        assert_eq!(bond_lost.payload, WireEnvelope::fixed(0));
+        assert_eq!(bond_lost.payload, Envelope::fixed(0));
 
         let read_multiple = coverage.events.get(&0x0C15).unwrap();
-        assert_eq!(read_multiple.payload, WireEnvelope::bounded(3, 253));
+        assert_eq!(read_multiple.payload, Envelope::bounded(3, 253));
     }
 
     #[test]

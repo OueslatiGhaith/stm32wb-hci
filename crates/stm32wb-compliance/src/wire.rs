@@ -2,16 +2,16 @@
 //!
 //! Source adapters retain explicit unresolved evidence when CubeWB does not
 //! expose a definite size. At this boundary, every resolved layout becomes a
-//! [`WireEnvelope`]. The Rust declarations use the same representation, so
+//! [`Envelope`]. The Rust declarations use the same representation, so
 //! requests, command returns, and event payloads all follow one comparison
 //! path instead of carrying separate flags and length conventions.
 
 use std::collections::BTreeMap;
 
 use crate::catalog::{
-    CatalogCommand, CatalogCompletion, CatalogEvent, CommandScope, EventScope, ExtractedEnvelope,
+    CatalogCommand, CatalogCompletion, CatalogEvent, CommandScope, Envelope, EnvelopeEvidence,
+    EventScope, Evidence,
 };
-use crate::envelope::WireEnvelope;
 use crate::rust_source::{CommandCompletion, CommandDeclaration, EventDeclaration, RustCatalog};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,12 +31,12 @@ enum EnvelopeRelation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EnvelopeExpectation {
-    envelope: WireEnvelope,
+    envelope: Envelope,
     relation: EnvelopeRelation,
 }
 
 impl EnvelopeExpectation {
-    const fn exact(envelope: WireEnvelope) -> Self {
+    const fn exact(envelope: Envelope) -> Self {
         Self {
             envelope,
             relation: EnvelopeRelation::Exact,
@@ -92,7 +92,7 @@ pub(crate) fn compare_vendor_wire_with_external_events(
     commands: &[CatalogCommand],
     events: &[CatalogEvent],
     crate_coverage: &RustCatalog,
-    external_event_payloads: &BTreeMap<u16, ExtractedEnvelope>,
+    external_event_payloads: &BTreeMap<u16, EnvelopeEvidence>,
 ) -> WireReport {
     let mut by_ocf = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
     for command in commands {
@@ -190,7 +190,7 @@ fn compare_event_payload(
 }
 
 fn compare_event_payload_layout(
-    payload: &ExtractedEnvelope,
+    payload: &EnvelopeEvidence,
     metadata: &EventDeclaration,
     report: &mut WireReport,
 ) {
@@ -283,28 +283,20 @@ fn compare_completion(
 }
 
 fn extracted_envelope(
-    layout: &ExtractedEnvelope,
+    layout: &EnvelopeEvidence,
     variable_relation: EnvelopeRelation,
     unresolved: impl FnOnce(&str) -> String,
 ) -> Result<EnvelopeExpectation, String> {
     match layout {
-        ExtractedEnvelope::Known { minimum, maximum } => {
-            if minimum > maximum {
-                return Err(format!(
-                    "extracted envelope has inverted bounds {minimum}..={maximum}"
-                ));
+        Evidence::Known(envelope) => Ok(if envelope.is_fixed() {
+            EnvelopeExpectation::exact(*envelope)
+        } else {
+            EnvelopeExpectation {
+                envelope: *envelope,
+                relation: variable_relation,
             }
-            let envelope = WireEnvelope::bounded(*minimum as usize, *maximum as usize);
-            Ok(if minimum == maximum {
-                EnvelopeExpectation::exact(envelope)
-            } else {
-                EnvelopeExpectation {
-                    envelope,
-                    relation: variable_relation,
-                }
-            })
-        }
-        ExtractedEnvelope::Unresolved(expression) => Err(unresolved(expression)),
+        }),
+        Evidence::Unresolved(expression) => Err(unresolved(expression)),
     }
 }
 
@@ -313,7 +305,7 @@ fn compare_envelope(
     name: &str,
     label: &str,
     expected: Result<EnvelopeExpectation, String>,
-    actual: WireEnvelope,
+    actual: Envelope,
     report: &mut WireReport,
 ) {
     let expected = match expected {
@@ -336,23 +328,23 @@ fn compare_envelope(
             // semantic minimum, such as requiring one counted item, but must
             // accept the complete generated event capacity.
             !actual.is_fixed()
-                && actual.minimum >= expected.envelope.minimum
-                && actual.minimum <= expected.envelope.maximum
-                && actual.maximum == expected.envelope.maximum
+                && actual.minimum() >= expected.envelope.minimum()
+                && actual.minimum() <= expected.envelope.maximum()
+                && actual.maximum() == expected.envelope.maximum()
         }
         EnvelopeRelation::RequestCapacity => {
             // The C wrapper's command buffer proves a safe outer capacity,
             // while public parameter constraints can intentionally be
             // narrower. The entire Rust envelope must fit within that proof.
-            actual.minimum >= expected.envelope.minimum
-                && actual.maximum <= expected.envelope.maximum
+            actual.minimum() >= expected.envelope.minimum()
+                && actual.maximum() <= expected.envelope.maximum()
         }
         EnvelopeRelation::ResponseCapacity => {
             // A capacity-sized C response buffer is an outer storage bound.
             // Rust may preserve stricter command semantics, but must never
             // decode outside the proven prefix/capacity envelope.
-            actual.minimum >= expected.envelope.minimum
-                && actual.maximum <= expected.envelope.maximum
+            actual.minimum() >= expected.envelope.minimum()
+                && actual.maximum() <= expected.envelope.maximum()
         }
     };
     if !compatible {
@@ -400,7 +392,7 @@ mod tests {
         name: &str,
         code: u16,
         completion: CommandCompletion,
-        request: WireEnvelope,
+        request: Envelope,
     ) -> CommandDeclaration {
         CommandDeclaration {
             name: name.to_owned(),
@@ -411,7 +403,7 @@ mod tests {
         }
     }
 
-    fn declaration_complete(returns: WireEnvelope) -> CommandCompletion {
+    fn declaration_complete(returns: Envelope) -> CommandCompletion {
         CommandCompletion::CommandComplete { returns }
     }
 
@@ -429,7 +421,7 @@ mod tests {
     fn fixture_command(
         ocf: u16,
         completion: CatalogCompletion,
-        request: ExtractedEnvelope,
+        request: EnvelopeEvidence,
     ) -> CatalogCommand {
         CatalogCommand {
             kind: CatalogCommandKind::VendorAci { ocf },
@@ -441,11 +433,11 @@ mod tests {
         }
     }
 
-    fn catalog_complete(returns: ExtractedEnvelope) -> CatalogCompletion {
+    fn catalog_complete(returns: EnvelopeEvidence) -> CatalogCompletion {
         CatalogCompletion::CommandComplete { returns }
     }
 
-    fn fixture_event(code: u16, payload: ExtractedEnvelope) -> CatalogEvent {
+    fn fixture_event(code: u16, payload: EnvelopeEvidence) -> CatalogEvent {
         CatalogEvent {
             kind: CatalogEventKind::VendorAci { payload },
             code,
@@ -460,26 +452,26 @@ mod tests {
         let active = fixture_declaration(
             "Active",
             0x001,
-            declaration_complete(WireEnvelope::fixed(0)),
-            WireEnvelope::fixed(1),
+            declaration_complete(Envelope::fixed(0)),
+            Envelope::fixed(1),
         );
         let inactive = fixture_declaration(
             "Inactive",
             0x002,
             CommandCompletion::CommandStatus,
-            WireEnvelope::fixed(0),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(vec![active, inactive], &["Active"]);
         let commands = vec![
             fixture_command(
                 0x001,
                 CatalogCompletion::CommandStatus {},
-                ExtractedEnvelope::fixed(0),
+                EnvelopeEvidence::fixed(0),
             ),
             fixture_command(
                 0x002,
-                catalog_complete(ExtractedEnvelope::fixed(3)),
-                ExtractedEnvelope::fixed(0),
+                catalog_complete(EnvelopeEvidence::fixed(3)),
+                EnvelopeEvidence::fixed(0),
             ),
         ];
 
@@ -516,7 +508,7 @@ mod tests {
             EventDeclaration {
                 name: "FixedEvent".to_owned(),
                 code: 0x0400,
-                payload: WireEnvelope::fixed(2),
+                payload: Envelope::fixed(2),
                 location: PathBuf::from("event.rs"),
             },
         );
@@ -525,19 +517,13 @@ mod tests {
             EventDeclaration {
                 name: "VariableEvent".to_owned(),
                 code: 0x0401,
-                payload: WireEnvelope::bounded(3, 253),
+                payload: Envelope::bounded(3, 253),
                 location: PathBuf::from("event.rs"),
             },
         );
         let events = vec![
-            fixture_event(0x0400, ExtractedEnvelope::fixed(2)),
-            fixture_event(
-                0x0401,
-                ExtractedEnvelope::Known {
-                    minimum: 3,
-                    maximum: 253,
-                },
-            ),
+            fixture_event(0x0400, EnvelopeEvidence::fixed(2)),
+            fixture_event(0x0401, EnvelopeEvidence::known(3, 253)),
         ];
 
         let report = compare_vendor_wire(&[], &events, &coverage);
@@ -545,18 +531,18 @@ mod tests {
         assert!(report.differences.is_empty());
         assert!(report.unavailable.is_empty());
 
-        coverage.events.get_mut(&0x0401).unwrap().payload = WireEnvelope::bounded(3, 252);
+        coverage.events.get_mut(&0x0401).unwrap().payload = Envelope::bounded(3, 252);
         let report = compare_vendor_wire(&[], &events, &coverage);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("3..=253 bytes"));
         assert!(report.differences[0].issue.contains("3..=252 bytes"));
 
-        coverage.events.get_mut(&0x0401).unwrap().payload = WireEnvelope::bounded(2, 253);
+        coverage.events.get_mut(&0x0401).unwrap().payload = Envelope::bounded(2, 253);
         let report = compare_vendor_wire(&[], &events, &coverage);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("2..=253 bytes"));
 
-        coverage.events.get_mut(&0x0401).unwrap().payload = WireEnvelope::bounded(4, 253);
+        coverage.events.get_mut(&0x0401).unwrap().payload = Envelope::bounded(4, 253);
         let report = compare_vendor_wire(&[], &events, &coverage);
         assert!(report.differences.is_empty());
     }
@@ -569,7 +555,7 @@ mod tests {
             EventDeclaration {
                 name: "CoprocessorReady".to_owned(),
                 code: 0x9200,
-                payload: WireEnvelope::fixed(1),
+                payload: Envelope::fixed(1),
                 location: PathBuf::from("event.rs"),
             },
         );
@@ -578,13 +564,13 @@ mod tests {
         assert_eq!(unavailable.checked, 0);
         assert_eq!(unavailable.unavailable.len(), 1);
 
-        let mut external = BTreeMap::from([(0x9200, ExtractedEnvelope::fixed(1))]);
+        let mut external = BTreeMap::from([(0x9200, EnvelopeEvidence::fixed(1))]);
         let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
         assert_eq!(report.checked, 1);
         assert!(report.differences.is_empty());
         assert!(report.unavailable.is_empty());
 
-        external.insert(0x9200, ExtractedEnvelope::fixed(2));
+        external.insert(0x9200, EnvelopeEvidence::fixed(2));
         let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("is 2 bytes"));
@@ -596,26 +582,26 @@ mod tests {
         let status = fixture_declaration(
             "Status",
             0x001,
-            declaration_complete(WireEnvelope::fixed(0)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::fixed(0)),
+            Envelope::fixed(0),
         );
         let fixed = fixture_declaration(
             "Fixed",
             0x002,
-            declaration_complete(WireEnvelope::fixed(6)),
-            WireEnvelope::fixed(3),
+            declaration_complete(Envelope::fixed(6)),
+            Envelope::fixed(3),
         );
         let coverage = fixture_coverage(vec![status, fixed], &["Status", "Fixed"]);
         let commands = vec![
             fixture_command(
                 0x001,
-                catalog_complete(ExtractedEnvelope::fixed(0)),
-                ExtractedEnvelope::fixed(0),
+                catalog_complete(EnvelopeEvidence::fixed(0)),
+                EnvelopeEvidence::fixed(0),
             ),
             fixture_command(
                 0x002,
-                catalog_complete(ExtractedEnvelope::fixed(6)),
-                ExtractedEnvelope::fixed(3),
+                catalog_complete(EnvelopeEvidence::fixed(6)),
+                EnvelopeEvidence::fixed(3),
             ),
         ];
 
@@ -631,20 +617,20 @@ mod tests {
         let contained = fixture_declaration(
             "Contained",
             0x010,
-            declaration_complete(WireEnvelope::bounded(1, 16)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::bounded(1, 16)),
+            Envelope::fixed(0),
         );
         let missing_prefix = fixture_declaration(
             "MissingPrefix",
             0x011,
-            declaration_complete(WireEnvelope::bounded(0, 16)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::bounded(0, 16)),
+            Envelope::fixed(0),
         );
         let too_large = fixture_declaration(
             "TooLarge",
             0x012,
-            declaration_complete(WireEnvelope::bounded(1, 252)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::bounded(1, 252)),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(
             vec![contained, missing_prefix, too_large],
@@ -653,11 +639,8 @@ mod tests {
         let command = |ocf| {
             fixture_command(
                 ocf,
-                catalog_complete(ExtractedEnvelope::Known {
-                    minimum: 1,
-                    maximum: 251,
-                }),
-                ExtractedEnvelope::fixed(0),
+                catalog_complete(EnvelopeEvidence::known(1, 251)),
+                EnvelopeEvidence::fixed(0),
             )
         };
         let commands = vec![command(0x010), command(0x011), command(0x012)];
@@ -686,14 +669,14 @@ mod tests {
         let declaration = fixture_declaration(
             "Variable",
             0x001,
-            declaration_complete(WireEnvelope::bounded(1, 6)),
-            WireEnvelope::fixed(3),
+            declaration_complete(Envelope::bounded(1, 6)),
+            Envelope::fixed(3),
         );
         let coverage = fixture_coverage(vec![declaration], &["Variable"]);
         let commands = vec![fixture_command(
             0x001,
-            catalog_complete(ExtractedEnvelope::fixed(6)),
-            ExtractedEnvelope::fixed(3),
+            catalog_complete(EnvelopeEvidence::fixed(6)),
+            EnvelopeEvidence::fixed(3),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -711,14 +694,14 @@ mod tests {
         let declaration = fixture_declaration(
             "Fixed",
             0x002,
-            declaration_complete(WireEnvelope::fixed(5)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::fixed(5)),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(vec![declaration], &["Fixed"]);
         let commands = vec![fixture_command(
             0x002,
-            catalog_complete(ExtractedEnvelope::fixed(6)),
-            ExtractedEnvelope::fixed(0),
+            catalog_complete(EnvelopeEvidence::fixed(6)),
+            EnvelopeEvidence::fixed(0),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -735,28 +718,25 @@ mod tests {
             "Wrong",
             0x006,
             CommandCompletion::CommandStatus,
-            WireEnvelope::fixed(2),
+            Envelope::fixed(2),
         );
         let dynamic = fixture_declaration(
             "Dynamic",
             0x007,
             CommandCompletion::CommandStatus,
-            WireEnvelope::bounded(1, 17),
+            Envelope::bounded(1, 17),
         );
         let coverage = fixture_coverage(vec![wrong, dynamic], &["Wrong", "Dynamic"]);
         let commands = vec![
             fixture_command(
                 0x006,
                 CatalogCompletion::CommandStatus {},
-                ExtractedEnvelope::fixed(3),
+                EnvelopeEvidence::fixed(3),
             ),
             fixture_command(
                 0x007,
                 CatalogCompletion::CommandStatus {},
-                ExtractedEnvelope::Known {
-                    minimum: 1,
-                    maximum: 32,
-                },
+                EnvelopeEvidence::known(1, 32),
             ),
         ];
 
@@ -775,13 +755,13 @@ mod tests {
             "Unresolved",
             0x008,
             CommandCompletion::CommandStatus,
-            WireEnvelope::bounded(1, 17),
+            Envelope::bounded(1, 17),
         );
         let coverage = fixture_coverage(vec![declaration], &["Unresolved"]);
         let commands = vec![fixture_command(
             0x008,
             CatalogCompletion::CommandStatus {},
-            ExtractedEnvelope::Unresolved("custom(value_len)".to_owned()),
+            EnvelopeEvidence::Unresolved("custom(value_len)".to_owned()),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -802,7 +782,7 @@ mod tests {
             "UnresolvedCompletion",
             0x009,
             CommandCompletion::CommandStatus,
-            WireEnvelope::fixed(0),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(vec![declaration], &["UnresolvedCompletion"]);
         let commands = vec![fixture_command(
@@ -810,7 +790,7 @@ mod tests {
             CatalogCompletion::Unresolved {
                 expression: "HCI_VENDOR_EVENT".to_owned(),
             },
-            ExtractedEnvelope::fixed(0),
+            EnvelopeEvidence::fixed(0),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -826,14 +806,14 @@ mod tests {
         let declaration = fixture_declaration(
             "UnresolvedResponse",
             0x00a,
-            declaration_complete(WireEnvelope::fixed(1)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::fixed(1)),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(vec![declaration], &["UnresolvedResponse"]);
         let commands = vec![fixture_command(
             0x00a,
-            catalog_complete(ExtractedEnvelope::Unresolved("computed_rlen".to_owned())),
-            ExtractedEnvelope::fixed(0),
+            catalog_complete(EnvelopeEvidence::Unresolved("computed_rlen".to_owned())),
+            EnvelopeEvidence::fixed(0),
         )];
 
         let report = compare_vendor_wire(&commands, &[], &coverage);
@@ -847,7 +827,7 @@ mod tests {
     #[test]
     fn request_capacity_requires_the_rust_envelope_to_be_contained() {
         let expected = Ok(EnvelopeExpectation {
-            envelope: WireEnvelope::bounded(2, 255),
+            envelope: Envelope::bounded(2, 255),
             relation: EnvelopeRelation::RequestCapacity,
         });
 
@@ -857,7 +837,7 @@ mod tests {
             "Contained",
             "request payload",
             expected.clone(),
-            WireEnvelope::bounded(2, 48),
+            Envelope::bounded(2, 48),
             &mut report,
         );
         assert!(report.differences.is_empty());
@@ -867,7 +847,7 @@ mod tests {
             "MissingPrefix",
             "request payload",
             expected.clone(),
-            WireEnvelope::bounded(1, 48),
+            Envelope::bounded(1, 48),
             &mut report,
         );
         compare_envelope(
@@ -875,7 +855,7 @@ mod tests {
             "TooLarge",
             "request payload",
             expected,
-            WireEnvelope::bounded(2, 256),
+            Envelope::bounded(2, 256),
             &mut report,
         );
         assert_eq!(report.differences.len(), 2);
@@ -886,26 +866,26 @@ mod tests {
         let missing = fixture_declaration(
             "Missing",
             0x004,
-            declaration_complete(WireEnvelope::fixed(0)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::fixed(0)),
+            Envelope::fixed(0),
         );
         let ambiguous = fixture_declaration(
             "Ambiguous",
             0x005,
-            declaration_complete(WireEnvelope::fixed(0)),
-            WireEnvelope::fixed(0),
+            declaration_complete(Envelope::fixed(0)),
+            Envelope::fixed(0),
         );
         let coverage = fixture_coverage(vec![missing, ambiguous], &["Missing", "Ambiguous"]);
         let commands = vec![
             fixture_command(
                 0x005,
-                catalog_complete(ExtractedEnvelope::fixed(0)),
-                ExtractedEnvelope::fixed(0),
+                catalog_complete(EnvelopeEvidence::fixed(0)),
+                EnvelopeEvidence::fixed(0),
             ),
             fixture_command(
                 0x005,
-                catalog_complete(ExtractedEnvelope::fixed(0)),
-                ExtractedEnvelope::fixed(0),
+                catalog_complete(EnvelopeEvidence::fixed(0)),
+                EnvelopeEvidence::fixed(0),
             ),
         ];
 

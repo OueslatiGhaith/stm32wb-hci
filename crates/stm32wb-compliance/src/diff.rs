@@ -85,14 +85,10 @@ impl VersionDiff {
 
 #[derive(Debug, Error)]
 pub enum VersionDiffError {
-    #[error(
-        "cannot diff catalog schemas with versions {from}; expected the current schema version {expected}"
-    )]
-    UnsupportedFromSchema { from: u16, expected: u16 },
-    #[error(
-        "cannot diff catalog schemas with versions {to}; expected the current schema version {expected}"
-    )]
-    UnsupportedToSchema { to: u16, expected: u16 },
+    #[error("cannot diff invalid source catalog: {reason}")]
+    InvalidFromCatalog { reason: String },
+    #[error("cannot diff invalid destination catalog: {reason}")]
+    InvalidToCatalog { reason: String },
     #[error("cannot diff different firmware families: {from:?} and {to:?}")]
     FamilyMismatch {
         from: CatalogFamily,
@@ -172,18 +168,10 @@ pub fn diff_catalogs(
 }
 
 fn ensure_compatible(from: &CatalogSchema, to: &CatalogSchema) -> Result<(), VersionDiffError> {
-    if from.schema_version != crate::CATALOG_SCHEMA_VERSION {
-        return Err(VersionDiffError::UnsupportedFromSchema {
-            from: from.schema_version,
-            expected: crate::CATALOG_SCHEMA_VERSION,
-        });
-    }
-    if to.schema_version != crate::CATALOG_SCHEMA_VERSION {
-        return Err(VersionDiffError::UnsupportedToSchema {
-            to: to.schema_version,
-            expected: crate::CATALOG_SCHEMA_VERSION,
-        });
-    }
+    from.validate()
+        .map_err(|reason| VersionDiffError::InvalidFromCatalog { reason })?;
+    to.validate()
+        .map_err(|reason| VersionDiffError::InvalidToCatalog { reason })?;
     if from.family != to.family {
         return Err(VersionDiffError::FamilyMismatch {
             from: from.family,
@@ -245,10 +233,7 @@ fn same_event_shape(left: &CatalogEvent, right: &CatalogEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        CATALOG_SCHEMA_VERSION, CatalogCommandKind, CatalogCompletion, CatalogEventKind,
-        ExtractedEnvelope,
-    };
+    use crate::{CatalogCommandKind, CatalogCompletion, CatalogEventKind, EnvelopeEvidence};
 
     fn command(ocf: u16, name: &str) -> CatalogCommand {
         CatalogCommand {
@@ -257,16 +242,16 @@ mod tests {
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
             completion: CatalogCompletion::CommandComplete {
-                returns: ExtractedEnvelope::fixed(0),
+                returns: EnvelopeEvidence::fixed(0),
             },
-            request: ExtractedEnvelope::fixed(0),
+            request: EnvelopeEvidence::fixed(0),
         }
     }
 
     fn event(code: u16, name: &str) -> CatalogEvent {
         CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: ExtractedEnvelope::fixed(0),
+                payload: EnvelopeEvidence::fixed(0),
             },
             code,
             name: name.to_owned(),
@@ -277,7 +262,6 @@ mod tests {
 
     fn schema(tag: &str) -> CatalogSchema {
         CatalogSchema {
-            schema_version: CATALOG_SCHEMA_VERSION,
             family: CatalogFamily::Stm32Wb,
             cube_tag: tag.to_owned(),
             commands: Vec::new(),
@@ -296,7 +280,7 @@ mod tests {
         moved.source_offset = 99;
         new.commands = vec![moved, command(3, "added")];
         new.commands[0].completion = CatalogCompletion::CommandComplete {
-            returns: ExtractedEnvelope::fixed(3),
+            returns: EnvelopeEvidence::fixed(3),
         };
         new.events = vec![event(0x400, "renamed_event"), event(0x402, "added_event")];
         new.events[0].source_name = "new_events.c".to_owned();

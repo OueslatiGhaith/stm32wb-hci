@@ -55,10 +55,8 @@ The `stm32wb-compliance` workspace tool compares the selected feature surface ag
 tag in a local STM32CubeWB clone. It reads tagged blobs with `git show`, so running it does not
 checkout, modify, or otherwise disturb `STM32CubeWB`.
 
-Machine consumers should follow the compliance tool's
-[compatibility and migration guide](crates/stm32wb-compliance/README.md). The normalized catalog,
-JSON check report, and TOML exclusion policy are separate versioned contracts; the guide documents
-their version fields and the catalog-schema-9, report-schema-1, and policy-format-1 migrations.
+The compliance tool's [guide](crates/stm32wb-compliance/README.md) documents its
+internal normalized catalog, JSON report, and TOML exclusion policy.
 
 ```sh
 # STM32CubeWB is expected at ./STM32CubeWB by default.

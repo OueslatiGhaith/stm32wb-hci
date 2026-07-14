@@ -6,13 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::Deserialize;
-use stm32wb_compliance::{CheckReport, ExtractedEnvelope, FirmwareVersion};
-
-/// TOML exclusion-policy format version.
-///
-/// Format 1 replaced the pipe-delimited `exclusions.policy` format with a
-/// `version` field and an `[[exclusions]]` table for each entry.
-pub(crate) const POLICY_FORMAT_VERSION: u32 = 1;
+use stm32wb_compliance::{CheckReport, EnvelopeEvidence, FirmwareVersion};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CoverageKind {
@@ -59,7 +53,7 @@ struct PolicyEntry {
     kind: CoverageKind,
     code: u16,
     selector: FirmwareSelector,
-    external_event_payload: Option<ExtractedEnvelope>,
+    external_event_payload: Option<EnvelopeEvidence>,
     reason: String,
     index: usize,
 }
@@ -73,7 +67,6 @@ pub(crate) struct ExclusionPolicy {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyDocument {
-    version: u32,
     #[serde(default)]
     exclusions: Vec<PolicyEntryDocument>,
 }
@@ -121,13 +114,6 @@ impl ExclusionPolicy {
                 path.display()
             )
         })?;
-        if document.version != POLICY_FORMAT_VERSION {
-            return Err(format!(
-                "unsupported exclusion-policy format version {}; expected {POLICY_FORMAT_VERSION}",
-                document.version
-            ));
-        }
-
         let mut entries = Vec::with_capacity(document.exclusions.len());
         let mut raw_entries = BTreeSet::new();
         for (offset, entry) in document.exclusions.into_iter().enumerate() {
@@ -288,7 +274,7 @@ fn validate_event_payload(
     path: &Path,
     index: usize,
     payload: PayloadDocument,
-) -> Result<ExtractedEnvelope, String> {
+) -> Result<EnvelopeEvidence, String> {
     const MAX_VENDOR_EVENT_PAYLOAD: u32 = u8::MAX as u32 - 2;
 
     if payload.minimum > payload.maximum {
@@ -308,7 +294,7 @@ fn validate_event_payload(
             ),
         ));
     }
-    Ok(ExtractedEnvelope::known(payload.minimum, payload.maximum))
+    Ok(EnvelopeEvidence::known(payload.minimum, payload.maximum))
 }
 
 fn policy_error(path: &Path, index: usize, message: &str) -> String {
@@ -319,7 +305,7 @@ fn policy_error(path: &Path, index: usize, message: &str) -> String {
 pub(crate) struct ActiveExclusions {
     pub(crate) commands: BTreeMap<u16, String>,
     pub(crate) events: BTreeMap<u16, String>,
-    pub(crate) external_event_payloads: BTreeMap<u16, ExtractedEnvelope>,
+    pub(crate) external_event_payloads: BTreeMap<u16, EnvelopeEvidence>,
 }
 
 impl ActiveExclusions {
@@ -329,12 +315,12 @@ impl ActiveExclusions {
         firmware: FirmwareVersion,
     ) -> Result<PolicyAudit, String> {
         let reported_commands = report
-            .excluded_commands
+            .excluded_commands()
             .iter()
             .map(|entry| (entry.code, entry.reason.clone()))
             .collect::<BTreeMap<_, _>>();
         let reported_events = report
-            .excluded_events
+            .excluded_events()
             .iter()
             .map(|entry| (entry.code, entry.reason.clone()))
             .collect::<BTreeMap<_, _>>();
@@ -347,15 +333,15 @@ impl ActiveExclusions {
         audit_exclusion_codes(
             CoverageKind::Command,
             &self.commands,
-            &report.vendor.command_codes(),
-            &report.active_api.command_codes(),
+            &report.vendor().command_codes(),
+            &report.active_api().command_codes(),
             firmware,
         )?;
         audit_exclusion_codes(
             CoverageKind::Event,
             &self.events,
-            &report.vendor.event_codes(),
-            &report.active_api.event_codes(),
+            &report.vendor().event_codes(),
+            &report.active_api().event_codes(),
             firmware,
         )?;
         Ok(PolicyAudit {
@@ -405,8 +391,6 @@ mod tests {
         let policy = ExclusionPolicy::parse(
             "test.toml".into(),
             r#"
-                version = 1
-
                 [[exclusions]]
                 scope = "transport-event"
                 code = 0x9200
@@ -438,11 +422,11 @@ mod tests {
         );
         assert_eq!(
             old.external_event_payloads.get(&0x9200),
-            Some(&ExtractedEnvelope::fixed(1))
+            Some(&EnvelopeEvidence::fixed(1))
         );
         assert_eq!(
             old.external_event_payloads.get(&0x9201),
-            Some(&ExtractedEnvelope::known(1, 3))
+            Some(&EnvelopeEvidence::known(1, 3))
         );
         assert_eq!(old.commands.get(&1), Some(&"legacy command".to_owned()));
 
@@ -456,7 +440,6 @@ mod tests {
         let overlapping = ExclusionPolicy::parse(
             "test.toml".into(),
             r#"
-                version = 1
                 [[exclusions]]
                 scope = "transport-event"
                 code = 0x9200
@@ -476,7 +459,6 @@ mod tests {
         let unknown = ExclusionPolicy::parse(
             "test.toml".into(),
             r#"
-                version = 1
                 [[exclusions]]
                 scope = "event"
                 code = 0x9200
@@ -493,7 +475,6 @@ mod tests {
         ] {
             let source = format!(
                 r#"
-                    version = 1
                     [[exclusions]]
                     scope = "transport-event"
                     code = 0x9200
@@ -507,9 +488,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_payloads_bad_toml_and_wrong_versions() {
+    fn rejects_missing_payloads_and_bad_toml() {
         let missing_payload = r#"
-            version = 1
             [[exclusions]]
             scope = "transport-event"
             code = 0x9200
@@ -517,7 +497,6 @@ mod tests {
             reason = "transport event"
         "#;
         assert!(ExclusionPolicy::parse("test.toml".into(), missing_payload).is_err());
-        assert!(ExclusionPolicy::parse("test.toml".into(), "version = [").is_err());
-        assert!(ExclusionPolicy::parse("test.toml".into(), "version = 2").is_err());
+        assert!(ExclusionPolicy::parse("test.toml".into(), "exclusions = [").is_err());
     }
 }

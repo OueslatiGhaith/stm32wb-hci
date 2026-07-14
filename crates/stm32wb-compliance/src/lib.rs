@@ -3,14 +3,12 @@
 //! This host-only crate can run in CI against a local STM32CubeWB checkout;
 //! `syn` is used to make the selected Rust API inventory syntax-aware.
 //!
-//! The normalized catalog and machine-readable check report are independent
-//! versioned contracts. Consumers must validate [`CATALOG_SCHEMA_VERSION`] or
-//! [`REPORT_SCHEMA_VERSION`], respectively, before interpreting either one.
+//! The normalized catalog and machine-readable check report are internal
+//! representations validated at their construction boundaries.
 
 mod c_preprocessor;
 mod catalog;
 mod diff;
-mod envelope;
 mod json;
 mod model;
 mod rust_cfg;
@@ -20,14 +18,14 @@ mod vendor;
 mod wire;
 
 pub use catalog::{
-    CATALOG_SCHEMA_VERSION, CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent,
-    CatalogEventKind, CatalogFamily, CatalogSchema, CommandScope, EventScope, ExtractedEnvelope,
+    CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
+    CatalogFamily, CatalogSchema, CommandScope, Envelope, EnvelopeEvidence, EventScope, Evidence,
 };
 pub use diff::{
     CatalogIdentity, ChangedCommand, ChangedEvent, CommandChanges, CommandKey, EventChanges,
     EventKey, VersionDiff, VersionDiffError, diff_catalogs,
 };
-pub use json::{CheckReportJson, REPORT_SCHEMA_VERSION};
+pub use json::CheckReportJson;
 pub use model::{
     CheckReport, CoverageDifference, CoverageEntry, CoverageOrigin, ProtocolCoverage,
     StandardHciCoverage,
@@ -41,8 +39,6 @@ use std::process::Command;
 
 use thiserror::Error;
 
-use model::{compare_coverage, with_standard_hci_coverage, with_wire_report};
-
 #[derive(Clone, Debug)]
 pub struct CheckOptions {
     pub firmware: FirmwareVersion,
@@ -53,7 +49,7 @@ pub struct CheckOptions {
     pub excluded_events: BTreeMap<u16, String>,
     /// Payload layouts supplied by the checked-in policy for transport-only
     /// events which do not exist in CubeWB's generated event table.
-    pub external_event_payloads: BTreeMap<u16, ExtractedEnvelope>,
+    pub external_event_payloads: BTreeMap<u16, EnvelopeEvidence>,
 }
 
 impl CheckOptions {
@@ -77,7 +73,6 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
         cargo_check(&options.crate_dir, &options.firmware.feature_name())?;
     }
 
-    let tag = options.firmware.cube_tag();
     let catalog = load_catalog(&options.cube_dir, options.firmware)?;
     let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.firmware)
         .map_err(ComplianceError::Source)?;
@@ -95,24 +90,20 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     let standard_hci = catalog.standard_hci_coverage();
     let active_api = rust_catalog.coverage();
 
-    let report = compare_coverage(
+    Ok(CheckReport::new(
         options.firmware,
-        tag,
         vendor,
         active_api,
-        options.excluded_commands.clone(),
-        options.excluded_events.clone(),
-    );
-    let report = with_standard_hci_coverage(
-        report,
         standard_hci,
         StandardHciCoverage {
             commands: standard_provider.commands,
             events: standard_provider.events,
             le_meta_events: standard_provider.le_meta_events,
         },
-    );
-    Ok(with_wire_report(report, wire))
+        wire,
+        options.excluded_commands.clone(),
+        options.excluded_events.clone(),
+    ))
 }
 
 /// Load the normalized generated protocol catalog for one firmware version.

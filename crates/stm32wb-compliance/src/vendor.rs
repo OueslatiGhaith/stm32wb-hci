@@ -9,7 +9,7 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
-    CatalogFamily, CatalogSchema, CommandScope, EventScope, ExtractedEnvelope,
+    CatalogFamily, CatalogSchema, CommandScope, EnvelopeEvidence, EventScope,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -77,7 +77,7 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     )?;
     catalog.events.extend(le_events);
 
-    catalog.normalize();
+    catalog.normalize()?;
     Ok(catalog)
 }
 
@@ -493,7 +493,7 @@ fn event_process_layouts(
     root: Node<'_>,
     source: &str,
     packed_layouts: &PackedLayouts,
-) -> BTreeMap<String, ExtractedEnvelope> {
+) -> BTreeMap<String, EnvelopeEvidence> {
     let mut functions = Vec::new();
     collect_nodes(root, "function_definition", &mut functions);
     functions
@@ -514,7 +514,7 @@ fn event_process_layouts(
                             packed_layouts,
                         )
                     } else {
-                        ExtractedEnvelope::fixed(0)
+                        EnvelopeEvidence::fixed(0)
                     }
                 },
                 |type_name| event_payload_layout(type_name, packed_layouts),
@@ -701,15 +701,15 @@ fn request_layout(
     body: Node<'_>,
     source: &str,
     packed_layouts: &PackedLayouts,
-) -> ExtractedEnvelope {
+) -> EnvelopeEvidence {
     let Some(value) = assignment_value(body, source, "rq", "clen") else {
-        return ExtractedEnvelope::fixed(0);
+        return EnvelopeEvidence::fixed(0);
     };
     let value_text = node_text(value, source).trim();
     if let Some((size, end)) = parse_c_integer(value_text, 0)
         && value_text[end..].trim().is_empty()
     {
-        return ExtractedEnvelope::fixed(u32::from(size));
+        return EnvelopeEvidence::fixed(u32::from(size));
     }
     if expression_identifier(value)
         .is_some_and(|identifier| node_text(identifier, source).trim() == "index_input")
@@ -728,7 +728,7 @@ fn request_layout(
                 .iter()
                 .any(|(assignment, _)| nested_in_dynamic_control_flow(*assignment, body))
         {
-            return ExtractedEnvelope::Unresolved(formula);
+            return EnvelopeEvidence::Unresolved(formula);
         }
         let context = RequestExpressionContext {
             function_declarator,
@@ -745,21 +745,21 @@ fn request_layout(
             },
         );
         let Some(total) = total else {
-            return ExtractedEnvelope::Unresolved(formula);
+            return EnvelopeEvidence::Unresolved(formula);
         };
         let Some((minimum, maximum)) = total.envelope() else {
-            return ExtractedEnvelope::Unresolved(formula);
+            return EnvelopeEvidence::Unresolved(formula);
         };
         let (Ok(minimum), Ok(maximum)) = (u32::try_from(minimum), u32::try_from(maximum)) else {
-            return ExtractedEnvelope::Unresolved(formula);
+            return EnvelopeEvidence::Unresolved(formula);
         };
         return if minimum == maximum {
-            ExtractedEnvelope::fixed(maximum)
+            EnvelopeEvidence::fixed(maximum)
         } else {
-            ExtractedEnvelope::Known { minimum, maximum }
+            EnvelopeEvidence::known(minimum, maximum)
         };
     }
-    ExtractedEnvelope::Unresolved(value_text.to_owned())
+    EnvelopeEvidence::Unresolved(value_text.to_owned())
 }
 
 fn request_expression_values(
@@ -982,13 +982,9 @@ fn c_variable_type(body: Node<'_>, source: &str, variable: &str) -> Option<Strin
     })
 }
 
-fn return_layout(
-    body: Node<'_>,
-    source: &str,
-    packed_layouts: &PackedLayouts,
-) -> ExtractedEnvelope {
+fn return_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -> EnvelopeEvidence {
     let Some(value) = assignment_value(body, source, "rq", "rlen") else {
-        return ExtractedEnvelope::Unresolved(
+        return EnvelopeEvidence::Unresolved(
             "CubeWB does not state a Command Complete response length".to_owned(),
         );
     };
@@ -1003,39 +999,39 @@ fn return_layout(
     {
         return return_layout_for_struct(type_name, packed_layouts);
     }
-    ExtractedEnvelope::Unresolved(value_text.to_owned())
+    EnvelopeEvidence::Unresolved(value_text.to_owned())
 }
 
-fn return_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> ExtractedEnvelope {
+fn return_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> EnvelopeEvidence {
     match normalized_packed_layout(&type_name, layouts) {
         Ok((minimum, maximum, variable)) => normalized_return_layout(minimum, maximum, variable),
-        Err(reason) => ExtractedEnvelope::Unresolved(reason),
+        Err(reason) => EnvelopeEvidence::Unresolved(reason),
     }
 }
 
-fn normalized_return_layout(minimum: u32, maximum: u32, variable: bool) -> ExtractedEnvelope {
+fn normalized_return_layout(minimum: u32, maximum: u32, variable: bool) -> EnvelopeEvidence {
     let Some(minimum) = minimum.checked_sub(1) else {
-        return ExtractedEnvelope::Unresolved(
+        return EnvelopeEvidence::Unresolved(
             "CubeWB Command Complete response cannot contain its status byte".to_owned(),
         );
     };
     let Some(maximum) = maximum.checked_sub(1) else {
-        return ExtractedEnvelope::Unresolved(
+        return EnvelopeEvidence::Unresolved(
             "CubeWB Command Complete response cannot contain its status byte".to_owned(),
         );
     };
     if variable && minimum != maximum {
-        ExtractedEnvelope::Known { minimum, maximum }
+        EnvelopeEvidence::known(minimum, maximum)
     } else {
-        ExtractedEnvelope::fixed(maximum)
+        EnvelopeEvidence::fixed(maximum)
     }
 }
 
-fn event_payload_layout(type_name: String, layouts: &PackedLayouts) -> ExtractedEnvelope {
+fn event_payload_layout(type_name: String, layouts: &PackedLayouts) -> EnvelopeEvidence {
     match normalized_packed_layout(&type_name, layouts) {
-        Ok((minimum, maximum, true)) => ExtractedEnvelope::Known { minimum, maximum },
-        Ok((_, maximum, false)) => ExtractedEnvelope::fixed(maximum),
-        Err(reason) => ExtractedEnvelope::Unresolved(reason),
+        Ok((minimum, maximum, true)) => EnvelopeEvidence::known(minimum, maximum),
+        Ok((_, maximum, false)) => EnvelopeEvidence::fixed(maximum),
+        Err(reason) => EnvelopeEvidence::Unresolved(reason),
     }
 }
 
@@ -1540,13 +1536,7 @@ mod tests {
             &parse_packed_struct_envelopes(types),
         )
         .unwrap();
-        assert_eq!(
-            commands[0].request,
-            ExtractedEnvelope::Known {
-                minimum: 2,
-                maximum: 255,
-            }
-        );
+        assert_eq!(commands[0].request, EnvelopeEvidence::known(2, 255));
     }
 
     #[test]
@@ -1589,13 +1579,7 @@ mod tests {
             &parse_packed_struct_envelopes(types),
         )
         .unwrap();
-        assert_eq!(
-            commands[0].request,
-            ExtractedEnvelope::Known {
-                minimum: 2,
-                maximum: 254,
-            }
-        );
+        assert_eq!(commands[0].request, EnvelopeEvidence::known(2, 254));
     }
 
     #[test]
@@ -1632,20 +1616,8 @@ mod tests {
 
         let commands =
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
-        assert_eq!(
-            commands[0].request,
-            ExtractedEnvelope::Known {
-                minimum: 4,
-                maximum: 18,
-            }
-        );
-        assert_eq!(
-            commands[1].request,
-            ExtractedEnvelope::Known {
-                minimum: 4,
-                maximum: 18,
-            }
-        );
+        assert_eq!(commands[0].request, EnvelopeEvidence::known(4, 18));
+        assert_eq!(commands[1].request, EnvelopeEvidence::known(4, 18));
     }
 
     #[test]
@@ -1666,13 +1638,7 @@ mod tests {
 
         let commands =
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
-        assert_eq!(
-            commands[0].request,
-            ExtractedEnvelope::Known {
-                minimum: 13,
-                maximum: 255,
-            }
-        );
+        assert_eq!(commands[0].request, EnvelopeEvidence::known(13, 255));
     }
 
     #[test]
@@ -1692,7 +1658,7 @@ mod tests {
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
         assert_eq!(
             commands[0].request,
-            ExtractedEnvelope::Unresolved("encoded_size(Value)".to_owned())
+            EnvelopeEvidence::Unresolved("encoded_size(Value)".to_owned())
         );
     }
 
@@ -1778,7 +1744,7 @@ mod tests {
         assert!(
             commands
                 .iter()
-                .all(|command| matches!(command.request, ExtractedEnvelope::Unresolved(_)))
+                .all(|command| matches!(command.request, EnvelopeEvidence::Unresolved(_)))
         );
     }
 
@@ -1891,7 +1857,7 @@ mod tests {
         assert!(matches!(
             &vendor[0].kind,
             CatalogEventKind::VendorAci {
-                payload: ExtractedEnvelope::Unresolved(reason)
+                payload: EnvelopeEvidence::Unresolved(reason)
             } if reason.contains("vendor_rp0")
         ));
     }
@@ -1962,38 +1928,14 @@ mod tests {
 
         let returns = ["fixed_rp0", "hal_rp0", "gap_rp0", "gatt_rp0", "l2cap_rp0"]
             .map(|type_name| return_layout_for_struct(type_name.to_owned(), &layouts));
-        assert_eq!(returns[0], ExtractedEnvelope::fixed(6));
-        assert_eq!(
-            returns[1],
-            ExtractedEnvelope::Known {
-                minimum: 1,
-                maximum: 251,
-            }
-        );
-        assert_eq!(
-            returns[2],
-            ExtractedEnvelope::Known {
-                minimum: 1,
-                maximum: 246,
-            }
-        );
-        assert_eq!(
-            returns[3],
-            ExtractedEnvelope::Known {
-                minimum: 4,
-                maximum: 251,
-            }
-        );
-        assert_eq!(
-            returns[4],
-            ExtractedEnvelope::Known {
-                minimum: 1,
-                maximum: 251,
-            }
-        );
+        assert_eq!(returns[0], EnvelopeEvidence::fixed(6));
+        assert_eq!(returns[1], EnvelopeEvidence::known(1, 251));
+        assert_eq!(returns[2], EnvelopeEvidence::known(1, 246));
+        assert_eq!(returns[3], EnvelopeEvidence::known(4, 251));
+        assert_eq!(returns[4], EnvelopeEvidence::known(1, 251));
         assert!(matches!(
             return_layout_for_struct("missing_rp0".to_owned(), &layouts),
-            ExtractedEnvelope::Unresolved(reason) if reason.contains("missing_rp0")
+            EnvelopeEvidence::Unresolved(reason) if reason.contains("missing_rp0")
         ));
     }
 

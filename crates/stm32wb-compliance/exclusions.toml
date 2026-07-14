@@ -1,4 +1,4 @@
-# stm32wb-compliance exclusion policy, format version 1.
+# stm32wb-compliance exclusion policy.
 #
 # Every exclusion declares a scope, numeric wire code, firmware selector, and
 # reviewable reason. `firmware = "*"` selects every declared firmware; an exact
@@ -8,8 +8,6 @@
 # two-byte vendor event code. The checker rejects overlaps, unknown firmware
 # versions, invalid envelopes, and exclusions which no longer suppress a real
 # difference.
-
-version = 1
 
 # This event is emitted by the coprocessor transport but is not listed in the
 # generated STM32CubeWB `hci_vs_event_table` catalog.

@@ -1,30 +1,18 @@
-//! Stable, derived JSON views for compliance-domain values.
+//! Derived JSON views for compliance-domain values.
 //!
 //! The domain model retains source locations and intermediate inventories that
 //! are useful while comparing firmware APIs but should not become part of the
-//! machine-readable CLI contract. These DTOs explicitly define that contract
-//! and use `serde` derives exclusively; no domain type implements `Serialize`.
+//! machine-readable CLI output. These DTOs use `serde` derives exclusively; no
+//! domain type implements `Serialize`.
 
 use serde::Serialize;
 
 use crate::model::{CheckReport, CoverageDifference, ExcludedCode};
 use crate::wire::{WireDifference, WireReport, WireUnavailable};
 
-/// Schema version of the machine-readable compliance report.
-///
-/// Version 1 introduced explicit report versioning and removed the redundant
-/// `catalog_counts.descriptor_command_ids` field. Consumers should use
-/// `catalog_counts.active_command_ids` for the selected Rust command catalog.
-pub const REPORT_SCHEMA_VERSION: u16 = 1;
-
-/// The stable machine-readable representation of one compliance report.
-///
-/// Breaking changes to this DTO require incrementing
-/// [`REPORT_SCHEMA_VERSION`]. Use [`CheckReport::json`] instead of serializing
-/// the domain model directly.
+/// The machine-readable representation of one compliance report.
 #[derive(Serialize)]
 pub struct CheckReportJson<'a> {
-    schema_version: u16,
     firmware: String,
     cube_tag: &'a str,
     compliant: bool,
@@ -44,36 +32,35 @@ pub struct CheckReportJson<'a> {
 impl<'a> From<&'a CheckReport> for CheckReportJson<'a> {
     fn from(report: &'a CheckReport) -> Self {
         Self {
-            schema_version: REPORT_SCHEMA_VERSION,
-            firmware: report.firmware.to_string(),
-            cube_tag: &report.cube_tag,
+            firmware: report.firmware().to_string(),
+            cube_tag: report.cube_tag(),
             compliant: report.is_compliant(),
             catalog_counts: CatalogCounts::from(report),
-            missing_commands: coverage_differences(&report.missing_commands),
-            extraneous_commands: coverage_differences(&report.extraneous_commands),
-            missing_events: coverage_differences(&report.missing_events),
-            extraneous_events: coverage_differences(&report.extraneous_events),
+            missing_commands: coverage_differences(report.missing_commands()),
+            extraneous_commands: coverage_differences(report.extraneous_commands()),
+            missing_events: coverage_differences(report.missing_events()),
+            extraneous_events: coverage_differences(report.extraneous_events()),
             missing_standard_hci_commands: coverage_differences(
-                &report.missing_standard_hci_commands,
+                report.missing_standard_hci_commands(),
             ),
-            missing_standard_hci_events: coverage_differences(&report.missing_standard_hci_events),
+            missing_standard_hci_events: coverage_differences(report.missing_standard_hci_events()),
             missing_standard_hci_le_meta_events: coverage_differences(
-                &report.missing_standard_hci_le_meta_events,
+                report.missing_standard_hci_le_meta_events(),
             ),
-            wire: WireReportJson::from(&report.wire),
-            excluded_commands: excluded_codes(&report.excluded_commands),
-            excluded_events: excluded_codes(&report.excluded_events),
+            wire: WireReportJson::from(report.wire()),
+            excluded_commands: excluded_codes(report.excluded_commands()),
+            excluded_events: excluded_codes(report.excluded_events()),
         }
     }
 }
 
 impl CheckReport {
-    /// Build the stable JSON DTO for this report.
+    /// Build the JSON DTO for this report.
     pub fn json(&self) -> CheckReportJson<'_> {
         self.into()
     }
 
-    /// Serialize the stable JSON DTO for compatibility with existing callers.
+    /// Serialize the report JSON DTO.
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.json())
             .expect("a CheckReport JSON DTO can always serialize to JSON")
@@ -97,17 +84,17 @@ struct CatalogCounts {
 impl From<&CheckReport> for CatalogCounts {
     fn from(report: &CheckReport) -> Self {
         Self {
-            vendor_command_ids: report.vendor.command_codes().len(),
-            vendor_event_ids: report.vendor.event_codes().len(),
-            active_command_ids: report.active_api.command_codes().len(),
-            active_event_ids: report.active_api.event_codes().len(),
-            standard_hci_command_opcodes: report.standard_hci.commands.len(),
-            standard_hci_event_codes: report.standard_hci.events.len(),
-            standard_hci_le_meta_event_codes: report.standard_hci.le_meta_events.len(),
-            standard_hci_provider_command_opcodes: report.standard_hci_provider.commands.len(),
-            standard_hci_provider_event_codes: report.standard_hci_provider.events.len(),
+            vendor_command_ids: report.vendor().command_codes().len(),
+            vendor_event_ids: report.vendor().event_codes().len(),
+            active_command_ids: report.active_api().command_codes().len(),
+            active_event_ids: report.active_api().event_codes().len(),
+            standard_hci_command_opcodes: report.standard_hci().commands.len(),
+            standard_hci_event_codes: report.standard_hci().events.len(),
+            standard_hci_le_meta_event_codes: report.standard_hci().le_meta_events.len(),
+            standard_hci_provider_command_opcodes: report.standard_hci_provider().commands.len(),
+            standard_hci_provider_event_codes: report.standard_hci_provider().events.len(),
             standard_hci_provider_le_meta_event_codes: report
-                .standard_hci_provider
+                .standard_hci_provider()
                 .le_meta_events
                 .len(),
         }
