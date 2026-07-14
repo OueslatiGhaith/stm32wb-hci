@@ -91,22 +91,12 @@ impl FirmwareVersion {
     }
 
     /// Returns whether a custom version cfg is active for this firmware.
-    ///
-    /// Both the documented `*_fw_0_15_0` spelling and the shorter historical
-    /// `*_0_15_0` spelling are accepted to keep the checker useful while the
-    /// feature-gating convention evolves.
     pub fn matches_version_cfg(self, cfg: &str) -> Option<bool> {
         let (relation, value) = if let Some(value) = cfg.strip_prefix("before_fw_") {
             ("before", value)
         } else if let Some(value) = cfg.strip_prefix("only_fw_") {
             ("only", value)
         } else if let Some(value) = cfg.strip_prefix("since_fw_") {
-            ("since", value)
-        } else if let Some(value) = cfg.strip_prefix("before_") {
-            ("before", value)
-        } else if let Some(value) = cfg.strip_prefix("only_") {
-            ("only", value)
-        } else if let Some(value) = cfg.strip_prefix("since_") {
             ("since", value)
         } else {
             return None;
@@ -257,9 +247,9 @@ mod tests {
         let version = FirmwareVersion::new(0, 15, 0);
         assert_eq!(version.matches_version_cfg("before_fw_0_16_0"), Some(true));
         assert_eq!(version.matches_version_cfg("only_fw_0_15_0"), Some(true));
-        assert_eq!(version.matches_version_cfg("since_0_14_1"), Some(true));
         assert_eq!(version.matches_version_cfg("since_fw_0_15_0"), Some(true));
         assert_eq!(version.matches_version_cfg("since_fw_0_15_1"), Some(false));
+        assert_eq!(version.matches_version_cfg("since_0_14_1"), None);
     }
 
     #[test]

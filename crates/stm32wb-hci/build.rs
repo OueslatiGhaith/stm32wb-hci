@@ -26,7 +26,7 @@ fn main() {
 
     // `FirmwareVersion` has numeric ordering, so 0.17.0 correctly sorts after
     // 0.9.0. The same ordering is used by the compliance checker when it
-    // evaluates a source-level `before_`/`only_`/`since_` predicate.
+    // evaluates a source-level `before_fw_`/`only_fw_`/`since_fw_` predicate.
     firmwares.sort();
     for pair in firmwares.windows(2) {
         if pair[0] == pair[1] {
@@ -40,10 +40,8 @@ fn main() {
     for firmware in &firmwares {
         let feature = firmware.feature_name();
         println!("cargo::rerun-if-env-changed={}", feature_env_var(&feature));
-        for cfg_name in firmware_cfg_names(&feature) {
-            for prefix in ["before", "only", "since"] {
-                println!("cargo::rustc-check-cfg=cfg({prefix}_{cfg_name})");
-            }
+        for prefix in ["before", "only", "since"] {
+            println!("cargo::rustc-check-cfg=cfg({prefix}_{feature})");
         }
     }
 
@@ -100,16 +98,5 @@ fn feature_env_var(feature: &str) -> String {
 }
 
 fn emit_cfg(prefix: &str, feature: &str) {
-    for cfg_name in firmware_cfg_names(feature) {
-        println!("cargo::rustc-cfg={prefix}_{cfg_name}");
-    }
-}
-
-/// Emit both the explicit `*_fw_0_15_0` spelling used by this crate and the
-/// short `*_0_15_0` spelling from the original feature-gating proposal.
-fn firmware_cfg_names(feature: &str) -> [String; 2] {
-    let short_name = feature
-        .strip_prefix("fw_")
-        .expect("firmware features are filtered by the `fw_` prefix");
-    [feature.to_owned(), short_name.to_owned()]
+    println!("cargo::rustc-cfg={prefix}_{feature}");
 }

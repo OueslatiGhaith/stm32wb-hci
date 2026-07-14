@@ -47,9 +47,7 @@ cargo build --no-default-features --features fw_0_15_0
 The build script makes these internal conditional-compilation predicates available to the crate:
 `before_fw_0_17_0`, `only_fw_0_17_0`, and `since_fw_0_17_0`. `before` is a strict comparison;
 `since` includes the named firmware. Do not use
-`--all-features`, because firmware features are intentionally mutually exclusive. The shorter
-`before_0_17_0`/`only_0_17_0`/`since_0_17_0` spellings are emitted as compatibility
-aliases.
+`--all-features`, because firmware features are intentionally mutually exclusive.
 
 ## Firmware compliance
 
