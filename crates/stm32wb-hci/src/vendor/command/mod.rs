@@ -925,3 +925,5 @@ pub mod gap;
 pub mod gatt;
 pub mod hal;
 pub mod l2cap;
+#[cfg(since_fw_0_23_0)]
+pub mod sys;

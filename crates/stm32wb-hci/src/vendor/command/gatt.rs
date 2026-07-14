@@ -545,6 +545,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(cgid = 0x2, cid = 0x1F) {
         Params<'a> = {
@@ -561,6 +562,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicDescriptor(cgid = 0x2, cid = 0x20) {
         Params = {
@@ -572,6 +574,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicDescriptor(cgid = 0x2, cid = 0x21) {
         Params<'a> = {
@@ -587,6 +590,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicDescriptor(cgid = 0x2, cid = 0x22) {
         Params = {
@@ -639,6 +643,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteResponse(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
@@ -661,10 +666,48 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(since_fw_0_24_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GattPermitWrite(cgid = 0x2, cid = 0x26) {
+        Params<'a> = {
+            conn_handle: ConnHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            write_status: WriteStatus => 1,
+            error_code: u8 => 1,
+            value: &'a [u8] => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 248,
+            },
+        };
+        Constraints = {
+            implies_eq(write_status, WriteStatus::Allowed, error_code, 0);
+            implies_range(write_status, WriteStatus::Rejected, error_code, 1, u8::MAX);
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattAllowRead(cgid = 0x2, cid = 0x27) {
         Params = {
             conn_handle: ConnHandle => 2,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(since_fw_0_24_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GattPermitRead(cgid = 0x2, cid = 0x27) {
+        Params = {
+            conn_handle: ConnHandle => 2,
+            read_status: bool => 1,
+            error_code: u8 => 1,
+            attribute_handle: AttributeHandle => 2,
         };
         Completion = CommandComplete;
         Return = ();
@@ -750,6 +793,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattDenyRead(cgid = 0x2, cid = 0x2D) {
         Params = {
@@ -812,8 +856,38 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(since_fw_0_24_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
+        Params = {
+            conn_handle: ConnHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            signed_mode: bool => 1,
+            data_len: u16 => 2,
+            data_pointer: u32 => 4,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(since_fw_0_24_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
+        Params = {
+            conn_handle: ConnHandle => 2,
+            attribute_handle: AttributeHandle => 2,
+            write_mode: WriteMode => 1,
+            value_offset: u16 => 2,
+            data_len: u16 => 2,
+            data_pointer: u32 => 4,
+        };
+        Completion = CommandStatus;
+    }
+}
+
 hci_enum! {
-    /// Application decision returned by [`GattWriteResponse`].
+    /// Application decision returned for a pending attribute write.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum WriteStatus: u8 => 1 {
@@ -821,6 +895,21 @@ hci_enum! {
         Allowed = 0x00,
         /// Reject the requested attribute write and return its ATT error code.
         Rejected = 0x01,
+    }
+}
+
+#[cfg(since_fw_0_24_0)]
+hci_enum! {
+    /// GATT write-with-response procedure used by [`GattWriteWithRespExt`].
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum WriteMode: u8 => 1 {
+        /// Write a characteristic value or descriptor.
+        CharacteristicOrDescriptor = 0x00,
+        /// Write a long characteristic value or descriptor.
+        LongCharacteristicOrDescriptor = 0x01,
+        /// Reliably write a characteristic value.
+        ReliableCharacteristic = 0x02,
     }
 }
 

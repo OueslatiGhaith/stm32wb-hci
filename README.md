@@ -10,7 +10,7 @@ and events from the specification, and vendor-specific commands and events.
 ## Firmware selection
 
 One crate release can target several STM32WB wireless-firmware versions. Select exactly one
-firmware feature; `fw_0_17_1` is the default. The feature names retain this crate's historical
+firmware feature; `fw_0_24_0` is the default. The feature names retain this crate's historical
 `0.x.y` compatibility notation, while the corresponding STM32CubeWB tags use `v1.x.y`.
 
 The `[features]` table in `Cargo.toml` is the source of truth. To see the complete, current set
@@ -26,6 +26,17 @@ cargo run -p stm32wb-compliance -- list-supported
 | `fw_0_16_0`   | `v1.16.0`       |
 | `fw_0_17_0`   | `v1.17.0`       |
 | `fw_0_17_1`   | `v1.17.1`       |
+| `fw_0_17_2`   | `v1.17.2`       |
+| `fw_0_17_3`   | `v1.17.3`       |
+| `fw_0_18_0`   | `v1.18.0`       |
+| `fw_0_19_0`   | `v1.19.0`       |
+| `fw_0_19_1`   | `v1.19.1`       |
+| `fw_0_20_0`   | `v1.20.0`       |
+| `fw_0_21_0`   | `v1.21.0`       |
+| `fw_0_22_0`   | `v1.22.0`       |
+| `fw_0_22_1`   | `v1.22.1`       |
+| `fw_0_23_0`   | `v1.23.0`       |
+| `fw_0_24_0`   | `v1.24.0`       |
 
 For a non-default firmware, disable default features before selecting it:
 

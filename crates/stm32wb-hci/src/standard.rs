@@ -103,3 +103,15 @@ cmd! {
         Params = [u8; 65];
     }
 }
+
+#[cfg(since_fw_0_23_0)]
+cmd! {
+    /// LE Set Resolvable Private Address Timeout v2 command.
+    ///
+    /// The parameters are the advertising handle, own-address type, and the
+    /// two-byte timeout.
+    LeSetResolvablePrivateAddressTimeoutV2(LE, 0x009E) {
+        Params = [u8; 4];
+        Return = ();
+    }
+}

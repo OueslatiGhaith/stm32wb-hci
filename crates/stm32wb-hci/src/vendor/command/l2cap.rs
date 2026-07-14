@@ -46,6 +46,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
@@ -54,6 +55,28 @@ stm32wb_hci_macros::vendor_cmd! {
             mps: u16 => 2,
             initial_credits: u16 => 2,
             result: u16 => 2,
+        };
+        Completion = CommandComplete;
+        Return = L2CapCocConnectConfirmWire {
+            channel_indices: BoundedBytes<5> => {
+                kind: counted_bytes,
+                count: u8 => 1,
+                max_len: 5,
+            },
+        };
+    }
+}
+
+#[cfg(since_fw_0_23_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
+        Params = {
+            conn_handle: ConnHandle => 2,
+            mtu: u16 => 2,
+            mps: u16 => 2,
+            initial_credits: u16 => 2,
+            result: u16 => 2,
+            max_channel_number: u8 => 1,
         };
         Completion = CommandComplete;
         Return = L2CapCocConnectConfirmWire {

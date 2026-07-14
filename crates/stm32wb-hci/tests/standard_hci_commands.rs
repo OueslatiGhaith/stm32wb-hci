@@ -3,8 +3,10 @@ extern crate stm32wb_hci as hci;
 mod vendor;
 
 use hci::bt_hci::cmd::{AsyncCmd, SyncCmd};
-#[cfg(any(feature = "fw_0_17_0", feature = "fw_0_17_1"))]
+#[cfg(since_fw_0_17_0)]
 use hci::standard::LeGenerateDhkeyV2;
+#[cfg(since_fw_0_23_0)]
+use hci::standard::LeSetResolvablePrivateAddressTimeoutV2;
 use hci::standard::{
     LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadPeerResolvableAddress, LeReceiverTest,
     LeReceiverTestV2, LeTransmitterTest, LeTransmitterTestV2,
@@ -68,7 +70,7 @@ async fn v1_test_commands_use_their_v1_ocfs() {
     assert_eq!(transmitter.written_data(), [1, 0x1E, 0x20, 3, 1, 2, 3]);
 }
 
-#[cfg(any(feature = "fw_0_17_0", feature = "fw_0_17_1"))]
+#[cfg(since_fw_0_17_0)]
 #[tokio::test]
 async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
     let sink = RecordingSink::new();
@@ -79,4 +81,17 @@ async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
     let bytes = sink.written_data();
     assert_eq!(&bytes[..4], [1, 0x5E, 0x20, 65]);
     assert_eq!(&bytes[4..], key);
+}
+
+#[cfg(since_fw_0_23_0)]
+#[tokio::test]
+async fn resolvable_private_address_timeout_v2_uses_its_full_opcode() {
+    let sink = RecordingSink::new();
+
+    LeSetResolvablePrivateAddressTimeoutV2::new([1, 2, 3, 4])
+        .exec(&sink)
+        .await
+        .unwrap();
+
+    assert_eq!(sink.written_data(), [1, 0x9E, 0x20, 4, 1, 2, 3, 4]);
 }

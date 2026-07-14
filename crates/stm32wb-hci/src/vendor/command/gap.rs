@@ -550,6 +550,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_22_0)]
 stm32wb_hci_macros::vendor_cmd! {
     CmdGapResolvePrivateAddress(cgid = 0x1, cid = 0x20) {
         Params = {
@@ -628,6 +629,7 @@ impl GapBondedDevices {
     }
 }
 
+#[cfg(before_fw_0_22_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapIsDeviceBonded(cgid = 0x1, cid = 0x24) {
         Params = {
@@ -635,6 +637,19 @@ stm32wb_hci_macros::vendor_cmd! {
         };
         Completion = CommandComplete;
         Return = ();
+    }
+}
+
+#[cfg(since_fw_0_22_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GapCheckBondedDevice(cgid = 0x1, cid = 0x24) {
+        Params = {
+            address: PeerAddrType => 7,
+        };
+        Completion = CommandComplete;
+        Return = GapCheckBondedDeviceReturn {
+            identity_address: BdAddrType => 7,
+        };
     }
 }
 
@@ -689,6 +704,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToResolvingList(cgid = 0x1, cid = 0x29) {
         Params<'a> = {
@@ -873,6 +889,79 @@ stm32wb_hci_macros::vendor_cmd! {
         };
         Completion = CommandComplete;
         Return = ();
+    }
+}
+
+#[cfg(since_fw_0_21_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
+        Params = {
+            conn_handle: ConnHandle => 2,
+            accept: bool => 1,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GapExtStartScan(cgid = 0x1, cid = 0x50) {
+        Params = {
+            scan_mode: ExtScanMode => 1,
+            procedure: Procedure => 1,
+            own_address_type: AddressType => 1,
+            filter_duplicates: bool => 1,
+            duration: u16 => 2,
+            period: u16 => 2,
+            scanning_filter_policy: ScanningFilterPolicy => 1,
+            scanning_phys: ScanningPhy => 1,
+            le_1m_params: ExtScanPhyParams => 5,
+            le_coded_params: ExtScanPhyParams => 5,
+        };
+        Constraints = {
+            one_of(procedure, [
+                Procedure::LIMITED_DISCOVERY,
+                Procedure::GENERAL_DISCOVERY,
+                Procedure::GENERAL_CONNECTION_ESTABLISHMENT,
+                Procedure::SELECTIVE_CONNECTION_ESTABLISHMENT,
+                Procedure::OBSERVATION,
+            ]);
+            non_empty(scanning_phys);
+        };
+        Completion = CommandStatus;
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
+        Params = {
+            initiating_mode: ExtInitiatingMode => 1,
+            procedure: Procedure => 1,
+            own_address_type: AddressType => 1,
+            peer_address: BdAddrType => 7,
+            advertising_handle: InitiatingAdvertisingHandle => 1,
+            subevent: InitiatingSubevent => 1,
+            initiator_filter_policy: InitiatorFilterPolicy => 1,
+            initiating_phys: InitiatingPhy => 1,
+            le_1m_params: ExtConnectionPhyParams => 16,
+            le_2m_params: ExtConnectionPhyParams => 16,
+            le_coded_params: ExtConnectionPhyParams => 16,
+        };
+        Constraints = {
+            one_of(procedure, [
+                Procedure::AUTO_CONNECTION_ESTABLISHMENT,
+                Procedure::DIRECT_CONNECTION_ESTABLISHMENT,
+            ]);
+            one_of(own_address_type, [
+                AddressType::Public,
+                AddressType::Random,
+                AddressType::ResolvablePrivate,
+            ]);
+            non_empty(initiating_phys);
+        };
+        Completion = CommandStatus;
     }
 }
 
@@ -1156,6 +1245,161 @@ hci_enum! {
         ExtendedUnfiltered = 0x02,
         /// Apply the Filter Accept List while accepting resolvable directed targets.
         ExtendedFiltered = 0x03,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_enum! {
+    /// Reserved mode field used by the extended GAP scan command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ExtScanMode: u8 => 1 {
+        /// Reserved value required by STM32CubeWB.
+        Default = 0x00,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_bitflags! {
+    /// PHYs on which an extended scan is performed.
+    pub struct ScanningPhy: u8 => 1 {
+        /// Scan on the LE 1M PHY.
+        const LE_1M = 0x01;
+        /// Scan on the LE Coded PHY.
+        const LE_CODED = 0x04;
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_enum! {
+    /// Reserved mode field used by the extended GAP connection command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ExtInitiatingMode: u8 => 1 {
+        /// Reserved value required by STM32CubeWB.
+        Default = 0x00,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_enum! {
+    /// Selects how an advertiser is chosen during connection initiation.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum InitiatorFilterPolicy: u8 => 1 {
+        /// Connect to the explicitly supplied peer address.
+        UsePeerAddress = 0x00,
+        /// Choose an advertiser from the Filter Accept List.
+        UseFilterAcceptList = 0x01,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_bitflags! {
+    /// PHY-specific records supplied while initiating a connection.
+    pub struct InitiatingPhy: u8 => 1 {
+        /// Supply parameters for the LE 1M PHY.
+        const LE_1M = 0x01;
+        /// Supply parameters for the LE 2M PHY.
+        const LE_2M = 0x02;
+        /// Supply parameters for the LE Coded PHY.
+        const LE_CODED = 0x04;
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_ranged! {
+    /// Periodic-advertising handle used while initiating a connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct InitiatingAdvertisingHandle: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0xEF,
+        sentinel: UNUSED = 0xFF,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_ranged! {
+    /// Periodic-advertising subevent used while initiating a connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct InitiatingSubevent: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0x7F,
+        sentinel: UNUSED = 0xFF,
+    }
+}
+
+/// One of the two fixed extended-scan PHY parameter records.
+#[cfg(since_fw_0_18_0)]
+pub struct ExtScanPhyParams {
+    /// Passive or active scanning for this PHY.
+    pub scan_type: ScanType,
+    /// Scan interval in 0.625 ms units.
+    pub scan_interval: u16,
+    /// Scan window in 0.625 ms units.
+    pub scan_window: u16,
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_command_composite! {
+    ExtScanPhyParams => 5 {
+        Fields = {
+            scan_type: ScanType => 1,
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+        };
+        Encode = |value| {
+            (value.scan_type, value.scan_interval, value.scan_window)
+        };
+    }
+}
+
+/// One of the three fixed extended-connection PHY parameter records.
+#[cfg(since_fw_0_18_0)]
+pub struct ExtConnectionPhyParams {
+    /// Scan interval in 0.625 ms units.
+    pub scan_interval: u16,
+    /// Scan window in 0.625 ms units.
+    pub scan_window: u16,
+    /// Minimum connection interval in 1.25 ms units.
+    pub connection_interval_min: u16,
+    /// Maximum connection interval in 1.25 ms units.
+    pub connection_interval_max: u16,
+    /// Maximum connection latency in connection events.
+    pub max_latency: u16,
+    /// Supervision timeout in 10 ms units.
+    pub supervision_timeout: u16,
+    /// Minimum connection-event length in 0.625 ms units.
+    pub min_ce_length: u16,
+    /// Maximum connection-event length in 0.625 ms units.
+    pub max_ce_length: u16,
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_command_composite! {
+    ExtConnectionPhyParams => 16 {
+        Fields = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            connection_interval_min: u16 => 2,
+            connection_interval_max: u16 => 2,
+            max_latency: u16 => 2,
+            supervision_timeout: u16 => 2,
+            min_ce_length: u16 => 2,
+            max_ce_length: u16 => 2,
+        };
+        Encode = |value| {
+            (
+                value.scan_interval,
+                value.scan_window,
+                value.connection_interval_min,
+                value.connection_interval_max,
+                value.max_latency,
+                value.supervision_timeout,
+                value.min_ce_length,
+                value.max_ce_length,
+            )
+        };
     }
 }
 

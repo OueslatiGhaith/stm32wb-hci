@@ -72,9 +72,10 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
 ///
 /// The generated `VendorEvent::new` requires the two-byte event code, decodes
 /// every declared field in order, and rejects both truncated and trailing
-/// bytes. Event `cfg` attributes gate the enum variant and dispatch arm while
-/// retaining the generated payload type, matching the catalog's established
-/// cross-firmware API.
+/// bytes. Event `cfg` attributes gate the enum variant, payload type, and
+/// dispatch arm. Complementary `before_fw_*` and `since_fw_*` declarations may
+/// therefore reuse a name or wire code when a firmware boundary changes its
+/// shape.
 #[proc_macro]
 pub fn vendor_event(input: TokenStream) -> TokenStream {
     match syn::parse::<VendorEvents>(input) {
@@ -103,6 +104,7 @@ fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
         let EventPayload::Fields(fields) = &event.payload else {
             return None;
         };
+        let attrs = &event.attrs;
         let name = &event.name;
         let field_names = fields
             .fields()
@@ -115,6 +117,7 @@ fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
             .map(|field| &field.ty)
             .collect::<Vec<_>>();
         Some(quote! {
+            #(#attrs)*
             #[derive(Copy, Clone, Debug)]
             #[cfg_attr(feature = "defmt", derive(defmt::Format))]
             #[allow(missing_docs)]
@@ -1285,7 +1288,7 @@ mod tests {
         assert!(generated.contains("0x0001 =>"));
         assert!(generated.contains("0x0002 =>"));
         assert!(generated.contains("decode_hci_event_field"));
-        assert_eq!(generated.matches("cfg (since_fw_0_17_0)").count(), 2);
+        assert_eq!(generated.matches("cfg (since_fw_0_17_0)").count(), 3);
         assert!(!generated.contains("vendor_event !"));
     }
 

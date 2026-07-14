@@ -20,6 +20,7 @@ impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
     }
 }
 
+#[cfg(before_fw_0_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
         Params = ();
@@ -143,6 +144,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetPmDebugInfo(cgid = 0x0, cid = 0x1C) {
         Params = ();
@@ -226,11 +228,49 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(before_fw_0_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalStackReset(cgid = 0x0, cid = 0x3B) {
         Params = ();
         Completion = CommandComplete;
         Return = ();
+    }
+}
+
+#[cfg(since_fw_0_20_0)]
+stm32wb_hci_macros::vendor_cmd! {
+    HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
+        Params<'a> = {
+            mode: EadMode => 1,
+            key: &'a [u8; 16] => 16,
+            iv: &'a [u8; 8] => 8,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 228,
+            },
+        };
+        Completion = CommandComplete;
+        Return = HalEadEncryptDecryptReturn {
+            data: BoundedBytes<249> => {
+                kind: counted_bytes,
+                count: u16 => 2,
+                max_len: 249,
+            },
+        };
+    }
+}
+
+#[cfg(since_fw_0_20_0)]
+hci_enum! {
+    /// Operation selected by [`HalEadEncryptDecrypt`].
+    #[derive(Copy, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum EadMode: u8 => 1 {
+        /// Encrypt the supplied advertising data.
+        Encrypt = 0x00,
+        /// Decrypt the supplied advertising data.
+        Decrypt = 0x01,
     }
 }
 

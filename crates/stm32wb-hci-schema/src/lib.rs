@@ -10,7 +10,7 @@ pub use firmware::{
     FirmwareFeatureError, FirmwareManifestError, FirmwareVersion, FirmwareVersionError,
 };
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::{
@@ -713,8 +713,8 @@ impl Parse for VendorCommand {
 impl Parse for VendorEvents {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut events = Vec::new();
-        let mut names = BTreeSet::new();
-        let mut codes = BTreeSet::new();
+        let mut names = BTreeMap::new();
+        let mut codes = BTreeMap::new();
 
         while !input.is_empty() {
             let attrs = input.call(syn::Attribute::parse_outer)?;
@@ -733,13 +733,20 @@ impl Parse for VendorEvents {
                 return Err(input.error("vendor events accept at most one cfg attribute"));
             }
 
+            let partition = firmware_partition(&attrs);
             let name = input.parse::<syn::Ident>()?;
-            if !names.insert(name.to_string()) {
+            let previous_partitions = names.entry(name.to_string()).or_insert_with(Vec::new);
+            if previous_partitions
+                .iter()
+                .any(|previous| !firmware_partitions_are_complementary(previous, &partition))
+            {
                 return Err(syn::Error::new_spanned(
                     &name,
-                    "duplicate vendor event name",
+                    "duplicate vendor event name must use complementary \
+                     `before_fw_*` and `since_fw_*` cfg attributes",
                 ));
             }
+            previous_partitions.push(partition.clone());
 
             let arguments;
             syn::parenthesized!(arguments in input);
@@ -753,12 +760,20 @@ impl Parse for VendorEvents {
             if !arguments.is_empty() {
                 return Err(arguments.error("event code must be one integer literal"));
             }
-            if !codes.insert(code) {
+            let previous_partitions = codes.entry(code).or_insert_with(Vec::new);
+            if previous_partitions
+                .iter()
+                .any(|previous| !firmware_partitions_are_complementary(previous, &partition))
+            {
                 return Err(syn::Error::new_spanned(
                     &code_literal,
-                    format!("duplicate vendor event code 0x{code:04X}"),
+                    format!(
+                        "duplicate vendor event code 0x{code:04X} must use complementary \
+                         `before_fw_*` and `since_fw_*` cfg attributes"
+                    ),
                 ));
             }
+            previous_partitions.push(partition);
 
             let body;
             syn::braced!(body in input);
@@ -826,6 +841,52 @@ impl Parse for VendorEvents {
             return Err(input.error("vendor_event! must declare at least one event"));
         }
         Ok(Self { events })
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FirmwarePartitionSide {
+    Before,
+    Since,
+}
+
+#[derive(Clone, Copy)]
+struct FirmwarePartition {
+    side: FirmwarePartitionSide,
+    boundary: FirmwareVersion,
+}
+
+/// Return the simple firmware partition carried by an event declaration.
+///
+/// Duplicate event names or codes are useful when a firmware release changes a
+/// wire payload. They are safe only when the declarations are exact halves of
+/// one canonical version boundary. Complex cfg expressions deliberately return
+/// `None`: proving that arbitrary boolean cfg expressions do not overlap is
+/// outside the schema parser's scope, so such expressions cannot justify a
+/// duplicate declaration.
+fn firmware_partition(attrs: &[syn::Attribute]) -> Option<FirmwarePartition> {
+    let cfg = attrs.iter().find(|attr| attr.path().is_ident("cfg"))?;
+    let path = cfg.parse_args::<syn::Path>().ok()?;
+    let ident = path.get_ident()?.to_string();
+
+    let (side, feature) = if let Some(version) = ident.strip_prefix("before_") {
+        (FirmwarePartitionSide::Before, version)
+    } else if let Some(version) = ident.strip_prefix("since_") {
+        (FirmwarePartitionSide::Since, version)
+    } else {
+        return None;
+    };
+    let boundary = FirmwareVersion::from_feature_name(feature).ok()?;
+    Some(FirmwarePartition { side, boundary })
+}
+
+fn firmware_partitions_are_complementary(
+    left: &Option<FirmwarePartition>,
+    right: &Option<FirmwarePartition>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.side != right.side && left.boundary == right.boundary,
+        _ => false,
     }
 }
 
@@ -1852,6 +1913,22 @@ mod tests {
     }
 
     #[test]
+    fn accepts_complementary_firmware_shapes_for_one_event_code() {
+        let catalog = syn::parse_str::<VendorEvents>(
+            r#"
+                #[cfg(before_fw_0_22_0)]
+                Changed(0x0405) { Payload = (); }
+                #[cfg(since_fw_0_22_0)]
+                Changed(0x0405) { Payload = { handle: u16 => 2, }; }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(catalog.events.len(), 2);
+        assert_eq!(catalog.events[0].code, catalog.events[1].code);
+    }
+
+    #[test]
     fn rejects_invalid_vendor_event_catalog_states() {
         for (source, expected) in [
             ("", "must declare at least one event"),
@@ -1861,6 +1938,18 @@ mod tests {
             ),
             (
                 "First(1) { Payload = (); } Second(1) { Payload = (); }",
+                "duplicate vendor event code",
+            ),
+            (
+                "#[cfg(since_fw_0_21_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); }",
+                "complementary `before_fw_*` and `since_fw_*`",
+            ),
+            (
+                "#[cfg(before_fw_0_21_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); }",
+                "complementary `before_fw_*` and `since_fw_*`",
+            ),
+            (
+                "#[cfg(before_fw_0_22_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); } #[cfg(before_fw_0_22_0)] Third(1) { Payload = (); }",
                 "duplicate vendor event code",
             ),
             (

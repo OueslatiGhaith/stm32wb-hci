@@ -595,7 +595,19 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// Application use cases indlude synchronizing notifications with connection intervals, switching
     /// antenna at the end of advertising or performing flash erase while radio is idle.
+    #[cfg(before_fw_0_24_0)]
     HalEndOfRadioActivity(0x0004) {
+        Payload = {
+            last_state: RadioEvent => 1,
+            next_state: RadioEvent => 1,
+            next_state_sys_time: u32 => 4,
+            last_state_slot: u8 => 1,
+            next_state_slot: u8 => 1,
+        };
+    }
+    /// End-of-radio-activity event code used by STM32CubeWB 1.24 and newer.
+    #[cfg(since_fw_0_24_0)]
+    HalEndOfRadioActivity(0x1804) {
         Payload = {
             last_state: RadioEvent => 1,
             next_state: RadioEvent => 1,
@@ -608,7 +620,16 @@ stm32wb_hci_macros::vendor_event! {
     /// scheduled to be transmitted.
     ///
     /// Note: RSSI in this event is valid only when privacy is not used
+    #[cfg(before_fw_0_24_0)]
     HalScanReqReport(0x0005) {
+        Payload = {
+            rssi: u8 => 1,
+            peer_addr: PeerAddrType => 7,
+        };
+    }
+    /// Scan-request report event code used by STM32CubeWB 1.24 and newer.
+    #[cfg(since_fw_0_24_0)]
+    HalScanReqReport(0x1805) {
         Payload = {
             rssi: u8 => 1,
             peer_addr: PeerAddrType => 7,
@@ -655,6 +676,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated when the peripheral security request is successfully sent to the
     /// central device.
+    #[cfg(before_fw_0_22_0)]
     GapPeripheralSecurityInitiated(0x0404) {
         Payload = ();
     }
@@ -666,8 +688,14 @@ stm32wb_hci_macros::vendor_event! {
     /// is called to reestablish a bond with a peripheral but the peripheral has lost the bond. In
     /// order to create a new bond the central device has to launch `gap_send_pairing_request` with
     /// `force_rebond` set to `true`.
+    #[cfg(before_fw_0_22_0)]
     GapBondLost(0x0405) {
         Payload = ();
+    }
+    /// Bond-lost payload used by STM32CubeWB 1.22 and newer.
+    #[cfg(since_fw_0_22_0)]
+    GapBondLost(0x0405) {
+        Payload = { conn_handle: ConnHandle => 2, };
     }
     /// This event is sent by the GAP to the upper layers when a procedure previously started has
     /// been terminated by the upper layer or has completed for any other reason
@@ -708,6 +736,15 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             connection_handle: ConnHandle => 2,
             notification_type: KeypressNotificationType => 1,
+        };
+    }
+    /// This event asks the application to accept or reject an incoming pairing request.
+    #[cfg(since_fw_0_21_0)]
+    GapPairingRequest(0x040B) {
+        Payload = {
+            connection_handle: ConnHandle => 2,
+            bonded: bool => 1,
+            auth_req: u8 => 1,
         };
     }
     /// This event is generated when the central device responds to the L2CAP connection update
@@ -1093,9 +1130,8 @@ stm32wb_hci_macros::vendor_event! {
     /// This event is given to the application when a read request or read blob request is received
     /// by the server from the client. This event will be given to the application only if the event
     /// bit for this event generation is set when the characteristic was added. On receiving this
-    /// event, the application can update the value of the handle if it desires and when done it has
-    /// to use the [`allow_read`](crate::vendor::command::gatt::GattAllowRead) command to indicate to the
-    /// stack that it can send the response to the client.
+    /// event, the application can update the value of the handle if it desires and then use the
+    /// firmware's read-permission response command to tell the stack it can respond to the client.
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
     AttReadPermitRequest(0x0C14) {
@@ -1109,8 +1145,8 @@ stm32wb_hci_macros::vendor_event! {
     /// is received by the server from the client. This event will be given to the application only
     /// if the event bit for this event generation is set when the characteristic was added.  On
     /// receiving this event, the application can update the values of the handles if it desires and
-    /// when done it has to send the [`allow_read`](crate::vendor::command::gatt::GattAllowRead) command to
-    /// indicate to the stack that it can send the response to the client.
+    /// then use the firmware's read-permission response command to tell the stack it can respond to
+    /// the client.
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
     AttReadMultiplePermitRequest(0x0C15) {
@@ -1161,11 +1197,22 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event informs the application of a change in status of the enhanced ATT bearer handled
     /// by the special L2CAP channel.
+    #[cfg(before_fw_0_23_0)]
     GattEattBrearer(0x0C19) {
         Payload = {
             channel_index: u8 => 1,
             eab_state: EabState => 1,
             status: GattProcedureStatus => 1,
+        };
+    }
+    /// Enhanced ATT bearer payload used by STM32CubeWB 1.23 and newer.
+    #[cfg(since_fw_0_23_0)]
+    GattEattBrearer(0x0C19) {
+        Payload = {
+            conn_handle: ConnHandle => 2,
+            channel_index: u8 => 1,
+            eab_state: EabState => 1,
+            mtu: u16 => 2,
         };
     }
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
@@ -2174,6 +2221,8 @@ hci_event_enum! {
     pub enum EabState: u8 => 1 {
         AttBearerCreated = 0x00,
         AttBearerTerminated = 0x01,
+        /// The bearer MTU was reconfigured.
+        AttBearerReconfigured = 0x02,
     }
     TryFromError = Error => |value| Error::Vendor(VendorError::BadEabState(value));
     EventError = core::convert::identity;
@@ -2312,6 +2361,7 @@ mod tests {
         ));
     }
 
+    #[cfg(before_fw_0_23_0)]
     #[test]
     fn parses_gatt_eatt_bearer_event() {
         // 0x0C19 + channel_index(2) + eab_state(created) + status(success)
@@ -2323,6 +2373,23 @@ mod tests {
                 assert_eq!(e.channel_index, 2);
                 assert!(matches!(e.eab_state, EabState::AttBearerCreated));
                 assert_eq!(e.status, GattProcedureStatus::Success);
+            }
+            _ => panic!("unexpected event variant"),
+        }
+    }
+
+    #[cfg(since_fw_0_23_0)]
+    #[test]
+    fn parses_current_gatt_eatt_bearer_event() {
+        let bytes = [0x19, 0x0C, 0x23, 0x01, 0x02, 0x02, 0x40, 0x00];
+        let event = VendorEvent::new(&bytes).expect("parse current eatt bearer");
+
+        match event {
+            VendorEvent::GattEattBrearer(e) => {
+                assert_eq!(e.conn_handle, ConnHandle::new(0x0123));
+                assert_eq!(e.channel_index, 2);
+                assert!(matches!(e.eab_state, EabState::AttBearerReconfigured));
+                assert_eq!(e.mtu, 64);
             }
             _ => panic!("unexpected event variant"),
         }
@@ -2352,8 +2419,8 @@ mod tests {
         );
         assert_eq!(AttError::try_from(0x14).unwrap_err(), 0x14);
         assert_eq!(
-            EabState::try_from(2).unwrap_err(),
-            Error::Vendor(VendorError::BadEabState(2))
+            EabState::try_from(3).unwrap_err(),
+            Error::Vendor(VendorError::BadEabState(3))
         );
         assert_eq!(
             RadioEvent::try_from(4).unwrap_err(),
@@ -2824,6 +2891,7 @@ mod tests {
         assert!(groups.next().is_none());
     }
 
+    #[cfg(before_fw_0_22_0)]
     #[test]
     fn bond_lost_has_no_payload() {
         assert!(matches!(
@@ -2834,6 +2902,16 @@ mod tests {
             VendorEvent::new(&[0x05, 0x04, 0x23, 0x01]).unwrap_err(),
             Error::BadLength(2, 0)
         );
+    }
+
+    #[cfg(since_fw_0_22_0)]
+    #[test]
+    fn bond_lost_carries_its_connection_handle() {
+        let VendorEvent::GapBondLost(event) = VendorEvent::new(&[0x05, 0x04, 0x23, 0x01]).unwrap()
+        else {
+            panic!("unexpected event variant");
+        };
+        assert_eq!(event.conn_handle, ConnHandle::new(0x0123));
     }
 
     #[test]

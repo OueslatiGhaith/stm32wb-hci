@@ -1122,7 +1122,7 @@ mod tests {
                 inspect(&file.items, &path, &mut command_count);
             }
         }
-        assert_eq!(command_count, 129);
+        assert_eq!(command_count, 143);
     }
 
     #[test]
@@ -1151,7 +1151,7 @@ mod tests {
         assert_eq!(macro_path, ["stm32wb_hci_macros", "vendor_event"]);
 
         let parsed = syn::parse2::<SchemaVendorEvents>(catalog.mac.tokens.clone()).unwrap();
-        assert_eq!(parsed.events.len(), 55);
+        assert_eq!(parsed.events.len(), 60);
     }
 
     #[test]

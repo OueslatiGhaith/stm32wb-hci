@@ -4,6 +4,15 @@ mod vendor;
 
 use bt_hci::cmd::{AsyncCmd, Cmd, SyncCmd};
 use hci::types::{AdvertisingFilterPolicy, AdvertisingType, AttributeHandle};
+#[cfg(since_fw_0_24_0)]
+use hci::vendor::command::gatt::GattPermitWrite as GattWriteResponse;
+#[cfg(before_fw_0_24_0)]
+use hci::vendor::command::gatt::GattWriteResponse;
+#[cfg(before_fw_0_23_0)]
+use hci::vendor::command::hal::{
+    HalFirmwareRevision, HalGetFirmwareRevision, HalGetPmDebugInfo, HalGetTxTestPacketCount,
+    HalPmDebugInfo, HalRawRssi, HalReadRawRssi, HalReadRssi, HalRssi, HalTxTestPacketCount,
+};
 use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::command::{
     gap::{
@@ -27,15 +36,12 @@ use hci::vendor::command::{
         GattDiscoverPrimaryServicesByUUID, GattFindByTypeValueRequest, GattHandleValue,
         GattIncludeService, GattReadByGroupTypeRequest, GattReadByTypeRequest,
         GattReadCharacteristicUsingUUID, GattReadHandleValue, GattReadMultipleVarCharValue,
-        GattService, GattSetEventMask, GattWriteResponse, ServiceType, Uuid, WriteStatus,
+        GattService, GattSetEventMask, ServiceType, Uuid, WriteStatus,
     },
     hal::{
-        HalEventFlags, HalFirmwareRevision, HalGetFirmwareRevision, HalGetLinkStatus,
-        HalGetPmDebugInfo, HalGetTxTestPacketCount, HalPmDebugInfo, HalRadioRegisterValue,
-        HalRawRssi, HalReadRadioReg, HalReadRawRssi, HalReadRssi, HalRssi, HalRxStart,
+        HalEventFlags, HalGetLinkStatus, HalRadioRegisterValue, HalReadRadioReg, HalRxStart,
         HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
-        HalStartTone, HalTxTestPacketCount, HalWriteRadioReg, PowerLevel, RadioActivityFlags,
-        ToneChannel,
+        HalStartTone, HalWriteRadioReg, PowerLevel, RadioActivityFlags, ToneChannel,
     },
     l2cap::{L2CocConnectConfirm, L2CocReconfig, L2CocTxData},
 };
@@ -689,6 +695,7 @@ fn declarative_hal_radio_reg_decodes_payload_without_status_byte() {
     assert_eq!(value.value, 0x55);
 }
 
+#[cfg(before_fw_0_23_0)]
 #[test]
 fn declarative_hal_fixed_returns_decode_without_status_byte() {
     use bt_hci::{FromHciBytes, FromHciBytesError};
@@ -718,6 +725,7 @@ fn declarative_hal_fixed_returns_decode_without_status_byte() {
     ));
 }
 
+#[cfg(before_fw_0_23_0)]
 #[tokio::test]
 async fn declarative_hal_fixed_return_commands_have_no_wire_parameters() {
     let sink = RecordingSink::new();
@@ -1402,6 +1410,7 @@ fn reusable_fixed_gatt_returns_decode_without_transport_status() {
     assert_eq!(descriptor.descriptor_handle, AttributeHandle(0x9ABC));
 }
 
+#[cfg(before_fw_0_23_0)]
 #[tokio::test]
 async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
     let sink = RecordingSink::new();
@@ -1421,6 +1430,29 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
         sink.written_data(),
         [
             1, 0x89, 0xFD, 10, 0x23, 0x01, 0x67, 0x45, 0x89, 0x00, 0xCD, 0xAB, 0x02, 0x00,
+        ]
+    );
+}
+
+#[cfg(since_fw_0_23_0)]
+#[tokio::test]
+async fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
+    let sink = RecordingSink::new();
+    let _ = L2CocConnectConfirm::new(
+        hci::bt_hci::param::ConnHandle(0x0123),
+        0x4567,
+        0x0089,
+        0xABCD,
+        0x0002,
+        5,
+    )
+    .exec(&sink)
+    .await;
+
+    assert_eq!(
+        sink.written_data(),
+        [
+            1, 0x89, 0xFD, 11, 0x23, 0x01, 0x67, 0x45, 0x89, 0x00, 0xCD, 0xAB, 0x02, 0x00, 5,
         ]
     );
 }
