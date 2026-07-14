@@ -14,7 +14,9 @@ use crate::types::{AttributeHandle, PeerAddrType};
 use crate::vendor::command::BoundedItems;
 use bt_hci::param::{BdAddr, ConnHandle};
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Six-digit GAP pass key.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct PassKey: u32 => 4 {
@@ -23,7 +25,9 @@ hci_ranged! {
     }
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Maximum number of consecutive auxiliary advertising events the
     /// controller may skip.
     ///
@@ -32,7 +36,9 @@ hci_open_scalar! {
     pub struct SecondaryAdvertisingMaximumSkip: u8 => 1;
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Legacy advertising-interval bound in 0.625 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AdvertisingIntervalBound: u16 => 2 {
@@ -41,7 +47,9 @@ hci_ranged! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Optional legacy advertising-interval bound in 0.625 ms units.
     ///
     /// Discoverable procedures accept zero for both bounds to let the
@@ -55,7 +63,9 @@ hci_ranged! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Advertising set identifier carried in the four-bit SID field.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AdvertisingSid: u8 => 1 {
@@ -64,7 +74,9 @@ hci_ranged! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Power-amplifier output level accepted by the additional-beacon command.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct PowerAmplifierOutputLevel: u8 => 1 {
@@ -73,7 +85,9 @@ hci_ranged! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Reasons accepted by [`GapTerminate`].
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -88,7 +102,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Privacy behavior selected while initializing the GAP service.
     ///
     /// CubeWB uses `0x02`, rather than the usual Boolean `0x01`, to enable
@@ -964,7 +980,9 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Duplicate filtering behavior for extended scanning.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -977,7 +995,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Extended-scan duration in 10 ms units; zero scans until stopped.
     ///
     /// CubeWB assigns meaning to every `u16` value, including the zero
@@ -987,7 +1007,9 @@ hci_open_scalar! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Extended-scan period in 1.28 s units; zero disables periodic scanning.
     ///
     /// CubeWB assigns meaning to every `u16` value, including the zero
@@ -1036,7 +1058,9 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// I/O capabilities available for the [GAP Set I/O Capability](GapSetIoCapability) command.
     #[derive(Copy, Clone, Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1063,7 +1087,9 @@ pub enum OutOfBandAuthentication {
     Enabled([u8; 16]),
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Secure Connection support mode for [`GapSetAuthenticationRequirement`].
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1086,7 +1112,9 @@ pub enum Pin {
     Fixed(u32),
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Options for the [GAP Authorization Response](GapAuthorizationResponse).
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1098,7 +1126,9 @@ hci_enum! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Roles for a [GAP service](CmdGapInit).
     pub struct Role: u8 => 1 {
         /// Peripheral
@@ -1112,7 +1142,9 @@ hci_bitflags! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Indicates the type of address being used in the advertising packets, for
     /// [`GapSetNonConnectable`].
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1130,7 +1162,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Available types of advertising data.
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1172,7 +1206,9 @@ hci_enum! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Event types for [GAP Set Event Mask](GapSetEventMask).
     pub struct EventFlags: u16 => 2 {
         /// [Limited Discoverable](crate::vendor::event::VendorEvent::GapLimitedDiscoverableTimeout)
@@ -1200,7 +1236,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// GAP procedures accepted by [`GapTerminateProcedure`].
     pub struct Procedure: u8 => 1 {
         /// [Limited Discovery](GapStartLimitedDiscoveryProcedure) procedure.
@@ -1222,7 +1260,9 @@ hci_bitflags! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Parameter for [GAP Passkey Input](GapPasskeyInput).
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1235,7 +1275,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Kind of GAP out-of-band pairing data.
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1249,7 +1291,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Length modes accepted when supplying GAP out-of-band pairing data.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1261,7 +1305,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Device whose GAP out-of-band data is being supplied.
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1271,7 +1317,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Parameter for [GAP Add Devices to List](GapAddDevicesToList).
     #[derive(Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1291,7 +1339,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Type of Link Layer scan performed by GAP discovery procedures.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1303,7 +1353,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Policy used to filter advertising and scan-response packets while scanning.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1320,7 +1372,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Reserved mode field used by the extended GAP scan command.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1331,7 +1385,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// PHYs on which an extended scan is performed.
     pub struct ScanningPhy: u8 => 1 {
         /// Scan on the LE 1M PHY.
@@ -1342,7 +1398,9 @@ hci_bitflags! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Reserved mode field used by the extended GAP connection command.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1353,7 +1411,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Selects how an advertiser is chosen during connection initiation.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1366,7 +1426,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// PHY-specific records supplied while initiating a connection.
     pub struct InitiatingPhy: u8 => 1 {
         /// Supply parameters for the LE 1M PHY.
@@ -1379,7 +1441,9 @@ hci_bitflags! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Periodic-advertising handle used while initiating a connection.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct InitiatingAdvertisingHandle: u8 => 1 {
@@ -1390,7 +1454,9 @@ hci_ranged! {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Periodic-advertising subevent used while initiating a connection.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct InitiatingSubevent: u8 => 1 {
@@ -1410,7 +1476,9 @@ pub struct ExtScanPhyParams {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ExtScanPhyParams => 5 {
         Fields = {
             scan_type: ScanType => 1,
@@ -1434,7 +1502,9 @@ pub struct ExtConnectionPhyParams {
 }
 
 #[cfg(since_fw_0_18_0)]
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ExtConnectionPhyParams => 16 {
         Fields = {
             scan_window: ScanWindow => 4,
@@ -1451,7 +1521,9 @@ hci_command_composite! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Primary advertising channels selected for an advertising procedure.
     pub struct AdvertisingChannelMap: u8 => 1 {
         /// Use primary advertising channel 37.

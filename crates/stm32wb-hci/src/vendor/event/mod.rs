@@ -11,11 +11,18 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use crate::types::{AttributeHandle, PeerAddrType, to_peer_addr_type};
 pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
 use crate::vendor::command::gap::EventFlags;
-pub use crate::wire::{BoundedBytes, BoundedItems};
+pub use crate::vendor::command::l2cap::{
+    L2CocChannelIndex, L2CocConnectionResult, L2CocCreditIncrement, L2CocInitialCredits, L2CocMps,
+    L2CocMtu, L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm,
+    L2SignalIdentifier,
+};
+pub use crate::wire::{BoundedBytes, BoundedItems, HciEventField};
 use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
 use bt_hci::param::{BdAddr, ConnHandle};
 
-hci_try_from_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [conversion];
+    closed
     /// Enumeration of vendor-specific status codes.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -137,6 +144,27 @@ pub enum VendorError {
     /// not recognized. Includes the unknown value.
     BadL2CapRejectionReason(u16),
 
+    /// A credit-based event reported an MTU outside the documented domain.
+    BadL2CocMtu(crate::vendor::command::HciValueError),
+
+    /// A credit-based event reported an MPS outside the documented domain.
+    BadL2CocMps(crate::vendor::command::HciValueError),
+
+    /// A credit-based connection response used an undocumented result value.
+    BadL2CocConnectionResult(crate::vendor::command::HciValueError),
+
+    /// A credit-based connection request used an invalid SPSM.
+    BadL2CocSpsm(crate::vendor::command::HciValueError),
+
+    /// A credit-based connection request used an invalid channel count.
+    BadL2CocRequestedChannelCount(crate::vendor::command::HciValueError),
+
+    /// A credit-based reconfiguration response used an undocumented result value.
+    BadL2CocReconfigurationResult(crate::vendor::command::HciValueError),
+
+    /// A credit-based flow-control event reported a zero credit increment.
+    BadL2CocCreditIncrement(crate::vendor::command::HciValueError),
+
     /// For the [L2CAP Connection Update Response](VendorEvent::L2CapConnectionUpdateResponse)
     /// event: The command was accepted, but the result was not recognized. It did not indicate the
     /// parameters were either updated or rejected. Includes the unknown value.
@@ -214,26 +242,6 @@ impl From<VendorError> for Error {
     }
 }
 
-/// A value decoded from an exact-width field in a vendor event.
-///
-/// `N` is part of the trait so `field: Type => N` only compiles when `Type`
-/// explicitly supports that wire width. Implementations must decode the
-/// protocol representation rather than relying on Rust layout or native
-/// endianness.
-///
-/// An unsupported type/width pair is a compile-time error:
-///
-/// ```compile_fail
-/// use stm32wb_hci::vendor::event::HciEventField;
-///
-/// fn requires_two_bytes<T: HciEventField<2>>() {}
-/// requires_two_bytes::<bool>();
-/// ```
-pub trait HciEventField<const N: usize>: Sized {
-    /// Decode one exact-width vendor-event field.
-    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, Error>;
-}
-
 /// Event-specific diagnostics for a count-prefixed byte-field target.
 #[doc(hidden)]
 pub trait HciEventCountedBytesTarget<
@@ -297,48 +305,6 @@ pub trait HciEventTaggedItemsVariant<Tag, Item: Copy, const ITEM_LEN: usize, con
     fn invalid_items(tag: Tag) -> Error;
 
     fn from_tagged_items(tag: Tag, items: [Item; MAX_ITEMS], len: usize) -> Self;
-}
-
-macro_rules! impl_hci_event_integer_field {
-    ($ty:ty, $len:literal) => {
-        impl HciEventField<$len> for $ty {
-            fn from_hci_event_field(bytes: &[u8; $len]) -> Result<Self, Error> {
-                Ok(<$ty>::from_le_bytes(*bytes))
-            }
-        }
-    };
-}
-
-impl_hci_event_integer_field!(u8, 1);
-impl_hci_event_integer_field!(u16, 2);
-impl_hci_event_integer_field!(u32, 4);
-
-impl<const N: usize> HciEventField<N> for [u8; N] {
-    fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, Error> {
-        Ok(*bytes)
-    }
-}
-
-impl HciEventField<1> for bool {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        match bytes[0] {
-            0 => Ok(false),
-            1 => Ok(true),
-            value => Err(Error::Vendor(VendorError::BadBooleanValue(value))),
-        }
-    }
-}
-
-impl HciEventField<2> for ConnHandle {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
-        Ok(Self(u16::from_le_bytes(*bytes)))
-    }
-}
-
-impl HciEventField<2> for AttributeHandle {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
-        Ok(Self(u16::from_le_bytes(*bytes)))
-    }
 }
 
 fn decode_hci_event_field<T, const N: usize>(
@@ -439,6 +405,7 @@ fn decode_hci_event_counted_items<
     C,
     const COUNT_LEN: usize,
     const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
     const MAX_ITEMS: usize,
 >(
     data: &[u8],
@@ -449,12 +416,23 @@ where
     Item: Copy + HciEventField<ITEM_LEN>,
     C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
-    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MAX_ITEMS>(
+    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>(
         data,
         |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
         Item::from_hci_event_field,
     )
-    .map_err(|error| map_event_decode_error(error, data.len(), original_len))
+    .map_err(|error| {
+        if let crate::wire::DecodeError::Truncated { required } = error
+            && data.len() >= COUNT_LEN
+            && ITEM_LEN != 0
+        {
+            return Error::BadLength(
+                data.len().saturating_sub(COUNT_LEN) / ITEM_LEN,
+                required.saturating_sub(COUNT_LEN) / ITEM_LEN,
+            );
+        }
+        map_event_decode_error(error, data.len(), original_len)
+    })
 }
 
 fn decode_hci_event_length_prefixed_records<
@@ -775,7 +753,7 @@ stm32wb_hci_macros::vendor_event! {
     L2CapConnectionUpdateRequest(0x0802) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            identifier: u8 => 1,
+            identifier: L2SignalIdentifier => 1,
             l2cap_length: u16 => 2,
             conn_interval: ConnectionInterval => 8,
         };
@@ -786,7 +764,7 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCommandReject(0x080A) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            identifier: u8 => 1,
+            identifier: L2SignalIdentifier => 1,
             reason: L2CapRejectionReason => 2,
             data: BoundedBytes<247> => {
                 kind: counted_bytes,
@@ -801,11 +779,11 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCocConnect(0x0810) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            spsm: u16 => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
-            initial_credits: u16 => 2,
-            channel_number: u8 => 1,
+            spsm: L2CocSpsm => 2,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
+            initial_credits: L2CocInitialCredits => 2,
+            channel_number: L2CocRequestedChannelCount => 1,
         };
     }
     /// This event is generated when receiving a valid Credit Based Connection Response packet.
@@ -814,15 +792,15 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCocConnectConfirm(0x0811) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
-            initial_credits: u16 => 2,
-            result: u16 => 2,
-            channel_indices: L2CapChannelIndices<0, 242> => {
-                kind: counted_bytes,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
+            initial_credits: L2CocInitialCredits => 2,
+            result: L2CocConnectionResult => 2,
+            channel_indices: BoundedItems<L2CocChannelIndex, 242> => {
+                kind: counted_items,
                 count: u8 => 1,
-                min_len: 0,
-                max_len: 242,
+                item: L2CocChannelIndex => 1,
+                max_items: 242,
             },
         };
     }
@@ -832,13 +810,14 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCocReconfig(0x0812) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            mtu: u16 => 2,
-            mps: u16 => 2,
-            channel_indices: L2CapChannelIndices<1, 246> => {
-                kind: counted_bytes,
+            mtu: L2CocMtu => 2,
+            mps: L2CocMps => 2,
+            channel_indices: BoundedItems<L2CocChannelIndex, 246> => {
+                kind: counted_items,
                 count: u8 => 1,
-                min_len: 1,
-                max_len: 246,
+                item: L2CocChannelIndex => 1,
+                min_items: 1,
+                max_items: 246,
             },
         };
     }
@@ -848,7 +827,7 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCocReconfigConfirm(0x0813) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            result: u16 => 2,
+            result: L2CocReconfigurationResult => 2,
         };
     }
     /// This event is generated when a connection-oriented channel is disconnected following an
@@ -858,15 +837,15 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocDisconnect(0x0814) {
-        Payload = { channel_index: u8 => 1, };
+        Payload = { channel_index: L2CocChannelIndex => 1, };
     }
     /// This event is generated when receiving a valid Flow Control Credit signaling packet.
     ///
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocFlowControl(0x0815) {
         Payload = {
-            channel_index: u8 => 1,
-            credits: u16 => 2,
+            channel_index: L2CocChannelIndex => 1,
+            credits: L2CocCreditIncrement => 2,
         };
     }
     /// This event is generated when receiving a valid K-frame packet on a connection-oriented channel
@@ -879,7 +858,7 @@ stm32wb_hci_macros::vendor_event! {
     /// information data only contains the K-frame information payload.
     L2CapCocRxData(0x0816) {
         Payload = {
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
             data: BoundedBytes<250> => {
                 kind: counted_bytes,
                 count: u16 => 2,
@@ -1200,7 +1179,7 @@ stm32wb_hci_macros::vendor_event! {
     #[cfg(before_fw_0_23_0)]
     GattEattBrearer(0x0C19) {
         Payload = {
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
             eab_state: EabState => 1,
             status: GattProcedureStatus => 1,
         };
@@ -1210,7 +1189,7 @@ stm32wb_hci_macros::vendor_event! {
     GattEattBrearer(0x0C19) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
             eab_state: EabState => 1,
             mtu: u16 => 2,
         };
@@ -1292,7 +1271,9 @@ stm32wb_hci_macros::vendor_event! {
     }
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Potential firmware kinds for [`CoprocessorReady`](VendorEvent::CoprocessorReady)
     /// event.
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1307,7 +1288,9 @@ hci_event_enum! {
     EventError = Error::Vendor;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Reasons why an L2CAP command was rejected. See the Bluetooth specification, v4.1, Vol 3,
     /// Part A, Section 4.1.
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1326,7 +1309,9 @@ hci_event_enum! {
     EventError = Error::Vendor;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Results reported by the L2CAP connection update response event.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1391,44 +1376,6 @@ impl HciEventCountedBytesTarget<u8, 1, 0, 250> for EmptyL2CapData {
     }
 }
 
-/// Channel indices prefixed by the controller-provided channel count.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct L2CapChannelIndices<const MIN: usize, const MAX: usize> {
-    indices: [u8; MAX],
-    len: usize,
-}
-
-impl<const MIN: usize, const MAX: usize> L2CapChannelIndices<MIN, MAX> {
-    /// Returns the channel indices present on the wire.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.indices[..self.len]
-    }
-}
-
-impl<const MIN: usize, const MAX: usize> HciDecodeCountedBytes<u8, 1, MAX>
-    for L2CapChannelIndices<MIN, MAX>
-{
-    fn from_counted_bytes(value: &[u8]) -> Self {
-        let len = value.len();
-        let mut indices = [0; MAX];
-        indices[..len].copy_from_slice(value);
-        Self { indices, len }
-    }
-}
-
-impl<const MIN: usize, const MAX: usize> HciEventCountedBytesTarget<u8, 1, MIN, MAX>
-    for L2CapChannelIndices<MIN, MAX>
-{
-    fn truncated_counted_bytes_error(
-        _declared_len: Option<usize>,
-        actual: usize,
-        required: usize,
-    ) -> Option<Error> {
-        Some(Error::BadLength(actual, required))
-    }
-}
-
 /// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event was generated.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1444,7 +1391,9 @@ pub enum GapPairingStatus {
     EncryptionFailed(GapPairingReason),
 }
 
-hci_try_from_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [conversion];
+    closed
     /// Reasons the [GAP Pairing Complete](VendorEvent::GapPairingComplete) event failed.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1466,7 +1415,9 @@ hci_try_from_enum! {
     TryFromError = VendorError => VendorError::BadGapPairingErrorReason;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// GAP procedure discriminator carried by the procedure-complete event.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1484,7 +1435,9 @@ hci_event_enum! {
     EventError = Error::Vendor;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Possible results of a [GAP procedure](VendorEvent::GapProcedureComplete).
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1569,7 +1522,9 @@ pub struct HandleUuid128Pair {
     pub uuid: Uuid128,
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     HandleUuid16Pair => 4 {
         Fields = {
             handle: AttributeHandle => 2,
@@ -1584,7 +1539,9 @@ hci_event_composite! {
     }
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     HandleUuid128Pair => 18 {
         Fields = {
             handle: AttributeHandle => 2,
@@ -1779,7 +1736,9 @@ impl HandleInfoPair {
     }
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     HandleInfoPair => 4 {
         Fields = {
             attribute: AttributeHandle => 2,
@@ -1975,7 +1934,9 @@ impl_attribute_value_accessor!(
     GattNotificationExt,
 );
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Allowed status codes for the [GATT Procedure Complete](VendorEvent::GattProcedureComplete)
     /// event.
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1990,7 +1951,9 @@ hci_event_enum! {
     EventError = core::convert::identity;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Potential error codes for the [ATT Error Response](VendorEvent::AttErrorResponse). See
     /// Table 3.3 in the Bluetooth Core Specification, v4.1, Vol 3, Part F, Section 3.4.1.1 and
     /// The Bluetooth Core Specification Supplement, Table 1.1.
@@ -2116,7 +2079,9 @@ hci_event_enum! {
     EventError = |value| Error::Vendor(VendorError::BadAttError(value));
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Possible ATT requests. See Table 3.37 in the Bluetooth Core Spec v4.1, Vol 3, Part F,
     /// Section 3.4.8.
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -2197,7 +2162,9 @@ impl AttPrepareWritePermitRequest {
     }
 }
 
-hci_event_open_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    open_enum
     /// Type of keypress input notified by a peer with keyboard I/O capabilities.
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -2214,7 +2181,9 @@ hci_event_open_enum! {
 /// Preferred spelling alias kept for API ergonomics.
 pub type GattEattBearer = GattEattBrearer;
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Enhanced ATT bearer state.
     #[derive(Debug, Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -2228,7 +2197,9 @@ hci_event_enum! {
     EventError = core::convert::identity;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Radio state reported by the end-of-radio-activity event.
     #[derive(Debug, Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -2245,7 +2216,9 @@ hci_event_enum! {
     EventError = core::convert::identity;
 }
 
-hci_event_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    closed
     /// Defines error types returned by [HAL Firmware Error](VendorEvent::HalFirmwareError) event.
     #[derive(Debug, Clone, Copy)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -2275,7 +2248,9 @@ impl HalFirmwareError {
     }
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     PeerAddrType => 7 {
         Fields = {
             address_type: u8 => 1,
@@ -2288,7 +2263,9 @@ hci_event_composite! {
     }
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     GapPairingStatus => 2 {
         Fields = {
             status: u8 => 1,
@@ -2315,7 +2292,9 @@ hci_event_composite! {
     }
 }
 
-hci_event_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    composite
     ConnectionInterval => 8 {
         Fields = {
             interval_min: u16 => 2,
@@ -2370,7 +2349,7 @@ mod tests {
 
         match event {
             VendorEvent::GattEattBrearer(e) => {
-                assert_eq!(e.channel_index, 2);
+                assert_eq!(e.channel_index, L2CocChannelIndex::new(2));
                 assert!(matches!(e.eab_state, EabState::AttBearerCreated));
                 assert_eq!(e.status, GattProcedureStatus::Success);
             }
@@ -2387,7 +2366,7 @@ mod tests {
         match event {
             VendorEvent::GattEattBrearer(e) => {
                 assert_eq!(e.conn_handle, ConnHandle::new(0x0123));
-                assert_eq!(e.channel_index, 2);
+                assert_eq!(e.channel_index, L2CocChannelIndex::new(2));
                 assert!(matches!(e.eab_state, EabState::AttBearerReconfigured));
                 assert_eq!(e.mtu, 64);
             }
@@ -2605,6 +2584,7 @@ mod tests {
         else {
             panic!("unexpected event variant");
         };
+        assert_eq!(event.identifier, L2SignalIdentifier::new(0x07));
         assert_eq!(event.reason, L2CapRejectionReason::InvalidCid);
     }
 
@@ -2656,7 +2636,7 @@ mod tests {
     }
 
     #[test]
-    fn ranged_counted_bytes_decode_within_their_declared_bounds() {
+    fn ranged_counted_items_decode_semantic_l2cap_values() {
         let bytes = [
             0x12, 0x08, // event code
             0x23, 0x01, // connection handle
@@ -2669,11 +2649,16 @@ mod tests {
         let VendorEvent::L2CapCocReconfig(event) = event else {
             panic!("unexpected event variant");
         };
-        assert_eq!(event.channel_indices.as_slice(), &[0x07]);
+        assert_eq!(event.mtu.value(), 64);
+        assert_eq!(event.mps.value(), 32);
+        assert_eq!(
+            event.channel_indices.as_slice(),
+            &[L2CocChannelIndex::new(0x07)]
+        );
     }
 
     #[test]
-    fn ranged_counted_bytes_enforce_their_declared_bounds() {
+    fn ranged_counted_items_enforce_their_declared_bounds() {
         let mut bytes = [
             0x12, 0x08, // event code
             0x23, 0x01, // connection handle
@@ -2687,6 +2672,25 @@ mod tests {
         bytes[8] = 247;
         let error = VendorEvent::new(&bytes).expect_err("at most 246 channels are allowed");
         assert_eq!(error, Error::BadLength(247, 246));
+    }
+
+    #[test]
+    fn semantic_l2cap_event_values_reject_invalid_controller_data() {
+        let bytes = [
+            0x12, 0x08, // event code
+            0x23, 0x01, // connection handle
+            0x16, 0x00, // MTU below the documented minimum
+            0x20, 0x00, // MPS
+            0x01, // channel count
+            0x07, // channel index
+        ];
+        let error = VendorEvent::new(&bytes).expect_err("invalid MTU must be rejected");
+        let Error::Vendor(VendorError::BadL2CocMtu(value)) = error else {
+            panic!("unexpected error: {error:?}");
+        };
+        assert_eq!(value.actual(), 22);
+        assert_eq!(value.minimum(), 23);
+        assert_eq!(value.maximum(), u16::MAX as u64);
     }
 
     #[test]

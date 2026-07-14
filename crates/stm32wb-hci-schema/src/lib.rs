@@ -5,9 +5,15 @@
 //! accepting a command declaration that the other interprets differently.
 
 mod firmware;
+mod wire_type;
 
 pub use firmware::{
     FirmwareFeatureError, FirmwareManifestError, FirmwareVersion, FirmwareVersionError,
+};
+pub use wire_type::{
+    BitflagsWireType, ClosedEnumWireType, CompositeWireType, OpenEnumWireType, OpenScalarWireType,
+    PrimitiveWireType, RangedWireType, SemanticWireType, TransparentWireType, WireAdapter,
+    WireAdapters, WireCompositeField, WireEnumVariant, WireFlag, WireSentinel, WireTypeDeclaration,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -253,6 +259,8 @@ pub enum VariableEncodingShape {
         count: WireType,
         /// Item type and its wire width.
         item: WireType,
+        /// Minimum accepted item count.
+        min_items: IntegerValue,
         /// Maximum accepted item count.
         max_items: IntegerValue,
     },
@@ -1384,10 +1392,20 @@ impl Parse for VariableEncoding {
             "counted_items" => {
                 let count = parse_wire_type(input, "count")?;
                 let item = parse_wire_type(input, "item")?;
+                let min_items = if next_label_is(input, "min_items")? {
+                    parse_integer_value(input, "min_items")?
+                } else {
+                    IntegerValue {
+                        literal: LitInt::new("0", kind.span()),
+                        value: 0,
+                    }
+                };
                 let max_items = parse_integer_value(input, "max_items")?;
+                validate_range(input, "counted_items", min_items.value, max_items.value)?;
                 VariableEncodingShape::CountedItems {
                     count,
                     item,
+                    min_items,
                     max_items,
                 }
             }
@@ -1479,9 +1497,14 @@ fn variable_bounds(
         VariableEncodingShape::CountedItems {
             count,
             item,
+            min_items,
             max_items,
         } => (
-            count.width.value,
+            item.width
+                .value
+                .checked_mul(min_items.value)
+                .and_then(|items| count.width.value.checked_add(items))
+                .ok_or_else(|| input.error("counted_items minimum field length overflows usize"))?,
             item.width
                 .value
                 .checked_mul(max_items.value)
@@ -2030,6 +2053,7 @@ mod tests {
                             kind: counted_items,
                             count: u8 => 1,
                             item: Item => 2,
+                            min_items: 1,
                             max_items: 3,
                         },
                     };
@@ -2082,6 +2106,13 @@ mod tests {
                 catalog.events[1].payload.max_len()
             ),
             (3, 11),
+        );
+        assert_eq!(
+            (
+                catalog.events[2].payload.min_len(),
+                catalog.events[2].payload.max_len()
+            ),
+            (3, 7),
         );
         let records = catalog.events[3].payload.fields().unwrap();
         let FieldEncoding::Variable(encoding) = &records.fields()[0].encoding else {
@@ -2148,6 +2179,10 @@ mod tests {
             (
                 "#[allow(dead_code)] BadAttr(1) { Payload = (); }",
                 "only documentation and cfg attributes",
+            ),
+            (
+                "BadRange(1) { Payload = { values: BoundedItems<Item, 2> => { kind: counted_items, count: u8 => 1, item: Item => 1, min_items: 3, max_items: 2, }, }; }",
+                "counted_items minimum 3 exceeds maximum 2",
             ),
             (
                 "NoDecoder(1) { Payload = { bitmap: u8 => 1, values: BoundedItems<Item, 1> => { kind: bitmap_items, bitmap: bitmap, mask: 0x01, item: Item => 1, max_items: 1, }, }; }",

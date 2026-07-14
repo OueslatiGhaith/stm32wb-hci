@@ -2,7 +2,9 @@
 
 use crate::vendor::command::BoundedBytes;
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Bluetooth RF channel accepted by [`HalStartTone`].
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ToneChannel: u8 => 1 {
@@ -11,7 +13,9 @@ hci_ranged! {
     }
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Signed frequency-offset byte passed through to the RF tone generator.
     ///
     /// CubeWB documents the complete byte domain and assigns the physical
@@ -20,7 +24,9 @@ hci_open_scalar! {
     pub struct ToneFrequencyOffset: u8 => 1;
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Controller radio-register address.
     ///
     /// The HAL API deliberately treats the register map as opaque and accepts
@@ -29,13 +35,17 @@ hci_open_scalar! {
     pub struct RadioRegisterAddress: u8 => 1;
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Opaque byte stored in a controller radio register.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RadioRegisterValue: u8 => 1;
 }
 
-hci_cfg_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Configuration-data offsets accepted by the STM32WB write-config commands.
     ///
     /// Variants are firmware-gated at the CubeWB version that first documents
@@ -93,7 +103,9 @@ impl From<ConfigWriteOffset> for usize {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Configuration-data offsets accepted by the STM32WB read-config commands.
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -366,7 +378,9 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_0_20_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Operation selected by [`HalEadEncryptDecrypt`].
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -378,7 +392,9 @@ hci_enum! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Transmitter power levels available for the system.
     ///
     /// STM32WB5x uses single byte parameter for PA level.
@@ -483,7 +499,9 @@ hci_enum! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Radio activities reported through the HAL activity mask.
     pub struct RadioActivityFlags: u16 => 2 {
         /// Idle
@@ -503,7 +521,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// HAL vendor events enabled in the controller.
     pub struct HalEventFlags: u32 => 4 {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event

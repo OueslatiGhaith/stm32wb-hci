@@ -67,7 +67,9 @@ impl ExpectedConnectionLength {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ExpectedConnectionLength => 4 {
         Fields = {
             minimum: u16 => 2,

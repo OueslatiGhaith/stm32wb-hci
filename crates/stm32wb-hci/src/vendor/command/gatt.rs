@@ -6,7 +6,9 @@ use crate::types::AttributeHandle;
 use crate::vendor::command::BoundedBytes;
 use crate::vendor::command::l2cap::L2CocChannelIndex;
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Number of attribute records reserved for a service.
     ///
     /// CubeWB leaves this as an application-selected byte capacity and does
@@ -15,7 +17,9 @@ hci_open_scalar! {
     pub struct GattAttributeRecordCapacity: u8 => 1;
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Maximum or resulting length of a Bluetooth attribute value.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct GattAttributeValueLength: u16 => 2 {
@@ -30,7 +34,9 @@ impl From<GattAttributeValueLength> for usize {
     }
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Eight-bit offset into a local attribute value.
     ///
     /// Validity depends on the characteristic selected by the same command.
@@ -38,7 +44,9 @@ hci_open_scalar! {
     pub struct GattAttributeOffset8: u8 => 1;
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Offset into an attribute value.
     ///
     /// CubeWB defines the complete wire width; the selected local or remote
@@ -53,13 +61,17 @@ impl From<GattAttributeOffset> for usize {
     }
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Maximum number of local attribute bytes requested from the controller.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct GattRequestedValueLength: u16 => 2;
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    open_scalar
     /// Raw 16-bit UUID used by the ATT Find By Type Value procedure.
     ///
     /// The Bluetooth Assigned Numbers registry is open, so every bit pattern
@@ -121,14 +133,18 @@ impl InvalidGattNotificationTarget {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     GattNotificationTarget => 2 {
         Fields = { value: u16 => 2, };
         Encode = |target| { (target.value(),) };
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Maximum characteristic-descriptor value length accepted by
     /// [`GattAddCharacteristicDescriptor`].
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1037,7 +1053,9 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Application decision returned for a pending attribute write.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1050,7 +1068,9 @@ hci_enum! {
 }
 
 #[cfg(since_fw_0_24_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Application decision returned for a pending attribute read.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1111,7 +1131,9 @@ impl ExtraDataReference {
 }
 
 #[cfg(since_fw_0_24_0)]
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ExtraDataReference => 6 {
         Fields = {
             length: u16 => 2,
@@ -1124,7 +1146,9 @@ hci_command_composite! {
 }
 
 #[cfg(since_fw_0_24_0)]
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// GATT write-with-response procedure used by [`GattWriteWithRespExt`].
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1149,7 +1173,9 @@ pub enum Uuid {
     Uuid128([u8; 16]),
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Types of GATT services.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1161,7 +1187,9 @@ hci_enum! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Available characteristic properties. Defined in Volume 3, Part G,
     /// Section 3.3.3.1 of Bluetooth Specification 4.1.
     pub struct CharacteristicProperty: u8 => 1 {
@@ -1206,7 +1234,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Security permissions available for characteristics.
     pub struct CharacteristicPermission: u8 => 1 {
         /// Need authentication to read.
@@ -1229,7 +1259,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Which events may be generated when a characteristic is accessed.
     pub struct CharacteristicEvent: u8 => 1 {
         /// The application will be notified when a client writes to this attribute.
@@ -1249,7 +1281,9 @@ hci_bitflags! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Encryption key size, in bytes.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct EncryptionKeySize: u8 => 1 {
@@ -1282,7 +1316,9 @@ impl From<KnownDescriptor> for Uuid {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Permissions available for characteristic descriptors.
     pub struct DescriptorPermission: u8 => 1 {
         /// Authentication required.
@@ -1296,7 +1332,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Types of access for characteristic descriptors
     pub struct AccessPermission: u8 => 1 {
         /// Readable
@@ -1312,7 +1350,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Flags for individual events that can be masked by the
     /// [GATT Set Event Mask](GattSetEventMask) command.
     pub struct Event: u32 => 4 {
@@ -1361,7 +1401,9 @@ hci_bitflags! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Flags for types of updates that the controller should signal when a characteristic value is
     /// [updated](GattUpdateLongCharacteristicValue).
     pub struct UpdateType: u8 => 1 {

@@ -60,7 +60,9 @@ pub fn to_bd_addr_type(address_type: u8, address: BdAddr) -> Result<BdAddrType, 
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Indicates the type of address used in advertising and initiating packets.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -87,7 +89,9 @@ impl From<OwnAddressType> for AddrKind {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Filter policy used for undirected advertising.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -188,7 +192,9 @@ impl PeerAddrType {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     PeerAddrType => 7 {
         Fields = {
             kind: u8 => 1,

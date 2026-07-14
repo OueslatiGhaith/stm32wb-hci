@@ -87,7 +87,9 @@ impl ScanWindow {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ScanWindow => 4 {
         Fields = {
             interval: u16 => 2,

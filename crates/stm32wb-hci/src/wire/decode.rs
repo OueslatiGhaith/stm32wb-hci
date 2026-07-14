@@ -325,6 +325,7 @@ pub(crate) fn decode_counted_items<
     E,
     const COUNT_LEN: usize,
     const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
     const MAX_ITEMS: usize,
 >(
     data: &[u8],
@@ -335,6 +336,12 @@ where
     T: HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
 {
     let (len, mut remaining) = decode_fixed_field(data, decode_count)?;
+    if len < MIN_ITEMS {
+        return Err(DecodeError::CountTooSmall {
+            actual: len,
+            minimum: MIN_ITEMS,
+        });
+    }
     if len > MAX_ITEMS {
         return Err(DecodeError::CountTooLarge {
             actual: len,

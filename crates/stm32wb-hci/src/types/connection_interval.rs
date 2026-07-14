@@ -120,7 +120,9 @@ impl ConnectionInterval {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ConnectionInterval => 8 {
         Fields = {
             interval_min: u16 => 2,

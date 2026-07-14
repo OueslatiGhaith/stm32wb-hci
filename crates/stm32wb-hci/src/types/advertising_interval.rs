@@ -149,7 +149,9 @@ pub enum AdvertisingIntervalError {
     NoRange,
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// The advertising type is used in the advertising parameters to determine the packet type that
     /// is used for advertising when advertising is enabled.
     #[derive(Copy, Clone, Debug, PartialEq)]

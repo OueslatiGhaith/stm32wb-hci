@@ -1,6 +1,8 @@
 use core::time::Duration;
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Extended advertising modes
     pub struct AdvertisingMode: u8 => 1 {
         /// Use specific random address
@@ -8,7 +10,9 @@ hci_bitflags! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Advertising-set handle accepted by STM32WB extended-advertising commands.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AdvertisingHandle: u8 => 1 {
@@ -17,7 +21,9 @@ hci_ranged! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Advertising event types
     pub struct AdvertisingEvent: u16 => 2 {
         /// Connectable advertising
@@ -114,7 +120,9 @@ impl ExtendedAdvertisingInterval {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     ExtendedAdvertisingInterval => 8 {
         Fields = {
             minimum: u32 => 4,
@@ -137,7 +145,9 @@ pub enum ExtendedAdvertisingIntervalError {
     Inverted(Duration, Duration),
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Advertising PHY
     #[derive(Clone, Copy, Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -177,7 +187,9 @@ impl AdvSet {
     }
 }
 
-hci_command_composite! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
     AdvSet => 4 {
         Fields = {
             handle: AdvertisingHandle => 1,
@@ -188,7 +200,9 @@ hci_command_composite! {
     }
 }
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Advertising Operation
     #[derive(Clone, Copy, Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]

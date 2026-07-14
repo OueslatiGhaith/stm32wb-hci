@@ -24,138 +24,6 @@ const fn vendor_ocf(cgid: u16, cid: u16) -> u16 {
     (cgid << 7) | cid
 }
 
-macro_rules! impl_hci_integer_field {
-    ($ty:ty, $len:literal) => {
-        impl HciEncodeField<$len> for $ty {
-            #[inline]
-            fn write_hci_field<W: embedded_io::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                writer.write_all(&self.to_le_bytes())
-            }
-
-            #[inline]
-            async fn write_hci_field_async<W: embedded_io_async::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                writer.write_all(&self.to_le_bytes()).await
-            }
-        }
-
-        impl HciDecodeField<$len> for $ty {
-            #[inline]
-            fn from_hci_field(bytes: &[u8; $len]) -> Result<Self, bt_hci::FromHciBytesError> {
-                Ok(<$ty>::from_le_bytes(*bytes))
-            }
-        }
-    };
-}
-
-impl_hci_integer_field!(u8, 1);
-impl_hci_integer_field!(i8, 1);
-impl_hci_integer_field!(u16, 2);
-impl_hci_integer_field!(i16, 2);
-impl_hci_integer_field!(u32, 4);
-impl_hci_integer_field!(i32, 4);
-impl_hci_integer_field!(u64, 8);
-impl_hci_integer_field!(i64, 8);
-
-impl HciEncodeField<1> for bool {
-    #[inline]
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&[u8::from(*self)])
-    }
-
-    #[inline]
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&[u8::from(*self)]).await
-    }
-}
-
-impl HciDecodeField<1> for bool {
-    #[inline]
-    fn from_hci_field(bytes: &[u8; 1]) -> Result<Self, bt_hci::FromHciBytesError> {
-        match bytes[0] {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(bt_hci::FromHciBytesError::InvalidValue),
-        }
-    }
-}
-
-impl<const N: usize> HciEncodeField<N> for [u8; N] {
-    #[inline]
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(self)
-    }
-
-    #[inline]
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(self).await
-    }
-}
-
-impl<const N: usize> HciDecodeField<N> for [u8; N] {
-    #[inline]
-    fn from_hci_field(bytes: &[u8; N]) -> Result<Self, bt_hci::FromHciBytesError> {
-        Ok(*bytes)
-    }
-}
-
-impl<T, const N: usize> HciEncodeField<N> for &T
-where
-    T: HciEncodeField<N>,
-{
-    fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        T::write_hci_field(self, writer)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        T::write_hci_field_async(self, writer).await
-    }
-}
-
-macro_rules! impl_hci_newtype_field {
-    ($ty:path, $inner:ty, $len:literal) => {
-        impl HciEncodeField<$len> for $ty {
-            #[inline]
-            fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-                <$inner as HciEncodeField<$len>>::write_hci_field(&self.0, writer)
-            }
-
-            #[inline]
-            async fn write_hci_field_async<W: embedded_io_async::Write>(
-                &self,
-                writer: W,
-            ) -> Result<(), W::Error> {
-                <$inner as HciEncodeField<$len>>::write_hci_field_async(&self.0, writer).await
-            }
-        }
-
-        impl HciDecodeField<$len> for $ty {
-            #[inline]
-            fn from_hci_field(bytes: &[u8; $len]) -> Result<Self, bt_hci::FromHciBytesError> {
-                <$inner as HciDecodeField<$len>>::from_hci_field(bytes).map(Self)
-            }
-        }
-    };
-}
-
-impl_hci_newtype_field!(bt_hci::param::ConnHandle, u16, 2);
-impl_hci_newtype_field!(bt_hci::param::BdAddr, [u8; 6], 6);
-impl_hci_newtype_field!(crate::types::AttributeHandle, u16, 2);
-
 impl HciEncodeField<7> for crate::types::BdAddrType {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         match self {
@@ -472,6 +340,7 @@ pub struct CountedItems<
     C,
     const COUNT_LEN: usize,
     const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
     const MAX_ITEMS: usize,
 > {
     value: T,
@@ -479,8 +348,15 @@ pub struct CountedItems<
     _item: core::marker::PhantomData<Item>,
 }
 
-impl<T, Item, C, const COUNT_LEN: usize, const ITEM_LEN: usize, const MAX_ITEMS: usize>
-    CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>
+impl<
+    T,
+    Item,
+    C,
+    const COUNT_LEN: usize,
+    const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
+    const MAX_ITEMS: usize,
+> CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>
 where
     T: AsRef<[Item]>,
     C: HciCount<COUNT_LEN>,
@@ -488,9 +364,9 @@ where
     pub fn try_new(value: T) -> Result<Self, HciLengthError> {
         let actual = value.as_ref().len();
         let maximum = core::cmp::min(MAX_ITEMS, C::MAX);
-        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, 0, maximum))?;
-        if actual > MAX_ITEMS {
-            return Err(HciLengthError::new(actual, 0, maximum));
+        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_ITEMS, maximum))?;
+        if !(MIN_ITEMS..=maximum).contains(&actual) {
+            return Err(HciLengthError::new(actual, MIN_ITEMS, maximum));
         }
         Ok(Self {
             value,
@@ -566,6 +442,7 @@ pub fn decode_declarative_counted_items<
     C,
     const COUNT_LEN: usize,
     const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
     const MAX_ITEMS: usize,
 >(
     data: &[u8],
@@ -575,7 +452,7 @@ where
     Item: Copy + HciDecodeField<ITEM_LEN>,
     C: HciCount<COUNT_LEN> + HciDecodeField<COUNT_LEN>,
 {
-    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MAX_ITEMS>(
+    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>(
         data,
         |bytes| C::from_hci_field(bytes).map(HciCount::to_usize),
         Item::from_hci_field,
@@ -685,8 +562,15 @@ where
     }
 }
 
-impl<T, Item, C, const COUNT_LEN: usize, const ITEM_LEN: usize, const MAX_ITEMS: usize>
-    DeclarativeEncodedField for CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>
+impl<
+    T,
+    Item,
+    C,
+    const COUNT_LEN: usize,
+    const ITEM_LEN: usize,
+    const MIN_ITEMS: usize,
+    const MAX_ITEMS: usize,
+> DeclarativeEncodedField for CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>
 where
     T: AsRef<[Item]>,
     Item: HciEncodeField<ITEM_LEN>,
@@ -811,7 +695,9 @@ impl<T: DeclarativeFieldList> WriteHci for DeclarativeParams<T> {
 mod tests {
     use super::HciDecodeField;
 
-    hci_enum! {
+    stm32wb_hci_macros::wire_type! {
+        adapters: [command];
+        closed
         #[derive(Debug, Eq, PartialEq)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         enum SemanticEnumFixture: u8 => 1 {
@@ -820,7 +706,9 @@ mod tests {
         }
     }
 
-    hci_bitflags! {
+    stm32wb_hci_macros::wire_type! {
+        adapters: [command];
+        bitflags
         struct SemanticFlagsFixture: u8 => 1 {
             const FIRST = 0x01;
             const THIRD = 0x04;

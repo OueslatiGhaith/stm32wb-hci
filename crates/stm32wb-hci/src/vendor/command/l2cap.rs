@@ -7,7 +7,9 @@ use crate::{
     vendor::command::BoundedItems,
 };
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
     /// Controller-assigned index identifying one LE credit-based channel.
     ///
     /// CubeWB does not publish a narrower numeric range; validity depends on
@@ -16,7 +18,9 @@ hci_open_scalar! {
     pub struct L2CocChannelIndex: u8 => 1;
 }
 
-hci_open_scalar! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
     /// L2CAP signaling identifier copied from the controller request event.
     ///
     /// The response command echoes an opaque controller-selected byte.
@@ -24,34 +28,53 @@ hci_open_scalar! {
     pub struct L2SignalIdentifier: u8 => 1;
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Maximum transmission unit accepted by credit-based channel procedures.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocMtu: u16 => 2 {
         minimum: 23,
         maximum: u16::MAX,
     }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocMtu(error).into();
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Maximum payload size accepted by credit-based channel procedures.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocMps: u16 => 2 {
         minimum: 23,
         maximum: 248,
     }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocMps(error).into();
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Credit-based connection response result defined by the Bluetooth Core.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocConnectionResult: u16 => 2 {
         minimum: 0,
         maximum: 0x000F,
     }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocConnectionResult(error).into();
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
+    /// Initial receive-credit allocation for one or more credit-based channels.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocInitialCredits: u16 => 2;
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
     /// Maximum number of credit-based channels accepted in one response.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocMaximumChannelCount: u8 => 1 {
@@ -60,16 +83,21 @@ hci_ranged! {
     }
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Simplified Protocol/Service Multiplexer for a credit-based connection.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocSpsm: u16 => 2 {
         minimum: 1,
         maximum: 0x00FF,
     }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocSpsm(error).into();
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Number of channels requested by a credit-based connection procedure.
     ///
     /// Zero requests one LE credit-based channel; one through five request
@@ -79,24 +107,37 @@ hci_ranged! {
         minimum: 0,
         maximum: 5,
     }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocRequestedChannelCount(error).into()
+    };
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Credit-based reconfiguration response result defined by the Bluetooth Core.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocReconfigurationResult: u16 => 2 {
         minimum: 0,
         maximum: 0x0004,
     }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocReconfigurationResult(error).into()
+    };
 }
 
-hci_ranged! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
     /// Nonzero credit increment sent by a flow-control procedure.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct L2CocCreditIncrement: u16 => 2 {
         minimum: 1,
         maximum: u16::MAX,
     }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocCreditIncrement(error).into()
+    };
 }
 
 stm32wb_hci_macros::vendor_cmd! {
@@ -131,7 +172,7 @@ stm32wb_hci_macros::vendor_cmd! {
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
             // CubeWB documents the complete `u16` credit domain.
-            initial_credits: u16 => 2,
+            initial_credits: L2CocInitialCredits => 2,
             channel_number: L2CocRequestedChannelCount => 1,
         };
         Completion = CommandComplete;
@@ -147,7 +188,7 @@ stm32wb_hci_macros::vendor_cmd! {
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
             // CubeWB documents the complete `u16` credit domain.
-            initial_credits: u16 => 2,
+            initial_credits: L2CocInitialCredits => 2,
             result: L2CocConnectionResult => 2,
         };
         Completion = CommandComplete;
@@ -170,7 +211,7 @@ stm32wb_hci_macros::vendor_cmd! {
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
             // CubeWB documents the complete `u16` credit domain.
-            initial_credits: u16 => 2,
+            initial_credits: L2CocInitialCredits => 2,
             result: L2CocConnectionResult => 2,
             max_channel_number: L2CocMaximumChannelCount => 1,
         };
@@ -196,11 +237,9 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_items,
                 count: u8 => 1,
                 item: L2CocChannelIndex => 1,
+                min_items: 1,
                 max_items: 5,
             },
-        };
-        Constraints = {
-            non_empty(channel_indices);
         };
         Completion = CommandComplete;
         Return = ();

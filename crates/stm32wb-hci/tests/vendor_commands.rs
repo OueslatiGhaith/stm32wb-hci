@@ -49,8 +49,9 @@ use hci::vendor::command::{
     },
     l2cap::{
         L2CapCocConnectConfirmWire, L2CocChannelIndex, L2CocConnectConfirm, L2CocConnectionResult,
-        L2CocCreditIncrement, L2CocMaximumChannelCount, L2CocMps, L2CocMtu, L2CocReconfig,
-        L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm, L2CocTxData,
+        L2CocCreditIncrement, L2CocInitialCredits, L2CocMaximumChannelCount, L2CocMps, L2CocMtu,
+        L2CocReconfig, L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm,
+        L2CocTxData,
     },
 };
 use vendor::RecordingSink;
@@ -1021,6 +1022,7 @@ fn declarative_bounded_items_decode_records_and_preserve_trailing_bytes() {
         u8,
         1,
         2,
+        0,
         3,
     >(&[2, 0x34, 0x12, 0x78, 0x56, 0xAA])
     .unwrap();
@@ -1066,19 +1068,19 @@ fn declarative_bounded_items_reject_excessive_truncated_and_invalid_records() {
 
     type Handles = BoundedItems<AttributeHandle, 3>;
     assert!(matches!(
-        decode_declarative_counted_items::<Handles, AttributeHandle, u8, 1, 2, 3>(&[4]),
+        decode_declarative_counted_items::<Handles, AttributeHandle, u8, 1, 2, 0, 3>(&[4]),
         Err(FromHciBytesError::InvalidValue)
     ));
     assert!(matches!(
-        decode_declarative_counted_items::<Handles, AttributeHandle, u8, 1, 2, 3>(
-            &[2, 0x34, 0x12,]
-        ),
+        decode_declarative_counted_items::<Handles, AttributeHandle, u8, 1, 2, 0, 3>(&[
+            2, 0x34, 0x12,
+        ]),
         Err(FromHciBytesError::InvalidSize)
     ));
 
     type Addresses = BoundedItems<hci::types::BdAddrType, 1>;
     assert!(matches!(
-        decode_declarative_counted_items::<Addresses, hci::types::BdAddrType, u8, 1, 7, 1>(&[
+        decode_declarative_counted_items::<Addresses, hci::types::BdAddrType, u8, 1, 7, 0, 1>(&[
             1, 0x02, 0, 0, 0, 0, 0, 0,
         ]),
         Err(FromHciBytesError::InvalidValue)
@@ -1494,7 +1496,7 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
         hci::bt_hci::param::ConnHandle(0x0123),
         L2CocMtu::try_new(0x4567).unwrap(),
         L2CocMps::try_new(0x0089).unwrap(),
-        0xABCD,
+        L2CocInitialCredits::new(0xABCD),
         L2CocConnectionResult::try_new(0x0002).unwrap(),
     )
     .exec(&sink)
@@ -1518,7 +1520,7 @@ async fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
         hci::bt_hci::param::ConnHandle(0x0123),
         L2CocMtu::try_new(0x4567).unwrap(),
         L2CocMps::try_new(0x0089).unwrap(),
-        0xABCD,
+        L2CocInitialCredits::new(0xABCD),
         L2CocConnectionResult::try_new(0x0002).unwrap(),
         L2CocMaximumChannelCount::try_new(5).unwrap(),
     )

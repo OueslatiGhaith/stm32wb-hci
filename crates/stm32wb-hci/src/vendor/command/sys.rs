@@ -3,7 +3,9 @@
 use crate::vendor::command::BoundedBytes;
 pub use crate::vendor::command::hal::{ConfigReadOffset, ConfigWriteOffset};
 
-hci_enum! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    closed
     /// Reset behavior selected by [`SysReset`].
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -15,7 +17,9 @@ hci_enum! {
     }
 }
 
-hci_bitflags! {
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    bitflags
     /// Optional BLE stack features selected by [`SysReset`].
     pub struct SysResetOptions: u32 => 4 {
         /// Run the Link Layer without the host stack.
