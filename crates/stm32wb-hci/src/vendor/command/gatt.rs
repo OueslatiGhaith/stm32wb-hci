@@ -4,6 +4,129 @@ use bt_hci::param::ConnHandle;
 
 use crate::types::AttributeHandle;
 use crate::vendor::command::BoundedBytes;
+use crate::vendor::command::l2cap::L2CocChannelIndex;
+
+hci_open_scalar! {
+    /// Number of attribute records reserved for a service.
+    ///
+    /// CubeWB leaves this as an application-selected byte capacity and does
+    /// not publish a narrower intrinsic domain.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattAttributeRecordCapacity: u8 => 1;
+}
+
+hci_ranged! {
+    /// Maximum or resulting length of a Bluetooth attribute value.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattAttributeValueLength: u16 => 2 {
+        minimum: 0,
+        maximum: 512,
+    }
+}
+
+impl From<GattAttributeValueLength> for usize {
+    fn from(value: GattAttributeValueLength) -> Self {
+        usize::from(value.value())
+    }
+}
+
+hci_open_scalar! {
+    /// Eight-bit offset into a local attribute value.
+    ///
+    /// Validity depends on the characteristic selected by the same command.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattAttributeOffset8: u8 => 1;
+}
+
+hci_open_scalar! {
+    /// Offset into an attribute value.
+    ///
+    /// CubeWB defines the complete wire width; the selected local or remote
+    /// attribute supplies the context-dependent upper bound.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattAttributeOffset: u16 => 2;
+}
+
+impl From<GattAttributeOffset> for usize {
+    fn from(value: GattAttributeOffset) -> Self {
+        usize::from(value.value())
+    }
+}
+
+hci_open_scalar! {
+    /// Maximum number of local attribute bytes requested from the controller.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattRequestedValueLength: u16 => 2;
+}
+
+hci_open_scalar! {
+    /// Raw 16-bit UUID used by the ATT Find By Type Value procedure.
+    ///
+    /// The Bluetooth Assigned Numbers registry is open, so every bit pattern
+    /// remains representable.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct GattUuid16: u16 => 2;
+}
+
+/// Client selection for [`GattUpdateLongCharacteristicValue`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GattNotificationTarget(u16);
+
+impl GattNotificationTarget {
+    /// Notify all subscribed clients on their unenhanced ATT bearers.
+    pub const ALL_UNENHANCED: Self = Self(0x0000);
+
+    /// Construct a target from its documented disjoint wire domain.
+    pub const fn try_new(value: u16) -> Result<Self, InvalidGattNotificationTarget> {
+        if value == 0x0000
+            || (value >= 0x0001 && value <= 0x0EFF)
+            || (value >= 0xEA00 && value <= 0xEA3F)
+        {
+            Ok(Self(value))
+        } else {
+            Err(InvalidGattNotificationTarget { actual: value })
+        }
+    }
+
+    /// Select one client on an unenhanced ATT bearer.
+    pub const fn for_connection(handle: ConnHandle) -> Result<Self, InvalidGattNotificationTarget> {
+        Self::try_new(handle.0)
+    }
+
+    /// Select one client on an enhanced ATT bearer.
+    pub const fn for_enhanced_channel(
+        index: L2CocChannelIndex,
+    ) -> Result<Self, InvalidGattNotificationTarget> {
+        Self::try_new(0xEA00 | index.value() as u16)
+    }
+
+    /// Return the encoded client selector.
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+}
+
+/// Value outside the client-selector domain documented by CubeWB.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidGattNotificationTarget {
+    actual: u16,
+}
+
+impl InvalidGattNotificationTarget {
+    /// Return the rejected wire value.
+    pub const fn actual(self) -> u16 {
+        self.actual
+    }
+}
+
+hci_command_composite! {
+    GattNotificationTarget => 2 {
+        Fields = { value: u16 => 2, };
+        Encode = |target| { (target.value(),) };
+    }
+}
 
 hci_ranged! {
     /// Maximum characteristic-descriptor value length accepted by
@@ -49,7 +172,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 max_len: 17,
             },
             service_type: ServiceType => 1,
-            max_attribute_records: u8 => 1,
+            max_attribute_records: GattAttributeRecordCapacity => 1,
         };
         Completion = CommandComplete;
         Return = GattService {
@@ -108,7 +231,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 min_len: 3,
                 max_len: 17,
             },
-            characteristic_value_len: u16 => 2,
+            characteristic_value_len: GattAttributeValueLength => 2,
             characteristic_properties: CharacteristicProperty => 1,
             security_permissions: CharacteristicPermission => 1,
             gatt_event_mask: CharacteristicEvent => 1,
@@ -170,7 +293,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params<'a> = {
             service_handle: AttributeHandle => 2,
             characteristic_handle: AttributeHandle => 2,
-            offset: u8 => 1,
+            offset: GattAttributeOffset8 => 1,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -250,7 +373,7 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             attribute_handle_start: AttributeHandle => 2,
             attribute_handle_end: AttributeHandle => 2,
-            uuid: u16 => 2,
+            uuid: GattUuid16 => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -320,7 +443,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -477,7 +600,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = {
             conn_handle: ConnHandle => 2,
             attribute: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
         };
         Completion = CommandStatus;
     }
@@ -518,7 +641,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -534,7 +657,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
             characteristic_handle: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -551,7 +674,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params<'a> = {
             conn_handle: ConnHandle => 2,
             descriptor_handle: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -568,7 +691,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = {
             conn_handle: ConnHandle => 2,
             attribute: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
         };
         Completion = CommandStatus;
     }
@@ -756,7 +879,7 @@ stm32wb_hci_macros::vendor_cmd! {
             service_handle: AttributeHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             descriptor_handle: AttributeHandle => 2,
-            offset: u16 => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -772,8 +895,8 @@ stm32wb_hci_macros::vendor_cmd! {
     GattReadHandleValue(cgid = 0x2, cid = 0x2A) {
         Params = {
             handle: AttributeHandle => 2,
-            offset: u16 => 2,
-            value_length_requested: u16 => 2,
+            offset: GattAttributeOffset => 2,
+            value_length_requested: GattRequestedValueLength => 2,
         };
         Completion = CommandComplete;
         Return = GattHandleValue {
@@ -800,17 +923,20 @@ impl GattHandleValue {
 stm32wb_hci_macros::vendor_cmd! {
     GattUpdateLongCharacteristicValue(cgid = 0x2, cid = 0x2C) {
         Params<'a> = {
-            conn_handle_to_notify: u16 => 2,
+            conn_handle_to_notify: GattNotificationTarget => 2,
             service_handle: AttributeHandle => 2,
             characteristic_handle: AttributeHandle => 2,
             update_type: UpdateType => 1,
-            total_len: u16 => 2,
-            offset: u16 => 2,
+            total_len: GattAttributeValueLength => 2,
+            offset: GattAttributeOffset => 2,
             value: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 243,
             },
+        };
+        Constraints = {
+            offset_len_at_most(offset, value, total_len);
         };
         Completion = CommandComplete;
         Return = ();
@@ -823,6 +949,9 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = {
             conn_handle: ConnHandle => 2,
             error_code: u8 => 1,
+        };
+        Constraints = {
+            one_of_or_range(error_code, [0x08], 0x80, 0x9F);
         };
         Completion = CommandComplete;
         Return = ();
@@ -901,7 +1030,7 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             write_mode: WriteMode => 1,
-            value_offset: u16 => 2,
+            value_offset: GattAttributeOffset => 2,
             data: ExtraDataReference => 6,
         };
         Completion = CommandStatus;

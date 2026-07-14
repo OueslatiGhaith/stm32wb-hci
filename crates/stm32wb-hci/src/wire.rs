@@ -247,6 +247,155 @@ macro_rules! hci_enum {
     };
 }
 
+/// Declare a firmware-gated closed command enum.
+///
+/// This deliberately accepts only documentation and an optional `cfg` on
+/// each variant. The `cfg` is repeated on every generated reference to that
+/// variant, while documentation remains attached only to the enum itself.
+/// Keeping those two attribute classes separate avoids emitting rustdoc
+/// attributes on generated match arms.
+macro_rules! hci_cfg_enum {
+    (
+        $(#[$enum_attr:meta])*
+        $vis:vis enum $name:ident : $repr:ty => $len:literal {
+            $(
+                $(#[doc = $variant_doc:literal])*
+                $(#[cfg($variant_cfg:meta)])?
+                $variant:ident = $value:expr,
+            )+
+        }
+    ) => {
+        $(#[$enum_attr])*
+        #[repr($repr)]
+        $vis enum $name {
+            $(
+                $(#[doc = $variant_doc])*
+                $(#[cfg($variant_cfg)])?
+                $variant = $value,
+            )+
+        }
+
+        impl crate::vendor::command::HciEncodeField<$len> for $name {
+            fn write_hci_field<W: embedded_io::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                let value: $repr = match self {
+                    $($(#[cfg($variant_cfg)])? Self::$variant => $value,)+
+                };
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field(
+                    &value,
+                    writer,
+                )
+            }
+
+            async fn write_hci_field_async<W: embedded_io_async::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                let value: $repr = match self {
+                    $($(#[cfg($variant_cfg)])? Self::$variant => $value,)+
+                };
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field_async(
+                    &value,
+                    writer,
+                )
+                .await
+            }
+        }
+
+        impl crate::vendor::command::HciDecodeField<$len> for $name {
+            fn from_hci_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, bt_hci::FromHciBytesError> {
+                let value =
+                    <$repr as crate::vendor::command::HciDecodeField<$len>>::from_hci_field(bytes)?;
+                $(
+                    $(#[cfg($variant_cfg)])?
+                    if value == $value {
+                        return Ok(Self::$variant);
+                    }
+                )+
+                Err(bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+    };
+}
+
+/// Declare a semantic command scalar whose protocol accepts every bit pattern.
+///
+/// Open scalars distinguish unrelated wire concepts without inventing a
+/// numeric restriction that the controller documentation does not define.
+/// They therefore use infallible construction and delegate their exact-width
+/// encoding and decoding to the underlying integer.
+macro_rules! hci_open_scalar {
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $name:ident : $repr:ty => $len:literal;
+    ) => {
+        $(#[$attr])*
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        $vis struct $name($repr);
+
+        impl $name {
+            /// Construct the semantic value from its complete wire domain.
+            pub const fn new(value: $repr) -> Self {
+                Self(value)
+            }
+
+            /// Return the underlying wire value.
+            pub const fn value(self) -> $repr {
+                self.0
+            }
+        }
+
+        impl From<$repr> for $name {
+            fn from(value: $repr) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<$name> for $repr {
+            fn from(value: $name) -> Self {
+                value.value()
+            }
+        }
+
+        impl crate::vendor::command::HciEncodeField<$len> for $name {
+            fn write_hci_field<W: embedded_io::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field(
+                    &self.0,
+                    writer,
+                )
+            }
+
+            async fn write_hci_field_async<W: embedded_io_async::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <$repr as crate::vendor::command::HciEncodeField<$len>>::write_hci_field_async(
+                    &self.0,
+                    writer,
+                )
+                .await
+            }
+        }
+
+        impl crate::vendor::command::HciDecodeField<$len> for $name {
+            fn from_hci_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, bt_hci::FromHciBytesError> {
+                <$repr as crate::vendor::command::HciDecodeField<$len>>::from_hci_field(bytes)
+                    .map(Self::new)
+            }
+        }
+    };
+}
+
 /// Declare a closed enum with canonical conversions to and from its wire
 /// representation.
 macro_rules! hci_try_from_enum {

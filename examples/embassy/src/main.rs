@@ -21,9 +21,9 @@ use embassy_stm32::{
 };
 use stm32wb_hci::vendor::{
     command::{
-        gap::{CmdGapInit, Role},
+        gap::{CmdGapInit, PrivacyMode, Role},
         gatt::GattInit,
-        hal::HalWriteConfigData,
+        hal::{ConfigWriteOffset, HalWriteConfigData},
     },
     event::VendorEvent,
 };
@@ -114,14 +114,13 @@ async fn main(spawner: Spawner) {
 
             defmt::info!("hci: write config data");
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let command = match HalWriteConfigData::try_new(0, &public_address.0) {
+            let command = match HalWriteConfigData::try_new(
+                ConfigWriteOffset::PublicAddress,
+                &public_address.0,
+            ) {
                 Ok(command) => command,
                 Err(error) => {
-                    defmt::error!(
-                        "invalid config command length: actual={}, maximum={}",
-                        error.actual(),
-                        error.maximum()
-                    );
+                    defmt::error!("invalid config command: {}", error);
                     return;
                 }
             };
@@ -133,7 +132,14 @@ async fn main(spawner: Spawner) {
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gap");
-            let response = CmdGapInit::new(Role::PERIPHERAL, false, 8).exec(&ble).await;
+            let command = match CmdGapInit::try_new(Role::PERIPHERAL, PrivacyMode::Disabled, 8) {
+                Ok(command) => command,
+                Err(error) => {
+                    defmt::error!("invalid GAP init command: {}", error);
+                    return;
+                }
+            };
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             info!("BLE HCI ready");

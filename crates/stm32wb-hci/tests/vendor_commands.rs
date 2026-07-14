@@ -25,28 +25,32 @@ use hci::vendor::command::{
         GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable, GapSetNonDiscoverable,
         GapSetOobData, GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
         GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
-        OptionalAdvertisingIntervalBound, PassKey, PowerAmplifierOutputLevel, Procedure, Role,
-        ScanType, ScanningFilterPolicy, SecureConnectionSupport, TerminationReason,
+        OptionalAdvertisingIntervalBound, PassKey, PowerAmplifierOutputLevel, PrivacyMode,
+        Procedure, Role, ScanType, ScanningFilterPolicy, SecondaryAdvertisingMaximumSkip,
+        SecureConnectionSupport, TerminationReason,
     },
     gatt::{
         AccessPermission, CharacteristicEvent, CharacteristicPermission, CharacteristicProperty,
         DescriptorPermission, DescriptorValueMaxLength, EncryptionKeySize, GattAddCharacteristic,
-        GattAddCharacteristicDescriptor, GattAddService, GattCharacteristic,
+        GattAddCharacteristicDescriptor, GattAddService, GattAttributeOffset,
+        GattAttributeRecordCapacity, GattAttributeValueLength, GattCharacteristic,
         GattCharacteristicDescriptor, GattDiscoverCharacteristicsByUUID,
         GattDiscoverPrimaryServicesByUUID, GattFindByTypeValueRequest, GattHandleValue,
-        GattIncludeService, GattReadByGroupTypeRequest, GattReadByTypeRequest,
-        GattReadCharacteristicUsingUUID, GattReadHandleValue, GattReadMultipleVarCharValue,
-        GattService, GattSetEventMask, ServiceType, Uuid, WriteStatus,
+        GattIncludeService, GattNotificationTarget, GattReadByGroupTypeRequest,
+        GattReadByTypeRequest, GattReadCharacteristicUsingUUID, GattReadHandleValue,
+        GattReadMultipleVarCharValue, GattRequestedValueLength, GattService, GattSetEventMask,
+        GattUpdateLongCharacteristicValue, GattUuid16, ServiceType, UpdateType, Uuid, WriteStatus,
     },
     hal::{
         HalEventFlags, HalGetLinkStatus, HalRadioRegisterValue, HalReadRadioReg, HalRxStart,
         HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
-        HalStartTone, HalWriteRadioReg, PowerLevel, RadioActivityFlags, ToneChannel,
+        HalStartTone, HalWriteRadioReg, PowerLevel, RadioActivityFlags, RadioRegisterAddress,
+        RadioRegisterValue, ToneChannel, ToneFrequencyOffset,
     },
     l2cap::{
-        L2CocConnectConfirm, L2CocConnectionResult, L2CocCreditIncrement, L2CocMaximumChannelCount,
-        L2CocMps, L2CocMtu, L2CocReconfig, L2CocReconfigurationResult, L2CocRequestedChannelCount,
-        L2CocSpsm, L2CocTxData,
+        L2CapCocConnectConfirmWire, L2CocChannelIndex, L2CocConnectConfirm, L2CocConnectionResult,
+        L2CocCreditIncrement, L2CocMaximumChannelCount, L2CocMps, L2CocMtu, L2CocReconfig,
+        L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm, L2CocTxData,
     },
 };
 use vendor::RecordingSink;
@@ -135,7 +139,10 @@ async fn semantic_scan_domains_encode_their_declared_values() {
 #[test]
 fn extended_scan_requires_at_least_one_declared_phy() {
     use core::time::Duration;
-    use hci::vendor::command::gap::{ExtScanMode, ExtScanPhyParams, GapExtStartScan, ScanningPhy};
+    use hci::vendor::command::gap::{
+        ExtScanMode, ExtScanPhyParams, ExtendedDuplicateFiltering, ExtendedScanDuration,
+        ExtendedScanPeriod, GapExtStartScan, ScanningPhy,
+    };
 
     let phy_params = || ExtScanPhyParams {
         scan_type: ScanType::Passive,
@@ -151,9 +158,9 @@ fn extended_scan_requires_at_least_one_declared_phy() {
             ExtScanMode::Default,
             Procedure::OBSERVATION,
             AddressType::Public,
-            false,
-            0,
-            0,
+            ExtendedDuplicateFiltering::Disabled,
+            ExtendedScanDuration::new(0),
+            ExtendedScanPeriod::new(0),
             ScanningFilterPolicy::BasicUnfiltered,
             ScanningPhy::empty(),
             phy_params(),
@@ -567,7 +574,7 @@ async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
             address,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             power,
-            0,
+            SecondaryAdvertisingMaximumSkip::new(0),
             AdvertisingPhy::Le1M,
             sid,
             false,
@@ -577,6 +584,7 @@ async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
     let sid_zero = AdvertisingSid::try_new(0).unwrap();
     assert!(make(-128, sid_zero).is_err());
     assert!(make(21, sid_zero).is_err());
+    assert!(make(127, sid_zero).is_ok());
     assert!(AdvertisingSid::try_new(16).is_err());
 
     let sink = RecordingSink::new();
@@ -706,7 +714,13 @@ async fn hal_set_peripheral_latency_uses_its_own_opcode() {
 async fn hal_write_radio_reg_matches_cubewb() {
     let sink = RecordingSink::new();
 
-    HalWriteRadioReg::new(0xAA, 0x55).exec(&sink).await.unwrap();
+    HalWriteRadioReg::new(
+        RadioRegisterAddress::new(0xAA),
+        RadioRegisterValue::new(0x55),
+    )
+    .exec(&sink)
+    .await
+    .unwrap();
 
     // OGF 0x3f / OCF 0x031, as used by aci_hal_write_radio_reg in CubeWB.
     assert_eq!(sink.written_data(), [1, 0x31, 0xFC, 2, 0xAA, 0x55]);
@@ -716,9 +730,12 @@ async fn hal_write_radio_reg_matches_cubewb() {
 async fn declarative_hal_read_radio_reg_matches_cubewb() {
     let sink = RecordingSink::new();
 
-    let value = HalReadRadioReg::new(0xAA).exec(&sink).await.unwrap();
+    let value = HalReadRadioReg::new(RadioRegisterAddress::new(0xAA))
+        .exec(&sink)
+        .await
+        .unwrap();
 
-    assert_eq!(value.value, 0);
+    assert_eq!(value.value, RadioRegisterValue::new(0));
     assert_eq!(sink.written_data(), [1, 0x30, 0xFC, 1, 0xAA]);
 }
 
@@ -728,7 +745,7 @@ fn declarative_hal_radio_reg_decodes_payload_without_status_byte() {
 
     let value = HalRadioRegisterValue::from_hci_bytes_complete(&[0x55]).unwrap();
 
-    assert_eq!(value.value, 0x55);
+    assert_eq!(value.value, RadioRegisterValue::new(0x55));
 }
 
 #[cfg(before_fw_0_23_0)]
@@ -810,10 +827,13 @@ async fn declarative_hal_fixed_setters_match_cubewb() {
         .exec(&sink)
         .await
         .unwrap();
-    HalStartTone::new(ToneChannel::try_new(0x27).unwrap(), 0xAA)
-        .exec(&sink)
-        .await
-        .unwrap();
+    HalStartTone::new(
+        ToneChannel::try_new(0x27).unwrap(),
+        ToneFrequencyOffset::new(0xAA),
+    )
+    .exec(&sink)
+    .await
+    .unwrap();
     HalSetRadioActivityMask::new(RadioActivityFlags::IDLE | RadioActivityFlags::CENTRAL_CONN)
         .exec(&sink)
         .await
@@ -822,7 +842,10 @@ async fn declarative_hal_fixed_setters_match_cubewb() {
         .exec(&sink)
         .await
         .unwrap();
-    HalRxStart::new(0x27).exec(&sink).await.unwrap();
+    HalRxStart::new(ToneChannel::try_new(0x27).unwrap())
+        .exec(&sink)
+        .await
+        .unwrap();
 
     assert_eq!(
         sink.written_data(),
@@ -884,11 +907,20 @@ async fn declarative_gap_init_matches_cubewb() {
 
     let sink = RecordingSink::new();
 
-    let _ = CmdGapInit::new(Role::PERIPHERAL | Role::CENTRAL, true, 0x20)
+    let _ = CmdGapInit::try_new(Role::PERIPHERAL | Role::CENTRAL, PrivacyMode::Enabled, 0x20)
+        .unwrap()
         .exec(&sink)
         .await;
 
-    assert_eq!(sink.written_data(), [1, 0x8A, 0xFC, 3, 0x05, 0x01, 0x20]);
+    assert_eq!(sink.written_data(), [1, 0x8A, 0xFC, 3, 0x05, 0x02, 0x20]);
+}
+
+#[test]
+fn gap_init_rejects_empty_roles_and_boolean_style_privacy_encoding() {
+    assert!(CmdGapInit::try_new(Role::empty(), PrivacyMode::Disabled, 8).is_err());
+    assert!(
+        <PrivacyMode as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x01]).is_err()
+    );
 }
 
 #[tokio::test]
@@ -1087,9 +1119,13 @@ async fn declarative_get_bonded_devices_has_no_request_parameters() {
 async fn gatt_read_handle_value_matches_cubewb() {
     let sink = RecordingSink::new();
 
-    let _ = GattReadHandleValue::new(AttributeHandle(0x0123), 0x4567, 0x89AB)
-        .exec(&sink)
-        .await;
+    let _ = GattReadHandleValue::new(
+        AttributeHandle(0x0123),
+        GattAttributeOffset::new(0x4567),
+        GattRequestedValueLength::new(0x89AB),
+    )
+    .exec(&sink)
+    .await;
 
     // OGF 0x3f / OCF 0x12a, as used by aci_gatt_read_handle_value in CubeWB.
     assert_eq!(
@@ -1221,10 +1257,14 @@ async fn inline_uuid_shape_drives_characteristic_procedures() {
 async fn inline_uuid_shape_drives_add_service() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x1234);
-    let _ = GattAddService::try_new(&uuid, ServiceType::Primary, 0x12)
-        .unwrap()
-        .exec(&sink)
-        .await;
+    let _ = GattAddService::try_new(
+        &uuid,
+        ServiceType::Primary,
+        GattAttributeRecordCapacity::new(0x12),
+    )
+    .unwrap()
+    .exec(&sink)
+    .await;
 
     assert_eq!(
         sink.written_data(),
@@ -1261,7 +1301,7 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
     let _ = GattAddCharacteristic::try_new(
         AttributeHandle(0x0123),
         &uuid,
-        0x89AB,
+        GattAttributeValueLength::try_new(0x01AB).unwrap(),
         CharacteristicProperty::READ | CharacteristicProperty::WRITE,
         CharacteristicPermission::ENCRYPTED_READ,
         CharacteristicEvent::CONFIRM_READ,
@@ -1275,7 +1315,7 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
     assert_eq!(
         sink.written_data(),
         [
-            1, 0x04, 0xFD, 12, 0x23, 0x01, 0x01, 0x67, 0x45, 0xAB, 0x89, 0x0A, 0x04, 0x04, 0x10,
+            1, 0x04, 0xFD, 12, 0x23, 0x01, 0x01, 0x67, 0x45, 0xAB, 0x01, 0x0A, 0x04, 0x04, 0x10,
             0x01,
         ]
     );
@@ -1358,7 +1398,7 @@ async fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value() {
         hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
-        0xCDEF,
+        GattUuid16::new(0xCDEF),
         &[0xAA, 0xBB],
     )
     .unwrap()
@@ -1381,7 +1421,7 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         hci::bt_hci::param::ConnHandle(0x0123),
         AttributeHandle(0x4567),
         AttributeHandle(0x89AB),
-        0xCDEF,
+        GattUuid16::new(0xCDEF),
         &oversized_value,
     );
     assert!(result.is_err());
@@ -1500,7 +1540,7 @@ async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
         hci::bt_hci::param::ConnHandle(0x0123),
         L2CocMtu::try_new(0x4567).unwrap(),
         L2CocMps::try_new(0x0089).unwrap(),
-        &[0xAA, 0xBB],
+        &[L2CocChannelIndex::new(0xAA), L2CocChannelIndex::new(0xBB)],
     )
     .unwrap()
     .exec(&sink)
@@ -1530,6 +1570,78 @@ fn l2cap_credit_based_domains_reject_controller_invalid_values() {
     assert!(L2CocCreditIncrement::try_new(0).is_err());
 }
 
+#[test]
+fn l2cap_connect_confirm_decodes_semantic_channel_indices() {
+    use bt_hci::FromHciBytes;
+
+    let response = L2CapCocConnectConfirmWire::from_hci_bytes_complete(&[2, 0xAA, 0xBB]).unwrap();
+    assert_eq!(
+        response.channel_indices.as_slice(),
+        [L2CocChannelIndex::new(0xAA), L2CocChannelIndex::new(0xBB)]
+    );
+}
+
+#[test]
+fn hal_config_offsets_own_their_documented_payload_lengths() {
+    use hci::vendor::command::hal::{ConfigReadOffset, ConfigWriteOffset, HalWriteConfigData};
+
+    assert!(HalWriteConfigData::try_new(ConfigWriteOffset::PublicAddress, &[0; 5]).is_err());
+    assert!(HalWriteConfigData::try_new(ConfigWriteOffset::PublicAddress, &[0; 6]).is_ok());
+    assert!(
+        <ConfigReadOffset as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[0x01])
+            .is_err()
+    );
+}
+
+#[test]
+fn gatt_long_updates_validate_intrinsic_and_cross_field_domains() {
+    assert!(GattAttributeValueLength::try_new(513).is_err());
+    assert!(GattNotificationTarget::try_new(0x0F00).is_err());
+    assert!(GattNotificationTarget::try_new(0xEA40).is_err());
+    assert!(GattNotificationTarget::try_new(0xEA3F).is_ok());
+    assert!(GattNotificationTarget::for_enhanced_channel(L2CocChannelIndex::new(0x40)).is_err());
+
+    let target = GattNotificationTarget::ALL_UNENHANCED;
+    let total = GattAttributeValueLength::try_new(10).unwrap();
+    assert!(
+        GattUpdateLongCharacteristicValue::try_new(
+            target,
+            AttributeHandle(1),
+            AttributeHandle(2),
+            UpdateType::empty(),
+            total,
+            GattAttributeOffset::new(9),
+            &[0xAA, 0xBB],
+        )
+        .is_err()
+    );
+    assert!(
+        GattUpdateLongCharacteristicValue::try_new(
+            target,
+            AttributeHandle(1),
+            AttributeHandle(2),
+            UpdateType::empty(),
+            total,
+            GattAttributeOffset::new(8),
+            &[0xAA, 0xBB],
+        )
+        .is_ok()
+    );
+}
+
+#[cfg(before_fw_0_24_0)]
+#[test]
+fn legacy_gatt_deny_read_accepts_only_documented_att_errors() {
+    use hci::vendor::command::gatt::GattDenyRead;
+
+    let handle = hci::bt_hci::param::ConnHandle(1);
+    assert!(GattDenyRead::try_new(handle, 0x07).is_err());
+    assert!(GattDenyRead::try_new(handle, 0x08).is_ok());
+    assert!(GattDenyRead::try_new(handle, 0x80).is_ok());
+    assert!(GattDenyRead::try_new(handle, 0x9F).is_ok());
+    assert!(GattDenyRead::try_new(handle, 0xA0).is_err());
+}
+
 #[cfg(since_fw_0_20_0)]
 #[test]
 fn ead_decryption_requires_randomizer_and_mic_overhead() {
@@ -1546,7 +1658,7 @@ fn ead_decryption_requires_randomizer_and_mic_overhead() {
 #[test]
 fn system_reset_options_follow_the_selected_reset_mode() {
     use hci::vendor::command::sys::{
-        SysReset, SysResetMode, SysResetOptions, SysWritableConfigOffset, SysWriteConfigData,
+        ConfigWriteOffset, SysReset, SysResetMode, SysResetOptions, SysWriteConfigData,
     };
 
     assert!(SysReset::try_new(SysResetMode::NoOptionsChange, SysResetOptions::empty()).is_ok());
@@ -1565,18 +1677,18 @@ fn system_reset_options_follow_the_selected_reset_mode() {
         .is_ok()
     );
 
-    assert!(SysWriteConfigData::try_new(SysWritableConfigOffset::PublicAddress, &[0; 5]).is_err());
-    assert!(SysWriteConfigData::try_new(SysWritableConfigOffset::PublicAddress, &[0; 6]).is_ok());
+    assert!(SysWriteConfigData::try_new(ConfigWriteOffset::PublicAddress, &[0; 5]).is_err());
+    assert!(SysWriteConfigData::try_new(ConfigWriteOffset::PublicAddress, &[0; 6]).is_ok());
     assert!(
         SysWriteConfigData::try_new(
-            SysWritableConfigOffset::LinkLayerMaximumDataLengthExtension,
+            ConfigWriteOffset::LinkLayerMaximumDataLengthExtension,
             &[0; 7],
         )
         .is_err()
     );
     assert!(
         SysWriteConfigData::try_new(
-            SysWritableConfigOffset::LinkLayerMaximumDataLengthExtension,
+            ConfigWriteOffset::LinkLayerMaximumDataLengthExtension,
             &[0; 8],
         )
         .is_ok()
@@ -1656,7 +1768,7 @@ async fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
 #[tokio::test]
 async fn declarative_l2cap_tx_data_writes_only_the_declared_data() {
     let sink = RecordingSink::new();
-    L2CocTxData::try_new(3, &[0xAA, 0xBB])
+    L2CocTxData::try_new(L2CocChannelIndex::new(3), &[0xAA, 0xBB])
         .unwrap()
         .exec(&sink)
         .await
@@ -1667,7 +1779,7 @@ async fn declarative_l2cap_tx_data_writes_only_the_declared_data() {
 
 #[test]
 fn declarative_l2cap_rejects_lengths_beyond_the_wire_bounds() {
-    let reconfig = [0; 6];
+    let reconfig = [L2CocChannelIndex::new(0); 6];
     let tx = [0; 253];
 
     assert!(
@@ -1688,5 +1800,5 @@ fn declarative_l2cap_rejects_lengths_beyond_the_wire_bounds() {
         )
         .is_err()
     );
-    assert!(L2CocTxData::try_new(0, &tx).is_err());
+    assert!(L2CocTxData::try_new(L2CocChannelIndex::new(0), &tx).is_err());
 }

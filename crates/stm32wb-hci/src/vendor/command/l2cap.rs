@@ -4,8 +4,25 @@ use bt_hci::param::ConnHandle;
 
 use crate::{
     types::{ConnectionInterval, ExpectedConnectionLength},
-    vendor::command::BoundedBytes,
+    vendor::command::BoundedItems,
 };
+
+hci_open_scalar! {
+    /// Controller-assigned index identifying one LE credit-based channel.
+    ///
+    /// CubeWB does not publish a narrower numeric range; validity depends on
+    /// the channels currently owned by the controller.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocChannelIndex: u8 => 1;
+}
+
+hci_open_scalar! {
+    /// L2CAP signaling identifier copied from the controller request event.
+    ///
+    /// The response command echoes an opaque controller-selected byte.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2SignalIdentifier: u8 => 1;
+}
 
 hci_ranged! {
     /// Maximum transmission unit accepted by credit-based channel procedures.
@@ -98,7 +115,7 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             conn_interval: ConnectionInterval => 8,
             expected_connection_length_range: ExpectedConnectionLength => 4,
-            identifier: u8 => 1,
+            identifier: L2SignalIdentifier => 1,
             accepted: bool => 1,
         };
         Completion = CommandComplete;
@@ -113,6 +130,7 @@ stm32wb_hci_macros::vendor_cmd! {
             spsm: L2CocSpsm => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
+            // CubeWB documents the complete `u16` credit domain.
             initial_credits: u16 => 2,
             channel_number: L2CocRequestedChannelCount => 1,
         };
@@ -128,15 +146,17 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
+            // CubeWB documents the complete `u16` credit domain.
             initial_credits: u16 => 2,
             result: L2CocConnectionResult => 2,
         };
         Completion = CommandComplete;
         Return = L2CapCocConnectConfirmWire {
-            channel_indices: BoundedBytes<5> => {
-                kind: counted_bytes,
+            channel_indices: BoundedItems<L2CocChannelIndex, 5> => {
+                kind: counted_items,
                 count: u8 => 1,
-                max_len: 5,
+                item: L2CocChannelIndex => 1,
+                max_items: 5,
             },
         };
     }
@@ -149,16 +169,18 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
+            // CubeWB documents the complete `u16` credit domain.
             initial_credits: u16 => 2,
             result: L2CocConnectionResult => 2,
             max_channel_number: L2CocMaximumChannelCount => 1,
         };
         Completion = CommandComplete;
         Return = L2CapCocConnectConfirmWire {
-            channel_indices: BoundedBytes<5> => {
-                kind: counted_bytes,
+            channel_indices: BoundedItems<L2CocChannelIndex, 5> => {
+                kind: counted_items,
                 count: u8 => 1,
-                max_len: 5,
+                item: L2CocChannelIndex => 1,
+                max_items: 5,
             },
         };
     }
@@ -170,12 +192,15 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
-            channel_indices: &'a [u8] => {
-                kind: counted_bytes,
+            channel_indices: &'a [L2CocChannelIndex] => {
+                kind: counted_items,
                 count: u8 => 1,
-                min_len: 1,
-                max_len: 5,
+                item: L2CocChannelIndex => 1,
+                max_items: 5,
             },
+        };
+        Constraints = {
+            non_empty(channel_indices);
         };
         Completion = CommandComplete;
         Return = ();
@@ -196,7 +221,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     L2CocDisconnect(cgid = 0x3, cid = 0x0C) {
         Params = {
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
         };
         Completion = CommandComplete;
         Return = ();
@@ -206,7 +231,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
         Params = {
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
             credits: L2CocCreditIncrement => 2,
         };
         Completion = CommandComplete;
@@ -217,7 +242,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     L2CocTxData(cgid = 0x3, cid = 0x0E) {
         Params<'a> = {
-            channel_index: u8 => 1,
+            channel_index: L2CocChannelIndex => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
                 count: u16 => 2,

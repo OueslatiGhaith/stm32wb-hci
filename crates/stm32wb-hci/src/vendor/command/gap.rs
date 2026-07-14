@@ -23,6 +23,15 @@ hci_ranged! {
     }
 }
 
+hci_open_scalar! {
+    /// Maximum number of consecutive auxiliary advertising events the
+    /// controller may skip.
+    ///
+    /// The Bluetooth command assigns meaning to the complete byte domain.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct SecondaryAdvertisingMaximumSkip: u8 => 1;
+}
+
 hci_ranged! {
     /// Legacy advertising-interval bound in 0.625 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -76,6 +85,19 @@ hci_enum! {
         UnsupportedRemoteFeature = 0x1A,
         PairingWithUnitKeyNotSupported = 0x29,
         UnacceptableConnectionParameters = 0x3B,
+    }
+}
+
+hci_enum! {
+    /// Privacy behavior selected while initializing the GAP service.
+    ///
+    /// CubeWB uses `0x02`, rather than the usual Boolean `0x01`, to enable
+    /// privacy for this command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum PrivacyMode: u8 => 1 {
+        Disabled = 0x00,
+        Enabled = 0x02,
     }
 }
 
@@ -288,8 +310,12 @@ stm32wb_hci_macros::vendor_cmd! {
     CmdGapInit(cgid = 0x1, cid = 0x0A) {
         Params = {
             role: Role => 1,
-            privacy_enabled: bool => 1,
+            privacy: PrivacyMode => 1,
+            // CubeWB defines no narrower numeric domain for this capacity.
             dev_name_characteristic_len: u8 => 1,
+        };
+        Constraints = {
+            non_empty(role);
         };
         Completion = CommandComplete;
         Return = GapInit {
@@ -799,14 +825,14 @@ stm32wb_hci_macros::vendor_cmd! {
             peer_addr: BdAddrType => 7,
             adv_filter_policy: AdvertisingFilterPolicy => 1,
             adv_tx_power: i8 => 1,
-            secondary_adv_max_skip: u8 => 1,
+            secondary_adv_max_skip: SecondaryAdvertisingMaximumSkip => 1,
             secondary_adv_phy: AdvertisingPhy => 1,
             adv_sid: AdvertisingSid => 1,
             scan_req_notification_enable: bool => 1,
         };
         Constraints = {
             non_empty(primary_adv_channel_map);
-            range(adv_tx_power, -127, 20);
+            one_of_or_range(adv_tx_power, [127], -127, 20);
         };
         Completion = CommandComplete;
         Return = ();
@@ -911,9 +937,9 @@ stm32wb_hci_macros::vendor_cmd! {
             scan_mode: ExtScanMode => 1,
             procedure: Procedure => 1,
             own_address_type: AddressType => 1,
-            filter_duplicates: bool => 1,
-            duration: u16 => 2,
-            period: u16 => 2,
+            filter_duplicates: ExtendedDuplicateFiltering => 1,
+            duration: ExtendedScanDuration => 2,
+            period: ExtendedScanPeriod => 2,
             scanning_filter_policy: ScanningFilterPolicy => 1,
             scanning_phys: ScanningPhy => 1,
             le_1m_params: ExtScanPhyParams => 5,
@@ -935,6 +961,39 @@ stm32wb_hci_macros::vendor_cmd! {
         };
         Completion = CommandStatus;
     }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_enum! {
+    /// Duplicate filtering behavior for extended scanning.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum ExtendedDuplicateFiltering: u8 => 1 {
+        Disabled = 0x00,
+        Enabled = 0x01,
+        /// Enable filtering and reset the duplicate list each scan period.
+        EnabledWithPeriodicReset = 0x02,
+    }
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_open_scalar! {
+    /// Extended-scan duration in 10 ms units; zero scans until stopped.
+    ///
+    /// CubeWB assigns meaning to every `u16` value, including the zero
+    /// sentinel, so construction is intentionally infallible.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct ExtendedScanDuration: u16 => 2;
+}
+
+#[cfg(since_fw_0_18_0)]
+hci_open_scalar! {
+    /// Extended-scan period in 1.28 s units; zero disables periodic scanning.
+    ///
+    /// CubeWB assigns meaning to every `u16` value, including the zero
+    /// sentinel, so construction is intentionally infallible.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct ExtendedScanPeriod: u16 => 2;
 }
 
 #[cfg(since_fw_0_18_0)]

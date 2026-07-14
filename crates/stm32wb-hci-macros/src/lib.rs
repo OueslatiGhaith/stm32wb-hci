@@ -52,9 +52,10 @@ use stm32wb_hci_schema::{
 /// failure. Supported relationships are `ordered`, `ordered_when_in_range`,
 /// `range`, `one_of`, `one_of_or_range`, `paired_value`, `implies_eq`,
 /// `implies_range`, `implies_one_of_or_range`, `implies_len_at_least`,
-/// `implies_len_eq`, `len_at_most`, and `non_empty`. Intrinsic validity should
-/// remain in the semantic field type; constraints describe relationships or
-/// command-specific subsets.
+/// `implies_len_eq`, `len_eq`, `len_at_most`, `offset_len_at_most`, and
+/// `non_empty`. Intrinsic
+/// validity should remain in the semantic field type; constraints describe
+/// relationships or command-specific subsets.
 ///
 /// Selector-dependent checks use
 /// `implies_*(selector, selected_value, dependent_field, ...)`. Length checks
@@ -755,11 +756,45 @@ fn expand_constraint_check(command: &syn::Ident, constraint: &Constraint) -> Tok
                 ));
             }
         },
+        Constraint::LenEq { field, expected } => quote! {
+            if #field.len() != usize::from(#expected) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#field),
+                        ".len() == usize::from(",
+                        stringify!(#expected),
+                        ")",
+                    ),
+                ));
+            }
+        },
         Constraint::LenAtMost { field, maximum } => quote! {
             if #field.len() > usize::from(#maximum) {
                 return Err(crate::vendor::command::HciConstraintError::new(
                     stringify!(#command),
                     concat!(stringify!(#field), ".len() <= ", stringify!(#maximum)),
+                ));
+            }
+        },
+        Constraint::OffsetLenAtMost {
+            offset,
+            field,
+            total,
+        } => quote! {
+            if usize::from(#offset)
+                .checked_add(#field.len())
+                .map_or(true, |end| end > usize::from(#total))
+            {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#offset),
+                        " + ",
+                        stringify!(#field),
+                        ".len() <= ",
+                        stringify!(#total),
+                    ),
                 ));
             }
         },

@@ -454,10 +454,21 @@ pub enum Constraint {
         field: syn::Ident,
         required: Expr,
     },
+    /// Require a collection length to equal a semantic scalar field.
+    LenEq {
+        field: syn::Ident,
+        expected: syn::Ident,
+    },
     /// Require a collection's runtime length not to exceed another field.
     LenAtMost {
         field: syn::Ident,
         maximum: syn::Ident,
+    },
+    /// Require `offset + collection.len()` not to exceed a total-length field.
+    OffsetLenAtMost {
+        offset: syn::Ident,
+        field: syn::Ident,
+        total: syn::Ident,
     },
     /// Require a collection or bitflags field to be nonempty.
     NonEmpty { field: syn::Ident },
@@ -1196,11 +1207,29 @@ impl Parse for Constraints {
                         required,
                     }
                 }
+                "len_eq" => {
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let expected = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::LenEq { field, expected }
+                }
                 "len_at_most" => {
                     let field = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
                     let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
                     Constraint::LenAtMost { field, maximum }
+                }
+                "offset_len_at_most" => {
+                    let offset = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let total = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::OffsetLenAtMost {
+                        offset,
+                        field,
+                        total,
+                    }
                 }
                 "non_empty" => {
                     let field = parse_field_reference(&arguments, &mut referenced_fields)?;
@@ -1891,13 +1920,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_selector_dependent_domain_and_length_constraints() {
+    fn parses_offset_plus_length_constraint() {
         let command = syn::parse_str::<VendorCommand>(
             r#"
-                Conditional(cgid = 0x0, cid = 0x04) {
+                Chunk(cgid = 0x0, cid = 0x04) {
                     Params<'a> = {
-                        mode: u8 => 1,
-                        error: u8 => 1,
+                        total: u16 => 2,
+                        offset: u16 => 2,
                         data: &'a [u8] => {
                             kind: counted_bytes,
                             count: u8 => 1,
@@ -1905,9 +1934,7 @@ mod tests {
                         },
                     };
                     Constraints = {
-                        implies_one_of_or_range(mode, 1, error, [8], 0x80, 0x9F);
-                        implies_len_at_least(mode, 2, data, 9);
-                        implies_len_eq(mode, 3, data, 6);
+                        offset_len_at_most(offset, data, total);
                     };
                     Completion = CommandComplete;
                     Return = ();
@@ -1919,7 +1946,51 @@ mod tests {
         let constraints = command.constraints.as_ref().unwrap();
         assert_eq!(
             constraints.referenced_fields(),
-            &BTreeSet::from(["data".to_owned(), "error".to_owned(), "mode".to_owned()])
+            &BTreeSet::from(["data".to_owned(), "offset".to_owned(), "total".to_owned(),])
+        );
+        assert!(matches!(
+            constraints.nodes(),
+            [Constraint::OffsetLenAtMost { .. }]
+        ));
+    }
+
+    #[test]
+    fn parses_selector_dependent_domain_and_length_constraints() {
+        let command = syn::parse_str::<VendorCommand>(
+            r#"
+                Conditional(cgid = 0x0, cid = 0x04) {
+                    Params<'a> = {
+                        mode: u8 => 1,
+                        error: u8 => 1,
+                        limit: u8 => 1,
+                        data: &'a [u8] => {
+                            kind: counted_bytes,
+                            count: u8 => 1,
+                            max_len: 16,
+                        },
+                    };
+                    Constraints = {
+                        implies_one_of_or_range(mode, 1, error, [8], 0x80, 0x9F);
+                        implies_len_at_least(mode, 2, data, 9);
+                        implies_len_eq(mode, 3, data, 6);
+                        len_eq(data, limit);
+                    };
+                    Completion = CommandComplete;
+                    Return = ();
+                }
+            "#,
+        )
+        .unwrap();
+
+        let constraints = command.constraints.as_ref().unwrap();
+        assert_eq!(
+            constraints.referenced_fields(),
+            &BTreeSet::from([
+                "data".to_owned(),
+                "error".to_owned(),
+                "limit".to_owned(),
+                "mode".to_owned(),
+            ])
         );
         assert!(matches!(
             constraints.nodes()[0],
@@ -1933,6 +2004,7 @@ mod tests {
             constraints.nodes()[2],
             Constraint::ImpliesLenEq { .. }
         ));
+        assert!(matches!(constraints.nodes()[3], Constraint::LenEq { .. }));
     }
 
     #[test]

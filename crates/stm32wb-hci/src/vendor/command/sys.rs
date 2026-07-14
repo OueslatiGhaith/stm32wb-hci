@@ -1,6 +1,7 @@
 //! System-level commands introduced by STM32CubeWB 1.23.
 
 use crate::vendor::command::BoundedBytes;
+pub use crate::vendor::command::hal::{ConfigReadOffset, ConfigWriteOffset};
 
 hci_enum! {
     /// Reset behavior selected by [`SysReset`].
@@ -40,52 +41,6 @@ hci_bitflags! {
     }
 }
 
-hci_enum! {
-    /// Configuration-data offsets accepted by [`SysWriteConfigData`].
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum SysWritableConfigOffset: u8 => 1 {
-        /// Public Bluetooth device address.
-        PublicAddress = 0x00,
-        /// Encryption root key.
-        EncryptionRootKey = 0x08,
-        /// Identity root key.
-        IdentityRootKey = 0x18,
-        /// Random Bluetooth device address.
-        RandomAddress = 0x2E,
-        /// Additional GAP service record count.
-        GapAdditionalRecordCount = 0x34,
-        /// Secure Connections key type.
-        SecureConnectionsKeyType = 0x35,
-        /// Security Manager Protocol mode.
-        SmpMode = 0xB0,
-        /// Link Layer scan-channel map.
-        LinkLayerScanChannelMap = 0xC0,
-        /// Link Layer background-scan mode.
-        LinkLayerBackgroundScanMode = 0xC1,
-        /// Link Layer resolvable-private-address mode.
-        LinkLayerResolvablePrivateAddressMode = 0xC3,
-        /// Link Layer maximum data-length extension.
-        LinkLayerMaximumDataLengthExtension = 0xD1,
-    }
-}
-
-hci_enum! {
-    /// Configuration-data offsets accepted by [`SysReadConfigData`].
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum SysReadableConfigOffset: u8 => 1 {
-        /// Public Bluetooth device address.
-        PublicAddress = 0x00,
-        /// Encryption root key.
-        EncryptionRootKey = 0x08,
-        /// Identity root key.
-        IdentityRootKey = 0x18,
-        /// Random Bluetooth device address.
-        RandomAddress = 0x2E,
-    }
-}
-
 stm32wb_hci_macros::vendor_cmd! {
     SysReset(cgid = 0x6, cid = 0x00) {
         Params = {
@@ -120,7 +75,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     SysWriteConfigData(cgid = 0x6, cid = 0x02) {
         Params<'a> = {
-            offset: SysWritableConfigOffset => 1,
+            offset: ConfigWriteOffset => 1,
             data: &'a [u8] => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -128,27 +83,7 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            implies_len_eq(offset, SysWritableConfigOffset::PublicAddress, data, 6);
-            implies_len_eq(offset, SysWritableConfigOffset::EncryptionRootKey, data, 16);
-            implies_len_eq(offset, SysWritableConfigOffset::IdentityRootKey, data, 16);
-            implies_len_eq(offset, SysWritableConfigOffset::RandomAddress, data, 6);
-            implies_len_eq(offset, SysWritableConfigOffset::GapAdditionalRecordCount, data, 1);
-            implies_len_eq(offset, SysWritableConfigOffset::SecureConnectionsKeyType, data, 1);
-            implies_len_eq(offset, SysWritableConfigOffset::SmpMode, data, 1);
-            implies_len_eq(offset, SysWritableConfigOffset::LinkLayerScanChannelMap, data, 1);
-            implies_len_eq(offset, SysWritableConfigOffset::LinkLayerBackgroundScanMode, data, 1);
-            implies_len_eq(
-                offset,
-                SysWritableConfigOffset::LinkLayerResolvablePrivateAddressMode,
-                data,
-                1
-            );
-            implies_len_eq(
-                offset,
-                SysWritableConfigOffset::LinkLayerMaximumDataLengthExtension,
-                data,
-                8
-            );
+            len_eq(data, offset);
         };
         Completion = CommandComplete;
         Return = ();
@@ -158,7 +93,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     SysReadConfigData(cgid = 0x6, cid = 0x03) {
         Params = {
-            offset: SysReadableConfigOffset => 1,
+            offset: ConfigReadOffset => 1,
         };
         Completion = CommandComplete;
         Return = SysReadConfigDataReturn {
