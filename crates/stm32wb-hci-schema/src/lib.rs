@@ -45,8 +45,16 @@ impl VendorCommand {
     }
 }
 
-/// Request payload syntax.
-pub enum Params {
+/// Request payload syntax, including its optional borrowing lifetime.
+pub struct Params {
+    /// Lifetime declared by `Params<'a>`, if present.
+    pub lifetime: Option<syn::Lifetime>,
+    /// Unit or inline-field request shape.
+    pub shape: ParamsShape,
+}
+
+/// Unit or inline-field request payload.
+pub enum ParamsShape {
     /// `Params = ();`
     Unit,
     /// `Params = { ... };` or `Params<'a> = { ... };`
@@ -56,9 +64,9 @@ pub enum Params {
 impl Params {
     /// Parsed field metadata, if the request is not unit.
     pub const fn fields(&self) -> Option<&Fields> {
-        match self {
-            Self::Unit => None,
-            Self::Fields(fields) => Some(fields),
+        match &self.shape {
+            ParamsShape::Unit => None,
+            ParamsShape::Fields(fields) => Some(fields),
         }
     }
 
@@ -114,6 +122,7 @@ impl Returns {
 
 /// Parsed aggregate metadata for an inline field body.
 pub struct Fields {
+    fields: Vec<Field>,
     names: BTreeSet<String>,
     min_len: usize,
     max_len: usize,
@@ -121,6 +130,11 @@ pub struct Fields {
 }
 
 impl Fields {
+    /// Lossless typed fields in declaration order.
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
     /// Field names declared by this body.
     pub const fn names(&self) -> &BTreeSet<String> {
         &self.names
@@ -144,12 +158,136 @@ impl Fields {
     /// An empty field body, used by unit event payloads.
     pub fn empty() -> Self {
         Self {
+            fields: Vec::new(),
             names: BTreeSet::new(),
             min_len: 0,
             max_len: 0,
             contains_removed_payload: false,
         }
     }
+}
+
+/// One typed field in a Params, Return, or event payload body.
+pub struct Field {
+    /// Field binding and generated member name.
+    pub name: syn::Ident,
+    /// Semantic Rust type from the declaration.
+    pub ty: Type,
+    /// Fixed-width or variable wire encoding.
+    pub encoding: FieldEncoding,
+}
+
+/// Wire encoding declared after a field's `=>` token.
+pub enum FieldEncoding {
+    /// One canonical fixed-width HCI field.
+    Fixed(FixedEncoding),
+    /// A variable schema body retained losslessly for later code generation.
+    Variable(Box<VariableEncoding>),
+}
+
+/// Fixed-width field encoding.
+pub struct FixedEncoding {
+    /// Original integer literal, retaining its span and spelling.
+    pub width_literal: LitInt,
+    /// Parsed width used by envelope validation.
+    pub width: usize,
+}
+
+/// Validated variable field encoding.
+pub struct VariableEncoding {
+    /// Complete typed encoding schema used by code generation.
+    pub shape: VariableEncodingShape,
+    /// Minimum encoded field size.
+    pub min_len: usize,
+    /// Maximum encoded field size.
+    pub max_len: usize,
+    /// Whether this field consumes every remaining payload byte.
+    pub consumes_remainder: bool,
+}
+
+/// Complete schema for one variable-width field.
+pub enum VariableEncodingShape {
+    /// A fixed-width count followed by that many bytes.
+    CountedBytes {
+        /// Count type and its wire width.
+        count: WireType,
+        /// Maximum accepted byte count.
+        max_len: IntegerValue,
+    },
+    /// A fixed-width count followed by that many fixed-width items.
+    CountedItems {
+        /// Count type and its wire width.
+        count: WireType,
+        /// Item type and its wire width.
+        item: WireType,
+        /// Maximum accepted item count.
+        max_items: IntegerValue,
+    },
+    /// A discriminator followed by a variant-specific fixed payload.
+    Tagged(TaggedEncoding),
+    /// Removed compatibility escape hatch, retained only for focused diagnostics.
+    Payload {
+        /// Declared minimum encoded length.
+        min_len: IntegerValue,
+        /// Declared maximum encoded length.
+        max_len: IntegerValue,
+    },
+    /// A bounded field that consumes every remaining byte.
+    TrailingBytes {
+        /// Minimum accepted byte count.
+        min_len: IntegerValue,
+        /// Maximum accepted byte count.
+        max_len: IntegerValue,
+    },
+    /// Fixed-width items selected by set bits in an earlier bitmap field.
+    BitmapItems {
+        /// Earlier request field whose bits select the encoded items.
+        bitmap: syn::Ident,
+        /// Bits that participate in item selection.
+        mask: IntegerValue,
+        /// Item type and its wire width.
+        item: WireType,
+        /// Number of selectable items; validated against the mask population.
+        max_items: IntegerValue,
+    },
+}
+
+/// A semantic Rust type paired with its fixed wire width.
+pub struct WireType {
+    /// Semantic Rust type from the declaration.
+    pub ty: Type,
+    /// Fixed encoded width.
+    pub width: IntegerValue,
+}
+
+/// An integer literal together with its validated `usize` value.
+pub struct IntegerValue {
+    /// Original literal, retaining its spelling and span for generated code.
+    pub literal: LitInt,
+    /// Parsed value used for validation and envelope arithmetic.
+    pub value: usize,
+}
+
+/// Tagged-union encoding details.
+pub struct TaggedEncoding {
+    /// Discriminator type and wire width.
+    pub tag: WireType,
+    /// Variants in declaration order.
+    pub variants: Vec<TaggedVariant>,
+    /// Declared and validated minimum encoded length.
+    pub min_len: IntegerValue,
+    /// Declared and validated maximum encoded length.
+    pub max_len: IntegerValue,
+}
+
+/// One tagged-union match arm and its fixed payload fields.
+pub struct TaggedVariant {
+    /// Refutable pattern used to select and bind the source variant.
+    pub pattern: syn::Pat,
+    /// Discriminator value emitted for this variant.
+    pub tag: IntegerValue,
+    /// Fixed-width fields bound by `pattern` and encoded after the tag.
+    pub fields: Fields,
 }
 
 /// Completion mechanism declared by a command.
@@ -161,20 +299,98 @@ pub enum Completion {
     CommandStatus,
 }
 
-/// Parsed constraint metadata.
-///
-/// The parser validates each supported form and records all referenced request
-/// fields. The procedural macro still delegates runtime code generation during
-/// the scaffold phase; the compliance checker consumes the same references.
+/// Parsed constraints in declaration order.
 pub struct Constraints {
+    nodes: Vec<Constraint>,
     referenced_fields: BTreeSet<String>,
 }
 
 impl Constraints {
+    /// Structured constraint nodes in source order.
+    pub fn nodes(&self) -> &[Constraint] {
+        &self.nodes
+    }
+
     /// Every request field referenced by the constraint body.
     pub const fn referenced_fields(&self) -> &BTreeSet<String> {
         &self.referenced_fields
     }
+}
+
+/// One semantic relationship between command parameters.
+pub enum Constraint {
+    /// Require `minimum <= maximum`.
+    Ordered {
+        minimum: syn::Ident,
+        maximum: syn::Ident,
+    },
+    /// Require ordering only when both operands are inside the inclusive range.
+    OrderedWhenInRange {
+        minimum: syn::Ident,
+        maximum: syn::Ident,
+        range_minimum: Expr,
+        range_maximum: Expr,
+    },
+    /// Require a field to be inside an inclusive range.
+    Range {
+        field: syn::Ident,
+        minimum: Expr,
+        maximum: Expr,
+    },
+    /// Require a field to equal one expression from a nonempty set.
+    OneOf {
+        field: syn::Ident,
+        allowed: Vec<Expr>,
+    },
+    /// Require a field to be in a sparse set or an inclusive range.
+    OneOfOrRange {
+        field: syn::Ident,
+        allowed: Vec<Expr>,
+        minimum: Expr,
+        maximum: Expr,
+    },
+    /// Require both fields to equal a sentinel value, or neither field to do so.
+    PairedValue {
+        left: syn::Ident,
+        right: syn::Ident,
+        value: Expr,
+    },
+    /// Require an exact dependent value when a selector has one value.
+    ImpliesEq {
+        selector: syn::Ident,
+        selected: Expr,
+        field: syn::Ident,
+        required: Expr,
+    },
+    /// Require a dependent field range when a selector has one value.
+    ImpliesRange {
+        selector: syn::Ident,
+        selected: Expr,
+        field: syn::Ident,
+        minimum: Expr,
+        maximum: Expr,
+    },
+    /// Require PAwR subevents to fit inside the minimum periodic interval.
+    PawrSubeventsFit {
+        periodic_interval_min: syn::Ident,
+        num_subevents: syn::Ident,
+        subevent_interval: syn::Ident,
+    },
+    /// Validate PAwR response delay and spacing with ignored-field semantics.
+    PawrResponseSlotsFit {
+        num_subevents: syn::Ident,
+        subevent_interval: syn::Ident,
+        response_slot_delay: syn::Ident,
+        response_slot_spacing: syn::Ident,
+        num_response_slots: syn::Ident,
+    },
+    /// Require a collection's runtime length not to exceed another field.
+    LenAtMost {
+        field: syn::Ident,
+        maximum: syn::Ident,
+    },
+    /// Require a collection or bitflags field to be nonempty.
+    NonEmpty { field: syn::Ident },
 }
 
 struct Invocation {
@@ -285,8 +501,8 @@ impl Parse for VendorCommand {
                             "vendor command declares `Params` more than once",
                         ));
                     }
-                    syn::parse2::<ParamsLifetime>(header)?;
-                    params = Some(parse_params(value)?);
+                    let lifetime = syn::parse2::<ParamsLifetime>(header)?.0;
+                    params = Some(parse_params(value, lifetime)?);
                 }
                 "Constraints" => {
                     require_empty_header(&header, &label)?;
@@ -351,6 +567,18 @@ impl Parse for VendorCommand {
                 "Params uses removed `kind: payload`; inline the wire schema instead",
             ));
         }
+        let has_variable_params = params.fields().is_some_and(|fields| {
+            fields
+                .fields()
+                .iter()
+                .any(|field| matches!(field.encoding, FieldEncoding::Variable(_)))
+        });
+        if params.lifetime.is_none() && has_variable_params {
+            return Err(syn::Error::new(
+                invocation.name.span(),
+                "variable Params must declare a lifetime",
+            ));
+        }
 
         if let Some(constraints) = &constraints {
             let names = params.field_names();
@@ -401,6 +629,27 @@ impl Parse for VendorCommand {
                 "Return uses removed `kind: payload`; inline the wire schema instead",
             ));
         }
+        if returns
+            .as_ref()
+            .and_then(Returns::fields)
+            .is_some_and(|fields| {
+                fields.fields().iter().any(|field| {
+                    let FieldEncoding::Variable(encoding) = &field.encoding else {
+                        return false;
+                    };
+                    matches!(
+                        encoding.shape,
+                        VariableEncodingShape::Tagged(_)
+                            | VariableEncodingShape::BitmapItems { .. }
+                    )
+                })
+            })
+        {
+            return Err(syn::Error::new(
+                invocation.name.span(),
+                "Return uses a variable encoding that has no owned decoder",
+            ));
+        }
 
         Ok(Self {
             name: invocation.name,
@@ -414,20 +663,20 @@ impl Parse for VendorCommand {
     }
 }
 
-struct ParamsLifetime;
+struct ParamsLifetime(Option<syn::Lifetime>);
 
 impl Parse for ParamsLifetime {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         if input.is_empty() {
-            return Ok(Self);
+            return Ok(Self(None));
         }
         input.parse::<syn::Token![<]>()?;
-        input.parse::<syn::Lifetime>()?;
+        let lifetime = input.parse::<syn::Lifetime>()?;
         input.parse::<syn::Token![>]>()?;
         if !input.is_empty() {
             return Err(input.error("Params accepts at most one lifetime parameter"));
         }
-        Ok(Self)
+        Ok(Self(Some(lifetime)))
     }
 }
 
@@ -442,11 +691,23 @@ fn require_empty_header(header: &TokenStream, label: &syn::Ident) -> syn::Result
     }
 }
 
-fn parse_params(value: TokenStream) -> syn::Result<Params> {
+fn parse_params(value: TokenStream, lifetime: Option<syn::Lifetime>) -> syn::Result<Params> {
     if is_unit_type(&value) {
-        return Ok(Params::Unit);
+        if lifetime.is_some() {
+            return Err(syn::Error::new_spanned(
+                value,
+                "unit Params must not declare a lifetime",
+            ));
+        }
+        return Ok(Params {
+            lifetime,
+            shape: ParamsShape::Unit,
+        });
     }
-    parse_braced_fields(value).map(Params::Fields)
+    parse_braced_fields(value).map(|fields| Params {
+        lifetime,
+        shape: ParamsShape::Fields(fields),
+    })
 }
 
 fn parse_returns(value: TokenStream) -> syn::Result<Returns> {
@@ -542,120 +803,196 @@ fn parse_constraints(value: TokenStream) -> syn::Result<Constraints> {
 
 impl Parse for Constraints {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Err(input.error("Constraints must declare at least one check"));
+        }
+        let mut nodes = Vec::new();
         let mut referenced_fields = BTreeSet::new();
         while !input.is_empty() {
             let kind = input.parse::<syn::Ident>()?;
             let arguments;
             syn::parenthesized!(arguments in input);
 
-            match kind.to_string().as_str() {
-                "ordered" | "len_at_most" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+            let node = match kind.to_string().as_str() {
+                "ordered" => {
+                    let minimum = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::Ordered { minimum, maximum }
                 }
                 "ordered_when_in_range" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let minimum = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    insert_field(&arguments, &mut referenced_fields)?;
-                    parse_two_expressions(&arguments)?;
+                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    let (range_minimum, range_maximum) = parse_expression_pair(&arguments)?;
+                    Constraint::OrderedWhenInRange {
+                        minimum,
+                        maximum,
+                        range_minimum,
+                        range_maximum,
+                    }
                 }
                 "range" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
-                    parse_two_expressions(&arguments)?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
+                    Constraint::Range {
+                        field,
+                        minimum,
+                        maximum,
+                    }
                 }
                 "one_of" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    parse_nonempty_expression_list(&arguments, "one_of")?;
+                    let allowed = parse_nonempty_expression_list(&arguments, "one_of")?;
+                    Constraint::OneOf { field, allowed }
                 }
                 "one_of_or_range" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    parse_nonempty_expression_list(&arguments, "one_of_or_range")?;
-                    parse_two_expressions(&arguments)?;
+                    let allowed = parse_nonempty_expression_list(&arguments, "one_of_or_range")?;
+                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
+                    Constraint::OneOfOrRange {
+                        field,
+                        allowed,
+                        minimum,
+                        maximum,
+                    }
                 }
                 "paired_value" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let left = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let right = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    arguments.parse::<Expr>()?;
+                    let value = arguments.parse::<Expr>()?;
+                    Constraint::PairedValue { left, right, value }
                 }
                 "implies_eq" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    arguments.parse::<Expr>()?;
+                    let selected = arguments.parse::<Expr>()?;
                     arguments.parse::<syn::Token![,]>()?;
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    arguments.parse::<Expr>()?;
+                    let required = arguments.parse::<Expr>()?;
+                    Constraint::ImpliesEq {
+                        selector,
+                        selected,
+                        field,
+                        required,
+                    }
                 }
                 "implies_range" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
+                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
                     arguments.parse::<syn::Token![,]>()?;
-                    arguments.parse::<Expr>()?;
+                    let selected = arguments.parse::<Expr>()?;
                     arguments.parse::<syn::Token![,]>()?;
-                    insert_field(&arguments, &mut referenced_fields)?;
-                    parse_two_expressions(&arguments)?;
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
+                    Constraint::ImpliesRange {
+                        selector,
+                        selected,
+                        field,
+                        minimum,
+                        maximum,
+                    }
                 }
                 "pawr_subevents_fit" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
-                    for _ in 0..2 {
-                        arguments.parse::<syn::Token![,]>()?;
-                        insert_field(&arguments, &mut referenced_fields)?;
+                    let periodic_interval_min =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let num_subevents = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let subevent_interval =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::PawrSubeventsFit {
+                        periodic_interval_min,
+                        num_subevents,
+                        subevent_interval,
                     }
                 }
                 "pawr_response_slots_fit" => {
-                    insert_field(&arguments, &mut referenced_fields)?;
-                    for _ in 0..4 {
-                        arguments.parse::<syn::Token![,]>()?;
-                        insert_field(&arguments, &mut referenced_fields)?;
+                    let num_subevents = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let subevent_interval =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let response_slot_delay =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let response_slot_spacing =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let num_response_slots =
+                        parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::PawrResponseSlotsFit {
+                        num_subevents,
+                        subevent_interval,
+                        response_slot_delay,
+                        response_slot_spacing,
+                        num_response_slots,
                     }
                 }
-                "non_empty" => insert_field(&arguments, &mut referenced_fields)?,
+                "len_at_most" => {
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    arguments.parse::<syn::Token![,]>()?;
+                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::LenAtMost { field, maximum }
+                }
+                "non_empty" => {
+                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
+                    Constraint::NonEmpty { field }
+                }
                 _ => {
                     return Err(syn::Error::new_spanned(
                         kind,
                         "unknown declarative constraint",
                     ));
                 }
-            }
+            };
 
             if !arguments.is_empty() {
                 return Err(arguments.error("unexpected tokens in declarative constraint"));
             }
             input.parse::<syn::Token![;]>()?;
+            nodes.push(node);
         }
-        Ok(Self { referenced_fields })
+        Ok(Self {
+            nodes,
+            referenced_fields,
+        })
     }
 }
 
-fn insert_field(input: ParseStream<'_>, fields: &mut BTreeSet<String>) -> syn::Result<()> {
-    fields.insert(input.parse::<syn::Ident>()?.to_string());
-    Ok(())
+fn parse_field_reference(
+    input: ParseStream<'_>,
+    fields: &mut BTreeSet<String>,
+) -> syn::Result<syn::Ident> {
+    let field = input.parse::<syn::Ident>()?;
+    fields.insert(field.to_string());
+    Ok(field)
 }
 
-fn parse_two_expressions(input: ParseStream<'_>) -> syn::Result<()> {
+fn parse_expression_pair(input: ParseStream<'_>) -> syn::Result<(Expr, Expr)> {
     input.parse::<syn::Token![,]>()?;
-    input.parse::<Expr>()?;
+    let first = input.parse::<Expr>()?;
     input.parse::<syn::Token![,]>()?;
-    input.parse::<Expr>()?;
-    Ok(())
+    let second = input.parse::<Expr>()?;
+    Ok((first, second))
 }
 
-fn parse_nonempty_expression_list(input: ParseStream<'_>, kind: &str) -> syn::Result<()> {
+fn parse_nonempty_expression_list(input: ParseStream<'_>, kind: &str) -> syn::Result<Vec<Expr>> {
     let allowed;
     syn::bracketed!(allowed in input);
     let values = Punctuated::<Expr, syn::Token![,]>::parse_terminated(&allowed)?;
     if values.is_empty() {
         return Err(allowed.error(format!("{kind} must declare at least one allowed value")));
     }
-    Ok(())
+    Ok(values.into_iter().collect())
 }
-
 impl Parse for Fields {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut fields = Vec::new();
         let mut names = BTreeSet::new();
         let mut min_len = 0usize;
         let mut max_len = 0usize;
@@ -668,41 +1005,64 @@ impl Parse for Fields {
             }
             let name = input.parse::<syn::Ident>()?;
             if !names.insert(name.to_string()) {
-                return Err(syn::Error::new_spanned(name, "duplicate declarative field"));
+                return Err(syn::Error::new_spanned(
+                    &name,
+                    "duplicate declarative field",
+                ));
             }
             input.parse::<syn::Token![:]>()?;
-            input.parse::<Type>()?;
+            let ty = input.parse::<Type>()?;
             input.parse::<syn::Token![=>]>()?;
 
-            let shape = if input.peek(LitInt) {
-                let width = parse_usize_literal(&input.parse::<LitInt>()?)
-                    .map_err(|error| input.error(error))?;
-                VariableShape {
-                    min_len: width,
-                    max_len: width,
-                    removed_payload: false,
-                    consumes_remainder: false,
-                }
-            } else if input.peek(syn::token::Brace) {
-                let shape;
-                syn::braced!(shape in input);
-                shape.parse::<VariableShape>()?
-            } else {
-                return Err(input.error("expected a fixed width or variable field shape"));
-            };
+            let (encoding, field_min_len, field_max_len, removed_payload, field_consumes_remainder) =
+                if input.peek(LitInt) {
+                    let width_literal = input.parse::<LitInt>()?;
+                    let width =
+                        parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
+                    (
+                        FieldEncoding::Fixed(FixedEncoding {
+                            width_literal,
+                            width,
+                        }),
+                        width,
+                        width,
+                        false,
+                        false,
+                    )
+                } else if input.peek(syn::token::Brace) {
+                    let shape;
+                    syn::braced!(shape in input);
+                    let encoding = shape.parse::<VariableEncoding>()?;
+                    let field_min_len = encoding.min_len;
+                    let field_max_len = encoding.max_len;
+                    let removed_payload =
+                        matches!(encoding.shape, VariableEncodingShape::Payload { .. });
+                    let field_consumes_remainder = encoding.consumes_remainder;
+                    (
+                        FieldEncoding::Variable(Box::new(encoding)),
+                        field_min_len,
+                        field_max_len,
+                        removed_payload,
+                        field_consumes_remainder,
+                    )
+                } else {
+                    return Err(input.error("expected a fixed width or variable field shape"));
+                };
 
-            consumes_remainder = shape.consumes_remainder;
-            contains_removed_payload |= shape.removed_payload;
+            consumes_remainder = field_consumes_remainder;
+            contains_removed_payload |= removed_payload;
             min_len = min_len
-                .checked_add(shape.min_len)
+                .checked_add(field_min_len)
                 .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
             max_len = max_len
-                .checked_add(shape.max_len)
+                .checked_add(field_max_len)
                 .ok_or_else(|| input.error("declarative field length overflows usize"))?;
+            fields.push(Field { name, ty, encoding });
             input.parse::<syn::Token![,]>()?;
         }
 
         Ok(Self {
+            fields,
             names,
             min_len,
             max_len,
@@ -711,87 +1071,119 @@ impl Parse for Fields {
     }
 }
 
-struct VariableShape {
-    min_len: usize,
-    max_len: usize,
-    removed_payload: bool,
-    consumes_remainder: bool,
-}
-
-impl Parse for VariableShape {
+impl Parse for VariableEncoding {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         parse_colon_label(input, "kind")?;
         let kind = input.parse::<syn::Ident>()?;
         input.parse::<syn::Token![,]>()?;
 
-        let mut removed_payload = false;
-        let mut consumes_remainder = false;
-        let (min_len, max_len) = match kind.to_string().as_str() {
+        let shape = match kind.to_string().as_str() {
             "counted_bytes" => {
-                let count_len = parse_type_width(input, "count")?;
-                let max_value = parse_integer(input, "max_len")?;
-                (Some(count_len), count_len.checked_add(max_value))
+                let count = parse_wire_type(input, "count")?;
+                let max_len = parse_integer_value(input, "max_len")?;
+                VariableEncodingShape::CountedBytes { count, max_len }
             }
             "counted_items" => {
-                let count_len = parse_type_width(input, "count")?;
-                let item_len = parse_type_width(input, "item")?;
-                let max_items = parse_integer(input, "max_items")?;
-                (
-                    Some(count_len),
-                    item_len
-                        .checked_mul(max_items)
-                        .and_then(|items| count_len.checked_add(items)),
-                )
+                let count = parse_wire_type(input, "count")?;
+                let item = parse_wire_type(input, "item")?;
+                let max_items = parse_integer_value(input, "max_items")?;
+                VariableEncodingShape::CountedItems {
+                    count,
+                    item,
+                    max_items,
+                }
             }
-            "tagged" => parse_tagged_shape(input)?,
+            "tagged" => VariableEncodingShape::Tagged(parse_tagged_encoding(input)?),
             "payload" => {
-                let min_len = parse_integer(input, "min_len")?;
-                let max_len = parse_integer(input, "max_len")?;
-                validate_range(input, "payload", min_len, max_len)?;
-                removed_payload = true;
-                (Some(min_len), Some(max_len))
+                let min_len = parse_integer_value(input, "min_len")?;
+                let max_len = parse_integer_value(input, "max_len")?;
+                validate_range(input, "payload", min_len.value, max_len.value)?;
+                VariableEncodingShape::Payload { min_len, max_len }
             }
             "trailing_bytes" => {
-                let min_len = parse_integer(input, "min_len")?;
-                let max_len = parse_integer(input, "max_len")?;
-                validate_range(input, "trailing_bytes", min_len, max_len)?;
-                consumes_remainder = true;
-                (Some(min_len), Some(max_len))
+                let min_len = parse_integer_value(input, "min_len")?;
+                let max_len = parse_integer_value(input, "max_len")?;
+                validate_range(input, "trailing_bytes", min_len.value, max_len.value)?;
+                VariableEncodingShape::TrailingBytes { min_len, max_len }
             }
             "bitmap_items" => {
                 parse_colon_label(input, "bitmap")?;
-                input.parse::<syn::Ident>()?;
+                let bitmap = input.parse::<syn::Ident>()?;
                 input.parse::<syn::Token![,]>()?;
-                let mask = parse_integer(input, "mask")?;
-                let item_len = parse_type_width(input, "item")?;
-                let max_items = parse_integer(input, "max_items")?;
-                if mask.count_ones() as usize != max_items {
+                let mask = parse_integer_value(input, "mask")?;
+                let item = parse_wire_type(input, "item")?;
+                let max_items = parse_integer_value(input, "max_items")?;
+                if mask.value.count_ones() as usize != max_items.value {
                     return Err(input.error(format!(
-                        "bitmap mask selects {} bits but max_items is {max_items}",
-                        mask.count_ones()
+                        "bitmap mask selects {} bits but max_items is {}",
+                        mask.value.count_ones(),
+                        max_items.value,
                     )));
                 }
-                (Some(0), item_len.checked_mul(max_items))
+                VariableEncodingShape::BitmapItems {
+                    bitmap,
+                    mask,
+                    item,
+                    max_items,
+                }
             }
             _ => {
                 return Err(input.error(format!("unknown declarative variable kind `{kind}`")));
             }
         };
 
-        let min_len = min_len
-            .ok_or_else(|| input.error("declarative variable minimum length overflows usize"))?;
-        let max_len = max_len
-            .ok_or_else(|| input.error("declarative variable field length overflows usize"))?;
+        let (min_len, max_len, consumes_remainder) = variable_bounds(input, &shape)?;
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after declarative variable field"));
         }
         Ok(Self {
+            shape,
             min_len,
             max_len,
-            removed_payload,
             consumes_remainder,
         })
     }
+}
+
+fn variable_bounds(
+    input: ParseStream<'_>,
+    shape: &VariableEncodingShape,
+) -> syn::Result<(usize, usize, bool)> {
+    let bounds = match shape {
+        VariableEncodingShape::CountedBytes { count, max_len } => (
+            count.width.value,
+            count.width.value.checked_add(max_len.value),
+            false,
+        ),
+        VariableEncodingShape::CountedItems {
+            count,
+            item,
+            max_items,
+        } => (
+            count.width.value,
+            item.width
+                .value
+                .checked_mul(max_items.value)
+                .and_then(|items| count.width.value.checked_add(items)),
+            false,
+        ),
+        VariableEncodingShape::Tagged(tagged) => {
+            (tagged.min_len.value, Some(tagged.max_len.value), false)
+        }
+        VariableEncodingShape::Payload { min_len, max_len } => {
+            (min_len.value, Some(max_len.value), false)
+        }
+        VariableEncodingShape::TrailingBytes { min_len, max_len } => {
+            (min_len.value, Some(max_len.value), true)
+        }
+        VariableEncodingShape::BitmapItems {
+            item, max_items, ..
+        } => (0, item.width.value.checked_mul(max_items.value), false),
+    };
+    let max_len = bounds
+        .1
+        .ok_or_else(|| input.error("declarative variable field length overflows usize"))?;
+    Ok((bounds.0, max_len, bounds.2))
 }
 
 fn validate_range(
@@ -809,14 +1201,15 @@ fn validate_range(
     }
 }
 
-fn parse_tagged_shape(input: ParseStream<'_>) -> syn::Result<(Option<usize>, Option<usize>)> {
-    let tag_len = parse_type_width(input, "tag")?;
+fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> {
+    let tag = parse_wire_type(input, "tag")?;
     parse_colon_label(input, "variants")?;
     let variants;
     syn::braced!(variants in input);
     input.parse::<syn::Token![,]>()?;
 
     let mut tags = BTreeSet::new();
+    let mut parsed_variants = Vec::new();
     let mut variant_min = None::<usize>;
     let mut variant_max = None::<usize>;
     while !variants.is_empty() {
@@ -827,15 +1220,19 @@ fn parse_tagged_shape(input: ParseStream<'_>) -> syn::Result<(Option<usize>, Opt
         let body;
         syn::braced!(body in variants);
 
-        let tag = parse_integer(&body, "tag")?;
-        if !tags.insert(tag) {
-            return Err(variants.error(format!("duplicate tagged variant value {tag:#x}")));
+        let variant_tag = parse_integer_value(&body, "tag")?;
+        if !tags.insert(variant_tag.value) {
+            return Err(variants.error(format!(
+                "duplicate tagged variant value {:#x}",
+                variant_tag.value,
+            )));
         }
-        if tag_len < core::mem::size_of::<usize>()
-            && tag >= (1usize << (tag_len * u8::BITS as usize))
+        if tag.width.value < core::mem::size_of::<usize>()
+            && variant_tag.value >= (1usize << (tag.width.value * u8::BITS as usize))
         {
             return Err(variants.error(format!(
-                "tag value {tag:#x} does not fit in {tag_len} bytes"
+                "tag value {:#x} does not fit in {} bytes",
+                variant_tag.value, tag.width.value,
             )));
         }
 
@@ -846,19 +1243,33 @@ fn parse_tagged_shape(input: ParseStream<'_>) -> syn::Result<(Option<usize>, Opt
         if !body.is_empty() {
             return Err(body.error("unexpected tokens after tagged variant fields"));
         }
-        let payload = parse_fixed_fields(&fields)?;
-        for field in &payload.names {
+        let payload = fields.parse::<Fields>()?;
+        if payload
+            .fields()
+            .iter()
+            .any(|field| !matches!(field.encoding, FieldEncoding::Fixed(_)))
+        {
+            return Err(fields.error("tagged variant payload fields must be fixed-width"));
+        }
+        for field in payload.names() {
             if !bindings.names.contains(field) {
                 return Err(fields.error(format!(
                     "tagged payload field `{field}` is not bound by its variant pattern"
                 )));
             }
         }
-        let wire_len = tag_len
-            .checked_add(payload.len)
+        let wire_len = tag
+            .width
+            .value
+            .checked_add(payload.max_len())
             .ok_or_else(|| variants.error("tagged variant length overflows usize"))?;
         variant_min = Some(variant_min.map_or(wire_len, |value| value.min(wire_len)));
         variant_max = Some(variant_max.map_or(wire_len, |value| value.max(wire_len)));
+        parsed_variants.push(TaggedVariant {
+            pattern,
+            tag: variant_tag,
+            fields: payload,
+        });
         variants.parse::<syn::Token![,]>()?;
     }
 
@@ -866,14 +1277,20 @@ fn parse_tagged_shape(input: ParseStream<'_>) -> syn::Result<(Option<usize>, Opt
         return Err(input.error("tagged field must declare at least one variant"));
     };
     let computed_max = variant_max.expect("minimum and maximum are populated together");
-    let declared_min = parse_integer(input, "min_len")?;
-    let declared_max = parse_integer(input, "max_len")?;
-    if (declared_min, declared_max) != (computed_min, computed_max) {
+    let declared_min = parse_integer_value(input, "min_len")?;
+    let declared_max = parse_integer_value(input, "max_len")?;
+    if (declared_min.value, declared_max.value) != (computed_min, computed_max) {
         return Err(input.error(format!(
-            "tagged field declares lengths {declared_min}..={declared_max}, but its variants require {computed_min}..={computed_max}"
+            "tagged field declares lengths {}..={}, but its variants require {computed_min}..={computed_max}",
+            declared_min.value, declared_max.value,
         )));
     }
-    Ok((Some(computed_min), Some(computed_max)))
+    Ok(TaggedEncoding {
+        tag,
+        variants: parsed_variants,
+        min_len: declared_min,
+        max_len: declared_max,
+    })
 }
 
 #[derive(Default)]
@@ -886,29 +1303,6 @@ impl<'ast> Visit<'ast> for PatternBindings {
         self.names.insert(pattern.ident.to_string());
         visit::visit_pat_ident(self, pattern);
     }
-}
-
-struct FixedFields {
-    len: usize,
-    names: Vec<String>,
-}
-
-fn parse_fixed_fields(input: ParseStream<'_>) -> syn::Result<FixedFields> {
-    let mut len = 0usize;
-    let mut names = Vec::new();
-    while !input.is_empty() {
-        names.push(input.parse::<syn::Ident>()?.to_string());
-        input.parse::<syn::Token![:]>()?;
-        input.parse::<Type>()?;
-        input.parse::<syn::Token![=>]>()?;
-        let width =
-            parse_usize_literal(&input.parse::<LitInt>()?).map_err(|error| input.error(error))?;
-        len = len
-            .checked_add(width)
-            .ok_or_else(|| input.error("tagged variant field length overflows usize"))?;
-        input.parse::<syn::Token![,]>()?;
-    }
-    Ok(FixedFields { len, names })
 }
 
 fn parse_label_equals(input: ParseStream<'_>, expected: &str) -> syn::Result<()> {
@@ -933,20 +1327,26 @@ fn parse_colon_label(input: ParseStream<'_>, expected: &str) -> syn::Result<()> 
     input.parse::<syn::Token![:]>().map(|_| ())
 }
 
-fn parse_type_width(input: ParseStream<'_>, label: &str) -> syn::Result<usize> {
+fn parse_wire_type(input: ParseStream<'_>, label: &str) -> syn::Result<WireType> {
     parse_colon_label(input, label)?;
-    input.parse::<Type>()?;
+    let ty = input.parse::<Type>()?;
     input.parse::<syn::Token![=>]>()?;
-    let width = input.parse::<LitInt>()?;
+    let width = parse_integer_literal_value(input)?;
     input.parse::<syn::Token![,]>()?;
-    parse_usize_literal(&width).map_err(|error| input.error(error))
+    Ok(WireType { ty, width })
 }
 
-fn parse_integer(input: ParseStream<'_>, label: &str) -> syn::Result<usize> {
+fn parse_integer_value(input: ParseStream<'_>, label: &str) -> syn::Result<IntegerValue> {
     parse_colon_label(input, label)?;
-    let value = input.parse::<LitInt>()?;
+    let value = parse_integer_literal_value(input)?;
     input.parse::<syn::Token![,]>()?;
-    parse_usize_literal(&value).map_err(|error| input.error(error))
+    Ok(value)
+}
+
+fn parse_integer_literal_value(input: ParseStream<'_>) -> syn::Result<IntegerValue> {
+    let literal = input.parse::<LitInt>()?;
+    let value = parse_usize_literal(&literal).map_err(|error| input.error(error))?;
+    Ok(IntegerValue { literal, value })
 }
 
 fn parse_u16_literal(literal: &LitInt) -> Result<u16, String> {
@@ -999,6 +1399,16 @@ mod tests {
         assert_eq!(command.ocf(), 0x085);
         assert_eq!(command.params.min_len(), 1);
         assert_eq!(command.params.max_len(), 1);
+        assert!(command.params.lifetime.is_none());
+        let [field] = command.params.fields().unwrap().fields() else {
+            panic!("expected one typed Params field");
+        };
+        assert_eq!(field.name, "io_capability");
+        let FieldEncoding::Fixed(encoding) = &field.encoding else {
+            panic!("expected a fixed encoding");
+        };
+        assert_eq!(encoding.width, 1);
+        assert_eq!(encoding.width_literal.base10_digits(), "1");
         assert_eq!(command.completion, Completion::CommandComplete);
         assert_eq!(command.returns.unwrap().max_len(), 0);
     }
@@ -1028,10 +1438,32 @@ mod tests {
         .unwrap();
         assert_eq!(command.params.min_len(), 2);
         assert_eq!(command.params.max_len(), 18);
+        assert_eq!(command.params.lifetime.as_ref().unwrap().ident, "a");
+        let fields = command.params.fields().unwrap().fields();
+        assert_eq!(fields.len(), 2);
+        let FieldEncoding::Variable(encoding) = &fields[1].encoding else {
+            panic!("expected a variable encoding");
+        };
+        assert_eq!((encoding.min_len, encoding.max_len), (1, 17));
+        let VariableEncodingShape::CountedBytes { count, max_len } = &encoding.shape else {
+            panic!("expected typed counted-bytes metadata");
+        };
+        assert_eq!(count.width.value, 1);
+        assert_eq!(max_len.value, 16);
+        let constraints = command.constraints.as_ref().unwrap();
         assert_eq!(
-            command.constraints.unwrap().referenced_fields(),
+            constraints.referenced_fields(),
             &BTreeSet::from(["data".to_owned(), "limit".to_owned()])
         );
+        assert!(matches!(constraints.nodes()[0], Constraint::Range { .. }));
+        assert!(matches!(
+            constraints.nodes()[1],
+            Constraint::LenAtMost { .. }
+        ));
+        assert!(matches!(
+            constraints.nodes()[2],
+            Constraint::NonEmpty { .. }
+        ));
     }
 
     #[test]
@@ -1048,6 +1480,10 @@ mod tests {
             (
                 "Bad(cgid = 0, cid = 1) { Params = { value: u8 => 1, }; Constraints = { range(missing, 0, 1); }; Completion = CommandStatus; }",
                 "unknown parameter(s): missing",
+            ),
+            (
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8 => 1, }; Constraints = {}; Completion = CommandStatus; }",
+                "Constraints must declare at least one check",
             ),
         ] {
             let error = syn::parse_str::<VendorCommand>(source)

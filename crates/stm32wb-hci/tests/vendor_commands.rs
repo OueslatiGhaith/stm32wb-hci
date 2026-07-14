@@ -10,7 +10,7 @@ use hci::vendor::{
         gap::{
             AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle, CmdGapInit,
             GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdditionalBeaconStart,
-            GapAdvSetConfig, GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices,
+            GapAdvSetConfig, GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapInit,
             GapPassKeyResponse, GapPeripheralSecurityRequest, GapSendPairingRequest,
             GapSetAuthenticationRequirement, GapSetBroadcastMode, GapSetDirectConnectable,
             GapSetDiscoverable, GapSetEventMask, GapSetIoCapability, GapSetLimitedDiscoverable,
@@ -827,7 +827,7 @@ async fn gap_configure_whitelist_has_no_wire_parameters() {
 async fn declarative_gap_nondiscoverable_has_no_wire_parameters() {
     let sink = RecordingSink::new();
 
-    GapSetNonDiscoverable::new().exec(&sink).await.unwrap();
+    GapSetNonDiscoverable::default().exec(&sink).await.unwrap();
 
     assert_eq!(sink.written_data(), [1, 0x81, 0xFC, 0]);
 }
@@ -851,6 +851,14 @@ async fn proc_macro_gap_io_capability_preserves_the_legacy_contract() {
 
 #[tokio::test]
 async fn declarative_gap_init_matches_cubewb() {
+    fn assert_sync_contract<C>()
+    where
+        C: SyncCmd<Return = GapInit, ReturnBuf = [u8; 6]>,
+    {
+    }
+
+    assert_sync_contract::<CmdGapInit>();
+
     let sink = RecordingSink::new();
 
     let _ = CmdGapInit::new(Role::PERIPHERAL | Role::CENTRAL, true, 0x20)
@@ -862,6 +870,10 @@ async fn declarative_gap_init_matches_cubewb() {
 
 #[tokio::test]
 async fn declarative_gap_command_status_matches_cubewb() {
+    fn assert_async_contract<C: AsyncCmd>() {}
+
+    assert_async_contract::<GapPeripheralSecurityRequest>();
+
     let sink = RecordingSink::new();
 
     GapPeripheralSecurityRequest::new(hci::bt_hci::param::ConnHandle(0x0123))
@@ -897,7 +909,6 @@ fn declarative_counted_bytes_reject_oversized_input() {
 #[test]
 fn declarative_gap_init_decodes_payload_without_status_byte() {
     use bt_hci::FromHciBytes;
-    use hci::vendor::command::gap::GapInit;
 
     let value = GapInit::from_hci_bytes_complete(&[0x34, 0x12, 0x78, 0x56, 0xBC, 0x9A])
         .expect("valid GAP Init return payload");

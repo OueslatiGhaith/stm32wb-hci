@@ -1,25 +1,1061 @@
 //! Procedural entry points for the declarative STM32WB protocol catalog.
 
 use proc_macro::TokenStream;
-use quote::quote;
-use stm32wb_hci_schema::VendorCommand;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{format_ident, quote, quote_spanned};
+use stm32wb_hci_schema::{
+    Completion, Constraint, Constraints, Field, FieldEncoding, Fields, Returns, TaggedEncoding,
+    VariableEncodingShape, VendorCommand,
+};
 
-/// Parse a vendor command through the shared schema, then delegate generation
-/// to the established `macro_rules! vendor_cmd` implementation.
+/// Declare one complete STM32WB vendor command.
 ///
-/// This deliberately separates the parser migration from the code-generation
-/// migration. The representative command therefore gets the new parser and
-/// diagnostics while retaining byte-for-byte identical generated Rust. Once
-/// the catalog is migrated, generation can move here without changing the
-/// declaration language or the compliance parser again.
+/// The declaration is the source of truth for the command's vendor opcode,
+/// request wire layout, completion mechanism, return wire layout, and
+/// cross-field constraints. The same syntax is parsed by this proc macro and
+/// by the compliance tool through `stm32wb-hci-schema`.
+///
+/// ```text
+/// vendor_cmd! {
+///     GapSetIoCapability(cgid = 0x1, cid = 0x05) {
+///         Params = { io_capability: IoCapability => 1, };
+///         Completion = CommandComplete;
+///         Return = ();
+///     }
+/// }
+/// ```
+///
+/// `cgid` is a three-bit command-group ID and `cid` is a seven-bit command ID.
+/// The generated command derives its vendor OCF and HCI opcode from those two
+/// values.
+///
+/// `Params` is either `()` or an inline field body. Fixed fields use
+/// `field: Type => width`. Borrowing or variable fields use `Params<'a>` and
+/// one of these typed schemas:
+///
+/// - `counted_bytes`: a count field followed by up to `max_len` bytes.
+/// - `counted_items`: a count field followed by fixed-width items.
+/// - `tagged`: a fixed-width discriminator and one fixed-width variant body.
+/// - `trailing_bytes`: a bounded field that consumes the remaining bytes.
+/// - `bitmap_items`: fixed-width items selected by bits in an earlier field.
+///
+/// `CommandComplete` requires `Return = ();` or an inline named return type.
+/// `CommandStatus` has no `Return` declaration and implements `AsyncCmd`.
+/// Fixed, infallible commands expose `new`; constrained or variable commands
+/// expose `try_new` with `HciConstraintError`, `HciLengthError`, or their
+/// combined `HciValidationError` as appropriate. Variable construction checks
+/// both each field's declared bound and the aggregate 255-byte HCI parameter
+/// limit.
+///
+/// `Constraints` are evaluated in declaration order and stop at the first
+/// failure. Supported relationships are `ordered`, `ordered_when_in_range`,
+/// `range`, `one_of`, `one_of_or_range`, `paired_value`, `implies_eq`,
+/// `implies_range`, `pawr_subevents_fit`, `pawr_response_slots_fit`,
+/// `len_at_most`, and `non_empty`. Intrinsic validity should remain in the
+/// semantic field type; constraints describe relationships or
+/// command-specific subsets.
 #[proc_macro]
 pub fn vendor_cmd(input: TokenStream) -> TokenStream {
-    let original = proc_macro2::TokenStream::from(input);
-    match syn::parse2::<VendorCommand>(original.clone()) {
-        Ok(_) => quote! {
-            vendor_cmd! { #original }
-        }
-        .into(),
+    match syn::parse::<VendorCommand>(input) {
+        Ok(command) => expand_vendor_command(&command).into(),
         Err(error) => error.into_compile_error().into(),
+    }
+}
+
+/// Generate the complete command type directly from the shared schema.
+fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
+    let name = &command.name;
+    let cgid = command.cgid;
+    let cid = command.cid;
+    let fields = command.params.fields().map_or(&[][..], Fields::fields);
+    let field_names = fields.iter().map(|field| &field.name).collect::<Vec<_>>();
+    let field_types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    let params_type = field_list_type(fields);
+    let params_value = field_list_value(fields);
+    let schema_validations = expand_schema_validations(fields);
+    let params_length_assert = command.params.lifetime.is_none().then(|| {
+        let params_len = command.params.max_len();
+        quote! {
+            const _: () = crate::vendor::command::assert_hci_field_list_length(#params_len);
+        }
+    });
+    let constructor = expand_constructor(command, &field_names, &field_types, &params_value);
+    let completion_impl = expand_completion(command);
+    let lifetime = command.params.lifetime.as_ref();
+    let impl_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
+    let type_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
+    let default_impl = command.params.fields().is_none().then(|| {
+        quote! {
+            impl Default for #name {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+        }
+    });
+
+    quote! {
+        #schema_validations
+        #params_length_assert
+
+        #[allow(missing_docs)]
+        pub struct #name #impl_generics(
+            crate::vendor::command::DeclarativeParams<#params_type>
+        );
+
+        impl #impl_generics #name #type_generics {
+            /// STM32 vendor command-group ID.
+            pub const CGID: u16 = #cgid;
+            /// Command ID within [`Self::CGID`].
+            pub const CID: u16 = #cid;
+            /// Vendor-specific Opcode Command Field.
+            pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
+
+            #constructor
+        }
+
+        impl #impl_generics ::bt_hci::cmd::Cmd for #name #type_generics {
+            const OPCODE: ::bt_hci::cmd::Opcode = ::bt_hci::cmd::Opcode::new(
+                ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
+                Self::OCF,
+            );
+            type Params = crate::vendor::command::DeclarativeParams<#params_type>;
+
+            fn params(&self) -> &Self::Params {
+                &self.0
+            }
+        }
+
+        impl #impl_generics ::bt_hci::WriteHci for #name #type_generics {
+            #[inline]
+            fn size(&self) -> usize {
+                ::bt_hci::WriteHci::size(<Self as ::bt_hci::cmd::Cmd>::params(self)) + 3
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                ::embedded_io::Write::write_all(
+                    &mut writer,
+                    &<Self as ::bt_hci::cmd::Cmd>::header(self),
+                )?;
+                ::bt_hci::WriteHci::write_hci(
+                    <Self as ::bt_hci::cmd::Cmd>::params(self),
+                    writer,
+                )
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                ::embedded_io_async::Write::write_all(
+                    &mut writer,
+                    &<Self as ::bt_hci::cmd::Cmd>::header(self),
+                )
+                .await?;
+                ::bt_hci::WriteHci::write_hci_async(
+                    <Self as ::bt_hci::cmd::Cmd>::params(self),
+                    writer,
+                )
+                .await
+            }
+        }
+
+        #completion_impl
+        #default_impl
+    }
+}
+
+fn expand_constructor(
+    command: &VendorCommand,
+    field_names: &[&syn::Ident],
+    field_types: &[&syn::Type],
+    params_value: &TokenStream2,
+) -> TokenStream2 {
+    let has_variable_params = command.params.lifetime.is_some();
+    match (has_variable_params, &command.constraints) {
+        (false, None) => quote! {
+            #[allow(clippy::too_many_arguments)]
+            #[allow(missing_docs)]
+            pub fn new(#(#field_names: #field_types),*) -> Self {
+                Self(crate::vendor::command::DeclarativeParams(#params_value))
+            }
+        },
+        (false, Some(constraints)) => {
+            let checks = expand_constraint_checks(&command.name, constraints);
+            quote! {
+                #[allow(clippy::too_many_arguments)]
+                #[allow(missing_docs)]
+                pub fn try_new(
+                    #(#field_names: #field_types),*
+                ) -> Result<Self, crate::vendor::command::HciConstraintError> {
+                    #checks
+                    Ok(Self(crate::vendor::command::DeclarativeParams(#params_value)))
+                }
+            }
+        }
+        (true, constraints) => {
+            let checks = constraints
+                .as_ref()
+                .map(|constraints| expand_constraint_checks(&command.name, constraints));
+            let error = if constraints.is_some() {
+                quote!(crate::vendor::command::HciValidationError)
+            } else {
+                quote!(crate::vendor::command::HciLengthError)
+            };
+            quote! {
+                #[allow(clippy::too_many_arguments)]
+                #[allow(missing_docs)]
+                pub fn try_new(
+                    #(#field_names: #field_types),*
+                ) -> Result<Self, #error> {
+                    #checks
+                    let params = crate::vendor::command::DeclarativeParams(#params_value);
+                    let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
+                    if actual > u8::MAX as usize {
+                        return Err(crate::vendor::command::HciLengthError::new(
+                            actual,
+                            0,
+                            u8::MAX as usize,
+                        ).into());
+                    }
+                    Ok(Self(params))
+                }
+            }
+        }
+    }
+}
+
+/// Translate the shared constraint AST into ordered, fail-fast runtime checks.
+/// Each branch preserves the established diagnostic wording because
+/// `HciConstraintError::constraint` is public API.
+fn expand_constraint_checks(command: &syn::Ident, constraints: &Constraints) -> TokenStream2 {
+    let checks = constraints
+        .nodes()
+        .iter()
+        .map(|constraint| expand_constraint_check(command, constraint));
+    quote! {
+        (|| -> Result<(), crate::vendor::command::HciConstraintError> {
+            #(#checks)*
+            Ok(())
+        })()?;
+    }
+}
+
+fn expand_constraint_check(command: &syn::Ident, constraint: &Constraint) -> TokenStream2 {
+    match constraint {
+        Constraint::Ordered { minimum, maximum } => quote! {
+            if #minimum > #maximum {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(stringify!(#minimum), " <= ", stringify!(#maximum)),
+                ));
+            }
+        },
+        Constraint::OrderedWhenInRange {
+            minimum,
+            maximum,
+            range_minimum,
+            range_maximum,
+        } => quote! {
+            if ((#range_minimum)..=(#range_maximum)).contains(&#minimum)
+                && ((#range_minimum)..=(#range_maximum)).contains(&#maximum)
+                && #minimum > #maximum
+            {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#minimum),
+                        " <= ",
+                        stringify!(#maximum),
+                        " when both are in ",
+                        stringify!(#range_minimum),
+                        "..=",
+                        stringify!(#range_maximum),
+                    ),
+                ));
+            }
+        },
+        Constraint::Range {
+            field,
+            minimum,
+            maximum,
+        } => quote! {
+            if !((#minimum)..=(#maximum)).contains(&#field) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#minimum),
+                        " <= ",
+                        stringify!(#field),
+                        " <= ",
+                        stringify!(#maximum),
+                    ),
+                ));
+            }
+        },
+        Constraint::OneOf { field, allowed } => quote! {
+            if ![#(#allowed),*].contains(&#field) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(stringify!(#field), " in ", stringify!([#(#allowed),*])),
+                ));
+            }
+        },
+        Constraint::OneOfOrRange {
+            field,
+            allowed,
+            minimum,
+            maximum,
+        } => quote! {
+            if ![#(#allowed),*].contains(&#field)
+                && !((#minimum)..=(#maximum)).contains(&#field)
+            {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#field),
+                        " in ",
+                        stringify!([#(#allowed),*]),
+                        " or ",
+                        stringify!(#minimum),
+                        " <= ",
+                        stringify!(#field),
+                        " <= ",
+                        stringify!(#maximum),
+                    ),
+                ));
+            }
+        },
+        Constraint::PairedValue { left, right, value } => {
+            let binding = format_ident!("__stm32wb_constraint_value", span = Span::mixed_site());
+            quote! {
+                match #value {
+                    ref #binding => {
+                        if (&#left == #binding) != (&#right == #binding) {
+                            return Err(crate::vendor::command::HciConstraintError::new(
+                                stringify!(#command),
+                                concat!(
+                                    stringify!(#left),
+                                    " and ",
+                                    stringify!(#right),
+                                    " are both ",
+                                    stringify!(#value),
+                                    " or neither is",
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Constraint::ImpliesEq {
+            selector,
+            selected,
+            field,
+            required,
+        } => quote! {
+            if #selector == #selected && #field != #required {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#selector),
+                        " == ",
+                        stringify!(#selected),
+                        " implies ",
+                        stringify!(#field),
+                        " == ",
+                        stringify!(#required),
+                    ),
+                ));
+            }
+        },
+        Constraint::ImpliesRange {
+            selector,
+            selected,
+            field,
+            minimum,
+            maximum,
+        } => quote! {
+            if #selector == #selected && !((#minimum)..=(#maximum)).contains(&#field) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#selector),
+                        " == ",
+                        stringify!(#selected),
+                        " implies ",
+                        stringify!(#minimum),
+                        " <= ",
+                        stringify!(#field),
+                        " <= ",
+                        stringify!(#maximum),
+                    ),
+                ));
+            }
+        },
+        Constraint::PawrSubeventsFit {
+            periodic_interval_min,
+            num_subevents,
+            subevent_interval,
+        } => quote! {
+            if !crate::vendor::command::pawr_subevents_fit(
+                #periodic_interval_min.value(),
+                #num_subevents.value(),
+                #subevent_interval.value(),
+            ) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#num_subevents),
+                        " * ",
+                        stringify!(#subevent_interval),
+                        " <= ",
+                        stringify!(#periodic_interval_min),
+                    ),
+                ));
+            }
+        },
+        Constraint::PawrResponseSlotsFit {
+            num_subevents,
+            subevent_interval,
+            response_slot_delay,
+            response_slot_spacing,
+            num_response_slots,
+        } => quote! {
+            if !crate::vendor::command::pawr_response_delay_fits(
+                #num_subevents.value(),
+                #subevent_interval.value(),
+                #response_slot_delay.value(),
+                #num_response_slots,
+            ) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        "0 < ",
+                        stringify!(#response_slot_delay),
+                        " < ",
+                        stringify!(#subevent_interval),
+                        " when ",
+                        stringify!(#num_response_slots),
+                        " != 0",
+                    ),
+                ));
+            }
+            if !crate::vendor::command::pawr_response_spacing_fits(
+                #num_subevents.value(),
+                #subevent_interval.value(),
+                #response_slot_delay.value(),
+                #response_slot_spacing.value(),
+                #num_response_slots,
+            ) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(
+                        stringify!(#response_slot_spacing),
+                        " * ",
+                        stringify!(#num_response_slots),
+                        " <= 10 * (",
+                        stringify!(#subevent_interval),
+                        " - ",
+                        stringify!(#response_slot_delay),
+                        ") when ",
+                        stringify!(#num_response_slots),
+                        " > 1",
+                    ),
+                ));
+            }
+        },
+        Constraint::LenAtMost { field, maximum } => quote! {
+            if #field.len() > usize::from(#maximum) {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(stringify!(#field), ".len() <= ", stringify!(#maximum)),
+                ));
+            }
+        },
+        Constraint::NonEmpty { field } => quote! {
+            if #field.is_empty() {
+                return Err(crate::vendor::command::HciConstraintError::new(
+                    stringify!(#command),
+                    concat!(stringify!(#field), " is not empty"),
+                ));
+            }
+        },
+    }
+}
+
+fn expand_completion(command: &VendorCommand) -> TokenStream2 {
+    let name = &command.name;
+    let lifetime = command.params.lifetime.as_ref();
+    let impl_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
+    let type_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
+    match (command.completion, &command.returns) {
+        (Completion::CommandComplete, Some(Returns::Unit)) => quote! {
+            const _: () = crate::vendor::command::assert_hci_field_list_length(0usize);
+
+            impl #impl_generics ::bt_hci::cmd::SyncCmd for #name #type_generics {
+                type Return = ();
+                type Handle = ();
+                type ReturnBuf = [u8; 0];
+
+                fn param_handle(&self) {}
+
+                fn return_handle(
+                    _data: &[u8],
+                ) -> Result<Self::Handle, ::bt_hci::FromHciBytesError> {
+                    Ok(())
+                }
+            }
+        },
+        (
+            Completion::CommandComplete,
+            Some(Returns::Fields {
+                name: return_name,
+                fields,
+            }),
+        ) => {
+            let return_declaration = expand_return(return_name, fields);
+            let return_len = fields.max_len();
+
+            quote! {
+                const _: () = crate::vendor::command::assert_hci_field_list_length(
+                    #return_len
+                );
+
+                #return_declaration
+
+                impl #impl_generics ::bt_hci::cmd::SyncCmd for #name #type_generics {
+                    type Return = #return_name;
+                    type Handle = ();
+                    type ReturnBuf = [u8; #return_len];
+
+                    fn param_handle(&self) {}
+
+                    fn return_handle(
+                        _data: &[u8],
+                    ) -> Result<Self::Handle, ::bt_hci::FromHciBytesError> {
+                        Ok(())
+                    }
+                }
+            }
+        }
+        (Completion::CommandStatus, None) => quote! {
+            impl #impl_generics ::bt_hci::cmd::AsyncCmd for #name #type_generics {}
+        },
+        _ => unreachable!("the shared parser validates completion and return combinations"),
+    }
+}
+
+fn expand_return(return_name: &syn::Ident, fields: &Fields) -> TokenStream2 {
+    let field_names = fields
+        .fields()
+        .iter()
+        .map(|field| &field.name)
+        .collect::<Vec<_>>();
+    let field_types = fields
+        .fields()
+        .iter()
+        .map(|field| &field.ty)
+        .collect::<Vec<_>>();
+    let cursor = format_ident!("__stm32wb_return_data", span = Span::mixed_site());
+    let decoders = fields
+        .fields()
+        .iter()
+        .map(|field| expand_return_decoder(field, &cursor));
+
+    quote! {
+        #[derive(Copy, Clone, Debug)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[allow(missing_docs)]
+        pub struct #return_name {
+            #(pub #field_names: #field_types,)*
+        }
+
+        impl<'de> ::bt_hci::FromHciBytes<'de> for #return_name {
+            fn from_hci_bytes(
+                data: &'de [u8],
+            ) -> Result<(Self, &'de [u8]), ::bt_hci::FromHciBytesError> {
+                let #cursor = data;
+                #(#decoders)*
+
+                Ok((Self { #(#field_names,)* }, #cursor))
+            }
+        }
+    }
+}
+
+fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
+    let name = &field.name;
+    let ty = &field.ty;
+    let decoder = match &field.encoding {
+        FieldEncoding::Fixed(encoding) => {
+            let width = &encoding.width_literal;
+            quote! {
+                crate::vendor::command::decode_declarative_fixed_field::<#ty, #width>(#cursor)
+            }
+        }
+        FieldEncoding::Variable(encoding) => match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, max_len } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_len = &max_len.literal;
+                quote! {
+                    crate::vendor::command::decode_declarative_counted_bytes::<
+                        #ty, #count_ty, #count_width, #max_len
+                    >(#cursor)
+                }
+            }
+            VariableEncodingShape::TrailingBytes { min_len, max_len } => {
+                let min_len = &min_len.literal;
+                let max_len = &max_len.literal;
+                quote! {
+                    crate::vendor::command::decode_declarative_trailing_bytes::<
+                        #ty, #min_len, #max_len
+                    >(#cursor)
+                }
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                max_items,
+            } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote! {
+                    crate::vendor::command::decode_declarative_counted_items::<
+                        #ty, #item_ty, #count_ty, #count_width, #item_width, #max_items
+                    >(#cursor)
+                }
+            }
+            VariableEncodingShape::Tagged(_)
+            | VariableEncodingShape::BitmapItems { .. }
+            | VariableEncodingShape::Payload { .. } => {
+                unreachable!("the shared parser rejects variable returns without owned decoders")
+            }
+        },
+    };
+    quote! {
+        let (#name, #cursor) = #decoder?;
+    }
+}
+
+fn field_list_type(fields: &[Field]) -> TokenStream2 {
+    fields.iter().rev().fold(quote!(()), |tail, field| {
+        let head = encoded_field_type(field);
+        quote!((#head, #tail))
+    })
+}
+
+fn encoded_field_type(field: &Field) -> TokenStream2 {
+    let ty = &field.ty;
+    match &field.encoding {
+        FieldEncoding::Fixed(encoding) => {
+            let width = &encoding.width_literal;
+            quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField<#ty, #width>)
+        }
+        FieldEncoding::Variable(encoding) => match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, max_len } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_len = &max_len.literal;
+                quote!(crate::vendor::command::CountedBytes<#ty, #count_ty, #count_width, #max_len>)
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                max_items,
+            } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote!(crate::vendor::command::CountedItems<
+                    #ty, #item_ty, #count_ty, #count_width, #item_width, #max_items
+                >)
+            }
+            VariableEncodingShape::Tagged(tagged) => {
+                let max_len = &tagged.max_len.literal;
+                quote!(crate::vendor::command::TaggedField<#ty, #max_len>)
+            }
+            VariableEncodingShape::TrailingBytes { min_len, max_len } => {
+                let min_len = &min_len.literal;
+                let max_len = &max_len.literal;
+                quote!(crate::vendor::command::TrailingBytes<#ty, #min_len, #max_len>)
+            }
+            VariableEncodingShape::BitmapItems {
+                item, max_items, ..
+            } => {
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote!(crate::vendor::command::BitmapItems<#ty, #item_ty, #item_width, #max_items>)
+            }
+            VariableEncodingShape::Payload { .. } => {
+                unreachable!("the shared parser rejects removed payload fields")
+            }
+        },
+    }
+}
+
+fn field_list_value(fields: &[Field]) -> TokenStream2 {
+    fields.iter().rev().fold(quote!(()), |tail, field| {
+        let head = encoded_field_value(field);
+        quote!((#head, #tail))
+    })
+}
+
+fn encoded_field_value(field: &Field) -> TokenStream2 {
+    let name = &field.name;
+    let ty = &field.ty;
+    match &field.encoding {
+        FieldEncoding::Fixed(encoding) => {
+            let width = &encoding.width_literal;
+            quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField::<_, #width>(#name))
+        }
+        FieldEncoding::Variable(encoding) => match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, max_len } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_len = &max_len.literal;
+                quote!(crate::vendor::command::CountedBytes::<
+                    _, #count_ty, #count_width, #max_len
+                >::try_new(#name)?)
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                max_items,
+            } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote!(crate::vendor::command::CountedItems::<
+                    _, #item_ty, #count_ty, #count_width, #item_width, #max_items
+                >::try_new(#name)?)
+            }
+            VariableEncodingShape::Tagged(tagged) => tagged_field_value(name, ty, tagged),
+            VariableEncodingShape::TrailingBytes { min_len, max_len } => {
+                let min_len = &min_len.literal;
+                let max_len = &max_len.literal;
+                quote!(crate::vendor::command::TrailingBytes::<
+                    _, #min_len, #max_len
+                >::try_new(#name)?)
+            }
+            VariableEncodingShape::BitmapItems {
+                bitmap,
+                mask,
+                item,
+                max_items,
+            } => {
+                let mask = &mask.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote!(crate::vendor::command::BitmapItems::<
+                    _, #item_ty, #item_width, #max_items
+                >::try_new(#name, #bitmap, #mask)?)
+            }
+            VariableEncodingShape::Payload { .. } => {
+                unreachable!("the shared parser rejects removed payload fields")
+            }
+        },
+    }
+}
+
+fn tagged_field_value(name: &syn::Ident, ty: &syn::Type, tagged: &TaggedEncoding) -> TokenStream2 {
+    let tag_ty = &tagged.tag.ty;
+    let tag_width = &tagged.tag.width.literal;
+    let min_len = &tagged.min_len.literal;
+    let max_len = &tagged.max_len.literal;
+    let arms = tagged.variants.iter().map(|variant| {
+        let pattern = &variant.pattern;
+        let tag = &variant.tag.literal;
+        let payload = tagged_payload_value(variant.fields.fields());
+        quote! {
+            #pattern => {
+                let tag: #tag_ty = #tag;
+                crate::vendor::command::TaggedField::<#ty, #max_len>::try_new::<#min_len, _>((
+                    crate::vendor::command::DeclarativeField::<#tag_ty, #tag_width>(tag),
+                    #payload,
+                ))?
+            },
+        }
+    });
+    quote! {
+        match &#name {
+            #(#arms)*
+        }
+    }
+}
+
+fn tagged_payload_value(fields: &[Field]) -> TokenStream2 {
+    fields.iter().rev().fold(quote!(()), |tail, field| {
+        let name = &field.name;
+        let ty = &field.ty;
+        let FieldEncoding::Fixed(encoding) = &field.encoding else {
+            unreachable!("tagged payload fields are validated as fixed-width")
+        };
+        let width = &encoding.width_literal;
+        quote!((
+            crate::vendor::command::DeclarativeField::<&#ty, #width>(#name),
+            #tail
+        ))
+    })
+}
+
+fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
+    let validations = fields.iter().filter_map(|field| {
+        let FieldEncoding::Variable(encoding) = &field.encoding else {
+            return None;
+        };
+        match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, max_len } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_len = &max_len.literal;
+                Some(quote! {
+                    const _: () = ::core::assert!(
+                        #max_len <= <#count_ty as crate::vendor::command::HciCount<#count_width>>::MAX
+                    );
+                })
+            }
+            VariableEncodingShape::CountedItems {
+                count, max_items, ..
+            } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_items = &max_items.literal;
+                Some(quote! {
+                    const _: () = ::core::assert!(
+                        #max_items <= <#count_ty as crate::vendor::command::HciCount<#count_width>>::MAX
+                    );
+                })
+            }
+            VariableEncodingShape::Tagged(_)
+            | VariableEncodingShape::TrailingBytes { .. }
+            | VariableEncodingShape::BitmapItems { .. } => None,
+            VariableEncodingShape::Payload { .. } => {
+                unreachable!("the shared parser rejects removed payload fields")
+            }
+        }
+    });
+    quote!(#(#validations)*)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(source: TokenStream2) -> VendorCommand {
+        syn::parse2(source).unwrap()
+    }
+
+    #[test]
+    fn directly_generates_fixed_command_complete_unit_return() {
+        let command = parse(quote! {
+            GapSetIoCapability(cgid = 0x1, cid = 0x05) {
+                Params = { io_capability: IoCapability => 1, };
+                Completion = CommandComplete;
+                Return = ();
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("pub struct GapSetIoCapability"));
+        assert!(generated.contains("SyncCmd for GapSetIoCapability"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_fixed_command_status() {
+        let command = parse(quote! {
+            GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
+                Params = { conn_handle: ConnHandle => 2, };
+                Completion = CommandStatus;
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("AsyncCmd for GapPeripheralSecurityRequest"));
+        assert!(!generated.contains("SyncCmd for GapPeripheralSecurityRequest"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_fixed_named_return() {
+        let command = parse(quote! {
+            CmdGapInit(cgid = 0x1, cid = 0x0A) {
+                Params = {
+                    role: Role => 1,
+                    privacy_enabled: bool => 1,
+                    dev_name_characteristic_len: u8 => 1,
+                };
+                Completion = CommandComplete;
+                Return = GapInit {
+                    service_handle: AttributeHandle => 2,
+                    dev_name_handle: AttributeHandle => 2,
+                    appearance_handle: AttributeHandle => 2,
+                };
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("pub struct GapInit"));
+        assert!(generated.contains("ReturnBuf = [u8 ; 6usize]"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_unit_params_and_default() {
+        let command = parse(quote! {
+            HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
+                Params = ();
+                Completion = CommandComplete;
+                Return = HalFirmwareRevision { revision: u16 => 2, };
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("Default for HalGetFirmwareRevision"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_fixed_constraints_and_try_new() {
+        let command = parse(quote! {
+            GapAdditionalBeaconStart(cgid = 0x1, cid = 0x30) {
+                Params = {
+                    advertising_interval_min: u16 => 2,
+                    advertising_interval_max: u16 => 2,
+                    advertising_channel_map: AdvertisingChannelMap => 1,
+                };
+                Constraints = {
+                    range(advertising_interval_min, 0x0020, 0x4000);
+                    ordered(advertising_interval_min, advertising_interval_max);
+                    non_empty(advertising_channel_map);
+                };
+                Completion = CommandComplete;
+                Return = ();
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("pub fn try_new"));
+        assert!(generated.contains("HciConstraintError :: new"));
+        assert!(generated.contains("advertising_channel_map . is_empty"));
+        assert!(!generated.contains("pub fn new"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_counted_tagged_and_trailing_params() {
+        let command = parse(quote! {
+            VariableParams(cgid = 0x2, cid = 0x01) {
+                Params<'a> = {
+                    bytes: &'a [u8] => {
+                        kind: counted_bytes,
+                        count: u8 => 1,
+                        max_len: 16,
+                    },
+                    uuid: &'a Uuid => {
+                        kind: tagged,
+                        tag: u8 => 1,
+                        variants: {
+                            Uuid::Uuid16(value) => {
+                                tag: 0x01,
+                                fields: { value: u16 => 2, },
+                            },
+                            Uuid::Uuid128(value) => {
+                                tag: 0x02,
+                                fields: { value: [u8; 16] => 16, },
+                            },
+                        },
+                        min_len: 3,
+                        max_len: 17,
+                    },
+                    tail: &'a [u8] => {
+                        kind: trailing_bytes,
+                        min_len: 0,
+                        max_len: 8,
+                    },
+                };
+                Completion = CommandStatus;
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("CountedBytes"));
+        assert!(generated.contains("TaggedField"));
+        assert!(generated.contains("TrailingBytes"));
+        assert!(generated.contains("pub fn try_new"));
+        assert!(generated.contains("HciLengthError"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_counted_and_bitmap_items() {
+        let command = parse(quote! {
+            VariableItems(cgid = 0x1, cid = 0x51) {
+                Params<'a> = {
+                    list: &'a [Peer] => {
+                        kind: counted_items,
+                        count: u8 => 1,
+                        item: Peer => 7,
+                        max_items: 3,
+                    },
+                    phys: Phys => 1,
+                    selected: &'a [PhyParams] => {
+                        kind: bitmap_items,
+                        bitmap: phys,
+                        mask: 0x05,
+                        item: PhyParams => 5,
+                        max_items: 2,
+                    },
+                };
+                Completion = CommandStatus;
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("CountedItems"));
+        assert!(generated.contains("BitmapItems"));
+        assert!(generated.contains("try_new (selected , phys , 0x05)"));
+        assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_all_owned_variable_return_decoders() {
+        let command = parse(quote! {
+            HalReadConfigData(cgid = 0x0, cid = 0x0D) {
+                Params = { param: ConfigParameter => 1, };
+                Completion = CommandComplete;
+                Return = HalReadConfigDataReturn {
+                    bytes: BoundedBytes<16> => {
+                        kind: counted_bytes,
+                        count: u8 => 1,
+                        max_len: 16,
+                    },
+                    items: BoundedItems<Item, 4> => {
+                        kind: counted_items,
+                        count: u8 => 1,
+                        item: Item => 2,
+                        max_items: 4,
+                    },
+                    tail: BoundedBytes<8> => {
+                        kind: trailing_bytes,
+                        min_len: 0,
+                        max_len: 8,
+                    },
+                };
+            }
+        });
+        let generated = expand_vendor_command(&command).to_string();
+        assert!(generated.contains("decode_declarative_counted_bytes"));
+        assert!(generated.contains("decode_declarative_counted_items"));
+        assert!(generated.contains("decode_declarative_trailing_bytes"));
+        assert!(generated.contains("ReturnBuf = [u8 ; 34usize]"));
+        assert!(!generated.contains("vendor_cmd !"));
     }
 }
