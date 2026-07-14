@@ -129,37 +129,3 @@ stm32wb_hci_macros::vendor_cmd! {
         Return = ();
     }
 }
-
-impl crate::vendor::command::HciEncodeField<8> for ConnectionInterval {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 8];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 8];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<4> for ExpectedConnectionLength {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
-    }
-}

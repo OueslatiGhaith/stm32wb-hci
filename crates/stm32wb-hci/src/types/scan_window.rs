@@ -37,8 +37,9 @@ impl ScanWindow {
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
         assert!(bytes.len() >= 4);
 
-        LittleEndian::write_u16(&mut bytes[0..2], Self::duration_as_u16(self.interval_width));
-        LittleEndian::write_u16(&mut bytes[2..4], Self::duration_as_u16(self.window_width));
+        let (interval, window) = self.hci_fields();
+        LittleEndian::write_u16(&mut bytes[0..2], interval);
+        LittleEndian::write_u16(&mut bytes[2..4], window);
     }
 
     /// Begins building a [ScanWindow]. The scan window has the given interval. Returns a
@@ -77,6 +78,23 @@ impl ScanWindow {
         //
         // Note: 1600 = 1_000_000 / 625
         (1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)) as u16
+    }
+
+    fn hci_fields(&self) -> (u16, u16) {
+        (
+            Self::duration_as_u16(self.interval_width),
+            Self::duration_as_u16(self.window_width),
+        )
+    }
+}
+
+hci_command_composite! {
+    ScanWindow => 4 {
+        Fields = {
+            interval: u16 => 2,
+            window: u16 => 2,
+        };
+        Encode = |value| { value.hci_fields() };
     }
 }
 

@@ -173,14 +173,28 @@ impl PeerAddrType {
     /// Panics unless `bytes` is exactly seven bytes long.
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
         assert_eq!(bytes.len(), 7);
-        let (kind, addr) = match *self {
+        let (kind, addr) = self.hci_fields();
+        bytes[0] = kind;
+        bytes[1..].copy_from_slice(&addr.0);
+    }
+
+    fn hci_fields(&self) -> (u8, BdAddr) {
+        match *self {
             Self::PublicDeviceAddress(addr) => (0x00, addr),
             Self::RandomDeviceAddress(addr) => (0x01, addr),
             Self::PublicIdentityAddress(addr) => (0x02, addr),
             Self::RandomIdentityAddress(addr) => (0x03, addr),
+        }
+    }
+}
+
+hci_command_composite! {
+    PeerAddrType => 7 {
+        Fields = {
+            kind: u8 => 1,
+            address: BdAddr => 6,
         };
-        bytes[0] = kind;
-        bytes[1..].copy_from_slice(&addr.0);
+        Encode = |value| { value.hci_fields() };
     }
 }
 

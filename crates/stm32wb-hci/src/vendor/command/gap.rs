@@ -24,20 +24,35 @@ hci_ranged! {
     }
 }
 
-impl crate::vendor::command::HciEncodeField<4> for ScanWindow {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
+hci_ranged! {
+    /// Legacy advertising-interval bound in 0.625 ms units.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct AdvertisingIntervalBound: u16 => 2 {
+        minimum: 0x0020,
+        maximum: 0x4000,
     }
+}
 
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
+hci_ranged! {
+    /// Optional legacy advertising-interval bound in 0.625 ms units.
+    ///
+    /// Discoverable procedures accept zero for both bounds to let the
+    /// controller select an interval. Whether both fields use that sentinel is
+    /// a command-level relationship and remains declarative in `vendor_cmd!`.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct OptionalAdvertisingIntervalBound: u16 => 2 {
+        minimum: 0x0020,
+        maximum: 0x4000,
+        sentinel: CONTROLLER_SELECTED = 0x0000,
+    }
+}
+
+hci_ranged! {
+    /// Advertising set identifier carried in the four-bit SID field.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct AdvertisingSid: u8 => 1 {
+        minimum: 0x00,
+        maximum: 0x0F,
     }
 }
 
@@ -77,8 +92,8 @@ stm32wb_hci_macros::vendor_cmd! {
     GapSetLimitedDiscoverable(cgid = 0x1, cid = 0x02) {
         Params<'a> = {
             advertising_type: AdvertisingType => 1,
-            advertising_interval_min: u16 => 2,
-            advertising_interval_max: u16 => 2,
+            advertising_interval_min: OptionalAdvertisingIntervalBound => 2,
+            advertising_interval_max: OptionalAdvertisingIntervalBound => 2,
             own_address_type: AddressType => 1,
             filter_policy: AdvertisingFilterPolicy => 1,
             local_name: &'a [u8] => {
@@ -100,9 +115,11 @@ stm32wb_hci_macros::vendor_cmd! {
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
             ]);
-            one_of_or_range(advertising_interval_min, [0], 0x0020, 0x4000);
-            one_of_or_range(advertising_interval_max, [0], 0x0020, 0x4000);
-            paired_value(advertising_interval_min, advertising_interval_max, 0);
+            paired_value(
+                advertising_interval_min,
+                advertising_interval_max,
+                OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED
+            );
             ordered(advertising_interval_min, advertising_interval_max);
             one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
             one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
@@ -116,8 +133,8 @@ stm32wb_hci_macros::vendor_cmd! {
     GapSetDiscoverable(cgid = 0x1, cid = 0x03) {
         Params<'a> = {
             advertising_type: AdvertisingType => 1,
-            advertising_interval_min: u16 => 2,
-            advertising_interval_max: u16 => 2,
+            advertising_interval_min: OptionalAdvertisingIntervalBound => 2,
+            advertising_interval_max: OptionalAdvertisingIntervalBound => 2,
             own_address_type: AddressType => 1,
             filter_policy: AdvertisingFilterPolicy => 1,
             local_name: &'a [u8] => {
@@ -139,9 +156,11 @@ stm32wb_hci_macros::vendor_cmd! {
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
             ]);
-            one_of_or_range(advertising_interval_min, [0], 0x0020, 0x4000);
-            one_of_or_range(advertising_interval_max, [0], 0x0020, 0x4000);
-            paired_value(advertising_interval_min, advertising_interval_max, 0);
+            paired_value(
+                advertising_interval_min,
+                advertising_interval_max,
+                OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED
+            );
             ordered(advertising_interval_min, advertising_interval_max);
             one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
             one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
@@ -304,14 +323,12 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     GapSetUnidirectedConnectable(cgid = 0x1, cid = 0x0C) {
         Params = {
-            advertising_interval_min: u16 => 2,
-            advertising_interval_max: u16 => 2,
+            advertising_interval_min: AdvertisingIntervalBound => 2,
+            advertising_interval_max: AdvertisingIntervalBound => 2,
             own_address_type: AddressType => 1,
             filter_policy: AdvertisingFilterPolicy => 1,
         };
         Constraints = {
-            range(advertising_interval_min, 0x0020, 0x4000);
-            range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
             one_of(filter_policy, [
                 AdvertisingFilterPolicy::AllowConnectionAndScan,
@@ -551,8 +568,8 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     GapSetBroadcastMode(cgid = 0x1, cid = 0x21) {
         Params<'a> = {
-            advertising_interval_min: u16 => 2,
-            advertising_interval_max: u16 => 2,
+            advertising_interval_min: AdvertisingIntervalBound => 2,
+            advertising_interval_max: AdvertisingIntervalBound => 2,
             advertising_type: AdvertisingType => 1,
             own_address_type: AddressType => 1,
             advertising_data: &'a [u8] => {
@@ -568,8 +585,6 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            range(advertising_interval_min, 0x0020, 0x4000);
-            range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
             one_of(advertising_type, [
                 AdvertisingType::ScannableUndirected,
@@ -722,15 +737,13 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconStart(cgid = 0x1, cid = 0x30) {
         Params = {
-            advertising_interval_min: u16 => 2,
-            advertising_interval_max: u16 => 2,
+            advertising_interval_min: AdvertisingIntervalBound => 2,
+            advertising_interval_max: AdvertisingIntervalBound => 2,
             advertising_channel_map: AdvertisingChannelMap => 1,
             own_address_type: BdAddrType => 7,
             pa_level: PowerAmplifierOutputLevel => 1,
         };
         Constraints = {
-            range(advertising_interval_min, 0x0020, 0x4000);
-            range(advertising_interval_max, 0x0020, 0x4000);
             ordered(advertising_interval_min, advertising_interval_max);
             non_empty(advertising_channel_map);
         };
@@ -775,13 +788,12 @@ stm32wb_hci_macros::vendor_cmd! {
             adv_tx_power: i8 => 1,
             secondary_adv_max_skip: u8 => 1,
             secondary_adv_phy: AdvertisingPhy => 1,
-            adv_sid: u8 => 1,
+            adv_sid: AdvertisingSid => 1,
             scan_req_notification_enable: bool => 1,
         };
         Constraints = {
             non_empty(primary_adv_channel_map);
             range(adv_tx_power, -127, 20);
-            range(adv_sid, 0, 0x0F);
         };
         Completion = CommandComplete;
         Return = ();
@@ -959,7 +971,7 @@ stm32wb_hci_macros::vendor_cmd! {
             primary_adv_phy: AdvertisingPhy => 1,
             secondary_adv_max_skip: u8 => 1,
             secondary_adv_phy: AdvertisingPhy => 1,
-            adv_sid: u8 => 1,
+            adv_sid: AdvertisingSid => 1,
             scan_req_notification_enable: bool => 1,
             primary_adv_phy_options: u8 => 1,
         };
@@ -969,7 +981,6 @@ stm32wb_hci_macros::vendor_cmd! {
             ordered(primary_adv_interval_min, primary_adv_interval_max);
             non_empty(primary_adv_channel_map);
             range(adv_tx_power, -127, 20);
-            range(adv_sid, 0, 0x0F);
         };
         Completion = CommandComplete;
         Return = ();
@@ -1043,57 +1054,6 @@ stm32wb_hci_macros::vendor_cmd! {
             non_empty(initiating_phys);
         };
         Completion = CommandStatus;
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<8> for ExtendedAdvertisingInterval {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 8];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 8];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<7> for PeerAddrType {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 7];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 7];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
-    }
-}
-
-impl crate::vendor::command::HciEncodeField<4> for AdvSet {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes)
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        let mut bytes = [0; 4];
-        self.copy_into_slice(&mut bytes);
-        writer.write_all(&bytes).await
     }
 }
 
@@ -1556,20 +1516,16 @@ pub struct ExtScanPhyParams {
 }
 
 #[cfg(since_fw_0_17_1)]
-impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        self.scan_type.write_hci_field(&mut writer)?;
-        writer.write_all(&self.scan_interval.to_le_bytes())?;
-        writer.write_all(&self.scan_window.to_le_bytes())
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        self.scan_type.write_hci_field_async(&mut writer).await?;
-        writer.write_all(&self.scan_interval.to_le_bytes()).await?;
-        writer.write_all(&self.scan_window.to_le_bytes()).await
+hci_command_composite! {
+    ExtScanPhyParams => 5 {
+        Fields = {
+            scan_type: ScanType => 1,
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+        };
+        Encode = |value| {
+            (value.scan_type, value.scan_interval, value.scan_window)
+        };
     }
 }
 
@@ -1595,35 +1551,29 @@ pub struct ExtConnectionPhyParams {
 }
 
 #[cfg(since_fw_0_17_1)]
-impl crate::vendor::command::HciEncodeField<16> for ExtConnectionPhyParams {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&self.scan_interval.to_le_bytes())?;
-        writer.write_all(&self.scan_window.to_le_bytes())?;
-        writer.write_all(&self.connection_interval_min.to_le_bytes())?;
-        writer.write_all(&self.connection_interval_max.to_le_bytes())?;
-        writer.write_all(&self.max_latency.to_le_bytes())?;
-        writer.write_all(&self.supervision_timeout.to_le_bytes())?;
-        writer.write_all(&self.min_ce_length.to_le_bytes())?;
-        writer.write_all(&self.max_ce_length.to_le_bytes())
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&self.scan_interval.to_le_bytes()).await?;
-        writer.write_all(&self.scan_window.to_le_bytes()).await?;
-        writer
-            .write_all(&self.connection_interval_min.to_le_bytes())
-            .await?;
-        writer
-            .write_all(&self.connection_interval_max.to_le_bytes())
-            .await?;
-        writer.write_all(&self.max_latency.to_le_bytes()).await?;
-        writer
-            .write_all(&self.supervision_timeout.to_le_bytes())
-            .await?;
-        writer.write_all(&self.min_ce_length.to_le_bytes()).await?;
-        writer.write_all(&self.max_ce_length.to_le_bytes()).await
+hci_command_composite! {
+    ExtConnectionPhyParams => 16 {
+        Fields = {
+            scan_interval: u16 => 2,
+            scan_window: u16 => 2,
+            connection_interval_min: u16 => 2,
+            connection_interval_max: u16 => 2,
+            max_latency: u16 => 2,
+            supervision_timeout: u16 => 2,
+            min_ce_length: u16 => 2,
+            max_ce_length: u16 => 2,
+        };
+        Encode = |value| {
+            (
+                value.scan_interval,
+                value.scan_window,
+                value.connection_interval_min,
+                value.connection_interval_max,
+                value.max_latency,
+                value.supervision_timeout,
+                value.min_ce_length,
+                value.max_ce_length,
+            )
+        };
     }
 }

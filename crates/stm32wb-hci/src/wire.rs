@@ -304,6 +304,123 @@ macro_rules! hci_event_enum {
     };
 }
 
+/// Declare an open vendor-event enum and its exact-width decoder.
+///
+/// Known wire values become fieldless semantic variants. Every other value is
+/// retained in the declared fallback variant, so decoding remains forward
+/// compatible without discarding the original protocol byte. Unlike
+/// [`hci_event_enum!`], decoding is infallible once the fixed-width scalar has
+/// been read.
+macro_rules! hci_event_open_enum {
+    (
+        $(#[$enum_attr:meta])*
+        $vis:vis enum $name:ident : $repr:ty => $len:literal {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr,
+            )+
+            _ => $fallback:ident,
+        }
+    ) => {
+        const _: () = {
+            #[allow(dead_code)]
+            #[repr($repr)]
+            enum WireDiscriminants {
+                $($variant = $value,)+
+            }
+        };
+
+        $(#[$enum_attr])*
+        $vis enum $name {
+            $($(#[$variant_attr])* $variant,)+
+            /// Unrecognized wire value retained verbatim.
+            $fallback($repr),
+        }
+
+        impl From<$repr> for $name {
+            fn from(value: $repr) -> Self {
+                $(
+                    if value == $value {
+                        return Self::$variant;
+                    }
+                )+
+                Self::$fallback(value)
+            }
+        }
+
+        impl From<$name> for $repr {
+            fn from(value: $name) -> Self {
+                match value {
+                    $($name::$variant => $value,)+
+                    $name::$fallback(value) => value,
+                }
+            }
+        }
+
+        impl crate::vendor::event::HciEventField<$len> for $name {
+            fn from_hci_event_field(
+                bytes: &[u8; $len],
+            ) -> Result<Self, crate::vendor::event::Error> {
+                Ok(<$repr>::from_le_bytes(*bytes).into())
+            }
+        }
+    };
+}
+
+/// Declare the exact-width command encoding of a semantic composite value.
+///
+/// `Fields` is the canonical ordered wire decomposition. Its widths must add
+/// up to the composite width, and every component must implement
+/// [`HciEncodeField`](crate::vendor::command::HciEncodeField) at the declared
+/// width. `Encode` projects the validated semantic value into those components
+/// once; the generated implementation uses the same declaration for both the
+/// synchronous and asynchronous writers.
+macro_rules! hci_command_composite {
+    (
+        $ty:ty => $total_len:literal {
+            Fields = {
+                $(
+                    $field:ident: $field_ty:ty => $field_len:literal,
+                )+
+            };
+            Encode = |$value:ident| $encode:block;
+        }
+    ) => {
+        const _: [(); $total_len] = [(); 0 $(+ $field_len)+];
+
+        impl crate::vendor::command::HciEncodeField<$total_len> for $ty {
+            fn write_hci_field<W: embedded_io::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                let ($($field,)+) = (|$value: &$ty| $encode)(self);
+                $(
+                    <$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field(
+                        &$field,
+                        &mut writer,
+                    )?;
+                )+
+                Ok(())
+            }
+
+            async fn write_hci_field_async<W: embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                let ($($field,)+) = (|$value: &$ty| $encode)(self);
+                $(
+                    <$field_ty as crate::vendor::command::HciEncodeField<$field_len>>::write_hci_field_async(
+                        &$field,
+                        &mut writer,
+                    )
+                    .await?;
+                )+
+                Ok(())
+            }
+        }
+    };
+}
+
 /// Declare how an exact-width composite vendor-event field is split into
 /// independently decoded wire fields and assembled into its semantic type.
 ///

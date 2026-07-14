@@ -2264,35 +2264,17 @@ impl AttPrepareWritePermitRequest {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Type of Keypress input notified/signaled by peer device
-/// (having Keyboard only I/O capabilities.
-pub enum KeypressNotificationType {
-    EntryStarted = 0x00,
-    DigitEntered = 0x01,
-    DigitErased = 0x02,
-    PasskeyCleared = 0x03,
-    EntryCompleted = 0x04,
-    Reserved,
-}
-
-impl From<u8> for KeypressNotificationType {
-    fn from(value: u8) -> Self {
-        match value {
-            0x00 => KeypressNotificationType::EntryStarted,
-            0x01 => KeypressNotificationType::DigitEntered,
-            0x02 => KeypressNotificationType::DigitErased,
-            0x03 => KeypressNotificationType::PasskeyCleared,
-            0x04 => KeypressNotificationType::EntryCompleted,
-            _ => KeypressNotificationType::Reserved,
-        }
-    }
-}
-
-impl HciEventField<1> for KeypressNotificationType {
-    fn from_hci_event_field(bytes: &[u8; 1]) -> Result<Self, Error> {
-        Ok(bytes[0].into())
+hci_event_open_enum! {
+    /// Type of keypress input notified by a peer with keyboard I/O capabilities.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum KeypressNotificationType: u8 => 1 {
+        EntryStarted = 0x00,
+        DigitEntered = 0x01,
+        DigitErased = 0x02,
+        PasskeyCleared = 0x03,
+        EntryCompleted = 0x04,
+        _ => Reserved,
     }
 }
 
@@ -2559,6 +2541,19 @@ mod tests {
             VendorError::BadGapPairingErrorReason(0x0D)
         );
         assert_eq!(u8::from(GapPairingReason::KeyRejected), 0x0F);
+    }
+
+    #[test]
+    fn declarative_open_event_enums_retain_unknown_wire_values() {
+        assert_eq!(
+            <KeypressNotificationType as HciEventField<1>>::from_hci_event_field(&[0x04]).unwrap(),
+            KeypressNotificationType::EntryCompleted
+        );
+
+        let reserved =
+            <KeypressNotificationType as HciEventField<1>>::from_hci_event_field(&[0xA5]).unwrap();
+        assert_eq!(reserved, KeypressNotificationType::Reserved(0xA5));
+        assert_eq!(u8::from(reserved), 0xA5);
     }
 
     #[test]

@@ -44,13 +44,11 @@ impl ConnectionInterval {
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
         assert!(bytes.len() >= 8);
 
-        LittleEndian::write_u16(&mut bytes[0..2], Self::interval_as_u16(self.interval_.0));
-        LittleEndian::write_u16(&mut bytes[2..4], Self::interval_as_u16(self.interval_.1));
-        LittleEndian::write_u16(&mut bytes[4..6], self.conn_latency_);
-        LittleEndian::write_u16(
-            &mut bytes[6..8],
-            Self::timeout_as_u16(self.supervision_timeout_),
-        );
+        let (interval_min, interval_max, latency, timeout) = self.hci_fields();
+        LittleEndian::write_u16(&mut bytes[0..2], interval_min);
+        LittleEndian::write_u16(&mut bytes[2..4], interval_max);
+        LittleEndian::write_u16(&mut bytes[4..6], latency);
+        LittleEndian::write_u16(&mut bytes[6..8], timeout);
     }
 
     /// Deserializes the connection interval from the given byte buffer.
@@ -111,6 +109,27 @@ impl ConnectionInterval {
         // T ms = N * 10 ms
         // N = T ms / 10 ms
         ((100 * d.as_secs()) as u32 + d.subsec_millis() / 10) as u16
+    }
+
+    fn hci_fields(&self) -> (u16, u16, u16, u16) {
+        (
+            Self::interval_as_u16(self.interval_.0),
+            Self::interval_as_u16(self.interval_.1),
+            self.conn_latency_,
+            Self::timeout_as_u16(self.supervision_timeout_),
+        )
+    }
+}
+
+hci_command_composite! {
+    ConnectionInterval => 8 {
+        Fields = {
+            interval_min: u16 => 2,
+            interval_max: u16 => 2,
+            latency: u16 => 2,
+            timeout: u16 => 2,
+        };
+        Encode = |value| { value.hci_fields() };
     }
 }
 

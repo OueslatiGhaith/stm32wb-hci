@@ -8,16 +8,17 @@ use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::{
     command::{
         gap::{
-            AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle, CmdGapInit,
-            GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdditionalBeaconStart,
-            GapAdvSetConfig, GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapInit,
-            GapPassKeyResponse, GapPeripheralSecurityRequest, GapSendPairingRequest,
-            GapSetAuthenticationRequirement, GapSetBroadcastMode, GapSetDirectConnectable,
-            GapSetDiscoverable, GapSetEventMask, GapSetIoCapability, GapSetLimitedDiscoverable,
-            GapSetNonConnectable, GapSetNonDiscoverable, GapSetOobData,
-            GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
-            GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
-            PassKey, PowerAmplifierOutputLevel, Procedure, Role, ScanType, ScanningFilterPolicy,
+            AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle,
+            AdvertisingIntervalBound, AdvertisingSid, CmdGapInit, GapAddDevicesToList,
+            GapAdditionalBeaconSetData, GapAdditionalBeaconStart, GapAdvSetConfig, GapAdvSetEnable,
+            GapConfigureWhitelist, GapGetBondedDevices, GapInit, GapPassKeyResponse,
+            GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
+            GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
+            GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable,
+            GapSetNonDiscoverable, GapSetOobData, GapSetUnidirectedConnectable, GapTerminate,
+            GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataLength,
+            OobDataType, OobDeviceType, OptionalAdvertisingIntervalBound, PassKey,
+            PowerAmplifierOutputLevel, Procedure, Role, ScanType, ScanningFilterPolicy,
             SecureConnectionSupport, TerminationReason,
         },
         gatt::{
@@ -50,8 +51,8 @@ async fn declarative_gap_discoverable_encodes_local_name_and_advertising_counts(
     let sink = RecordingSink::new();
     GapSetDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
-        0x20,
-        0x30,
+        OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
+        OptionalAdvertisingIntervalBound::try_new(0x30).unwrap(),
         AddressType::Public,
         AdvertisingFilterPolicy::AllowConnectionAndScan,
         &[0x09, b'X'],
@@ -77,8 +78,8 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     let name = [0; 242];
     let result = GapSetDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
-        0,
-        0,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
         AddressType::Public,
         AdvertisingFilterPolicy::AllowConnectionAndScan,
         &name,
@@ -231,8 +232,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(
         GapSetLimitedDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0x30,
-            0x20,
+            OptionalAdvertisingIntervalBound::try_new(0x30).unwrap(),
+            OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             &[],
@@ -244,8 +245,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     );
     GapSetLimitedDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
-        0,
-        0,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
         AddressType::Public,
         AdvertisingFilterPolicy::AllowConnectionAndScan,
         &[],
@@ -256,8 +257,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     .unwrap();
     GapSetLimitedDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
-        0,
-        0,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
+        OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
         AddressType::Public,
         AdvertisingFilterPolicy::AllowConnectionAndScan,
         &[],
@@ -269,8 +270,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(
         GapSetLimitedDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0,
-            0x20,
+            OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED,
+            OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             &[],
@@ -283,8 +284,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(
         GapSetLimitedDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0x20,
-            0x30,
+            OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
+            OptionalAdvertisingIntervalBound::try_new(0x30).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             &[],
@@ -297,8 +298,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(
         GapSetLimitedDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0x20,
-            0x30,
+            OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
+            OptionalAdvertisingIntervalBound::try_new(0x30).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             &[],
@@ -311,8 +312,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(
         GapSetDiscoverable::try_new(
             AdvertisingType::ConnectableDirectedHighDutyCycle,
-            0x20,
-            0x30,
+            OptionalAdvertisingIntervalBound::try_new(0x20).unwrap(),
+            OptionalAdvertisingIntervalBound::try_new(0x30).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionAndScan,
             &[],
@@ -434,8 +435,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     );
     assert!(
         GapSetUnidirectedConnectable::try_new(
-            0x20,
-            0x30,
+            AdvertisingIntervalBound::try_new(0x20).unwrap(),
+            AdvertisingIntervalBound::try_new(0x30).unwrap(),
             AddressType::Public,
             AdvertisingFilterPolicy::AllowConnectionWhiteListScan,
         )
@@ -448,8 +449,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     assert!(GapTerminateProcedure::try_new(Procedure::empty()).is_err());
     assert!(
         GapSetBroadcastMode::try_new(
-            0x20,
-            0x30,
+            AdvertisingIntervalBound::try_new(0x20).unwrap(),
+            AdvertisingIntervalBound::try_new(0x30).unwrap(),
             AdvertisingType::ConnectableUndirected,
             AddressType::Public,
             &[],
@@ -459,8 +460,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     );
     assert!(
         GapSetBroadcastMode::try_new(
-            0x30,
-            0x20,
+            AdvertisingIntervalBound::try_new(0x30).unwrap(),
+            AdvertisingIntervalBound::try_new(0x20).unwrap(),
             AdvertisingType::ScannableUndirected,
             AddressType::Public,
             &[],
@@ -468,22 +469,13 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         )
         .is_err()
     );
-    assert!(
-        GapSetBroadcastMode::try_new(
-            0x1F,
-            0x20,
-            AdvertisingType::ScannableUndirected,
-            AddressType::Public,
-            &[],
-            &[],
-        )
-        .is_err()
-    );
+    assert!(AdvertisingIntervalBound::try_new(0x1F).is_err());
+    assert!(OptionalAdvertisingIntervalBound::try_new(0x1F).is_err());
     assert!(PowerAmplifierOutputLevel::try_new(0x24).is_err());
     assert!(
         GapAdditionalBeaconStart::try_new(
-            0x20,
-            0x30,
+            AdvertisingIntervalBound::try_new(0x20).unwrap(),
+            AdvertisingIntervalBound::try_new(0x30).unwrap(),
             AdvertisingChannelMap::empty(),
             address,
             PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
@@ -491,8 +483,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
         .is_err()
     );
     let _ = GapAdditionalBeaconStart::try_new(
-        0x20,
-        0x30,
+        AdvertisingIntervalBound::try_new(0x20).unwrap(),
+        AdvertisingIntervalBound::try_new(0x30).unwrap(),
         AdvertisingChannelMap::CHANNEL_37
             | AdvertisingChannelMap::CHANNEL_38
             | AdvertisingChannelMap::CHANNEL_39,
@@ -502,18 +494,8 @@ fn declarative_gap_and_hal_constraints_restore_legacy_guarantees() {
     .unwrap();
     assert!(
         GapAdditionalBeaconStart::try_new(
-            0x001F,
-            0x0020,
-            AdvertisingChannelMap::CHANNEL_37,
-            address,
-            PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
-        )
-        .is_err()
-    );
-    assert!(
-        GapAdditionalBeaconStart::try_new(
-            0x0030,
-            0x0020,
+            AdvertisingIntervalBound::try_new(0x0030).unwrap(),
+            AdvertisingIntervalBound::try_new(0x0020).unwrap(),
             AdvertisingChannelMap::CHANNEL_37,
             address,
             PowerAmplifierOutputLevel::try_new(0x23).unwrap(),
@@ -555,12 +537,17 @@ async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
         )
     };
 
-    assert!(make(-128, 0).is_err());
-    assert!(make(21, 0).is_err());
-    assert!(make(0, 16).is_err());
+    let sid_zero = AdvertisingSid::try_new(0).unwrap();
+    assert!(make(-128, sid_zero).is_err());
+    assert!(make(21, sid_zero).is_err());
+    assert!(AdvertisingSid::try_new(16).is_err());
 
     let sink = RecordingSink::new();
-    make(-127, 15).unwrap().exec(&sink).await.unwrap();
+    make(-127, AdvertisingSid::try_new(15).unwrap())
+        .unwrap()
+        .exec(&sink)
+        .await
+        .unwrap();
     assert_eq!(sink.written_data()[26], 0x81);
 }
 

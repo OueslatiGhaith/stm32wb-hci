@@ -103,8 +103,26 @@ impl ExtendedAdvertisingInterval {
     ///
     /// - If the provided buffer is not at least 8 bytes long.
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
-        LittleEndian::write_u32(&mut bytes[0..], Self::duration_as_u32(self.interval.0));
-        LittleEndian::write_u32(&mut bytes[4..], Self::duration_as_u32(self.interval.1));
+        let (minimum, maximum) = self.hci_fields();
+        LittleEndian::write_u32(&mut bytes[0..], minimum);
+        LittleEndian::write_u32(&mut bytes[4..], maximum);
+    }
+
+    fn hci_fields(&self) -> (u32, u32) {
+        (
+            Self::duration_as_u32(self.interval.0),
+            Self::duration_as_u32(self.interval.1),
+        )
+    }
+}
+
+hci_command_composite! {
+    ExtendedAdvertisingInterval => 8 {
+        Fields = {
+            minimum: u32 => 4,
+            maximum: u32 => 4,
+        };
+        Encode = |value| { value.hci_fields() };
     }
 }
 
@@ -156,10 +174,19 @@ pub struct AdvSet {
 }
 
 impl AdvSet {
-    pub(crate) fn copy_into_slice(&self, bytes: &mut [u8]) {
-        bytes[0] = self.handle.value();
-        LittleEndian::write_u16(&mut bytes[1..], self.duration);
-        bytes[3] = self.max_extended_adv_events;
+    fn hci_fields(&self) -> (AdvertisingHandle, u16, u8) {
+        (self.handle, self.duration, self.max_extended_adv_events)
+    }
+}
+
+hci_command_composite! {
+    AdvSet => 4 {
+        Fields = {
+            handle: AdvertisingHandle => 1,
+            duration: u16 => 2,
+            max_extended_adv_events: u8 => 1,
+        };
+        Encode = |value| { value.hci_fields() };
     }
 }
 

@@ -46,8 +46,9 @@ impl ExpectedConnectionLength {
     pub fn copy_into_slice(&self, bytes: &mut [u8]) {
         assert!(bytes.len() >= 4);
 
-        LittleEndian::write_u16(&mut bytes[0..2], Self::duration_as_u16(self.range.0));
-        LittleEndian::write_u16(&mut bytes[2..4], Self::duration_as_u16(self.range.1));
+        let (minimum, maximum) = self.hci_fields();
+        LittleEndian::write_u16(&mut bytes[0..2], minimum);
+        LittleEndian::write_u16(&mut bytes[2..4], maximum);
     }
 
     fn duration_as_u16(d: Duration) -> u16 {
@@ -57,6 +58,23 @@ impl ExpectedConnectionLength {
         //
         // Note: 1600 = 1_000_000 / 625
         (1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)) as u16
+    }
+
+    fn hci_fields(&self) -> (u16, u16) {
+        (
+            Self::duration_as_u16(self.range.0),
+            Self::duration_as_u16(self.range.1),
+        )
+    }
+}
+
+hci_command_composite! {
+    ExpectedConnectionLength => 4 {
+        Fields = {
+            minimum: u16 => 2,
+            maximum: u16 => 2,
+        };
+        Encode = |value| { value.hci_fields() };
     }
 }
 
