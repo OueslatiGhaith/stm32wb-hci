@@ -71,14 +71,25 @@ impl ConnectionInterval {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ConnectionIntervalError> {
         assert!(bytes.len() >= 8);
 
+        Self::from_hci_fields(
+            LittleEndian::read_u16(&bytes[0..2]),
+            LittleEndian::read_u16(&bytes[2..4]),
+            LittleEndian::read_u16(&bytes[4..6]),
+            LittleEndian::read_u16(&bytes[6..8]),
+        )
+    }
+
+    pub(crate) fn from_hci_fields(
+        interval_min: u16,
+        interval_max: u16,
+        latency: u16,
+        timeout: u16,
+    ) -> Result<Self, ConnectionIntervalError> {
         // Do the error checking with the standard connection interval builder. The min and max of
         // the interval range are allowed to be equal.
-        let interval_min =
-            Duration::from_micros(1_250) * u32::from(LittleEndian::read_u16(&bytes[0..2]));
-        let interval_max =
-            Duration::from_micros(1_250) * u32::from(LittleEndian::read_u16(&bytes[2..4]));
-        let latency = LittleEndian::read_u16(&bytes[4..6]);
-        let timeout = Duration::from_millis(10) * u32::from(LittleEndian::read_u16(&bytes[6..8]));
+        let interval_min = Duration::from_micros(1_250) * u32::from(interval_min);
+        let interval_max = Duration::from_micros(1_250) * u32::from(interval_max);
+        let timeout = Duration::from_millis(10) * u32::from(timeout);
         ConnectionIntervalBuilder::new()
             .with_range(interval_min, interval_max)
             .with_latency(latency)

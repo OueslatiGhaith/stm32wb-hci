@@ -7,10 +7,9 @@
 use core::cmp::PartialEq;
 use core::convert::TryInto;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
-use core::time::Duration;
 
-use crate::types::PeerAddrType;
 pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
+use crate::types::{PeerAddrType, to_peer_addr_type};
 use crate::vendor::command::gap::EventFlags;
 pub use crate::wire::{BoundedBytes, BoundedItems};
 use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
@@ -122,14 +121,6 @@ pub enum VendorError {
     /// was not recognized. Includes the unrecognized byte.
     BadGapPairingErrorReason(u8),
 
-    /// For the GAP Device Found event: the type of event was not
-    /// recognized. Includes the unrecognized byte.
-    BadGapDeviceFoundEvent(u8),
-
-    /// For the GAP Device Found event: the type of BDADDR was not
-    /// recognized. Includes the unrecognized byte.
-    BadGapBdAddrType(u8),
-
     /// For the [GAP Procedure Complete](VendorEvent::GapProcedureComplete) event: The procedure
     /// code was not recognized. Includes the unrecognized byte.
     BadGapProcedure(u8),
@@ -142,17 +133,9 @@ pub enum VendorError {
     /// field is the required length, and the second is the actual length.
     BadL2CapDataLength(u8, u8),
 
-    /// For any L2CAP event: The L2CAP length did not match the expected length. The first field is
-    /// the required length, and the second is the actual length.
-    BadL2CapLength(u16, u16),
-
     /// For any L2CAP response event: The L2CAP command was rejected, but the rejection reason was
     /// not recognized. Includes the unknown value.
     BadL2CapRejectionReason(u16),
-
-    /// For the [L2CAP Connection Update Response](VendorEvent::L2CapConnectionUpdateResponse)
-    /// event: The code byte did not indicate either Rejected or Updated. Includes the invalid byte.
-    BadL2CapConnectionResponseCode(u8),
 
     /// For the [L2CAP Connection Update Response](VendorEvent::L2CapConnectionUpdateResponse)
     /// event: The command was accepted, but the result was not recognized. It did not indicate the
@@ -162,38 +145,6 @@ pub enum VendorError {
     /// For the [L2CAP Connection Update Request](VendorEvent::L2CapConnectionUpdateRequest) event:
     /// The provided connection interval is invalid. Includes the underlying error.
     BadConnectionInterval(ConnectionIntervalError),
-
-    /// For the [L2CAP Connection Update Request](VendorEvent::L2CapConnectionUpdateRequest) event:
-    /// The provided interval is invalid. Potential errors:
-    /// - Either the minimum or maximum is out of range. The minimum value for either is 7.5 ms, and
-    ///   the maximum is 4 s.
-    /// - The min is greater than the max
-    ///
-    /// See the Bluetooth specification, Vol 3, Part A, Section 4.20. Versions 4.1, 4.2 and 5.0.
-    ///
-    /// Inclues the provided minimum and maximum, respectively.
-    BadL2CapConnectionUpdateRequestInterval(Duration, Duration),
-
-    /// For the [L2CAP Connection Update Request](VendorEvent::L2CapConnectionUpdateRequest) event:
-    /// The provided connection latency is invalid. The maximum value for connection latency is
-    /// defined in terms of the timeout and maximum connection interval.
-    /// - `connIntervalMax = Interval Max`
-    /// - `connSupervisionTimeout = Timeout`
-    /// - `maxConnLatency = min(500, ((connSupervisionTimeout / (2 * connIntervalMax)) - 1))`
-    ///
-    /// See the Bluetooth specification, Vol 3, Part A, Section 4.20. Versions 4.1, 4.2 and 5.0.
-    ///
-    /// Inclues the provided value and maximum allowed value, respectively.
-    BadL2CapConnectionUpdateRequestLatency(u16, u16),
-
-    /// For the [L2CAP Connection Update Request](VendorEvent::L2CapConnectionUpdateRequest) event:
-    /// The provided timeout is invalid. The timeout field shall have a value in the range of 100 ms
-    /// to 32 seconds (inclusive).
-    ///
-    /// See the Bluetooth specification, Vol 3, Part A, Section 4.20. Versions 4.1, 4.2 and 5.0.
-    ///
-    /// Inclues the provided value.
-    BadL2CapConnectionUpdateRequestTimeout(Duration),
 
     /// For the [ATT Find Information Response](VendorEvent::AttFindInformationResponse) event: The
     /// format code is invalid. Includes the unrecognized byte.
@@ -206,10 +157,6 @@ pub enum VendorError {
     /// For the [ATT Find Information Response](VendorEvent::AttFindInformationResponse) event: The
     /// format code indicated 128-bit UUIDs, but the packet ends with a partial pair.
     AttFindInformationResponsePartialPair128,
-
-    /// For the [ATT Find by Type Value Response](VendorEvent::AttFindByTypeValueResponse) event:
-    /// The packet ends with a partial attribute pair.
-    AttFindByTypeValuePartial,
 
     /// For the [ATT Read by Type Response](VendorEvent::AttReadByTypeResponse) event: The packet
     /// ends with a partial attribute handle-value pair.
@@ -230,10 +177,6 @@ pub enum VendorError {
     /// For the [ATT Error Response](VendorEvent::AttErrorResponse) event: The error code was not
     /// recognized. Includes the unrecognized byte.
     BadAttError(u8),
-
-    /// For the [ATT Read Multiple Permit Request](VendorEvent::AttReadMultiplePermitRequest)
-    /// event: The packet ends with a partial attribute handle.
-    AttReadMultiplePermitRequestPartial,
 
     /// A field that is defined as a Boolean was neither 0 nor 1. The unknown
     /// value is provided.
@@ -827,7 +770,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             identifier: u8 => 1,
-            reason: u16 => 2,
+            reason: L2CapRejectionReason => 2,
             data: BoundedBytes<247> => {
                 kind: counted_bytes,
                 count: u8 => 1,
@@ -1337,12 +1280,12 @@ hci_event_enum! {
     EventError = Error::Vendor;
 }
 
-hci_try_from_enum! {
+hci_event_enum! {
     /// Reasons why an L2CAP command was rejected. See the Bluetooth specification, v4.1, Vol 3,
     /// Part A, Section 4.1.
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum L2CapRejectionReason: u16 {
+    pub enum L2CapRejectionReason: u16 => 2 {
         /// The controller sent an unknown command.
         CommandNotUnderstood = 0,
         /// When multiple commands are included in an L2CAP packet and the packet exceeds the
@@ -1353,32 +1296,21 @@ hci_try_from_enum! {
         InvalidCid = 2,
     }
     TryFromError = VendorError => VendorError::BadL2CapRejectionReason;
+    EventError = Error::Vendor;
 }
 
-/// Potential results that can be used in the L2CAP connection update response.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum L2CapConnectionUpdateResult {
-    /// The update request was rejected. The code indicates the reason for the rejection.
-    CommandRejected(L2CapRejectionReason),
-
-    /// The L2CAP connection update response is valid. The code indicates if the parameters were
-    /// rejected.
-    ParametersRejected,
-
-    /// The L2CAP connection update response is valid. The code indicates if the parameters were
-    /// updated.
-    ParametersUpdated,
-}
-
-fn to_l2cap_connection_update_accepted_result(
-    value: u16,
-) -> Result<L2CapConnectionUpdateResult, VendorError> {
-    match value {
-        0x0000 => Ok(L2CapConnectionUpdateResult::ParametersUpdated),
-        0x0001 => Ok(L2CapConnectionUpdateResult::ParametersRejected),
-        _ => Err(VendorError::BadL2CapConnectionResponseResult(value)),
+hci_event_enum! {
+    /// Results reported by the L2CAP connection update response event.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum L2CapConnectionUpdateResult: u16 => 2 {
+        /// The connection parameters were accepted and updated.
+        ParametersUpdated = 0x0000,
+        /// The connection parameters were rejected.
+        ParametersRejected = 0x0001,
     }
+    TryFromError = VendorError => VendorError::BadL2CapConnectionResponseResult;
+    EventError = Error::Vendor;
 }
 
 /// Zero-length L2CAP event data, including its required wire count.
@@ -1483,19 +1415,6 @@ pub enum GapPairingStatus {
     Failed(GapPairingReason),
     /// Encryption failed
     EncryptionFailed(GapPairingReason),
-}
-
-fn to_gap_pairing_status(
-    status: u8,
-    reason: Result<GapPairingReason, VendorError>,
-) -> Result<GapPairingStatus, VendorError> {
-    match status {
-        0 => Ok(GapPairingStatus::Success),
-        1 => Ok(GapPairingStatus::Timeout(reason?)),
-        2 => Ok(GapPairingStatus::Failed(reason?)),
-        3 => Ok(GapPairingStatus::EncryptionFailed(reason?)),
-        _ => Err(VendorError::BadGapPairingStatus(status)),
-    }
 }
 
 hci_try_from_enum! {
@@ -2426,36 +2345,59 @@ impl HciEventField<2> for usize {
     }
 }
 
-impl HciEventField<7> for PeerAddrType {
-    fn from_hci_event_field(bytes: &[u8; 7]) -> Result<Self, Error> {
-        let address = BdAddr(bytes[1..].try_into().expect("six-byte address"));
-        match bytes[0] {
-            0x00 | 0x02 => Ok(Self::PublicDeviceAddress(address)),
-            0x01 => Ok(Self::RandomDeviceAddress(address)),
-            0x03 => Ok(Self::RandomIdentityAddress(address)),
-            value => Err(Error::Vendor(VendorError::BadBdAddrType(value))),
-        }
+hci_event_composite! {
+    PeerAddrType => 7 {
+        Fields = {
+            address_type: u8 => 1,
+            address: [u8; 6] => 6,
+        };
+        Decode = {
+            to_peer_addr_type(address_type, BdAddr(address))
+                .map_err(|error| Error::Vendor(VendorError::BadBdAddrType(error.0)))
+        };
     }
 }
 
-impl HciEventField<2> for GapPairingStatus {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
-        to_gap_pairing_status(bytes[0], bytes[1].try_into()).map_err(Error::Vendor)
+hci_event_composite! {
+    GapPairingStatus => 2 {
+        Fields = {
+            status: u8 => 1,
+            reason: u8 => 1,
+        };
+        Decode = {
+            match status {
+                0 => Ok(GapPairingStatus::Success),
+                1 => reason
+                    .try_into()
+                    .map(GapPairingStatus::Timeout)
+                    .map_err(Error::Vendor),
+                2 => reason
+                    .try_into()
+                    .map(GapPairingStatus::Failed)
+                    .map_err(Error::Vendor),
+                3 => reason
+                    .try_into()
+                    .map(GapPairingStatus::EncryptionFailed)
+                    .map_err(Error::Vendor),
+                _ => Err(Error::Vendor(VendorError::BadGapPairingStatus(status))),
+            }
+        };
     }
 }
 
-impl HciEventField<2> for L2CapConnectionUpdateResult {
-    fn from_hci_event_field(bytes: &[u8; 2]) -> Result<Self, Error> {
-        to_l2cap_connection_update_accepted_result(u16::from_le_bytes(*bytes))
-            .map_err(Error::Vendor)
-    }
-}
-
-impl HciEventField<8> for ConnectionInterval {
-    fn from_hci_event_field(bytes: &[u8; 8]) -> Result<Self, Error> {
-        Self::from_bytes(bytes)
-            .map_err(VendorError::BadConnectionInterval)
-            .map_err(Error::Vendor)
+hci_event_composite! {
+    ConnectionInterval => 8 {
+        Fields = {
+            interval_min: u16 => 2,
+            interval_max: u16 => 2,
+            latency: u16 => 2,
+            timeout: u16 => 2,
+        };
+        Decode = {
+            ConnectionInterval::from_hci_fields(interval_min, interval_max, latency, timeout)
+                .map_err(VendorError::BadConnectionInterval)
+                .map_err(Error::Vendor)
+        };
     }
 }
 
@@ -2604,6 +2546,90 @@ mod tests {
             VendorError::BadGapPairingErrorReason(0x0D)
         );
         assert_eq!(u8::from(GapPairingReason::KeyRejected), 0x0F);
+    }
+
+    #[test]
+    fn declarative_composite_fields_preserve_contextual_semantics() {
+        let public_identity =
+            <PeerAddrType as HciEventField<7>>::from_hci_event_field(&[2, 1, 2, 3, 4, 5, 6])
+                .expect("public identity address");
+        assert!(matches!(
+            public_identity,
+            PeerAddrType::PublicIdentityAddress(BdAddr([1, 2, 3, 4, 5, 6]))
+        ));
+        assert_eq!(
+            <PeerAddrType as HciEventField<7>>::from_hci_event_field(&[4, 0, 0, 0, 0, 0, 0])
+                .unwrap_err(),
+            Error::Vendor(VendorError::BadBdAddrType(4))
+        );
+
+        assert_eq!(
+            <GapPairingStatus as HciEventField<2>>::from_hci_event_field(&[0, 0xFF])
+                .expect("success ignores the reason byte"),
+            GapPairingStatus::Success
+        );
+        assert_eq!(
+            <GapPairingStatus as HciEventField<2>>::from_hci_event_field(&[1, 0x01])
+                .expect("timeout reason"),
+            GapPairingStatus::Timeout(GapPairingReason::PasskeyEntryFailed)
+        );
+        assert_eq!(
+            <GapPairingStatus as HciEventField<2>>::from_hci_event_field(&[1, 0x0D]).unwrap_err(),
+            Error::Vendor(VendorError::BadGapPairingErrorReason(0x0D))
+        );
+        assert_eq!(
+            <GapPairingStatus as HciEventField<2>>::from_hci_event_field(&[4, 0x0D]).unwrap_err(),
+            Error::Vendor(VendorError::BadGapPairingStatus(4))
+        );
+
+        assert_eq!(
+            <L2CapConnectionUpdateResult as HciEventField<2>>::from_hci_event_field(&[0, 0])
+                .expect("accepted connection update"),
+            L2CapConnectionUpdateResult::ParametersUpdated
+        );
+        assert_eq!(
+            <L2CapConnectionUpdateResult as HciEventField<2>>::from_hci_event_field(&[2, 0])
+                .unwrap_err(),
+            Error::Vendor(VendorError::BadL2CapConnectionResponseResult(2))
+        );
+
+        let interval = <ConnectionInterval as HciEventField<8>>::from_hci_event_field(&[
+            6, 0, // 7.5 ms minimum
+            6, 0, // 7.5 ms maximum
+            0, 0, // zero connection latency
+            11, 0, // 110 ms supervision timeout
+        ])
+        .expect("valid connection interval");
+        assert_eq!(
+            interval.interval(),
+            (
+                core::time::Duration::from_micros(7_500),
+                core::time::Duration::from_micros(7_500)
+            )
+        );
+        assert_eq!(
+            <ConnectionInterval as HciEventField<8>>::from_hci_event_field(&[0; 8]).unwrap_err(),
+            Error::Vendor(VendorError::BadConnectionInterval(
+                ConnectionIntervalError::IntervalTooShort(core::time::Duration::ZERO)
+            ))
+        );
+    }
+
+    #[test]
+    fn l2cap_command_reject_uses_the_declared_reason_type() {
+        let bytes = [
+            0x0A, 0x08, // event code
+            0x23, 0x01, // connection handle
+            0x07, // identifier
+            0x02, 0x00, // invalid CID
+            0x00, // no reason-specific data
+        ];
+        let VendorEvent::L2CapCommandReject(event) =
+            VendorEvent::new(&bytes).expect("typed command rejection")
+        else {
+            panic!("unexpected event variant");
+        };
+        assert_eq!(event.reason, L2CapRejectionReason::InvalidCid);
     }
 
     #[test]

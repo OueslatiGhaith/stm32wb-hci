@@ -304,6 +304,51 @@ macro_rules! hci_event_enum {
     };
 }
 
+/// Declare how an exact-width composite vendor-event field is split into
+/// independently decoded wire fields and assembled into its semantic type.
+///
+/// The declared component widths must add up to the composite width; a
+/// mismatch is a compile-time error. Each component must implement
+/// [`HciEventField`](crate::vendor::event::HciEventField) at its declared
+/// width, while the decode block owns any relationships between components.
+macro_rules! hci_event_composite {
+    (
+        $ty:ty => $total_len:literal {
+            Fields = {
+                $(
+                    $field:ident: $field_ty:ty => $field_len:literal,
+                )+
+            };
+            Decode = $decode:block;
+        }
+    ) => {
+        impl crate::vendor::event::HciEventField<$total_len> for $ty {
+            fn from_hci_event_field(
+                bytes: &[u8; $total_len],
+            ) -> Result<Self, crate::vendor::event::Error> {
+                const _: [(); $total_len] = [(); 0 $(+ $field_len)+];
+
+                let mut __offset = 0usize;
+                $(
+                    let $field = {
+                        let __end = __offset + $field_len;
+                        let __bytes: &[u8; $field_len] = core::convert::TryInto::try_into(
+                            &bytes[__offset..__end],
+                        )
+                        .expect("declared composite field width");
+                        __offset = __end;
+                        <$field_ty as crate::vendor::event::HciEventField<$field_len>>::from_hci_event_field(
+                            __bytes,
+                        )?
+                    };
+                )+
+                debug_assert_eq!(__offset, $total_len);
+                $decode
+            }
+        }
+    };
+}
+
 macro_rules! hci_ranged_error {
     ($actual:expr, $minimum:expr, $maximum:expr) => {
         crate::vendor::command::HciValueError::new(
