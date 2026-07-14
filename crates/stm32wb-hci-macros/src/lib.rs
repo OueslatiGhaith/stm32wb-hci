@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_hci_schema::{
-    Completion, Constraint, Constraints, Field, FieldEncoding, Fields, Returns, TaggedEncoding,
-    VariableEncodingShape, VendorCommand,
+    Completion, Constraint, Constraints, EventPayload, Field, FieldEncoding, Fields, Returns,
+    TaggedEncoding, VariableEncodingShape, VendorCommand, VendorEvents,
 };
 
 /// Declare one complete STM32WB vendor command.
@@ -59,6 +59,236 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
     match syn::parse::<VendorCommand>(input) {
         Ok(command) => expand_vendor_command(&command).into(),
         Err(error) => error.into_compile_error().into(),
+    }
+}
+
+/// Declare the complete STM32WB vendor-event catalog.
+///
+/// Each declaration owns its 16-bit vendor event code and complete payload
+/// schema. Unit payloads generate unit `VendorEvent` variants; inline payloads
+/// generate an owned public payload structure and a tuple variant carrying it.
+/// Fixed fields use `field: Type => width`. Owned variable payload fields may
+/// use `counted_bytes`, `counted_items`, `trailing_bytes`, or `payload`; the
+/// latter delegates to the semantic type's bounded `decode_hci_event_payload`
+/// implementation.
+///
+/// The generated `VendorEvent::new` requires the two-byte event code, decodes
+/// every declared field in order, and rejects both truncated and trailing
+/// bytes. Event `cfg` attributes gate the enum variant and dispatch arm while
+/// retaining the generated payload type, matching the catalog's established
+/// cross-firmware API.
+#[proc_macro]
+pub fn vendor_event(input: TokenStream) -> TokenStream {
+    match syn::parse::<VendorEvents>(input) {
+        Ok(events) => expand_vendor_events(&events).into(),
+        Err(error) => error.into_compile_error().into(),
+    }
+}
+
+/// Generate the complete event enum, owned payload types, and wire dispatcher.
+fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
+    let variants = catalog.events.iter().map(|event| {
+        let attrs = &event.attrs;
+        let name = &event.name;
+        match &event.payload {
+            EventPayload::Unit => quote! {
+                #(#attrs)*
+                #name,
+            },
+            EventPayload::Fields(_) => quote! {
+                #(#attrs)*
+                #name(#name),
+            },
+        }
+    });
+    let payload_types = catalog.events.iter().filter_map(|event| {
+        let EventPayload::Fields(fields) = &event.payload else {
+            return None;
+        };
+        let name = &event.name;
+        let field_names = fields
+            .fields()
+            .iter()
+            .map(|field| &field.name)
+            .collect::<Vec<_>>();
+        let field_types = fields
+            .fields()
+            .iter()
+            .map(|field| &field.ty)
+            .collect::<Vec<_>>();
+        Some(quote! {
+            #[derive(Copy, Clone, Debug)]
+            #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+            #[allow(missing_docs)]
+            pub struct #name {
+                #(pub #field_names: #field_types,)*
+            }
+        })
+    });
+    let match_arms = catalog.events.iter().map(|event| {
+        let cfg_attrs = event
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("cfg"));
+        let name = &event.name;
+        let code = &event.code_literal;
+        let decoder = expand_event_payload_decoder(name, &event.payload);
+        quote! {
+            #(#cfg_attrs)*
+            #code => #decoder,
+        }
+    });
+
+    quote! {
+        /// Vendor-specific events for the STM32WB5x radio coprocessor.
+        #[allow(clippy::large_enum_variant)]
+        #[derive(Clone, Copy, Debug)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub enum VendorEvent {
+            /// If the host fails to read events from the controller quickly enough, the
+            /// controller will generate this event. This event is never lost; it is inserted as
+            /// soon as space is available in the Tx queue.
+            EventsLost(EventFlags),
+
+            #(#variants)*
+        }
+
+        #(#payload_types)*
+
+        impl VendorEvent {
+            /// Decode a two-byte STM32 vendor event code and its complete payload.
+            pub fn new(buffer: &[u8]) -> Result<Self, Error> {
+                if buffer.len() < 2 {
+                    return Err(Error::BadLength(buffer.len(), 2));
+                }
+                let (event_code, payload) = buffer.split_at(2);
+                let event_code = u16::from_le_bytes([event_code[0], event_code[1]]);
+
+                match event_code {
+                    #(#match_arms)*
+                    _ => Err(Error::Vendor(VendorError::UnknownEvent(event_code))),
+                }
+            }
+        }
+    }
+}
+
+fn expand_event_payload_decoder(name: &syn::Ident, payload: &EventPayload) -> TokenStream2 {
+    let EventPayload::Fields(fields) = payload else {
+        return quote! {{
+            if !payload.is_empty() {
+                return Err(Error::BadLength(payload.len(), 0));
+            }
+            Ok(VendorEvent::#name)
+        }};
+    };
+
+    let original_len = format_ident!("__stm32wb_event_original_len", span = Span::mixed_site());
+    let cursor = format_ident!("__stm32wb_event_data", span = Span::mixed_site());
+    let field_names = fields
+        .fields()
+        .iter()
+        .map(|field| &field.name)
+        .collect::<Vec<_>>();
+    let decoders = fields
+        .fields()
+        .iter()
+        .map(|field| expand_event_field_decoder(field, &cursor, &original_len));
+
+    quote! {{
+        let #original_len = payload.len();
+        let #cursor = payload;
+        #(#decoders)*
+        if !#cursor.is_empty() {
+            return Err(Error::BadLength(
+                #original_len,
+                #original_len - #cursor.len(),
+            ));
+        }
+        Ok(VendorEvent::#name(#name { #(#field_names,)* }))
+    }}
+}
+
+fn expand_event_field_decoder(
+    field: &Field,
+    cursor: &syn::Ident,
+    original_len: &syn::Ident,
+) -> TokenStream2 {
+    let name = &field.name;
+    let ty = &field.ty;
+    let decoder = match &field.encoding {
+        FieldEncoding::Fixed(encoding) => {
+            let width = &encoding.width_literal;
+            quote! {
+                decode_hci_event_field::<#ty, #width>(#cursor, #original_len)
+            }
+        }
+        FieldEncoding::Variable(encoding) => match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, max_len } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let max_len = &max_len.literal;
+                quote! {
+                    decode_hci_event_counted_bytes::<#ty, #count_ty, #count_width, #max_len>(
+                        #cursor,
+                        #original_len,
+                    )
+                }
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                max_items,
+            } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let max_items = &max_items.literal;
+                quote! {
+                    decode_hci_event_counted_items::<
+                        #ty,
+                        #item_ty,
+                        #count_ty,
+                        #count_width,
+                        #item_width,
+                        #max_items,
+                    >(#cursor, #original_len)
+                }
+            }
+            VariableEncodingShape::TrailingBytes { min_len, max_len } => {
+                let min_len = &min_len.literal;
+                let max_len = &max_len.literal;
+                quote! {
+                    decode_hci_event_trailing_bytes::<#ty, #min_len, #max_len>(#cursor)
+                }
+            }
+            VariableEncodingShape::SemanticPayload { min_len, max_len } => {
+                let min_len = &min_len.literal;
+                let max_len = &max_len.literal;
+                let field_original_len =
+                    format_ident!("__stm32wb_field_original_len", span = Span::mixed_site());
+                let value = format_ident!("__stm32wb_field_value", span = Span::mixed_site());
+                let rest = format_ident!("__stm32wb_field_rest", span = Span::mixed_site());
+                let consumed = format_ident!("__stm32wb_field_consumed", span = Span::mixed_site());
+                quote! {{
+                    let #field_original_len = #cursor.len();
+                    let (#value, #rest) = <#ty>::decode_hci_event_payload(#cursor)?;
+                    let #consumed = #field_original_len - #rest.len();
+                    if !(#min_len..=#max_len).contains(&#consumed) {
+                        return Err(Error::BadLength(#consumed, #max_len));
+                    }
+                    Ok::<(#ty, &[u8]), Error>((#value, #rest))
+                }}
+            }
+            VariableEncodingShape::Tagged(_) | VariableEncodingShape::BitmapItems { .. } => {
+                unreachable!("the shared parser rejects event encodings without owned decoders")
+            }
+        },
+    };
+
+    quote! {
+        let (#name, #cursor): (#ty, &[u8]) = #decoder?;
     }
 }
 
@@ -635,7 +865,7 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
             }
             VariableEncodingShape::Tagged(_)
             | VariableEncodingShape::BitmapItems { .. }
-            | VariableEncodingShape::Payload { .. } => {
+            | VariableEncodingShape::SemanticPayload { .. } => {
                 unreachable!("the shared parser rejects variable returns without owned decoders")
             }
         },
@@ -697,7 +927,7 @@ fn encoded_field_type(field: &Field) -> TokenStream2 {
                 let max_items = &max_items.literal;
                 quote!(crate::vendor::command::BitmapItems<#ty, #item_ty, #item_width, #max_items>)
             }
-            VariableEncodingShape::Payload { .. } => {
+            VariableEncodingShape::SemanticPayload { .. } => {
                 unreachable!("the shared parser rejects removed payload fields")
             }
         },
@@ -764,7 +994,7 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
                     _, #item_ty, #item_width, #max_items
                 >::try_new(#name, #bitmap, #mask)?)
             }
-            VariableEncodingShape::Payload { .. } => {
+            VariableEncodingShape::SemanticPayload { .. } => {
                 unreachable!("the shared parser rejects removed payload fields")
             }
         },
@@ -843,7 +1073,7 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
             VariableEncodingShape::Tagged(_)
             | VariableEncodingShape::TrailingBytes { .. }
             | VariableEncodingShape::BitmapItems { .. } => None,
-            VariableEncodingShape::Payload { .. } => {
+            VariableEncodingShape::SemanticPayload { .. } => {
                 unreachable!("the shared parser rejects removed payload fields")
             }
         }
@@ -856,6 +1086,10 @@ mod tests {
     use super::*;
 
     fn parse(source: TokenStream2) -> VendorCommand {
+        syn::parse2(source).unwrap()
+    }
+
+    fn parse_events(source: TokenStream2) -> VendorEvents {
         syn::parse2(source).unwrap()
     }
 
@@ -1057,5 +1291,76 @@ mod tests {
         assert!(generated.contains("decode_declarative_trailing_bytes"));
         assert!(generated.contains("ReturnBuf = [u8 ; 34usize]"));
         assert!(!generated.contains("vendor_cmd !"));
+    }
+
+    #[test]
+    fn directly_generates_event_enum_payloads_dispatch_and_cfg() {
+        let events = parse_events(quote! {
+            /// No payload.
+            Unit(0x0001) { Payload = (); }
+            #[cfg(since_fw_0_17_0)]
+            Fixed(0x0002) {
+                Payload = { value: u16 => 2, };
+            }
+        });
+        let generated = expand_vendor_events(&events).to_string();
+        assert!(generated.contains("pub enum VendorEvent"));
+        assert!(generated.contains("EventsLost (EventFlags)"));
+        assert!(generated.contains("pub struct Fixed"));
+        assert!(generated.contains("0x0001 =>"));
+        assert!(generated.contains("0x0002 =>"));
+        assert!(generated.contains("decode_hci_event_field"));
+        assert_eq!(generated.matches("cfg (since_fw_0_17_0)").count(), 2);
+        assert!(!generated.contains("vendor_event !"));
+    }
+
+    #[test]
+    fn directly_generates_every_owned_variable_event_decoder() {
+        let events = parse_events(quote! {
+            Counted(0x0001) {
+                Payload = {
+                    data: BoundedBytes<8> => {
+                        kind: counted_bytes,
+                        count: u8 => 1,
+                        max_len: 8,
+                    },
+                };
+            }
+            Items(0x0002) {
+                Payload = {
+                    values: BoundedItems<Item, 3> => {
+                        kind: counted_items,
+                        count: u8 => 1,
+                        item: Item => 2,
+                        max_items: 3,
+                    },
+                };
+            }
+            Semantic(0x0003) {
+                Payload = {
+                    value: SemanticValue => {
+                        kind: payload,
+                        min_len: 1,
+                        max_len: 4,
+                    },
+                };
+            }
+            Trailing(0x0004) {
+                Payload = {
+                    value: BoundedBytes<4> => {
+                        kind: trailing_bytes,
+                        min_len: 0,
+                        max_len: 4,
+                    },
+                };
+            }
+        });
+        let generated = expand_vendor_events(&events).to_string();
+        assert!(generated.contains("decode_hci_event_counted_bytes"));
+        assert!(generated.contains("decode_hci_event_counted_items"));
+        assert!(generated.contains("decode_hci_event_payload"));
+        assert!(generated.contains("decode_hci_event_trailing_bytes"));
+        assert!(generated.contains("__stm32wb_event_data"));
+        assert!(!generated.contains("vendor_event !"));
     }
 }

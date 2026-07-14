@@ -8,10 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stm32wb_hci_schema::{Completion as SchemaCompletion, Fields as SchemaFields, VendorCommand};
-use syn::parse::{Parse, ParseStream};
+use stm32wb_hci_schema::{
+    Completion as SchemaCompletion, VendorCommand, VendorEvents as SchemaVendorEvents,
+};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, LitInt, Meta, Path as SynPath};
+use syn::{Attribute, Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
 
 use crate::FirmwareVersion;
 use crate::envelope::WireEnvelope;
@@ -406,7 +407,7 @@ fn parse_vendor_event_declarations(
         ));
     };
     let invocation =
-        syn::parse2::<VendorEventsInvocation>(item.mac.tokens.clone()).map_err(|error| {
+        syn::parse2::<SchemaVendorEvents>(item.mac.tokens.clone()).map_err(|error| {
             format!(
                 "{}: unsupported vendor_event! declaration: {error}",
                 path.display()
@@ -415,25 +416,9 @@ fn parse_vendor_event_declarations(
 
     let mut events = Vec::new();
     let mut metadata = BTreeMap::new();
-    let mut names = BTreeSet::new();
     for definition in invocation.events {
         if !attrs_active(&definition.attrs, firmware, path)? {
             continue;
-        }
-        if definition.payload.max_len() > 253 {
-            return Err(format!(
-                "{}: event `{}` declares a maximum {}-byte payload; vendor event payloads cannot exceed 253 bytes after the two-byte event code",
-                path.display(),
-                definition.name,
-                definition.payload.max_len()
-            ));
-        }
-        if !names.insert(definition.name.to_string()) {
-            return Err(format!(
-                "{}: event `{}` is active more than once",
-                path.display(),
-                definition.name
-            ));
         }
         let event = EventMetadata {
             name: definition.name.to_string(),
@@ -441,15 +426,7 @@ fn parse_vendor_event_declarations(
             payload: wire_envelope(definition.payload.min_len(), definition.payload.max_len()),
             location: path.to_path_buf(),
         };
-        if let Some(previous) = metadata.insert(event.code, event.clone()) {
-            return Err(format!(
-                "{}: events `{}` and `{}` both declare active code 0x{:04X}",
-                path.display(),
-                previous.name,
-                event.name,
-                event.code
-            ));
-        }
+        metadata.insert(event.code, event.clone());
         events.push(
             CoverageEntry::new(event.code, &event.name, CoverageOrigin::VendorEventDispatch)
                 .at(path.to_path_buf()),
@@ -487,67 +464,6 @@ fn collect_vendor_event_macros<'ast>(
         }
     }
     Ok(())
-}
-
-struct VendorEventsInvocation {
-    events: Vec<VendorEventDefinition>,
-}
-
-struct VendorEventDefinition {
-    attrs: Vec<Attribute>,
-    name: syn::Ident,
-    code: u16,
-    payload: SchemaFields,
-}
-
-impl Parse for VendorEventsInvocation {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut events = Vec::new();
-        while !input.is_empty() {
-            let attrs = input.call(Attribute::parse_outer)?;
-            let name = input.parse::<syn::Ident>()?;
-            let arguments;
-            syn::parenthesized!(arguments in input);
-            let code = arguments.parse::<LitInt>()?;
-            let code = parse_u16_literal(&code).map_err(|error| arguments.error(error))?;
-            if !arguments.is_empty() {
-                return Err(arguments.error("event code must be one integer literal"));
-            }
-
-            let body;
-            syn::braced!(body in input);
-            let payload_label = body.parse::<syn::Ident>()?;
-            if payload_label != "Payload" {
-                return Err(body.error(format!("expected `Payload`, found `{payload_label}`")));
-            }
-            body.parse::<syn::Token![=]>()?;
-            let payload = if body.peek(syn::token::Brace) {
-                let payload;
-                syn::braced!(payload in body);
-                payload.parse::<SchemaFields>()?
-            } else if body.peek(syn::token::Paren) {
-                let unit;
-                syn::parenthesized!(unit in body);
-                if !unit.is_empty() {
-                    return Err(unit.error("unit event payload must be `()`"));
-                }
-                SchemaFields::empty()
-            } else {
-                return Err(body.error("event Payload must be `()` or a declarative field body"));
-            };
-            body.parse::<syn::Token![;]>()?;
-            if !body.is_empty() {
-                return Err(body.error("unexpected tokens after event Payload"));
-            }
-            events.push(VendorEventDefinition {
-                attrs,
-                name,
-                code,
-                payload,
-            });
-        }
-        Ok(Self { events })
-    }
 }
 
 fn item_is_active(item: &Item, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
@@ -763,32 +679,6 @@ fn cfg_path_name(path: &SynPath) -> String {
         .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
-}
-
-fn parse_u16_literal(literal: &LitInt) -> Result<u16, String> {
-    parse_integer_literal(literal)
-        .and_then(|value| u16::try_from(value).map_err(|_| format!("{value} does not fit in u16")))
-}
-
-fn parse_integer_literal(literal: &LitInt) -> Result<u128, String> {
-    let mut value = literal.to_string();
-    let suffix = literal.suffix();
-    if !suffix.is_empty() {
-        value.truncate(value.len() - suffix.len());
-    }
-    let digits = value.replace('_', "");
-    // Rust literal suffixes are not useful in this table. Parse a leading radix
-    // literal and reject anything that is not entirely numeric afterwards.
-    let (radix, digits) = if let Some(digits) = digits.strip_prefix("0x") {
-        (16, digits)
-    } else if let Some(digits) = digits.strip_prefix("0o") {
-        (8, digits)
-    } else if let Some(digits) = digits.strip_prefix("0b") {
-        (2, digits)
-    } else {
-        (10, digits.as_str())
-    };
-    u128::from_str_radix(digits, radix).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -1497,6 +1387,35 @@ mod tests {
             }
         }
         assert_eq!(command_count, 147);
+    }
+
+    #[test]
+    fn production_event_catalog_uses_the_proc_macro_and_shared_schema() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci/src/vendor/event/mod.rs");
+        let file = read_rust_file(&path).unwrap();
+        let macros = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Macro(item) if is_macro_named(&item.mac.path, "vendor_event") => Some(item),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [catalog] = macros.as_slice() else {
+            panic!("expected exactly one production vendor-event catalog");
+        };
+        let macro_path = catalog
+            .mac
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(macro_path, ["stm32wb_hci_macros", "vendor_event"]);
+
+        let parsed = syn::parse2::<SchemaVendorEvents>(catalog.mac.tokens.clone()).unwrap();
+        assert_eq!(parsed.events.len(), 56);
     }
 
     #[test]

@@ -38,6 +38,54 @@ pub struct VendorCommand {
     pub returns: Option<Returns>,
 }
 
+/// A complete parsed `vendor_event!` catalog.
+pub struct VendorEvents {
+    /// Event declarations in source order.
+    pub events: Vec<VendorEvent>,
+}
+
+/// One vendor-event declaration and its payload schema.
+pub struct VendorEvent {
+    /// Documentation and firmware cfg attributes attached to the event.
+    pub attrs: Vec<syn::Attribute>,
+    /// Generated payload type and `VendorEvent` variant name.
+    pub name: syn::Ident,
+    /// Original event-code literal, retaining its spelling and span.
+    pub code_literal: LitInt,
+    /// Parsed 16-bit STM32 vendor event code.
+    pub code: u16,
+    /// Complete event payload schema.
+    pub payload: EventPayload,
+}
+
+/// Unit or inline-field event payload.
+pub enum EventPayload {
+    /// `Payload = ();`
+    Unit,
+    /// `Payload = { ... };`
+    Fields(Fields),
+}
+
+impl EventPayload {
+    /// Parsed fields, if the payload is not unit.
+    pub const fn fields(&self) -> Option<&Fields> {
+        match self {
+            Self::Unit => None,
+            Self::Fields(fields) => Some(fields),
+        }
+    }
+
+    /// Minimum encoded payload size, excluding the two-byte event code.
+    pub fn min_len(&self) -> usize {
+        self.fields().map_or(0, Fields::min_len)
+    }
+
+    /// Maximum encoded payload size, excluding the two-byte event code.
+    pub fn max_len(&self) -> usize {
+        self.fields().map_or(0, Fields::max_len)
+    }
+}
+
 impl VendorCommand {
     /// The ten-bit vendor OCF derived from `cgid` and `cid`.
     pub const fn ocf(&self) -> u16 {
@@ -126,7 +174,7 @@ pub struct Fields {
     names: BTreeSet<String>,
     min_len: usize,
     max_len: usize,
-    contains_removed_payload: bool,
+    contains_semantic_payload: bool,
 }
 
 impl Fields {
@@ -150,20 +198,9 @@ impl Fields {
         self.max_len
     }
 
-    /// Whether this body used the removed opaque `kind: payload` escape hatch.
-    pub const fn contains_removed_payload(&self) -> bool {
-        self.contains_removed_payload
-    }
-
-    /// An empty field body, used by unit event payloads.
-    pub fn empty() -> Self {
-        Self {
-            fields: Vec::new(),
-            names: BTreeSet::new(),
-            min_len: 0,
-            max_len: 0,
-            contains_removed_payload: false,
-        }
+    /// Whether this body contains a bounded semantic payload decoder.
+    pub const fn contains_semantic_payload(&self) -> bool {
+        self.contains_semantic_payload
     }
 }
 
@@ -225,8 +262,8 @@ pub enum VariableEncodingShape {
     },
     /// A discriminator followed by a variant-specific fixed payload.
     Tagged(TaggedEncoding),
-    /// Removed compatibility escape hatch, retained only for focused diagnostics.
-    Payload {
+    /// A bounded value decoded by the semantic type's event-payload decoder.
+    SemanticPayload {
         /// Declared minimum encoded length.
         min_len: IntegerValue,
         /// Declared maximum encoded length.
@@ -560,7 +597,7 @@ impl Parse for VendorCommand {
         }
         if params
             .fields()
-            .is_some_and(Fields::contains_removed_payload)
+            .is_some_and(Fields::contains_semantic_payload)
         {
             return Err(syn::Error::new(
                 invocation.name.span(),
@@ -622,7 +659,7 @@ impl Parse for VendorCommand {
         if returns
             .as_ref()
             .and_then(Returns::fields)
-            .is_some_and(Fields::contains_removed_payload)
+            .is_some_and(Fields::contains_semantic_payload)
         {
             return Err(syn::Error::new(
                 invocation.name.span(),
@@ -660,6 +697,125 @@ impl Parse for VendorCommand {
             completion,
             returns,
         })
+    }
+}
+
+impl Parse for VendorEvents {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut events = Vec::new();
+        let mut names = BTreeSet::new();
+        let mut codes = BTreeSet::new();
+
+        while !input.is_empty() {
+            let attrs = input.call(syn::Attribute::parse_outer)?;
+            let mut cfg_count = 0usize;
+            for attr in &attrs {
+                if attr.path().is_ident("cfg") {
+                    cfg_count += 1;
+                } else if !attr.path().is_ident("doc") {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "vendor events accept only documentation and cfg attributes",
+                    ));
+                }
+            }
+            if cfg_count > 1 {
+                return Err(input.error("vendor events accept at most one cfg attribute"));
+            }
+
+            let name = input.parse::<syn::Ident>()?;
+            if !names.insert(name.to_string()) {
+                return Err(syn::Error::new_spanned(
+                    &name,
+                    "duplicate vendor event name",
+                ));
+            }
+
+            let arguments;
+            syn::parenthesized!(arguments in input);
+            let code_literal = arguments.parse::<LitInt>()?;
+            let code = parse_u16_literal(&code_literal).map_err(|error| {
+                syn::Error::new_spanned(
+                    &code_literal,
+                    format!("invalid vendor event code: {error}"),
+                )
+            })?;
+            if !arguments.is_empty() {
+                return Err(arguments.error("event code must be one integer literal"));
+            }
+            if !codes.insert(code) {
+                return Err(syn::Error::new_spanned(
+                    &code_literal,
+                    format!("duplicate vendor event code 0x{code:04X}"),
+                ));
+            }
+
+            let body;
+            syn::braced!(body in input);
+            let payload_label = body.parse::<syn::Ident>()?;
+            if payload_label != "Payload" {
+                return Err(body.error(format!("expected `Payload`, found `{payload_label}`")));
+            }
+            body.parse::<syn::Token![=]>()?;
+            let payload = if body.peek(syn::token::Brace) {
+                let fields;
+                syn::braced!(fields in body);
+                EventPayload::Fields(fields.parse::<Fields>()?)
+            } else if body.peek(syn::token::Paren) {
+                let unit;
+                syn::parenthesized!(unit in body);
+                if !unit.is_empty() {
+                    return Err(unit.error("unit event payload must be `()`"));
+                }
+                EventPayload::Unit
+            } else {
+                return Err(body.error("event Payload must be `()` or a declarative field body"));
+            };
+            body.parse::<syn::Token![;]>()?;
+            if !body.is_empty() {
+                return Err(body.error("unexpected tokens after event Payload"));
+            }
+
+            if payload.max_len() > 253 {
+                return Err(syn::Error::new_spanned(
+                    &name,
+                    format!(
+                        "vendor event payload is at most 253 bytes, but this schema allows {}",
+                        payload.max_len(),
+                    ),
+                ));
+            }
+            if payload.fields().is_some_and(|fields| {
+                fields.fields().iter().any(|field| {
+                    let FieldEncoding::Variable(encoding) = &field.encoding else {
+                        return false;
+                    };
+                    matches!(
+                        encoding.shape,
+                        VariableEncodingShape::Tagged(_)
+                            | VariableEncodingShape::BitmapItems { .. }
+                    )
+                })
+            }) {
+                return Err(syn::Error::new_spanned(
+                    &name,
+                    "vendor event payload uses a variable encoding that has no owned decoder",
+                ));
+            }
+
+            events.push(VendorEvent {
+                attrs,
+                name,
+                code_literal,
+                code,
+                payload,
+            });
+        }
+
+        if events.is_empty() {
+            return Err(input.error("vendor_event! must declare at least one event"));
+        }
+        Ok(Self { events })
     }
 }
 
@@ -997,7 +1153,7 @@ impl Parse for Fields {
         let mut min_len = 0usize;
         let mut max_len = 0usize;
         let mut consumes_remainder = false;
-        let mut contains_removed_payload = false;
+        let mut contains_semantic_payload = false;
 
         while !input.is_empty() {
             if consumes_remainder {
@@ -1014,43 +1170,50 @@ impl Parse for Fields {
             let ty = input.parse::<Type>()?;
             input.parse::<syn::Token![=>]>()?;
 
-            let (encoding, field_min_len, field_max_len, removed_payload, field_consumes_remainder) =
-                if input.peek(LitInt) {
-                    let width_literal = input.parse::<LitInt>()?;
-                    let width =
-                        parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
-                    (
-                        FieldEncoding::Fixed(FixedEncoding {
-                            width_literal,
-                            width,
-                        }),
+            let (
+                encoding,
+                field_min_len,
+                field_max_len,
+                semantic_payload,
+                field_consumes_remainder,
+            ) = if input.peek(LitInt) {
+                let width_literal = input.parse::<LitInt>()?;
+                let width =
+                    parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
+                (
+                    FieldEncoding::Fixed(FixedEncoding {
+                        width_literal,
                         width,
-                        width,
-                        false,
-                        false,
-                    )
-                } else if input.peek(syn::token::Brace) {
-                    let shape;
-                    syn::braced!(shape in input);
-                    let encoding = shape.parse::<VariableEncoding>()?;
-                    let field_min_len = encoding.min_len;
-                    let field_max_len = encoding.max_len;
-                    let removed_payload =
-                        matches!(encoding.shape, VariableEncodingShape::Payload { .. });
-                    let field_consumes_remainder = encoding.consumes_remainder;
-                    (
-                        FieldEncoding::Variable(Box::new(encoding)),
-                        field_min_len,
-                        field_max_len,
-                        removed_payload,
-                        field_consumes_remainder,
-                    )
-                } else {
-                    return Err(input.error("expected a fixed width or variable field shape"));
-                };
+                    }),
+                    width,
+                    width,
+                    false,
+                    false,
+                )
+            } else if input.peek(syn::token::Brace) {
+                let shape;
+                syn::braced!(shape in input);
+                let encoding = shape.parse::<VariableEncoding>()?;
+                let field_min_len = encoding.min_len;
+                let field_max_len = encoding.max_len;
+                let semantic_payload = matches!(
+                    encoding.shape,
+                    VariableEncodingShape::SemanticPayload { .. }
+                );
+                let field_consumes_remainder = encoding.consumes_remainder;
+                (
+                    FieldEncoding::Variable(Box::new(encoding)),
+                    field_min_len,
+                    field_max_len,
+                    semantic_payload,
+                    field_consumes_remainder,
+                )
+            } else {
+                return Err(input.error("expected a fixed width or variable field shape"));
+            };
 
             consumes_remainder = field_consumes_remainder;
-            contains_removed_payload |= removed_payload;
+            contains_semantic_payload |= semantic_payload;
             min_len = min_len
                 .checked_add(field_min_len)
                 .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
@@ -1066,7 +1229,7 @@ impl Parse for Fields {
             names,
             min_len,
             max_len,
-            contains_removed_payload,
+            contains_semantic_payload,
         })
     }
 }
@@ -1098,7 +1261,7 @@ impl Parse for VariableEncoding {
                 let min_len = parse_integer_value(input, "min_len")?;
                 let max_len = parse_integer_value(input, "max_len")?;
                 validate_range(input, "payload", min_len.value, max_len.value)?;
-                VariableEncodingShape::Payload { min_len, max_len }
+                VariableEncodingShape::SemanticPayload { min_len, max_len }
             }
             "trailing_bytes" => {
                 let min_len = parse_integer_value(input, "min_len")?;
@@ -1170,7 +1333,7 @@ fn variable_bounds(
         VariableEncodingShape::Tagged(tagged) => {
             (tagged.min_len.value, Some(tagged.max_len.value), false)
         }
-        VariableEncodingShape::Payload { min_len, max_len } => {
+        VariableEncodingShape::SemanticPayload { min_len, max_len } => {
             (min_len.value, Some(max_len.value), false)
         }
         VariableEncodingShape::TrailingBytes { min_len, max_len } => {
@@ -1464,6 +1627,110 @@ mod tests {
             constraints.nodes()[2],
             Constraint::NonEmpty { .. }
         ));
+    }
+
+    #[test]
+    fn parses_complete_vendor_event_catalog_shapes() {
+        let catalog = syn::parse_str::<VendorEvents>(
+            r#"
+                /// Unit event.
+                Unit(0x0001) { Payload = (); }
+                #[cfg(since_fw_0_17_0)]
+                Counted(0x0002) {
+                    Payload = {
+                        handle: u16 => 2,
+                        bytes: BoundedBytes<8> => {
+                            kind: counted_bytes,
+                            count: u8 => 1,
+                            max_len: 8,
+                        },
+                    };
+                }
+                Items(0x0003) {
+                    Payload = {
+                        values: BoundedItems<Item, 3> => {
+                            kind: counted_items,
+                            count: u8 => 1,
+                            item: Item => 2,
+                            max_items: 3,
+                        },
+                    };
+                }
+                Semantic(0x0004) {
+                    Payload = {
+                        value: SemanticValue => {
+                            kind: payload,
+                            min_len: 1,
+                            max_len: 4,
+                        },
+                    };
+                }
+                Trailing(0x0005) {
+                    Payload = {
+                        value: BoundedBytes<4> => {
+                            kind: trailing_bytes,
+                            min_len: 0,
+                            max_len: 4,
+                        },
+                    };
+                }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(catalog.events.len(), 5);
+        assert!(matches!(catalog.events[0].payload, EventPayload::Unit));
+        assert_eq!(catalog.events[1].code, 0x0002);
+        assert_eq!(catalog.events[1].attrs.len(), 1);
+        assert_eq!(
+            (
+                catalog.events[1].payload.min_len(),
+                catalog.events[1].payload.max_len()
+            ),
+            (3, 11),
+        );
+        let semantic = catalog.events[3].payload.fields().unwrap();
+        assert!(semantic.contains_semantic_payload());
+        let FieldEncoding::Variable(encoding) = &semantic.fields()[0].encoding else {
+            panic!("expected semantic variable payload");
+        };
+        assert!(matches!(
+            encoding.shape,
+            VariableEncodingShape::SemanticPayload { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_vendor_event_catalog_states() {
+        for (source, expected) in [
+            ("", "must declare at least one event"),
+            (
+                "First(1) { Payload = (); } First(2) { Payload = (); }",
+                "duplicate vendor event name",
+            ),
+            (
+                "First(1) { Payload = (); } Second(1) { Payload = (); }",
+                "duplicate vendor event code",
+            ),
+            (
+                "TooLarge(1) { Payload = { data: [u8; 254] => 254, }; }",
+                "at most 253 bytes",
+            ),
+            (
+                "#[allow(dead_code)] BadAttr(1) { Payload = (); }",
+                "only documentation and cfg attributes",
+            ),
+            (
+                "NoDecoder(1) { Payload = { bitmap: u8 => 1, values: BoundedItems<Item, 1> => { kind: bitmap_items, bitmap: bitmap, mask: 0x01, item: Item => 1, max_items: 1, }, }; }",
+                "no owned decoder",
+            ),
+        ] {
+            let error = syn::parse_str::<VendorEvents>(source)
+                .err()
+                .expect("fixture must be rejected")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]
