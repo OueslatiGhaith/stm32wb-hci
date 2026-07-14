@@ -655,7 +655,7 @@ async fn declarative_gap_add_devices_to_list_counts_complete_records() {
     );
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 use hci::vendor::command::gap::{ExtScanMode, ExtScanPhyParams, GapExtStartScan, ScanningPhy};
 
 #[tokio::test]
@@ -1407,7 +1407,7 @@ fn reusable_fixed_gatt_returns_decode_without_transport_status() {
     assert_eq!(descriptor.descriptor_handle, AttributeHandle(0x9ABC));
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[tokio::test]
 async fn declarative_bitmap_selected_phy_items_match_cubewb() {
     let sink = RecordingSink::new();
@@ -1449,7 +1449,7 @@ async fn declarative_bitmap_selected_phy_items_match_cubewb() {
     );
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn declarative_bitmap_selected_phy_items_reject_mismatch() {
     let phy_params = [ExtScanPhyParams {
@@ -1479,13 +1479,13 @@ fn declarative_bitmap_selected_phy_items_reject_mismatch() {
     assert_eq!(error.maximum(), 2);
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn declarative_bitmap_selected_phy_items_reject_unknown_bits() {
     assert!(ScanningPhy::from_bits(0x02).is_none());
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn extended_gatt_write_command_uses_a_closed_mode() {
     use hci::vendor::command::gatt::{GattWriteWithRespExt, WriteMode};
@@ -1503,7 +1503,7 @@ fn extended_gatt_write_command_uses_a_closed_mode() {
     );
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[tokio::test]
 async fn periodic_advertising_uses_typed_domains_and_exact_wire_values() {
     use hci::vendor::command::gap::{
@@ -1559,7 +1559,7 @@ async fn periodic_advertising_uses_typed_domains_and_exact_wire_values() {
     assert!(PeriodicAdvertisingEnable::from_bits(0x04).is_none());
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn periodic_advertising_rejects_impossible_pawr_schedules() {
     use hci::vendor::command::gap::{
@@ -1694,7 +1694,7 @@ fn periodic_advertising_rejects_impossible_pawr_schedules() {
     );
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn extended_connection_uses_typed_modes_phys_and_parameter_records() {
     use hci::vendor::command::gap::{
@@ -1745,7 +1745,7 @@ fn extended_connection_uses_typed_modes_phys_and_parameter_records() {
     assert!(InitiatingPhy::from_bits(0x08).is_none());
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 #[test]
 fn bitmap_schema_constructor_enforces_sparse_mask_and_cardinality() {
     let phy = [ExtScanPhyParams {

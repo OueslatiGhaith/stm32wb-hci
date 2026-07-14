@@ -100,16 +100,12 @@ impl FirmwareVersion {
             ("before", value)
         } else if let Some(value) = cfg.strip_prefix("only_fw_") {
             ("only", value)
-        } else if let Some(value) = cfg.strip_prefix("after_fw_") {
-            ("after", value)
         } else if let Some(value) = cfg.strip_prefix("since_fw_") {
             ("since", value)
         } else if let Some(value) = cfg.strip_prefix("before_") {
             ("before", value)
         } else if let Some(value) = cfg.strip_prefix("only_") {
             ("only", value)
-        } else if let Some(value) = cfg.strip_prefix("after_") {
-            ("after", value)
         } else if let Some(value) = cfg.strip_prefix("since_") {
             ("since", value)
         } else {
@@ -120,7 +116,6 @@ impl FirmwareVersion {
         Some(match relation {
             "before" => self < version,
             "only" => self == version,
-            "after" => self > version,
             "since" => self >= version,
             _ => unreachable!("the relation is selected above"),
         })
@@ -262,9 +257,9 @@ mod tests {
         let version = FirmwareVersion::new(0, 15, 0);
         assert_eq!(version.matches_version_cfg("before_fw_0_16_0"), Some(true));
         assert_eq!(version.matches_version_cfg("only_fw_0_15_0"), Some(true));
-        assert_eq!(version.matches_version_cfg("after_0_14_1"), Some(true));
-        assert_eq!(version.matches_version_cfg("after_fw_0_15_0"), Some(false));
+        assert_eq!(version.matches_version_cfg("since_0_14_1"), Some(true));
         assert_eq!(version.matches_version_cfg("since_fw_0_15_0"), Some(true));
+        assert_eq!(version.matches_version_cfg("since_fw_0_15_1"), Some(false));
     }
 
     #[test]

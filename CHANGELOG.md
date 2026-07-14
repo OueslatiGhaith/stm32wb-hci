@@ -50,6 +50,9 @@
 - Close periodic-advertising parameters with typed intervals, properties, PAwR fields, and enable
   flags, and declaratively reject schedules whose subevents or response slots do not fit their
   configured timing windows.
+- Document the complete declarative command-constraint grammar and move PAwR arithmetic into
+  named validators, while retaining the macro DSL as the current implementation boundary.
+- Replace strict `after_fw_*` gates with the simpler inclusive `since_fw_*` convention.
 
 ### 🐛 Bug Fixes
 

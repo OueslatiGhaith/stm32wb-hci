@@ -34,7 +34,7 @@ fn main() {
 
     // `FirmwareVersion` has numeric ordering, so 0.17.0 correctly sorts after
     // 0.9.0. The same ordering is used by the compliance checker when it
-    // evaluates a source-level `before_`/`only_`/`after_`/`since_` predicate.
+    // evaluates a source-level `before_`/`only_`/`since_` predicate.
     firmwares.sort();
     for pair in firmwares.windows(2) {
         if pair[0] == pair[1] {
@@ -49,7 +49,7 @@ fn main() {
         let feature = firmware.feature_name();
         println!("cargo::rerun-if-env-changed={}", feature_env_var(&feature));
         for cfg_name in firmware_cfg_names(&feature) {
-            for prefix in ["before", "only", "after", "since"] {
+            for prefix in ["before", "only", "since"] {
                 println!("cargo::rustc-check-cfg=cfg({prefix}_{cfg_name})");
             }
         }
@@ -83,7 +83,7 @@ fn main() {
         match selected.cmp(firmware) {
             Ordering::Less => emit_cfg("before", &feature),
             Ordering::Equal => emit_cfg("only", &feature),
-            Ordering::Greater => emit_cfg("after", &feature),
+            Ordering::Greater => {}
         }
 
         if selected >= firmware {

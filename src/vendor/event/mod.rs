@@ -945,7 +945,7 @@ vendor_event! {
     /// requests to the host.
     ///
     /// The host should answer using the GAP pairing-request-reply command.
-    #[cfg(after_fw_0_17_1)]
+    #[cfg(since_fw_0_17_1)]
     GapPairingRequest(0x040B) {
         Payload = {
             connection_handle: ConnHandle => 2,
@@ -1410,7 +1410,7 @@ vendor_event! {
     /// the a local update of a characteristic value (if it is enabled at the creation of the characteristic
     /// with [GATT Notify Notification Completion](crate::vendor::command::gatt::CharacteristicEvent) mask
     /// and if the characteristic supports notifications).
-    #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+    #[cfg(since_fw_0_17_0)]
     GattNotificationComplete(0x0C1B) {
         Payload = { attr_handle: AttributeHandle => 2, };
     }
@@ -2902,7 +2902,7 @@ impl HciEventField<1> for EabState {
 mod tests {
     use super::*;
 
-    #[cfg(after_fw_0_17_1)]
+    #[cfg(since_fw_0_17_1)]
     #[test]
     fn parses_gap_pairing_request_event() {
         // 0x040B + conn_handle(0x0123) + bonded(1) + auth_req(0x2D)
@@ -2919,7 +2919,7 @@ mod tests {
         }
     }
 
-    #[cfg(after_fw_0_17_1)]
+    #[cfg(since_fw_0_17_1)]
     #[test]
     fn rejects_short_gap_pairing_request_event() {
         let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01];
@@ -2928,7 +2928,7 @@ mod tests {
         assert!(matches!(err, Error::BadLength(_, _)));
     }
 
-    #[cfg(not(after_fw_0_17_1))]
+    #[cfg(not(since_fw_0_17_1))]
     #[test]
     fn rejects_gap_pairing_request_event_before_its_supported_firmware() {
         let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01, 0x2D];
@@ -2941,7 +2941,7 @@ mod tests {
         ));
     }
 
-    #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+    #[cfg(since_fw_0_17_0)]
     #[test]
     fn parses_gatt_notification_complete_event() {
         let bytes = [0x1B, 0x0C, 0x23, 0x01];

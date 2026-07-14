@@ -675,6 +675,13 @@ fn parse_completion_shape(
     }
 }
 
+/// Parser-side mirror of the `vendor_cmd!` constraint grammar.
+///
+/// It records every referenced parameter so compliance can reject stale or
+/// misspelled field names before comparing wire envelopes. The runtime meaning
+/// of each form is documented alongside `declarative_constraint_checks!` in
+/// `src/vendor/command/mod.rs`. Keep both grammars and their tests in lockstep
+/// until they are replaced by the planned shared proc-macro parser.
 struct DeclarativeConstraints {
     fields: BTreeSet<String>,
 }
@@ -1592,7 +1599,7 @@ mod tests {
         let firmware = version(0, 17, 0);
         let path = Path::new("fixture.rs");
         let attribute: Attribute = syn::parse_quote!(
-            #[cfg(all(since_fw_0_17_0, not(after_fw_0_17_0)))]
+            #[cfg(all(since_fw_0_17_0, not(since_fw_0_17_1)))]
         );
         assert!(attrs_active(&[attribute], firmware, path).unwrap());
     }
@@ -2153,12 +2160,7 @@ mod tests {
         assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
         assert_eq!(tagged.completion, DescriptorCompletion::CommandStatus);
 
-        assert!(!coverage.descriptor_metadata.contains_key("GapExtStartScan"));
-        let future_coverage = load_crate_coverage(&crate_dir, version(0, 18, 0)).unwrap();
-        let bitmap = future_coverage
-            .descriptor_metadata
-            .get("GapExtStartScan")
-            .unwrap();
+        let bitmap = coverage.descriptor_metadata.get("GapExtStartScan").unwrap();
         assert_eq!(bitmap.request, WireEnvelope::bounded(10, 20));
         assert_eq!(bitmap.completion, DescriptorCompletion::CommandStatus);
 
@@ -2196,7 +2198,7 @@ mod tests {
             }
         );
 
-        assert_eq!(coverage.event_metadata.len(), 55);
+        assert_eq!(coverage.event_metadata.len(), 56);
         let gap_procedure = coverage.event_metadata.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
         assert_eq!(gap_procedure.payload, WireEnvelope::bounded(3, 253));
@@ -2220,7 +2222,7 @@ mod tests {
     fn selects_commands_from_descriptor_cfg() {
         let source = r#"
             vendor_cmd! { Current(cgid = 0x0, cid = 0x03) { Params = (); Completion = CommandStatus; } }
-            #[cfg(after_fw_0_17_1)]
+            #[cfg(since_fw_0_17_1)]
             vendor_cmd! {
                 Retained(cgid = 0x0, cid = 0x01) {
                     Params = ();
@@ -2263,7 +2265,7 @@ mod tests {
             &root,
             r#"
                 pub mod current;
-                #[cfg(after_fw_0_17_1)]
+                #[cfg(since_fw_0_17_1)]
                 pub mod future;
             "#,
         )
@@ -2277,7 +2279,7 @@ mod tests {
             root.clone(),
             read_rust_file(&root).unwrap(),
             true,
-            version(0, 17, 1),
+            version(0, 17, 0),
             &mut visited,
             &mut sources,
         )

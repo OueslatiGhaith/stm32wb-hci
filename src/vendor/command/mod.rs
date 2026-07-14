@@ -1438,6 +1438,96 @@ macro_rules! declarative_return {
     };
 }
 
+/// Return whether a PAwR subevent schedule fits in the minimum periodic interval.
+#[doc(hidden)]
+pub const fn pawr_subevents_fit(
+    periodic_interval_min: u16,
+    num_subevents: u8,
+    subevent_interval: u8,
+) -> bool {
+    num_subevents == 0
+        || (num_subevents as u32) * (subevent_interval as u32) <= periodic_interval_min as u32
+}
+
+/// Return whether the first PAwR response slot starts inside its subevent.
+#[doc(hidden)]
+pub const fn pawr_response_delay_fits(
+    num_subevents: u8,
+    subevent_interval: u8,
+    response_slot_delay: u8,
+    num_response_slots: u8,
+) -> bool {
+    num_subevents == 0
+        || num_response_slots == 0
+        || (response_slot_delay != 0 && response_slot_delay < subevent_interval)
+}
+
+/// Return whether every PAwR response slot fits in the remaining subevent time.
+#[doc(hidden)]
+pub const fn pawr_response_spacing_fits(
+    num_subevents: u8,
+    subevent_interval: u8,
+    response_slot_delay: u8,
+    response_slot_spacing: u8,
+    num_response_slots: u8,
+) -> bool {
+    if num_subevents == 0 || num_response_slots <= 1 {
+        return true;
+    }
+    if response_slot_delay >= subevent_interval || response_slot_spacing == 0 {
+        return false;
+    }
+
+    (response_slot_spacing as u32) * (num_response_slots as u32)
+        <= 10 * ((subevent_interval - response_slot_delay) as u32)
+}
+
+/// Evaluate the constraint language embedded in a `vendor_cmd!` declaration.
+///
+/// This is a recursive token-muncher: each arm validates the first constraint,
+/// then invokes the macro again with the remaining tokens. Constraints run in
+/// source order and construction stops at the first failure. Every failure is
+/// reported as an [`HciConstraintError`] containing the generated command name
+/// and a static, human-readable form of the rejected relationship.
+///
+/// Intrinsic validity belongs in semantic field types such as enums, bitflags,
+/// and `hci_ranged!` scalars. This language is only for relationships between
+/// command parameters or for command-specific subsets of a wider field type.
+///
+/// Supported grammar and semantics:
+///
+/// - `ordered(minimum, maximum)`: `minimum <= maximum`.
+/// - `ordered_when_in_range(minimum, maximum, low, high)`: ordering is required
+///   only when both values are inside `low..=high`.
+/// - `range(field, minimum, maximum)`: `field` is inside the inclusive range.
+/// - `one_of(field, [values...])`: `field` equals one listed expression.
+/// - `one_of_or_range(field, [values...], minimum, maximum)`: union of a sparse
+///   value set and an inclusive range.
+/// - `paired_value(left, right, value)`: both fields equal `value`, or neither
+///   does.
+/// - `implies_eq(selector, selected, field, required)`: selecting one mode
+///   requires an exact dependent value.
+/// - `implies_range(selector, selected, field, minimum, maximum)`: selecting
+///   one mode requires the dependent field to be in an inclusive range.
+/// - `pawr_subevents_fit(interval, count, spacing)`: nonzero PAwR subevents must
+///   fit inside the minimum periodic advertising interval.
+/// - `pawr_response_slots_fit(subevents, interval, delay, spacing, slots)`:
+///   validates PAwR response delay and spacing while honoring the Bluetooth
+///   ignored-field rules for zero subevents, zero slots, and one slot.
+/// - `len_at_most(field, maximum)`: a slice/string-like field's length is at
+///   most the integral `maximum` field.
+/// - `non_empty(field)`: a collection or bitflags field is not empty.
+///
+/// The operands are command-parameter identifiers. General constraints rely on
+/// the operators named above; PAwR constraints specifically require the
+/// corresponding ranged scalar types and obtain their wire values with
+/// `value()`.
+///
+/// Maintenance rule: adding or changing a constraint requires matching updates
+/// to this evaluator, the `DeclarativeConstraints` parser in the compliance
+/// tool, the public `vendor_cmd!` documentation, and parser/runtime tests. This
+/// duplicated grammar is the main reason a shared parser plus proc macro is the
+/// recommended next architectural step.
 macro_rules! declarative_constraint_checks {
     ($command:ident;) => {};
     (
@@ -1632,10 +1722,11 @@ macro_rules! declarative_constraint_checks {
         );
         $($rest:tt)*
     ) => {
-        if $num_subevents.value() != 0
-            && u32::from($num_subevents.value()) * u32::from($subevent_interval.value())
-                > u32::from($periodic_interval_min.value())
-        {
+        if !crate::vendor::command::pawr_subevents_fit(
+            $periodic_interval_min.value(),
+            $num_subevents.value(),
+            $subevent_interval.value(),
+        ) {
             return Err(crate::vendor::command::HciConstraintError::new(
                 stringify!($command),
                 concat!(
@@ -1660,49 +1751,47 @@ macro_rules! declarative_constraint_checks {
         );
         $($rest:tt)*
     ) => {
-        if $num_subevents.value() != 0 && $num_response_slots != 0 {
-            let subevent_interval = u32::from($subevent_interval.value());
-            let response_slot_delay = u32::from($response_slot_delay.value());
-
-            if response_slot_delay == 0 || response_slot_delay >= subevent_interval {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!($command),
-                    concat!(
-                        "0 < ",
-                        stringify!($response_slot_delay),
-                        " < ",
-                        stringify!($subevent_interval),
-                        " when ",
-                        stringify!($num_response_slots),
-                        " != 0",
-                    ),
-                ));
-            }
-
-            if $num_response_slots > 1 {
-                let response_slot_spacing = u32::from($response_slot_spacing.value());
-                let num_response_slots = u32::from($num_response_slots);
-                if response_slot_spacing == 0
-                    || response_slot_spacing * num_response_slots
-                        > 10 * (subevent_interval - response_slot_delay)
-                {
-                    return Err(crate::vendor::command::HciConstraintError::new(
-                        stringify!($command),
-                        concat!(
-                            stringify!($response_slot_spacing),
-                            " * ",
-                            stringify!($num_response_slots),
-                            " <= 10 * (",
-                            stringify!($subevent_interval),
-                            " - ",
-                            stringify!($response_slot_delay),
-                            ") when ",
-                            stringify!($num_response_slots),
-                            " > 1",
-                        ),
-                    ));
-                }
-            }
+        if !crate::vendor::command::pawr_response_delay_fits(
+            $num_subevents.value(),
+            $subevent_interval.value(),
+            $response_slot_delay.value(),
+            $num_response_slots,
+        ) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    "0 < ",
+                    stringify!($response_slot_delay),
+                    " < ",
+                    stringify!($subevent_interval),
+                    " when ",
+                    stringify!($num_response_slots),
+                    " != 0",
+                ),
+            ));
+        }
+        if !crate::vendor::command::pawr_response_spacing_fits(
+            $num_subevents.value(),
+            $subevent_interval.value(),
+            $response_slot_delay.value(),
+            $response_slot_spacing.value(),
+            $num_response_slots,
+        ) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!($command),
+                concat!(
+                    stringify!($response_slot_spacing),
+                    " * ",
+                    stringify!($num_response_slots),
+                    " <= 10 * (",
+                    stringify!($subevent_interval),
+                    " - ",
+                    stringify!($response_slot_delay),
+                    ") when ",
+                    stringify!($num_response_slots),
+                    " > 1",
+                ),
+            ));
         }
         declarative_constraint_checks!($command; $($rest)*);
     };
@@ -2645,7 +2734,10 @@ macro_rules! vendor_cmd {
 
 #[cfg(test)]
 mod tests {
-    use super::{HciDecodeField, HciLengthError, TaggedField};
+    use super::{
+        HciDecodeField, HciLengthError, TaggedField, pawr_response_delay_fits,
+        pawr_response_spacing_fits, pawr_subevents_fit,
+    };
 
     hci_enum! {
         #[derive(Debug, Eq, PartialEq)]
@@ -2771,6 +2863,25 @@ mod tests {
         assert_eq!(AggregateLengthFixture::CID, 0x0E);
         assert_eq!(AggregateLengthFixture::OCF, 0x008E);
         assert_eq!(<AggregateLengthFixture<'_> as Cmd>::OPCODE.to_raw(), 0xFC8E);
+    }
+
+    #[test]
+    fn pawr_timing_helpers_document_the_ignored_field_cases() {
+        assert!(pawr_subevents_fit(6, 0, u8::MAX));
+        assert!(pawr_subevents_fit(32, 2, 16));
+        assert!(!pawr_subevents_fit(31, 2, 16));
+
+        assert!(pawr_response_delay_fits(0, 6, u8::MAX, u8::MAX));
+        assert!(pawr_response_delay_fits(1, 6, u8::MAX, 0));
+        assert!(pawr_response_delay_fits(1, 6, 1, 1));
+        assert!(!pawr_response_delay_fits(1, 6, 0, 1));
+        assert!(!pawr_response_delay_fits(1, 6, 6, 1));
+
+        assert!(pawr_response_spacing_fits(0, 6, 6, 0, u8::MAX));
+        assert!(pawr_response_spacing_fits(1, 6, 1, u8::MAX, 1));
+        assert!(pawr_response_spacing_fits(1, 16, 1, 75, 2));
+        assert!(!pawr_response_spacing_fits(1, 16, 1, 76, 2));
+        assert!(!pawr_response_spacing_fits(1, 16, 1, 0, 2));
     }
 }
 

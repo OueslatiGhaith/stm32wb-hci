@@ -1,6 +1,6 @@
 //! System commands (ACI_RESET, ACI_GET_INFORMATION, ACI_WRITE_CONFIG_DATA, ACI_READ_CONFIG_DATA).
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 use crate::vendor::command::BoundedBytes;
 hci_enum! {
     #[derive(Copy, Clone)]
@@ -13,7 +13,7 @@ hci_enum! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     SysReset(cgid = 0x6, cid = 0x00) {
         Params = {
@@ -25,7 +25,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     SysGetInformation(cgid = 0x6, cid = 0x01) {
         Params = ();
@@ -38,7 +38,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     SysWriteConfigData(cgid = 0x6, cid = 0x02) {
         Params<'a> = {
@@ -54,7 +54,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     SysReadConfigData(cgid = 0x6, cid = 0x03) {
         Params = {

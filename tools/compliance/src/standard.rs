@@ -648,7 +648,7 @@ mod tests {
     fn honors_firmware_cfg_on_local_extension() {
         let old = FirmwareVersion::new(0, 16, 0);
         let new = FirmwareVersion::new(0, 17, 0);
-        assert!(!eval_cfg_meta("any ( only_fw_0_17_0 , after_fw_0_17_0 )", old).unwrap());
-        assert!(eval_cfg_meta("any ( only_fw_0_17_0 , after_fw_0_17_0 )", new).unwrap());
+        assert!(!eval_cfg_meta("since_fw_0_17_0", old).unwrap());
+        assert!(eval_cfg_meta("since_fw_0_17_0", new).unwrap());
     }
 }

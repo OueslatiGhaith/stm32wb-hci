@@ -92,7 +92,7 @@ cmd! {
     }
 }
 
-#[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+#[cfg(since_fw_0_17_0)]
 cmd! {
     /// LE Generate DHKey v2 command.
     ///

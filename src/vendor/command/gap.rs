@@ -867,7 +867,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
         Params = {
@@ -879,7 +879,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicParameters(cgid = 0x1, cid = 0x47) {
         Params = {
@@ -913,7 +913,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicData(cgid = 0x1, cid = 0x48) {
         Params<'a> = {
@@ -930,7 +930,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetPeriodicEnable(cgid = 0x1, cid = 0x49) {
         Params = {
@@ -942,7 +942,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapAdvSetConfigurationV2(cgid = 0x1, cid = 0x4D) {
         Params = {
@@ -976,7 +976,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params<'a> = {
@@ -1010,7 +1010,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params<'a> = {
@@ -1392,7 +1392,7 @@ hci_bitflags! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Periodic-advertising interval in 1.25 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1402,7 +1402,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_bitflags! {
     /// Fields included in periodic advertising packets.
     pub struct PeriodicAdvertisingProperties: u16 => 2 {
@@ -1411,7 +1411,7 @@ hci_bitflags! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Number of PAwR subevents transmitted in each periodic advertising event.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1421,7 +1421,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Interval between PAwR subevents in 1.25 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1431,7 +1431,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Delay before the first PAwR response slot in 1.25 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1441,7 +1441,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Spacing between PAwR response slots in 0.125 ms units.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1452,7 +1452,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_bitflags! {
     /// Controls periodic advertising and the optional ADI field.
     pub struct PeriodicAdvertisingEnable: u8 => 1 {
@@ -1463,7 +1463,7 @@ hci_bitflags! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Periodic-advertising handle used while initiating an extended connection.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1474,7 +1474,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_ranged! {
     /// Periodic-advertising subevent used while initiating an extended connection.
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1485,7 +1485,7 @@ hci_ranged! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_enum! {
     /// Mode field for the extended GAP scan command.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1496,7 +1496,7 @@ hci_enum! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_bitflags! {
     /// PHYs on which an extended scan is performed.
     pub struct ScanningPhy: u8 => 1 {
@@ -1507,7 +1507,7 @@ hci_bitflags! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_enum! {
     /// Mode field for the extended GAP connection command.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1518,7 +1518,7 @@ hci_enum! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_enum! {
     /// Selects how an advertiser is chosen during connection initiation.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1531,7 +1531,7 @@ hci_enum! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_bitflags! {
     /// PHY-specific parameter records supplied while initiating a connection.
     pub struct InitiatingPhy: u8 => 1 {
@@ -1545,7 +1545,7 @@ hci_bitflags! {
 }
 
 /// One record in the extended-scan PHY parameter list.
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 pub struct ExtScanPhyParams {
     /// Passive or active scanning for this PHY.
     pub scan_type: ScanType,
@@ -1555,7 +1555,7 @@ pub struct ExtScanPhyParams {
     pub scan_window: u16,
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         self.scan_type.write_hci_field(&mut writer)?;
@@ -1574,7 +1574,7 @@ impl crate::vendor::command::HciEncodeField<5> for ExtScanPhyParams {
 }
 
 /// One record in the extended-connection PHY parameter list.
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 pub struct ExtConnectionPhyParams {
     /// Scan interval in 0.625 ms units.
     pub scan_interval: u16,
@@ -1594,7 +1594,7 @@ pub struct ExtConnectionPhyParams {
     pub max_ce_length: u16,
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 impl crate::vendor::command::HciEncodeField<16> for ExtConnectionPhyParams {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         writer.write_all(&self.scan_interval.to_le_bytes())?;

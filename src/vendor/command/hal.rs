@@ -243,7 +243,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     HalGetLinkStatusV2(cgid = 0x0, cid = 0x1B) {
         Params = ();
@@ -255,7 +255,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     HalSetSyncEventConfig(cgid = 0x0, cid = 0x21) {
         Params = {
@@ -269,7 +269,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     HalContinuousTxStart(cgid = 0x0, cid = 0x2E) {
         Params = {
@@ -282,7 +282,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {
@@ -793,11 +793,11 @@ hci_bitflags! {
 
 hci_enum! {
     #[cfg_attr(
-        after_fw_0_17_1,
+        since_fw_0_17_1,
         doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
     )]
     #[cfg_attr(
-        not(after_fw_0_17_1),
+        not(since_fw_0_17_1),
         doc = "Trigger source for `set_sync_event_config`."
     )]
     #[derive(Copy, Clone)]
@@ -810,10 +810,10 @@ hci_enum! {
 
 hci_enum! {
     #[cfg_attr(
-        after_fw_0_17_1,
+        since_fw_0_17_1,
         doc = "PHY for [continuous_tx_start](HalContinuousTxStart)."
     )]
-    #[cfg_attr(not(after_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
+    #[cfg_attr(not(since_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
     #[derive(Copy, Clone)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum ContinuousTxPhy: u8 => 1 {
@@ -824,10 +824,10 @@ hci_enum! {
 
 hci_enum! {
     #[cfg_attr(
-        after_fw_0_17_1,
+        since_fw_0_17_1,
         doc = "Data pattern for [continuous_tx_start](HalContinuousTxStart)."
     )]
-    #[cfg_attr(not(after_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
+    #[cfg_attr(not(since_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
     #[derive(Copy, Clone)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum ContinuousTxPattern: u8 => 1 {
@@ -844,10 +844,10 @@ hci_enum! {
 
 hci_enum! {
     #[cfg_attr(
-        after_fw_0_17_1,
+        since_fw_0_17_1,
         doc = "Mode for [ead_encrypt_decrypt](HalEadEncryptDecrypt)."
     )]
-    #[cfg_attr(not(after_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
+    #[cfg_attr(not(since_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
     #[derive(Copy, Clone)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum EadMode: u8 => 1 {

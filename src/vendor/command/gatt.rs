@@ -729,7 +729,7 @@ impl GattHandleValue {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GattReadHandleValueOffset(cgid = 0x2, cid = 0x2B) {
         Params = {
@@ -829,7 +829,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
         Params = {
@@ -844,7 +844,7 @@ vendor_cmd! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 vendor_cmd! {
     GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
         Params = {
@@ -871,7 +871,7 @@ hci_enum! {
     }
 }
 
-#[cfg(after_fw_0_17_1)]
+#[cfg(since_fw_0_17_1)]
 hci_enum! {
     /// GATT write-with-response procedure used by [`GattWriteWithRespExt`].
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -991,7 +991,7 @@ hci_bitflags! {
         /// attribute.
         const CONFIRM_READ = 0x04;
 
-        #[cfg(any(only_fw_0_17_0, after_fw_0_17_0))]
+        #[cfg(since_fw_0_17_0)]
         /// The application will be notified when a notification is complete.
         const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }
