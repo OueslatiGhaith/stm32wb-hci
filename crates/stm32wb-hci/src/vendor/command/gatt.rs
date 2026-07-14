@@ -730,24 +730,6 @@ impl GattHandleValue {
     }
 }
 
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    GattReadHandleValueOffset(cgid = 0x2, cid = 0x2B) {
-        Params = {
-            handle: AttributeHandle => 2,
-            offset: u8 => 1,
-        };
-        Completion = CommandComplete;
-        Return = GattHandleValueOffset {
-            value: BoundedBytes<128> => {
-                kind: counted_bytes,
-                count: u16 => 2,
-                max_len: 128,
-            },
-        };
-    }
-}
-
 stm32wb_hci_macros::vendor_cmd! {
     GattUpdateLongCharacteristicValue(cgid = 0x2, cid = 0x2C) {
         Params<'a> = {
@@ -830,36 +812,6 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
-        Params = {
-            conn_handle: ConnHandle => 2,
-            attr_handle: u16 => 2,
-            signed_mode: bool => 1,
-            data_len: u16 => 2,
-            data_pointer: u32 => 4,
-        };
-        Completion = CommandComplete;
-        Return = ();
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
-        Params = {
-            conn_handle: ConnHandle => 2,
-            attr_handle: u16 => 2,
-            write_mode: WriteMode => 1,
-            val_offset: u16 => 2,
-            data_len: u16 => 2,
-            data_pointer: u32 => 4,
-        };
-        Completion = CommandStatus;
-    }
-}
-
 hci_enum! {
     /// Application decision returned by [`GattWriteResponse`].
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -869,21 +821,6 @@ hci_enum! {
         Allowed = 0x00,
         /// Reject the requested attribute write and return its ATT error code.
         Rejected = 0x01,
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-hci_enum! {
-    /// GATT write-with-response procedure used by [`GattWriteWithRespExt`].
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum WriteMode: u8 => 1 {
-        /// Write a characteristic value or descriptor.
-        CharacteristicOrDescriptor = 0x00,
-        /// Write a long characteristic value or descriptor.
-        LongCharacteristicOrDescriptor = 0x01,
-        /// Reliably write a characteristic value.
-        ReliableCharacteristic = 0x02,
     }
 }
 

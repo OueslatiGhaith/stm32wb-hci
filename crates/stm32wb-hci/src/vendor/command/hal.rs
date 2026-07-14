@@ -20,15 +20,6 @@ impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
     }
 }
 
-impl crate::vendor::command::HciDecodeField<44> for [u16; 22] {
-    fn from_hci_field(bytes: &[u8; 44]) -> Result<Self, bt_hci::FromHciBytesError> {
-        Ok(core::array::from_fn(|index| {
-            let offset = index * 2;
-            u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
-        }))
-    }
-}
-
 stm32wb_hci_macros::vendor_cmd! {
     HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
         Params = ();
@@ -240,69 +231,6 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = ();
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    HalGetLinkStatusV2(cgid = 0x0, cid = 0x1B) {
-        Params = ();
-        Completion = CommandComplete;
-        Return = HalLinkStatusV2Raw {
-            link_status: [u8; 22] => 22,
-            link_connection_handles: [u16; 22] => 44,
-        };
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    HalSetSyncEventConfig(cgid = 0x0, cid = 0x21) {
-        Params = {
-            group_id: u8 => 1,
-            enable_sync: bool => 1,
-            enable_cb_trigger: bool => 1,
-            trigger_source: SyncTriggerSource => 1,
-        };
-        Completion = CommandComplete;
-        Return = ();
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    HalContinuousTxStart(cgid = 0x0, cid = 0x2E) {
-        Params = {
-            rf_channel: u8 => 1,
-            phy: ContinuousTxPhy => 1,
-            pattern: ContinuousTxPattern => 1,
-        };
-        Completion = CommandComplete;
-        Return = ();
-    }
-}
-
-#[cfg(since_fw_0_17_1)]
-stm32wb_hci_macros::vendor_cmd! {
-    HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
-        Params<'a> = {
-            mode: EadMode => 1,
-            key: &'a [u8; 16] => 16,
-            iv: &'a [u8; 8] => 8,
-            data: &'a [u8] => {
-                kind: counted_bytes,
-                count: u16 => 2,
-                max_len: 228,
-            },
-        };
-        Completion = CommandComplete;
-        Return = HalEadEncryptDecryptReturn {
-            data: BoundedBytes<237> => {
-                kind: counted_bytes,
-                count: u16 => 2,
-                max_len: 237,
-            },
-        };
     }
 }
 
@@ -788,70 +716,5 @@ hci_bitflags! {
     pub struct HalEventFlags: u32 => 4 {
         /// [HAL Scan Request Report](crate::vendor::event::VendorEvent::HalScanReqReport) event
         const SCAN_REQ_REPORT = 0x00000001;
-    }
-}
-
-hci_enum! {
-    #[cfg_attr(
-        since_fw_0_17_1,
-        doc = "Trigger source for [set_sync_event_config](HalSetSyncEventConfig)."
-    )]
-    #[cfg_attr(
-        not(since_fw_0_17_1),
-        doc = "Trigger source for `set_sync_event_config`."
-    )]
-    #[derive(Copy, Clone)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum SyncTriggerSource: u8 => 1 {
-        Cig = 0x00,
-        Big = 0x01,
-    }
-}
-
-hci_enum! {
-    #[cfg_attr(
-        since_fw_0_17_1,
-        doc = "PHY for [continuous_tx_start](HalContinuousTxStart)."
-    )]
-    #[cfg_attr(not(since_fw_0_17_1), doc = "PHY for `continuous_tx_start`.")]
-    #[derive(Copy, Clone)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum ContinuousTxPhy: u8 => 1 {
-        Le1M = 0x01,
-        Le2M = 0x02,
-    }
-}
-
-hci_enum! {
-    #[cfg_attr(
-        since_fw_0_17_1,
-        doc = "Data pattern for [continuous_tx_start](HalContinuousTxStart)."
-    )]
-    #[cfg_attr(not(since_fw_0_17_1), doc = "Data pattern for `continuous_tx_start`.")]
-    #[derive(Copy, Clone)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum ContinuousTxPattern: u8 => 1 {
-        Prbs9 = 0x00,
-        Alternating11110000 = 0x01,
-        Alternating10101010 = 0x02,
-        Prbs15 = 0x03,
-        AllOnes = 0x04,
-        AllZeros = 0x05,
-        Alternating00001111 = 0x06,
-        Alternating0101 = 0x07,
-    }
-}
-
-hci_enum! {
-    #[cfg_attr(
-        since_fw_0_17_1,
-        doc = "Mode for [ead_encrypt_decrypt](HalEadEncryptDecrypt)."
-    )]
-    #[cfg_attr(not(since_fw_0_17_1), doc = "Mode for `ead_encrypt_decrypt`.")]
-    #[derive(Copy, Clone)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum EadMode: u8 => 1 {
-        Encrypt = 0x00,
-        Decrypt = 0x01,
     }
 }

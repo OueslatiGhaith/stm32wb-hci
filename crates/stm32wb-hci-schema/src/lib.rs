@@ -431,20 +431,6 @@ pub enum Constraint {
         minimum: Expr,
         maximum: Expr,
     },
-    /// Require PAwR subevents to fit inside the minimum periodic interval.
-    PawrSubeventsFit {
-        periodic_interval_min: syn::Ident,
-        num_subevents: syn::Ident,
-        subevent_interval: syn::Ident,
-    },
-    /// Validate PAwR response delay and spacing with ignored-field semantics.
-    PawrResponseSlotsFit {
-        num_subevents: syn::Ident,
-        subevent_interval: syn::Ident,
-        response_slot_delay: syn::Ident,
-        response_slot_spacing: syn::Ident,
-        num_response_slots: syn::Ident,
-    },
     /// Require a collection's runtime length not to exceed another field.
     LenAtMost {
         field: syn::Ident,
@@ -1075,42 +1061,6 @@ impl Parse for Constraints {
                         field,
                         minimum,
                         maximum,
-                    }
-                }
-                "pawr_subevents_fit" => {
-                    let periodic_interval_min =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let num_subevents = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let subevent_interval =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::PawrSubeventsFit {
-                        periodic_interval_min,
-                        num_subevents,
-                        subevent_interval,
-                    }
-                }
-                "pawr_response_slots_fit" => {
-                    let num_subevents = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let subevent_interval =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let response_slot_delay =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let response_slot_spacing =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let num_response_slots =
-                        parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::PawrResponseSlotsFit {
-                        num_subevents,
-                        subevent_interval,
-                        response_slot_delay,
-                        response_slot_spacing,
-                        num_response_slots,
                     }
                 }
                 "len_at_most" => {

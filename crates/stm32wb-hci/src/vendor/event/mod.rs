@@ -710,18 +710,6 @@ stm32wb_hci_macros::vendor_event! {
             notification_type: KeypressNotificationType => 1,
         };
     }
-    /// This event is generated when SMP mode is configured to surface pairing
-    /// requests to the host.
-    ///
-    /// The host should answer using the GAP pairing-request-reply command.
-    #[cfg(since_fw_0_17_1)]
-    GapPairingRequest(0x040B) {
-        Payload = {
-            connection_handle: ConnHandle => 2,
-            bonded: bool => 1,
-            auth_req: u8 => 1,
-        };
-    }
     /// This event is generated when the central device responds to the L2CAP connection update
     /// request packet. For more info see
     /// [L2ConnectionParameterUpdateResponse](crate::vendor::command::l2cap::L2ConnectionParameterUpdateResponse)
@@ -2297,45 +2285,6 @@ hci_event_composite! {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(since_fw_0_17_1)]
-    #[test]
-    fn parses_gap_pairing_request_event() {
-        // 0x040B + conn_handle(0x0123) + bonded(1) + auth_req(0x2D)
-        let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01, 0x2D];
-        let event = VendorEvent::new(&bytes).expect("parse pairing request");
-
-        match event {
-            VendorEvent::GapPairingRequest(e) => {
-                assert_eq!(e.connection_handle.0, 0x0123);
-                assert!(e.bonded);
-                assert_eq!(e.auth_req, 0x2D);
-            }
-            _ => panic!("unexpected event variant"),
-        }
-    }
-
-    #[cfg(since_fw_0_17_1)]
-    #[test]
-    fn rejects_short_gap_pairing_request_event() {
-        let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01];
-        let err = VendorEvent::new(&bytes).expect_err("must reject short payload");
-
-        assert!(matches!(err, Error::BadLength(_, _)));
-    }
-
-    #[cfg(not(since_fw_0_17_1))]
-    #[test]
-    fn rejects_gap_pairing_request_event_before_its_supported_firmware() {
-        let bytes = [0x0B, 0x04, 0x23, 0x01, 0x01, 0x2D];
-        let err =
-            VendorEvent::new(&bytes).expect_err("event is not defined by supported Cube tags");
-
-        assert!(matches!(
-            err,
-            Error::Vendor(VendorError::UnknownEvent(0x040B))
-        ));
-    }
 
     #[cfg(since_fw_0_17_0)]
     #[test]

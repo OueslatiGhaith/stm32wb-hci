@@ -800,55 +800,9 @@ impl<T: DeclarativeFieldList> WriteHci for DeclarativeParams<T> {
     }
 }
 
-/// Return whether a PAwR subevent schedule fits in the minimum periodic interval.
-#[doc(hidden)]
-pub const fn pawr_subevents_fit(
-    periodic_interval_min: u16,
-    num_subevents: u8,
-    subevent_interval: u8,
-) -> bool {
-    num_subevents == 0
-        || (num_subevents as u32) * (subevent_interval as u32) <= periodic_interval_min as u32
-}
-
-/// Return whether the first PAwR response slot starts inside its subevent.
-#[doc(hidden)]
-pub const fn pawr_response_delay_fits(
-    num_subevents: u8,
-    subevent_interval: u8,
-    response_slot_delay: u8,
-    num_response_slots: u8,
-) -> bool {
-    num_subevents == 0
-        || num_response_slots == 0
-        || (response_slot_delay != 0 && response_slot_delay < subevent_interval)
-}
-
-/// Return whether every PAwR response slot fits in the remaining subevent time.
-#[doc(hidden)]
-pub const fn pawr_response_spacing_fits(
-    num_subevents: u8,
-    subevent_interval: u8,
-    response_slot_delay: u8,
-    response_slot_spacing: u8,
-    num_response_slots: u8,
-) -> bool {
-    if num_subevents == 0 || num_response_slots <= 1 {
-        return true;
-    }
-    if response_slot_delay >= subevent_interval || response_slot_spacing == 0 {
-        return false;
-    }
-
-    (response_slot_spacing as u32) * (num_response_slots as u32)
-        <= 10 * ((subevent_interval - response_slot_delay) as u32)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        HciDecodeField, pawr_response_delay_fits, pawr_response_spacing_fits, pawr_subevents_fit,
-    };
+    use super::HciDecodeField;
 
     hci_enum! {
         #[derive(Debug, Eq, PartialEq)]
@@ -965,29 +919,9 @@ mod tests {
         assert_eq!(AggregateLengthFixture::OCF, 0x008E);
         assert_eq!(<AggregateLengthFixture<'_> as Cmd>::OPCODE.to_raw(), 0xFC8E);
     }
-
-    #[test]
-    fn pawr_timing_helpers_document_the_ignored_field_cases() {
-        assert!(pawr_subevents_fit(6, 0, u8::MAX));
-        assert!(pawr_subevents_fit(32, 2, 16));
-        assert!(!pawr_subevents_fit(31, 2, 16));
-
-        assert!(pawr_response_delay_fits(0, 6, u8::MAX, u8::MAX));
-        assert!(pawr_response_delay_fits(1, 6, u8::MAX, 0));
-        assert!(pawr_response_delay_fits(1, 6, 1, 1));
-        assert!(!pawr_response_delay_fits(1, 6, 0, 1));
-        assert!(!pawr_response_delay_fits(1, 6, 6, 1));
-
-        assert!(pawr_response_spacing_fits(0, 6, 6, 0, u8::MAX));
-        assert!(pawr_response_spacing_fits(1, 6, 1, u8::MAX, 1));
-        assert!(pawr_response_spacing_fits(1, 16, 1, 75, 2));
-        assert!(!pawr_response_spacing_fits(1, 16, 1, 76, 2));
-        assert!(!pawr_response_spacing_fits(1, 16, 1, 0, 2));
-    }
 }
 
 pub mod gap;
 pub mod gatt;
 pub mod hal;
 pub mod l2cap;
-pub mod sys;

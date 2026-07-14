@@ -788,8 +788,6 @@ mod tests {
                         ordered_when_in_range(minimum, maximum, 0x20, 0x4000);
                         implies_eq(mode, 0x00, maximum, 0);
                         implies_range(mode, 0x02, maximum, 0x20, 0x4000);
-                        pawr_subevents_fit(minimum, mode, maximum);
-                        pawr_response_slots_fit(mode, minimum, maximum, mode, minimum);
                         len_at_most(data, mode);
                     };
                     Completion = CommandStatus;
@@ -1045,10 +1043,6 @@ mod tests {
         assert_eq!(tagged.request, WireEnvelope::bounded(5, 19));
         assert_eq!(tagged.completion, CommandCompletion::CommandStatus);
 
-        let bitmap = coverage.commands.get("GapExtStartScan").unwrap();
-        assert_eq!(bitmap.request, WireEnvelope::bounded(10, 20));
-        assert_eq!(bitmap.completion, CommandCompletion::CommandStatus);
-
         let bonded = coverage.commands.get("GapGetBondedDevices").unwrap();
         // Count plus at most 35 seven-byte address records; status is framing.
         assert_eq!(
@@ -1074,7 +1068,7 @@ mod tests {
             }
         );
 
-        assert_eq!(coverage.events.len(), 56);
+        assert_eq!(coverage.events.len(), 55);
         let gap_procedure = coverage.events.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
         assert_eq!(gap_procedure.payload, WireEnvelope::bounded(3, 253));
@@ -1128,7 +1122,7 @@ mod tests {
                 inspect(&file.items, &path, &mut command_count);
             }
         }
-        assert_eq!(command_count, 147);
+        assert_eq!(command_count, 129);
     }
 
     #[test]
@@ -1157,7 +1151,7 @@ mod tests {
         assert_eq!(macro_path, ["stm32wb_hci_macros", "vendor_event"]);
 
         let parsed = syn::parse2::<SchemaVendorEvents>(catalog.mac.tokens.clone()).unwrap();
-        assert_eq!(parsed.events.len(), 56);
+        assert_eq!(parsed.events.len(), 55);
     }
 
     #[test]

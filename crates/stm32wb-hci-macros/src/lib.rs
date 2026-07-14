@@ -50,9 +50,8 @@ use stm32wb_hci_schema::{
 /// `Constraints` are evaluated in declaration order and stop at the first
 /// failure. Supported relationships are `ordered`, `ordered_when_in_range`,
 /// `range`, `one_of`, `one_of_or_range`, `paired_value`, `implies_eq`,
-/// `implies_range`, `pawr_subevents_fit`, `pawr_response_slots_fit`,
-/// `len_at_most`, and `non_empty`. Intrinsic validity should remain in the
-/// semantic field type; constraints describe relationships or
+/// `implies_range`, `len_at_most`, and `non_empty`. Intrinsic validity should
+/// remain in the semantic field type; constraints describe relationships or
 /// command-specific subsets.
 #[proc_macro]
 pub fn vendor_cmd(input: TokenStream) -> TokenStream {
@@ -668,78 +667,6 @@ fn expand_constraint_check(command: &syn::Ident, constraint: &Constraint) -> Tok
                         stringify!(#field),
                         " <= ",
                         stringify!(#maximum),
-                    ),
-                ));
-            }
-        },
-        Constraint::PawrSubeventsFit {
-            periodic_interval_min,
-            num_subevents,
-            subevent_interval,
-        } => quote! {
-            if !crate::vendor::command::pawr_subevents_fit(
-                #periodic_interval_min.value(),
-                #num_subevents.value(),
-                #subevent_interval.value(),
-            ) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#num_subevents),
-                        " * ",
-                        stringify!(#subevent_interval),
-                        " <= ",
-                        stringify!(#periodic_interval_min),
-                    ),
-                ));
-            }
-        },
-        Constraint::PawrResponseSlotsFit {
-            num_subevents,
-            subevent_interval,
-            response_slot_delay,
-            response_slot_spacing,
-            num_response_slots,
-        } => quote! {
-            if !crate::vendor::command::pawr_response_delay_fits(
-                #num_subevents.value(),
-                #subevent_interval.value(),
-                #response_slot_delay.value(),
-                #num_response_slots,
-            ) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        "0 < ",
-                        stringify!(#response_slot_delay),
-                        " < ",
-                        stringify!(#subevent_interval),
-                        " when ",
-                        stringify!(#num_response_slots),
-                        " != 0",
-                    ),
-                ));
-            }
-            if !crate::vendor::command::pawr_response_spacing_fits(
-                #num_subevents.value(),
-                #subevent_interval.value(),
-                #response_slot_delay.value(),
-                #response_slot_spacing.value(),
-                #num_response_slots,
-            ) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#response_slot_spacing),
-                        " * ",
-                        stringify!(#num_response_slots),
-                        " <= 10 * (",
-                        stringify!(#subevent_interval),
-                        " - ",
-                        stringify!(#response_slot_delay),
-                        ") when ",
-                        stringify!(#num_response_slots),
-                        " > 1",
                     ),
                 ));
             }
