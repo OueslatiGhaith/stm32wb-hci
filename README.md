@@ -21,11 +21,11 @@ cargo run -p stm32wb-compliance -- list-supported
 ```
 
 | Cargo feature | STM32CubeWB tag |
-| --- | --- |
-| `fw_0_15_0` | `v1.15.0` |
-| `fw_0_16_0` | `v1.16.0` |
-| `fw_0_17_0` | `v1.17.0` |
-| `fw_0_17_1` | `v1.17.1` |
+| ------------- | --------------- |
+| `fw_0_15_0`   | `v1.15.0`       |
+| `fw_0_16_0`   | `v1.16.0`       |
+| `fw_0_17_0`   | `v1.17.0`       |
+| `fw_0_17_1`   | `v1.17.1`       |
 
 For a non-default firmware, disable default features before selecting it:
 
@@ -45,6 +45,11 @@ aliases.
 The `stm32wb-compliance` workspace tool compares the selected feature surface against the matching
 tag in a local STM32CubeWB clone. It reads tagged blobs with `git show`, so running it does not
 checkout, modify, or otherwise disturb `STM32CubeWB`.
+
+Machine consumers should follow the compliance tool's
+[compatibility and migration guide](crates/stm32wb-compliance/README.md). The normalized catalog,
+JSON check report, and TOML exclusion policy are separate versioned contracts; the guide documents
+their version fields and the catalog-schema-9, report-schema-1, and policy-format-1 migrations.
 
 ```sh
 # STM32CubeWB is expected at ./STM32CubeWB by default.

@@ -11,6 +11,10 @@ use crate::model::{CheckReport, CoverageDifference, ExcludedCode};
 use crate::wire::{WireDifference, WireReport, WireUnavailable};
 
 /// Schema version of the machine-readable compliance report.
+///
+/// Version 1 introduced explicit report versioning and removed the redundant
+/// `catalog_counts.descriptor_command_ids` field. Consumers should use
+/// `catalog_counts.active_command_ids` for the selected Rust command catalog.
 pub const REPORT_SCHEMA_VERSION: u16 = 1;
 
 /// The stable machine-readable representation of one compliance report.

@@ -9,6 +9,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
 
+/// Schema version of the normalized CubeWB catalog.
+///
+/// Version 9 replaced the separate request, return, and event-payload layout
+/// enums with [`ExtractedEnvelope`]. Known fixed lengths use identical minimum
+/// and maximum values, including `0..=0` for an empty wire envelope.
+///
 /// Increment only for a deliberate, documented incompatible schema change.
 pub const CATALOG_SCHEMA_VERSION: u16 = 9;
 

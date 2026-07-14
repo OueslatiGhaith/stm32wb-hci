@@ -8,6 +8,10 @@ use std::str::FromStr;
 use serde::Deserialize;
 use stm32wb_compliance::{CheckReport, ExtractedEnvelope, FirmwareVersion};
 
+/// TOML exclusion-policy format version.
+///
+/// Format 1 replaced the pipe-delimited `exclusions.policy` format with a
+/// `version` field and an `[[exclusions]]` table for each entry.
 pub(crate) const POLICY_FORMAT_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

@@ -2,6 +2,10 @@
 //!
 //! This host-only crate can run in CI against a local STM32CubeWB checkout;
 //! `syn` is used to make the selected Rust API inventory syntax-aware.
+//!
+//! The normalized catalog and machine-readable check report are independent
+//! versioned contracts. Consumers must validate [`CATALOG_SCHEMA_VERSION`] or
+//! [`REPORT_SCHEMA_VERSION`], respectively, before interpreting either one.
 
 mod c_preprocessor;
 mod catalog;

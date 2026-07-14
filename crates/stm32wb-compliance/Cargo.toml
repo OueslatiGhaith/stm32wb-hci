@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 description = "Firmware API compliance checks for stm32wb-hci"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
