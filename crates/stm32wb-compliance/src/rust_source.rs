@@ -9,12 +9,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use stm32wb_hci_schema::{
-    Completion as SchemaCompletion, VendorCommand, VendorEvents as SchemaVendorEvents,
+    Completion as SchemaCompletion, FieldEncoding, Fields, VariableEncodingShape, VendorCommand,
+    VendorEvents as SchemaVendorEvents,
 };
 use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
 
 use crate::FirmwareVersion;
-use crate::catalog::Envelope;
+use crate::catalog::{Envelope, WireLayout, WireSegment};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
 use crate::rust_cfg::attrs_active;
 
@@ -57,7 +58,7 @@ pub(crate) struct CommandDeclaration {
     pub(crate) code: u16,
     pub(crate) completion: CommandCompletion,
     /// Command parameter bytes, excluding the HCI command header.
-    pub(crate) request: Envelope,
+    pub(crate) request: WireLayout,
     pub(crate) location: PathBuf,
 }
 
@@ -75,7 +76,7 @@ impl CommandDeclaration {
 /// after parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandCompletion {
-    CommandComplete { returns: Envelope },
+    CommandComplete { returns: WireLayout },
     CommandStatus,
 }
 
@@ -84,7 +85,7 @@ pub(crate) struct EventDeclaration {
     pub(crate) name: String,
     pub(crate) code: u16,
     /// Vendor event payload bytes, excluding the two-byte vendor event code.
-    pub(crate) payload: Envelope,
+    pub(crate) payload: WireLayout,
     pub(crate) location: PathBuf,
 }
 
@@ -315,8 +316,8 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
         )
     })?;
 
-    let request = wire_envelope(
-        command.params.min_len(),
+    let request = wire_layout(
+        command.params.fields(),
         command.params.max_len().min(usize::from(u8::MAX)),
     );
     let completion = match command.completion {
@@ -326,7 +327,7 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
                 .as_ref()
                 .expect("the shared parser requires Return for CommandComplete");
             CommandCompletion::CommandComplete {
-                returns: wire_envelope(returns.min_len(), returns.max_len()),
+                returns: wire_layout(returns.fields(), returns.max_len()),
             }
         }
         SchemaCompletion::CommandStatus => CommandCompletion::CommandStatus,
@@ -341,14 +342,96 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
     })
 }
 
-fn wire_envelope(minimum: usize, maximum: usize) -> Envelope {
+fn wire_layout(fields: Option<&Fields>, maximum: usize) -> WireLayout {
+    let segments = fields.map_or_else(Vec::new, |fields| {
+        fields
+            .fields()
+            .iter()
+            .flat_map(field_segments)
+            .collect::<Vec<_>>()
+    });
+    let minimum = fields.map_or(0, Fields::min_len);
     let minimum = u32::try_from(minimum).expect("HCI envelopes fit in u32");
     let maximum = u32::try_from(maximum).expect("HCI envelopes fit in u32");
-    if minimum == maximum {
-        Envelope::fixed(maximum)
-    } else {
-        Envelope::bounded(minimum, maximum)
+    WireLayout::with_envelope(Envelope::bounded(minimum, maximum), segments)
+        .expect("the shared schema's field layout must cover its envelope")
+}
+
+fn field_segments(field: &stm32wb_hci_schema::Field) -> Vec<WireSegment> {
+    match &field.encoding {
+        FieldEncoding::Fixed(encoding) => {
+            vec![WireSegment::fixed(wire_width(encoding.width))]
+        }
+        FieldEncoding::Variable(encoding) => variable_segments(&encoding.shape),
     }
+}
+
+fn variable_segments(shape: &VariableEncodingShape) -> Vec<WireSegment> {
+    match shape {
+        VariableEncodingShape::CountedBytes {
+            count,
+            min_len,
+            max_len,
+        } => vec![
+            WireSegment::fixed(wire_width(count.width.value)),
+            WireSegment::variable(1, wire_width(min_len.value), wire_width(max_len.value)),
+        ],
+        VariableEncodingShape::CountedItems {
+            count,
+            item,
+            min_items,
+            max_items,
+        } => vec![
+            WireSegment::fixed(wire_width(count.width.value)),
+            WireSegment::variable(
+                wire_width(item.width.value),
+                wire_width(min_items.value),
+                wire_width(max_items.value),
+            ),
+        ],
+        VariableEncodingShape::Tagged(tagged) => {
+            let tag_width = tagged.tag.width.value;
+            vec![
+                WireSegment::fixed(wire_width(tag_width)),
+                WireSegment::variable(
+                    1,
+                    wire_width(tagged.min_len.value - tag_width),
+                    wire_width(tagged.max_len.value - tag_width),
+                ),
+            ]
+        }
+        VariableEncodingShape::LengthPrefixedRecords {
+            record_len,
+            length,
+            max_len,
+            ..
+        } => vec![
+            WireSegment::fixed(wire_width(record_len.width.value)),
+            WireSegment::fixed(wire_width(length.width.value)),
+            WireSegment::variable(1, 0, wire_width(max_len.value)),
+        ],
+        VariableEncodingShape::TaggedItems(tagged) => vec![
+            WireSegment::fixed(wire_width(tagged.tag.width.value)),
+            WireSegment::fixed(wire_width(tagged.length.width.value)),
+            WireSegment::variable(1, 0, wire_width(tagged.max_len.value)),
+        ],
+        VariableEncodingShape::TrailingBytes { min_len, max_len } => vec![WireSegment::variable(
+            1,
+            wire_width(min_len.value),
+            wire_width(max_len.value),
+        )],
+        VariableEncodingShape::BitmapItems {
+            item, max_items, ..
+        } => vec![WireSegment::variable(
+            wire_width(item.width.value),
+            0,
+            wire_width(max_items.value),
+        )],
+    }
+}
+
+fn wire_width(value: usize) -> u32 {
+    u32::try_from(value).expect("HCI field widths fit in u32")
 }
 
 fn parse_vendor_event_declarations(
@@ -388,7 +471,7 @@ fn parse_vendor_event_declarations(
         let event = EventDeclaration {
             name: definition.name.to_string(),
             code: definition.code,
-            payload: wire_envelope(definition.payload.min_len(), definition.payload.max_len()),
+            payload: wire_layout(definition.payload.fields(), definition.payload.max_len()),
             location: path.to_path_buf(),
         };
         if let Some(previous) = events.insert(event.code, event.clone()) {
@@ -484,6 +567,13 @@ mod tests {
         collect_commands(std::slice::from_ref(&unit), firmware).unwrap()
     }
 
+    fn assert_complete_envelope(completion: &CommandCompletion, expected: Envelope) {
+        let CommandCompletion::CommandComplete { returns } = completion else {
+            panic!("expected Command Complete");
+        };
+        assert_eq!(returns.envelope(), expected);
+    }
+
     #[test]
     fn keeps_declaration_return_metadata() {
         let source = r#"
@@ -502,12 +592,7 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.code, 0x0003);
-        assert_eq!(
-            declaration.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::fixed(8),
-            }
-        );
+        assert_complete_envelope(&declaration.completion, Envelope::fixed(8));
         assert_eq!(declaration.request, Envelope::fixed(0));
     }
 
@@ -536,12 +621,7 @@ mod tests {
         "#;
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
-        assert_eq!(
-            declaration.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::fixed(6),
-            }
-        );
+        assert_complete_envelope(&declaration.completion, Envelope::fixed(6));
         assert_eq!(declaration.request, Envelope::fixed(3));
     }
 
@@ -560,12 +640,7 @@ mod tests {
         let declaration = declarations.get("GapSetIoCapability").unwrap();
         assert_eq!(declaration.code, 0x085);
         assert_eq!(declaration.request, Envelope::fixed(1));
-        assert_eq!(
-            declaration.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::fixed(0),
-            }
-        );
+        assert_complete_envelope(&declaration.completion, Envelope::fixed(0));
     }
 
     #[test]
@@ -620,12 +695,7 @@ mod tests {
         "#;
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
-        assert_eq!(
-            declaration.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(4, 253),
-            }
-        );
+        assert_complete_envelope(&declaration.completion, Envelope::bounded(4, 253));
         assert_eq!(declaration.request, Envelope::bounded(3, 255));
     }
 
@@ -653,12 +723,7 @@ mod tests {
         let declarations = fixture_commands(source, version(0, 17, 0));
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.request, Envelope::fixed(1));
-        assert_eq!(
-            declaration.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(1, 16),
-            }
-        );
+        assert_complete_envelope(&declaration.completion, Envelope::bounded(1, 16));
     }
 
     #[test]
@@ -1011,12 +1076,7 @@ mod tests {
 
         let update = coverage.commands.get("GapUpdateAdvertisingData").unwrap();
         assert_eq!(update.request, Envelope::bounded(1, 32));
-        assert_eq!(
-            update.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::fixed(0),
-            }
-        );
+        assert_complete_envelope(&update.completion, Envelope::fixed(0));
 
         let discoverable = coverage.commands.get("GapSetLimitedDiscoverable").unwrap();
         // Independent field capacities exceed one HCI command, but the
@@ -1025,12 +1085,7 @@ mod tests {
 
         let read = coverage.commands.get("GattReadHandleValue").unwrap();
         assert_eq!(read.request, Envelope::fixed(6));
-        assert_eq!(
-            read.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(4, 251),
-            }
-        );
+        assert_complete_envelope(&read.completion, Envelope::bounded(4, 251));
 
         assert!(
             coverage
@@ -1047,28 +1102,13 @@ mod tests {
 
         let bonded = coverage.commands.get("GapGetBondedDevices").unwrap();
         // Count plus at most 35 seven-byte address records; status is framing.
-        assert_eq!(
-            bonded.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(1, 246),
-            }
-        );
+        assert_complete_envelope(&bonded.completion, Envelope::bounded(1, 246));
 
         let config = coverage.commands.get("HalReadConfigData").unwrap();
-        assert_eq!(
-            config.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(1, 16),
-            }
-        );
+        assert_complete_envelope(&config.completion, Envelope::bounded(2, 17));
 
         let channels = coverage.commands.get("L2CocConnectConfirm").unwrap();
-        assert_eq!(
-            channels.completion,
-            CommandCompletion::CommandComplete {
-                returns: Envelope::bounded(1, 6),
-            }
-        );
+        assert_complete_envelope(&channels.completion, Envelope::bounded(1, 6));
 
         assert_eq!(coverage.events.len(), 55);
         let gap_procedure = coverage.events.get(&0x0407).unwrap();

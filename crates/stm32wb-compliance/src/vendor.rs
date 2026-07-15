@@ -9,7 +9,8 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
-    CatalogFamily, CatalogSchema, CommandScope, EnvelopeEvidence, EventScope,
+    CatalogFamily, CatalogSchema, CommandScope, Envelope, EventScope, Evidence, WireLayout,
+    WireLayoutEvidence, WireSegment,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -493,7 +494,7 @@ fn event_process_layouts(
     root: Node<'_>,
     source: &str,
     packed_layouts: &PackedLayouts,
-) -> BTreeMap<String, EnvelopeEvidence> {
+) -> BTreeMap<String, WireLayoutEvidence> {
     let mut functions = Vec::new();
     collect_nodes(root, "function_definition", &mut functions);
     functions
@@ -514,7 +515,7 @@ fn event_process_layouts(
                             packed_layouts,
                         )
                     } else {
-                        EnvelopeEvidence::fixed(0)
+                        WireLayoutEvidence::fixed(0)
                     }
                 },
                 |type_name| event_payload_layout(type_name, packed_layouts),
@@ -701,15 +702,95 @@ fn request_layout(
     body: Node<'_>,
     source: &str,
     packed_layouts: &PackedLayouts,
-) -> EnvelopeEvidence {
+) -> WireLayoutEvidence {
+    let envelope = request_envelope(function_declarator, body, source, packed_layouts);
+    let mut type_names = Vec::new();
+    for index in 0..16 {
+        let variable = format!("cp{index}");
+        let Some(type_name) = c_pointer_variable_type(body, source, &variable) else {
+            break;
+        };
+        type_names.push(type_name);
+    }
+    if type_names.is_empty() {
+        return envelope;
+    }
+    let packed_segments = type_names
+        .iter()
+        .map(|type_name| normalized_packed_layout(type_name, packed_layouts))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .and_then(|layouts| {
+            layouts
+                .into_iter()
+                .try_fold(Vec::new(), |mut segments, layout| {
+                    segments.extend(layout.into_segments()?);
+                    Some(segments)
+                })
+        });
+    let Some(packed_segments) = packed_segments else {
+        return envelope;
+    };
+    let packed = WireLayout::from_segments(packed_segments)
+        .expect("resolved packed C fields form a valid wire layout");
+    let type_description = type_names.join(" + ");
+    match envelope {
+        Evidence::Known(layout) => {
+            let declared = layout.envelope();
+            let storage = packed.envelope();
+            if storage.minimum() == declared.minimum() {
+                let safe_envelope = Envelope::bounded(
+                    declared.minimum(),
+                    declared.maximum().min(storage.maximum()),
+                );
+                return WireLayout::with_envelope(
+                    safe_envelope,
+                    packed
+                        .into_segments()
+                        .expect("packed layouts retain their field schema"),
+                )
+                .map(Evidence::Known)
+                .expect("the packed capacity covers the normalized request envelope");
+            }
+            let minimum_delta = declared.minimum().checked_sub(storage.minimum());
+            let maximum_delta = declared.maximum().checked_sub(storage.maximum());
+            if let (Some(minimum_delta), Some(maximum_delta), Some(mut segments)) =
+                (minimum_delta, maximum_delta, packed.into_segments())
+                && minimum_delta == maximum_delta
+            {
+                if minimum_delta != 0 {
+                    segments.push(WireSegment::fixed(minimum_delta));
+                }
+                return WireLayout::with_envelope(declared, segments)
+                    .map(Evidence::Known)
+                    .unwrap_or_else(|| {
+                        Evidence::Unresolved(format!(
+                            "packed C structures `{type_description}` cannot represent rq.clen {declared}"
+                        ))
+                    });
+            }
+            Evidence::Unresolved(format!(
+                "packed C structures `{type_description}` are {storage}, but rq.clen evaluates to {declared}",
+            ))
+        }
+        Evidence::Unresolved(reason) => Evidence::Unresolved(reason),
+    }
+}
+
+fn request_envelope(
+    function_declarator: Node<'_>,
+    body: Node<'_>,
+    source: &str,
+    packed_layouts: &PackedLayouts,
+) -> WireLayoutEvidence {
     let Some(value) = assignment_value(body, source, "rq", "clen") else {
-        return EnvelopeEvidence::fixed(0);
+        return WireLayoutEvidence::fixed(0);
     };
     let value_text = node_text(value, source).trim();
     if let Some((size, end)) = parse_c_integer(value_text, 0)
         && value_text[end..].trim().is_empty()
     {
-        return EnvelopeEvidence::fixed(u32::from(size));
+        return WireLayoutEvidence::fixed(u32::from(size));
     }
     if expression_identifier(value)
         .is_some_and(|identifier| node_text(identifier, source).trim() == "index_input")
@@ -728,7 +809,7 @@ fn request_layout(
                 .iter()
                 .any(|(assignment, _)| nested_in_dynamic_control_flow(*assignment, body))
         {
-            return EnvelopeEvidence::Unresolved(formula);
+            return WireLayoutEvidence::Unresolved(formula);
         }
         let context = RequestExpressionContext {
             function_declarator,
@@ -745,21 +826,21 @@ fn request_layout(
             },
         );
         let Some(total) = total else {
-            return EnvelopeEvidence::Unresolved(formula);
+            return WireLayoutEvidence::Unresolved(formula);
         };
         let Some((minimum, maximum)) = total.envelope() else {
-            return EnvelopeEvidence::Unresolved(formula);
+            return WireLayoutEvidence::Unresolved(formula);
         };
         let (Ok(minimum), Ok(maximum)) = (u32::try_from(minimum), u32::try_from(maximum)) else {
-            return EnvelopeEvidence::Unresolved(formula);
+            return WireLayoutEvidence::Unresolved(formula);
         };
         return if minimum == maximum {
-            EnvelopeEvidence::fixed(maximum)
+            WireLayoutEvidence::fixed(maximum)
         } else {
-            EnvelopeEvidence::known(minimum, maximum)
+            WireLayoutEvidence::known(minimum, maximum)
         };
     }
-    EnvelopeEvidence::Unresolved(value_text.to_owned())
+    WireLayoutEvidence::Unresolved(value_text.to_owned())
 }
 
 fn request_expression_values(
@@ -982,9 +1063,13 @@ fn c_variable_type(body: Node<'_>, source: &str, variable: &str) -> Option<Strin
     })
 }
 
-fn return_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -> EnvelopeEvidence {
+fn return_layout(
+    body: Node<'_>,
+    source: &str,
+    packed_layouts: &PackedLayouts,
+) -> WireLayoutEvidence {
     let Some(value) = assignment_value(body, source, "rq", "rlen") else {
-        return EnvelopeEvidence::Unresolved(
+        return WireLayoutEvidence::Unresolved(
             "CubeWB does not state a Command Complete response length".to_owned(),
         );
     };
@@ -999,69 +1084,112 @@ fn return_layout(body: Node<'_>, source: &str, packed_layouts: &PackedLayouts) -
     {
         return return_layout_for_struct(type_name, packed_layouts);
     }
-    EnvelopeEvidence::Unresolved(value_text.to_owned())
+    WireLayoutEvidence::Unresolved(value_text.to_owned())
 }
 
-fn return_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> EnvelopeEvidence {
+fn return_layout_for_struct(type_name: String, layouts: &PackedLayouts) -> WireLayoutEvidence {
     match normalized_packed_layout(&type_name, layouts) {
-        Ok((minimum, maximum, variable)) => normalized_return_layout(minimum, maximum, variable),
-        Err(reason) => EnvelopeEvidence::Unresolved(reason),
+        Ok(layout) => normalized_struct_return_layout(layout),
+        Err(reason) => WireLayoutEvidence::Unresolved(reason),
     }
 }
 
-fn normalized_return_layout(minimum: u32, maximum: u32, variable: bool) -> EnvelopeEvidence {
+fn normalized_struct_return_layout(layout: WireLayout) -> WireLayoutEvidence {
+    let envelope = layout.envelope();
+    let Some(minimum) = envelope.minimum().checked_sub(1) else {
+        return WireLayoutEvidence::Unresolved(
+            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
+        );
+    };
+    let Some(maximum) = envelope.maximum().checked_sub(1) else {
+        return WireLayoutEvidence::Unresolved(
+            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
+        );
+    };
+    let Some(mut segments) = layout.into_segments() else {
+        return WireLayoutEvidence::Unresolved(
+            "CubeWB Command Complete response structure has no field schema".to_owned(),
+        );
+    };
+    let Some(WireSegment::Fixed { length }) = segments.first_mut() else {
+        return WireLayoutEvidence::Unresolved(
+            "CubeWB Command Complete response does not start with a fixed status byte".to_owned(),
+        );
+    };
+    let Some(remaining) = length.checked_sub(1) else {
+        return WireLayoutEvidence::Unresolved(
+            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
+        );
+    };
+    if remaining == 0 {
+        segments.remove(0);
+    } else {
+        *length = remaining;
+    }
+    WireLayout::with_envelope(Envelope::bounded(minimum, maximum), segments)
+        .map(Evidence::Known)
+        .unwrap_or_else(|| {
+            Evidence::Unresolved(
+                "CubeWB Command Complete response schema is inconsistent after removing status"
+                    .to_owned(),
+            )
+        })
+}
+
+fn normalized_return_layout(minimum: u32, maximum: u32, variable: bool) -> WireLayoutEvidence {
     let Some(minimum) = minimum.checked_sub(1) else {
-        return EnvelopeEvidence::Unresolved(
+        return WireLayoutEvidence::Unresolved(
             "CubeWB Command Complete response cannot contain its status byte".to_owned(),
         );
     };
     let Some(maximum) = maximum.checked_sub(1) else {
-        return EnvelopeEvidence::Unresolved(
+        return WireLayoutEvidence::Unresolved(
             "CubeWB Command Complete response cannot contain its status byte".to_owned(),
         );
     };
     if variable && minimum != maximum {
-        EnvelopeEvidence::known(minimum, maximum)
+        WireLayoutEvidence::known(minimum, maximum)
     } else {
-        EnvelopeEvidence::fixed(maximum)
+        WireLayoutEvidence::fixed(maximum)
     }
 }
 
-fn event_payload_layout(type_name: String, layouts: &PackedLayouts) -> EnvelopeEvidence {
+fn event_payload_layout(type_name: String, layouts: &PackedLayouts) -> WireLayoutEvidence {
     match normalized_packed_layout(&type_name, layouts) {
-        Ok((minimum, maximum, true)) => EnvelopeEvidence::known(minimum, maximum),
-        Ok((_, maximum, false)) => EnvelopeEvidence::fixed(maximum),
-        Err(reason) => EnvelopeEvidence::Unresolved(reason),
+        Ok(layout) => Evidence::Known(layout),
+        Err(reason) => WireLayoutEvidence::Unresolved(reason),
     }
 }
 
 fn normalized_packed_layout(
     type_name: &str,
     layouts: &PackedLayouts,
-) -> Result<(u32, u32, bool), String> {
+) -> Result<WireLayout, String> {
     let layout = layouts
         .get(type_name)
-        .copied()
+        .cloned()
         .flatten()
         .ok_or_else(|| format!("packed C structure `{type_name}` could not be resolved"))?;
     let minimum = u32::try_from(layout.minimum)
         .map_err(|_| format!("packed C structure `{type_name}` minimum exceeds schema range"))?;
     let maximum = u32::try_from(layout.maximum)
         .map_err(|_| format!("packed C structure `{type_name}` maximum exceeds schema range"))?;
-    Ok((minimum, maximum, layout.variable))
+    WireLayout::with_envelope(Envelope::bounded(minimum, maximum), layout.segments)
+        .ok_or_else(|| format!("packed C structure `{type_name}` has an inconsistent schema"))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct PackedEnvelope {
     minimum: usize,
     maximum: usize,
     variable: bool,
+    segments: Vec<WireSegment>,
 }
 
 type PackedLayouts = BTreeMap<String, Option<PackedEnvelope>>;
 
 fn fixed_packed_size(layouts: &PackedLayouts, type_name: &str) -> Option<usize> {
-    let layout = layouts.get(type_name).copied().flatten()?;
+    let layout = layouts.get(type_name).cloned().flatten()?;
     (!layout.variable && layout.minimum == layout.maximum).then_some(layout.maximum)
 }
 
@@ -1134,7 +1262,7 @@ fn parse_packed_struct_envelopes(source: &str) -> PackedLayouts {
             let Some(layout) = packed_struct_envelope(fields, &layouts) else {
                 continue;
             };
-            if layouts.get(&definition.name) != Some(&Some(layout)) {
+            if layouts.get(&definition.name) != Some(&Some(layout.clone())) {
                 layouts.insert(definition.name.clone(), Some(layout));
                 changed = true;
             }
@@ -1201,15 +1329,17 @@ fn packed_struct_envelope(
         minimum: 0,
         maximum: 0,
         variable: false,
+        segments: Vec::new(),
     };
     for field in fields {
         let element = primitive_c_size(&field.type_name).map_or_else(
-            || known.get(&field.type_name).copied().flatten(),
+            || known.get(&field.type_name).cloned().flatten(),
             |size| {
                 Some(PackedEnvelope {
                     minimum: size,
                     maximum: size,
                     variable: false,
+                    segments: vec![WireSegment::fixed(u32::try_from(size).ok()?)],
                 })
             },
         )?;
@@ -1222,6 +1352,18 @@ fn packed_struct_envelope(
                     .maximum
                     .checked_add(element.maximum.checked_mul(*count)?)?;
                 layout.variable |= element.variable;
+                if element.variable {
+                    for _ in 0..*count {
+                        layout.segments.extend(element.segments.iter().cloned());
+                    }
+                } else {
+                    let length = element.maximum.checked_mul(*count)?;
+                    if length != 0 {
+                        layout
+                            .segments
+                            .push(WireSegment::fixed(u32::try_from(length).ok()?));
+                    }
+                }
             }
             PackedMultiplicity::Capacity(expression) => {
                 if element.variable || element.minimum != element.maximum {
@@ -1232,9 +1374,15 @@ fn packed_struct_envelope(
                     .maximum
                     .checked_add(element.maximum.checked_mul(count)?)?;
                 layout.variable = true;
+                layout.segments.push(WireSegment::variable(
+                    u32::try_from(element.maximum).ok()?,
+                    0,
+                    u32::try_from(count).ok()?,
+                ));
             }
         }
     }
+    layout.segments = WireLayout::from_segments(layout.segments)?.into_segments()?;
     Some(layout)
 }
 
@@ -1333,7 +1481,7 @@ impl CapacityExpressionParser<'_> {
         (self.input.get(self.index) == Some(&b')')).then_some(())?;
         self.index += 1;
         primitive_c_size(&type_name).or_else(|| {
-            let layout = self.known.get(&type_name).copied().flatten()?;
+            let layout = self.known.get(&type_name).cloned().flatten()?;
             (!layout.variable && layout.minimum == layout.maximum).then_some(layout.maximum)
         })
     }
@@ -1536,7 +1684,14 @@ mod tests {
             &parse_packed_struct_envelopes(types),
         )
         .unwrap();
-        assert_eq!(commands[0].request, EnvelopeEvidence::known(2, 255));
+        assert_eq!(commands[0].request.bounds(), Some((2, 255)));
+        let Evidence::Known(layout) = &commands[0].request else {
+            panic!("expected resolved request layout");
+        };
+        assert_eq!(
+            layout.segments(),
+            Some([WireSegment::fixed(2), WireSegment::variable(1, 0, 253),].as_slice())
+        );
     }
 
     #[test]
@@ -1579,7 +1734,21 @@ mod tests {
             &parse_packed_struct_envelopes(types),
         )
         .unwrap();
-        assert_eq!(commands[0].request, EnvelopeEvidence::known(2, 254));
+        assert_eq!(commands[0].request.bounds(), Some((2, 254)));
+        let Evidence::Known(layout) = &commands[0].request else {
+            panic!("expected resolved request layout");
+        };
+        assert_eq!(
+            layout.segments(),
+            Some(
+                [
+                    WireSegment::fixed(1),
+                    WireSegment::variable(7, 0, 36),
+                    WireSegment::fixed(1),
+                ]
+                .as_slice()
+            )
+        );
     }
 
     #[test]
@@ -1616,8 +1785,8 @@ mod tests {
 
         let commands =
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
-        assert_eq!(commands[0].request, EnvelopeEvidence::known(4, 18));
-        assert_eq!(commands[1].request, EnvelopeEvidence::known(4, 18));
+        assert_eq!(commands[0].request, WireLayoutEvidence::known(4, 18));
+        assert_eq!(commands[1].request, WireLayoutEvidence::known(4, 18));
     }
 
     #[test]
@@ -1638,7 +1807,7 @@ mod tests {
 
         let commands =
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
-        assert_eq!(commands[0].request, EnvelopeEvidence::known(13, 255));
+        assert_eq!(commands[0].request, WireLayoutEvidence::known(13, 255));
     }
 
     #[test]
@@ -1658,7 +1827,7 @@ mod tests {
             extract_command_metadata(source, "fixture.c", CommandScope::VendorAci).unwrap();
         assert_eq!(
             commands[0].request,
-            EnvelopeEvidence::Unresolved("encoded_size(Value)".to_owned())
+            WireLayoutEvidence::Unresolved("encoded_size(Value)".to_owned())
         );
     }
 
@@ -1744,7 +1913,7 @@ mod tests {
         assert!(
             commands
                 .iter()
-                .all(|command| matches!(command.request, EnvelopeEvidence::Unresolved(_)))
+                .all(|command| matches!(command.request, WireLayoutEvidence::Unresolved(_)))
         );
     }
 
@@ -1857,7 +2026,7 @@ mod tests {
         assert!(matches!(
             &vendor[0].kind,
             CatalogEventKind::VendorAci {
-                payload: EnvelopeEvidence::Unresolved(reason)
+                payload: WireLayoutEvidence::Unresolved(reason)
             } if reason.contains("vendor_rp0")
         ));
     }
@@ -1928,14 +2097,14 @@ mod tests {
 
         let returns = ["fixed_rp0", "hal_rp0", "gap_rp0", "gatt_rp0", "l2cap_rp0"]
             .map(|type_name| return_layout_for_struct(type_name.to_owned(), &layouts));
-        assert_eq!(returns[0], EnvelopeEvidence::fixed(6));
-        assert_eq!(returns[1], EnvelopeEvidence::known(1, 251));
-        assert_eq!(returns[2], EnvelopeEvidence::known(1, 246));
-        assert_eq!(returns[3], EnvelopeEvidence::known(4, 251));
-        assert_eq!(returns[4], EnvelopeEvidence::known(1, 251));
+        assert_eq!(returns[0].bounds(), Some((6, 6)));
+        assert_eq!(returns[1].bounds(), Some((1, 251)));
+        assert_eq!(returns[2].bounds(), Some((1, 246)));
+        assert_eq!(returns[3].bounds(), Some((4, 251)));
+        assert_eq!(returns[4].bounds(), Some((1, 251)));
         assert!(matches!(
             return_layout_for_struct("missing_rp0".to_owned(), &layouts),
-            EnvelopeEvidence::Unresolved(reason) if reason.contains("missing_rp0")
+            WireLayoutEvidence::Unresolved(reason) if reason.contains("missing_rp0")
         ));
     }
 
@@ -1983,6 +2152,7 @@ mod tests {
                 minimum: 3,
                 maximum: 251,
                 variable: true,
+                segments: vec![WireSegment::fixed(3), WireSegment::variable(4, 0, 62),],
             }))
         );
     }

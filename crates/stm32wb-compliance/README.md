@@ -7,11 +7,13 @@ with this repository and do not carry compatibility version fields.
 
 ## Catalog and policy
 
-Known wire lengths use `Evidence<Envelope>`. `Envelope` has private bounds and
-can only be constructed when `minimum <= maximum`; unresolved source
-expressions remain `Evidence::Unresolved(String)`. Catalog construction and
-deserialization also reject duplicate identities, out-of-range wire codes, and
-inconsistent names.
+Known payloads use `Evidence<WireLayout>`. A layout retains both its validated
+length envelope and, when the generated source proves it, the ordered fixed and
+variable wire segments. Variable segments preserve element width and
+cardinality, so equal byte ranges no longer erase different field structures.
+Unresolved source expressions remain `Evidence::Unresolved(String)`. Catalog
+construction and deserialization also reject inconsistent layouts, duplicate
+identities, out-of-range wire codes, and inconsistent names.
 
 The checked-in [`exclusions.toml`](exclusions.toml) uses one `[[exclusions]]`
 table for each policy entry:

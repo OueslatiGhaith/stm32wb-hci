@@ -233,7 +233,7 @@ fn same_event_shape(left: &CatalogEvent, right: &CatalogEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CatalogCommandKind, CatalogCompletion, CatalogEventKind, EnvelopeEvidence};
+    use crate::{CatalogCommandKind, CatalogCompletion, CatalogEventKind, WireLayoutEvidence};
 
     fn command(ocf: u16, name: &str) -> CatalogCommand {
         CatalogCommand {
@@ -242,16 +242,16 @@ mod tests {
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
             completion: CatalogCompletion::CommandComplete {
-                returns: EnvelopeEvidence::fixed(0),
+                returns: WireLayoutEvidence::fixed(0),
             },
-            request: EnvelopeEvidence::fixed(0),
+            request: WireLayoutEvidence::fixed(0),
         }
     }
 
     fn event(code: u16, name: &str) -> CatalogEvent {
         CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: EnvelopeEvidence::fixed(0),
+                payload: WireLayoutEvidence::fixed(0),
             },
             code,
             name: name.to_owned(),
@@ -280,7 +280,7 @@ mod tests {
         moved.source_offset = 99;
         new.commands = vec![moved, command(3, "added")];
         new.commands[0].completion = CatalogCompletion::CommandComplete {
-            returns: EnvelopeEvidence::fixed(3),
+            returns: WireLayoutEvidence::fixed(3),
         };
         new.events = vec![event(0x400, "renamed_event"), event(0x402, "added_event")];
         new.events[0].source_name = "new_events.c".to_owned();

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::Deserialize;
-use stm32wb_compliance::{CheckReport, EnvelopeEvidence, FirmwareVersion};
+use stm32wb_compliance::{CheckReport, FirmwareVersion, WireLayoutEvidence};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CoverageKind {
@@ -53,7 +53,7 @@ struct PolicyEntry {
     kind: CoverageKind,
     code: u16,
     selector: FirmwareSelector,
-    external_event_payload: Option<EnvelopeEvidence>,
+    external_event_payload: Option<WireLayoutEvidence>,
     reason: String,
     index: usize,
 }
@@ -274,7 +274,7 @@ fn validate_event_payload(
     path: &Path,
     index: usize,
     payload: PayloadDocument,
-) -> Result<EnvelopeEvidence, String> {
+) -> Result<WireLayoutEvidence, String> {
     const MAX_VENDOR_EVENT_PAYLOAD: u32 = u8::MAX as u32 - 2;
 
     if payload.minimum > payload.maximum {
@@ -294,7 +294,7 @@ fn validate_event_payload(
             ),
         ));
     }
-    Ok(EnvelopeEvidence::known(payload.minimum, payload.maximum))
+    Ok(WireLayoutEvidence::known(payload.minimum, payload.maximum))
 }
 
 fn policy_error(path: &Path, index: usize, message: &str) -> String {
@@ -305,7 +305,7 @@ fn policy_error(path: &Path, index: usize, message: &str) -> String {
 pub(crate) struct ActiveExclusions {
     pub(crate) commands: BTreeMap<u16, String>,
     pub(crate) events: BTreeMap<u16, String>,
-    pub(crate) external_event_payloads: BTreeMap<u16, EnvelopeEvidence>,
+    pub(crate) external_event_payloads: BTreeMap<u16, WireLayoutEvidence>,
 }
 
 impl ActiveExclusions {
@@ -422,11 +422,11 @@ mod tests {
         );
         assert_eq!(
             old.external_event_payloads.get(&0x9200),
-            Some(&EnvelopeEvidence::fixed(1))
+            Some(&WireLayoutEvidence::fixed(1))
         );
         assert_eq!(
             old.external_event_payloads.get(&0x9201),
-            Some(&EnvelopeEvidence::known(1, 3))
+            Some(&WireLayoutEvidence::known(1, 3))
         );
         assert_eq!(old.commands.get(&1), Some(&"legacy command".to_owned()));
 

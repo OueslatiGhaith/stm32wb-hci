@@ -167,7 +167,8 @@ stm32wb_hci_macros::vendor_cmd! {
         Completion = CommandComplete;
         Return = HalReadConfigDataReturn {
             value: BoundedBytes<16> => {
-                kind: trailing_bytes,
+                kind: counted_bytes,
+                count: u8 => 1,
                 min_len: 1,
                 max_len: 16,
             },

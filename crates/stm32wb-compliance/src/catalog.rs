@@ -127,20 +127,194 @@ pub enum Evidence<T> {
 }
 
 /// Extracted evidence for a validated wire envelope.
-pub type EnvelopeEvidence = Evidence<Envelope>;
+pub type WireLayoutEvidence = Evidence<WireLayout>;
 
-impl Evidence<Envelope> {
+/// One ordered component of an encoded payload.
+///
+/// Keeping fixed fields separate preserves field boundaries. Variable fields
+/// retain their element width and valid cardinality instead of being flattened
+/// into a single minimum/maximum byte count.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum WireSegment {
+    Fixed {
+        length: u32,
+    },
+    Variable {
+        element_width: u32,
+        minimum_elements: u32,
+        maximum_elements: u32,
+    },
+}
+
+impl WireSegment {
     pub const fn fixed(length: u32) -> Self {
-        Self::Known(Envelope::fixed(length))
+        Self::Fixed { length }
     }
 
-    pub const fn known(minimum: u32, maximum: u32) -> Self {
-        Self::Known(Envelope::bounded(minimum, maximum))
+    pub const fn variable(
+        element_width: u32,
+        minimum_elements: u32,
+        maximum_elements: u32,
+    ) -> Self {
+        assert!(
+            element_width > 0,
+            "variable wire elements must not be empty"
+        );
+        assert!(
+            minimum_elements <= maximum_elements,
+            "variable wire cardinality is inverted"
+        );
+        Self::Variable {
+            element_width,
+            minimum_elements,
+            maximum_elements,
+        }
+    }
+
+    const fn minimum_length(&self) -> Option<u32> {
+        match self {
+            Self::Fixed { length } => Some(*length),
+            Self::Variable {
+                element_width,
+                minimum_elements,
+                ..
+            } => element_width.checked_mul(*minimum_elements),
+        }
+    }
+
+    const fn maximum_length(&self) -> Option<u32> {
+        match self {
+            Self::Fixed { length } => Some(*length),
+            Self::Variable {
+                element_width,
+                maximum_elements,
+                ..
+            } => element_width.checked_mul(*maximum_elements),
+        }
+    }
+}
+
+/// Complete ordered storage schema for one HCI parameter payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireLayout {
+    envelope: Envelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    segments: Option<Vec<WireSegment>>,
+}
+
+impl WireLayout {
+    pub fn from_segments(segments: Vec<WireSegment>) -> Option<Self> {
+        let segments = normalize_segments(segments)?;
+        let minimum = segments.iter().try_fold(0_u32, |total, segment| {
+            total.checked_add(segment.minimum_length()?)
+        })?;
+        let maximum = segments.iter().try_fold(0_u32, |total, segment| {
+            total.checked_add(segment.maximum_length()?)
+        })?;
+        Some(Self {
+            envelope: Envelope::bounded(minimum, maximum),
+            segments: Some(segments),
+        })
+    }
+
+    pub fn fixed(length: u32) -> Self {
+        Self {
+            envelope: Envelope::fixed(length),
+            segments: None,
+        }
+    }
+
+    pub fn with_envelope(envelope: Envelope, segments: Vec<WireSegment>) -> Option<Self> {
+        let storage = Self::from_segments(segments)?;
+        (storage.envelope.minimum() == envelope.minimum()
+            && storage.envelope.maximum() >= envelope.maximum())
+        .then_some(Self {
+            envelope,
+            segments: storage.segments,
+        })
+    }
+
+    pub fn byte_capacity(minimum: u32, maximum: u32) -> Self {
+        assert!(minimum <= maximum, "wire envelope minimum exceeds maximum");
+        Self {
+            envelope: Envelope::bounded(minimum, maximum),
+            segments: None,
+        }
+    }
+
+    pub const fn envelope(&self) -> Envelope {
+        self.envelope
+    }
+
+    pub fn segments(&self) -> Option<&[WireSegment]> {
+        self.segments.as_deref()
+    }
+
+    pub fn into_segments(self) -> Option<Vec<WireSegment>> {
+        self.segments
+    }
+
+    fn validate(&self) -> bool {
+        let Some(segments) = &self.segments else {
+            return true;
+        };
+        if segments.iter().any(|segment| match segment {
+            WireSegment::Fixed { .. } => false,
+            WireSegment::Variable {
+                element_width,
+                minimum_elements,
+                maximum_elements,
+            } => *element_width == 0 || minimum_elements > maximum_elements,
+        }) {
+            return false;
+        }
+        Self::from_segments(segments.clone()).is_some_and(|storage| {
+            storage.envelope.minimum() == self.envelope.minimum()
+                && storage.envelope.maximum() >= self.envelope.maximum()
+        })
+    }
+}
+
+fn normalize_segments(segments: Vec<WireSegment>) -> Option<Vec<WireSegment>> {
+    let mut normalized = Vec::<WireSegment>::new();
+    for segment in segments {
+        match (normalized.last_mut(), segment) {
+            (Some(WireSegment::Fixed { length: previous }), WireSegment::Fixed { length }) => {
+                *previous = previous.checked_add(length)?
+            }
+            (_, WireSegment::Fixed { length: 0 }) => {}
+            (_, segment) => normalized.push(segment),
+        }
+    }
+    Some(normalized)
+}
+
+impl PartialEq<Envelope> for WireLayout {
+    fn eq(&self, other: &Envelope) -> bool {
+        self.envelope == *other
+    }
+}
+
+impl PartialEq<WireLayout> for Envelope {
+    fn eq(&self, other: &WireLayout) -> bool {
+        *self == other.envelope
+    }
+}
+
+impl Evidence<WireLayout> {
+    pub fn fixed(length: u32) -> Self {
+        Self::Known(WireLayout::fixed(length))
+    }
+
+    pub fn known(minimum: u32, maximum: u32) -> Self {
+        Self::Known(WireLayout::byte_capacity(minimum, maximum))
     }
 
     pub const fn bounds(&self) -> Option<(u32, u32)> {
         match self {
-            Self::Known(envelope) => Some(envelope.bounds()),
+            Self::Known(layout) => Some(layout.envelope().bounds()),
             Self::Unresolved(_) => None,
         }
     }
@@ -155,7 +329,7 @@ impl Evidence<Envelope> {
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
 pub enum CatalogCompletion {
     CommandComplete {
-        returns: Evidence<Envelope>,
+        returns: WireLayoutEvidence,
     },
     CommandStatus {},
     Event {
@@ -172,7 +346,7 @@ pub enum CatalogCompletion {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "scope")]
 pub enum CatalogEventKind {
-    VendorAci { payload: Evidence<Envelope> },
+    VendorAci { payload: WireLayoutEvidence },
     StandardHci,
     LeMeta,
 }
@@ -233,7 +407,7 @@ impl CatalogEventKind {
         }
     }
 
-    pub const fn vendor_payload(&self) -> Option<&Evidence<Envelope>> {
+    pub const fn vendor_payload(&self) -> Option<&WireLayoutEvidence> {
         match self {
             Self::VendorAci { payload } => Some(payload),
             Self::StandardHci | Self::LeMeta => None,
@@ -250,7 +424,7 @@ pub struct CatalogCommand {
     pub source_name: String,
     pub source_offset: u32,
     pub completion: CatalogCompletion,
-    pub request: Evidence<Envelope>,
+    pub request: WireLayoutEvidence,
 }
 
 impl CatalogCommand {
@@ -291,7 +465,7 @@ impl CatalogEvent {
         self.kind.scope()
     }
 
-    pub const fn vendor_payload(&self) -> Option<&Evidence<Envelope>> {
+    pub const fn vendor_payload(&self) -> Option<&WireLayoutEvidence> {
         self.kind.vendor_payload()
     }
 }
@@ -532,11 +706,14 @@ impl CatalogSchema {
     }
 }
 
-fn validate_evidence(evidence: &Evidence<Envelope>, label: &str, name: &str) -> Result<(), String> {
-    if let Evidence::Known(envelope) = evidence
-        && envelope.minimum() > envelope.maximum()
-    {
-        return Err(format!("inverted {label} envelope for {name}"));
+fn validate_evidence(evidence: &WireLayoutEvidence, label: &str, name: &str) -> Result<(), String> {
+    if let Evidence::Known(layout) = evidence {
+        if layout.envelope().minimum() > layout.envelope().maximum() {
+            return Err(format!("inverted {label} envelope for {name}"));
+        }
+        if !layout.validate() {
+            return Err(format!("inconsistent {label} wire schema for {name}"));
+        }
     }
     Ok(())
 }
@@ -570,9 +747,9 @@ mod tests {
                 source_name: "z.c".to_owned(),
                 source_offset: 9,
                 completion: CatalogCompletion::CommandComplete {
-                    returns: EnvelopeEvidence::known(1, 251),
+                    returns: WireLayoutEvidence::known(1, 251),
                 },
-                request: EnvelopeEvidence::fixed(0),
+                request: WireLayoutEvidence::fixed(0),
             },
             CatalogCommand {
                 kind: CatalogCommandKind::VendorAci { ocf: 1 },
@@ -580,12 +757,12 @@ mod tests {
                 source_name: "a.c".to_owned(),
                 source_offset: 4,
                 completion: CatalogCompletion::CommandStatus {},
-                request: EnvelopeEvidence::known(3, 255),
+                request: WireLayoutEvidence::known(3, 255),
             },
         ]);
         schema.events.push(CatalogEvent {
             kind: CatalogEventKind::VendorAci {
-                payload: EnvelopeEvidence::fixed(0),
+                payload: WireLayoutEvidence::fixed(0),
             },
             code: 0x400,
             name: "gap_event".to_owned(),
@@ -620,8 +797,10 @@ mod tests {
             serde_json::json!({
                 "kind": "known",
                 "value": {
-                    "minimum": 3,
-                    "maximum": 255,
+                    "envelope": {
+                        "minimum": 3,
+                        "maximum": 255,
+                    },
                 },
             })
         );
@@ -630,8 +809,10 @@ mod tests {
             serde_json::json!({
                 "kind": "known",
                 "value": {
-                    "minimum": 1,
-                    "maximum": 251,
+                    "envelope": {
+                        "minimum": 1,
+                        "maximum": 251,
+                    },
                 },
             })
         );
@@ -642,8 +823,10 @@ mod tests {
             serde_json::json!({
                 "kind": "known",
                 "value": {
-                    "minimum": 0,
-                    "maximum": 0,
+                    "envelope": {
+                        "minimum": 0,
+                        "maximum": 0,
+                    },
                 },
             })
         );
@@ -652,7 +835,8 @@ mod tests {
             schema
         );
         assert_eq!(
-            serde_json::to_value(EnvelopeEvidence::Unresolved("computed_size".to_owned())).unwrap(),
+            serde_json::to_value(WireLayoutEvidence::Unresolved("computed_size".to_owned()))
+                .unwrap(),
             serde_json::json!({
                 "kind": "unresolved",
                 "value": "computed_size",
@@ -685,9 +869,9 @@ mod tests {
             source_name: "fixture.c".to_owned(),
             source_offset: 0,
             completion: CatalogCompletion::CommandComplete {
-                returns: EnvelopeEvidence::fixed(0),
+                returns: WireLayoutEvidence::fixed(0),
             },
-            request: EnvelopeEvidence::fixed(0),
+            request: WireLayoutEvidence::fixed(0),
         };
         let event = |kind, code, name: &str| CatalogEvent {
             kind,

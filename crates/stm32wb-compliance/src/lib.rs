@@ -19,7 +19,8 @@ mod wire;
 
 pub use catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
-    CatalogFamily, CatalogSchema, CommandScope, Envelope, EnvelopeEvidence, EventScope, Evidence,
+    CatalogFamily, CatalogSchema, CommandScope, Envelope, EventScope, Evidence, WireLayout,
+    WireLayoutEvidence, WireSegment,
 };
 pub use diff::{
     CatalogIdentity, ChangedCommand, ChangedEvent, CommandChanges, CommandKey, EventChanges,
@@ -49,7 +50,7 @@ pub struct CheckOptions {
     pub excluded_events: BTreeMap<u16, String>,
     /// Payload layouts supplied by the checked-in policy for transport-only
     /// events which do not exist in CubeWB's generated event table.
-    pub external_event_payloads: BTreeMap<u16, EnvelopeEvidence>,
+    pub external_event_payloads: BTreeMap<u16, WireLayoutEvidence>,
 }
 
 impl CheckOptions {
