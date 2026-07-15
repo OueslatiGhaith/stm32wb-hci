@@ -21,9 +21,7 @@ pub struct CheckReportJson<'a> {
     extraneous_commands: Vec<CoverageDifferenceJson<'a>>,
     missing_events: Vec<CoverageDifferenceJson<'a>>,
     extraneous_events: Vec<CoverageDifferenceJson<'a>>,
-    missing_standard_hci_commands: Vec<CoverageDifferenceJson<'a>>,
-    missing_standard_hci_events: Vec<CoverageDifferenceJson<'a>>,
-    missing_standard_hci_le_meta_events: Vec<CoverageDifferenceJson<'a>>,
+    unsupported_standard_hci_commands: Vec<CoverageDifferenceJson<'a>>,
     wire: WireReportJson<'a>,
     excluded_commands: Vec<ExcludedCodeJson<'a>>,
     excluded_events: Vec<ExcludedCodeJson<'a>>,
@@ -40,12 +38,8 @@ impl<'a> From<&'a CheckReport> for CheckReportJson<'a> {
             extraneous_commands: coverage_differences(report.extraneous_commands()),
             missing_events: coverage_differences(report.missing_events()),
             extraneous_events: coverage_differences(report.extraneous_events()),
-            missing_standard_hci_commands: coverage_differences(
-                report.missing_standard_hci_commands(),
-            ),
-            missing_standard_hci_events: coverage_differences(report.missing_standard_hci_events()),
-            missing_standard_hci_le_meta_events: coverage_differences(
-                report.missing_standard_hci_le_meta_events(),
+            unsupported_standard_hci_commands: coverage_differences(
+                report.unsupported_standard_hci_commands(),
             ),
             wire: WireReportJson::from(report.wire()),
             excluded_commands: excluded_codes(report.excluded_commands()),
@@ -76,9 +70,7 @@ struct CatalogCounts {
     standard_hci_command_opcodes: usize,
     standard_hci_event_codes: usize,
     standard_hci_le_meta_event_codes: usize,
-    standard_hci_provider_command_opcodes: usize,
-    standard_hci_provider_event_codes: usize,
-    standard_hci_provider_le_meta_event_codes: usize,
+    local_standard_hci_command_opcodes: usize,
 }
 
 impl From<&CheckReport> for CatalogCounts {
@@ -91,12 +83,7 @@ impl From<&CheckReport> for CatalogCounts {
             standard_hci_command_opcodes: report.standard_hci().commands.len(),
             standard_hci_event_codes: report.standard_hci().events.len(),
             standard_hci_le_meta_event_codes: report.standard_hci().le_meta_events.len(),
-            standard_hci_provider_command_opcodes: report.standard_hci_provider().commands.len(),
-            standard_hci_provider_event_codes: report.standard_hci_provider().events.len(),
-            standard_hci_provider_le_meta_event_codes: report
-                .standard_hci_provider()
-                .le_meta_events
-                .len(),
+            local_standard_hci_command_opcodes: report.local_standard_hci_commands().len(),
         }
     }
 }

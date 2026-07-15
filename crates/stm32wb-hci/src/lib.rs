@@ -30,10 +30,8 @@
 /// crate.
 ///
 /// STM32WB-specific APIs live under [`vendor`].  Re-exporting the underlying
-/// standard-HCI crate makes the complete standard command/event surface
-/// available to callers and lets the firmware compliance checker verify that
-/// STM32CubeWB's `ble_hci_le.c` surface is backed by the exact dependency this
-/// crate ships with.
+/// standard-HCI crate makes its command/event surface available to callers.
+/// Firmware compliance covers only APIs implemented directly by this crate.
 pub use bt_hci;
 
 // This must go FIRST so that all the other modules see its macros.

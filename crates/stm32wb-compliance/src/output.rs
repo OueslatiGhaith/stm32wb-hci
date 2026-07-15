@@ -446,7 +446,7 @@ mod tests {
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
-            StandardHciCoverage::default(),
+            Vec::new(),
             WireReport::default(),
             Default::default(),
             Default::default(),

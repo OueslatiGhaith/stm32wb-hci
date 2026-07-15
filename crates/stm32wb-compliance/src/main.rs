@@ -543,7 +543,7 @@ mod tests {
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
-            StandardHciCoverage::default(),
+            Vec::new(),
             WireReport {
                 checked: 0,
                 differences: Vec::new(),

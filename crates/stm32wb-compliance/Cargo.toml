@@ -7,7 +7,6 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-cargo_metadata.workspace = true
 clap = { version = "4", features = ["derive"] }
 proc-macro2.workspace = true
 serde = { version = "1", features = ["derive"] }

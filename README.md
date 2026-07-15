@@ -85,8 +85,8 @@ are all included in the active API inventory. It compares:
 
 - vendor ACI command IDs and vendor-event IDs from CubeWB's generated `ble_*_aci.c` and
   `ble_events.c` files;
-- standard HCI command opcodes, ordinary events, and LE Meta subevents from `ble_hci_le.c` and
-  `ble_events.c` against the crate's public `bt_hci` re-export plus STM32WB command extensions;
+- standard HCI command opcodes declared directly in `src/standard.rs` against the selected
+  CubeWB catalog; APIs inherited from `bt-hci` are intentionally outside compliance scope;
 - vendor command and event payload envelopes: exact and bounded request, return, and event sizes,
   plus Command Complete versus Command Status completion. Command returns are normalized without
   the transport status byte, matching the declarative `Return` schema.
