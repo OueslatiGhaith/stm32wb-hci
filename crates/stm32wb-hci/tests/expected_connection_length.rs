@@ -22,6 +22,21 @@ fn valid() {
             .unwrap();
     let bytes: [u8; 4] = encode(&range);
     assert_eq!(bytes, [0x40, 0x01, 0x20, 0x03]);
+    assert_eq!(
+        range.range(),
+        (Duration::from_millis(200), Duration::from_millis(500))
+    );
+    assert_eq!(core::mem::size_of::<ExpectedConnectionLength>(), 4);
+}
+
+#[test]
+fn rejects_durations_between_hci_ticks() {
+    let value = Duration::from_micros(200_001);
+    let error = ExpectedConnectionLength::new(value, Duration::from_millis(500)).unwrap_err();
+    assert_eq!(
+        error,
+        ExpectedConnectionLengthError::NotRepresentable(value)
+    );
 }
 
 #[test]

@@ -11,17 +11,6 @@ macro_rules! assert {
     };
 }
 
-macro_rules! assert_eq {
-    ($($x:tt)*) => {
-        {
-            #[cfg(not(feature = "defmt"))]
-            ::core::assert_eq!($($x)*);
-            #[cfg(feature = "defmt")]
-            ::defmt::assert_eq!($($x)*);
-        }
-    };
-}
-
 macro_rules! debug_assert_eq {
     ($($x:tt)*) => {
         {

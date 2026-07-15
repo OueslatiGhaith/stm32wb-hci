@@ -23,6 +23,14 @@ fn valid() {
         .unwrap();
     assert_eq!(scan_window.interval(), Duration::from_millis(10));
     assert_eq!(scan_window.window(), Duration::from_millis(5));
+    assert_eq!(core::mem::size_of::<ScanWindow>(), 4);
+}
+
+#[test]
+fn rejects_durations_between_hci_ticks() {
+    let value = Duration::from_micros(10_001);
+    let error = ScanWindow::start_every(value).err().unwrap();
+    assert_eq!(error, ScanWindowError::NotRepresentable(value));
 }
 
 #[test]

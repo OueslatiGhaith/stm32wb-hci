@@ -3,20 +3,28 @@
 use core::cmp;
 use core::time::Duration;
 
+use super::time_units::{duration_from_ticks, duration_to_u16_ticks};
+
+const INTERVAL_QUANTUM_MICROS: u64 = 1_250;
+const TIMEOUT_QUANTUM_MICROS: u64 = 10_000;
+
 /// Define a connection interval range with its latency and supervision timeout. This value is
 /// passed to the controller, which determines the [actual connection interval](crate::types::FixedConnectionInterval).
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectionInterval {
-    interval_: (Duration, Duration),
+    interval_: (u16, u16),
     conn_latency_: u16,
-    supervision_timeout_: Duration,
+    supervision_timeout_: u16,
 }
 
 impl ConnectionInterval {
     /// Returns the connection interval.
     pub fn interval(&self) -> (Duration, Duration) {
-        self.interval_
+        (
+            interval_duration(self.interval_.0),
+            interval_duration(self.interval_.1),
+        )
     }
 
     /// Returns the connection latency, in number of events.
@@ -26,7 +34,7 @@ impl ConnectionInterval {
 
     /// Returns the supervision timeout.
     pub fn supervision_timeout(&self) -> Duration {
-        self.supervision_timeout_
+        timeout_duration(self.supervision_timeout_)
     }
 
     /// Deserializes the connection interval from the given byte buffer.
@@ -61,42 +69,32 @@ impl ConnectionInterval {
         latency: u16,
         timeout: u16,
     ) -> Result<Self, ConnectionIntervalError> {
-        // Do the error checking with the standard connection interval builder. The min and max of
-        // the interval range are allowed to be equal.
-        let interval_min = Duration::from_micros(1_250) * u32::from(interval_min);
-        let interval_max = Duration::from_micros(1_250) * u32::from(interval_max);
-        let timeout = Duration::from_millis(10) * u32::from(timeout);
         ConnectionIntervalBuilder::new()
-            .with_range(interval_min, interval_max)
+            .with_range(
+                interval_duration(interval_min),
+                interval_duration(interval_max),
+            )
             .with_latency(latency)
-            .with_supervision_timeout(timeout)
+            .with_supervision_timeout(timeout_duration(timeout))
             .build()
-    }
-
-    fn interval_as_u16(d: Duration) -> u16 {
-        // T ms = N * 1.25 ms
-        // N = T / 1.25 ms
-        //   = T / (5/4) ms
-        //   = 4 * T ms / 5 ms
-        //
-        // Note: 1000 * 4 / 5 = 800
-        ((800 * d.as_secs()) as u32 + 4 * d.subsec_millis() / 5) as u16
-    }
-
-    fn timeout_as_u16(d: Duration) -> u16 {
-        // T ms = N * 10 ms
-        // N = T ms / 10 ms
-        ((100 * d.as_secs()) as u32 + d.subsec_millis() / 10) as u16
     }
 
     fn hci_fields(&self) -> (u16, u16, u16, u16) {
         (
-            Self::interval_as_u16(self.interval_.0),
-            Self::interval_as_u16(self.interval_.1),
+            self.interval_.0,
+            self.interval_.1,
             self.conn_latency_,
-            Self::timeout_as_u16(self.supervision_timeout_),
+            self.supervision_timeout_,
         )
     }
+}
+
+fn interval_duration(ticks: u16) -> Duration {
+    duration_from_ticks(u32::from(ticks), INTERVAL_QUANTUM_MICROS)
+}
+
+fn timeout_duration(ticks: u16) -> Duration {
+    duration_from_ticks(u32::from(ticks), TIMEOUT_QUANTUM_MICROS)
 }
 
 stm32wb_hci_macros::wire_type! {
@@ -190,6 +188,8 @@ impl ConnectionIntervalBuilder {
     ///   is greater than 4 seconds.
     /// - [IntervalInverted](ConnectionIntervalError::IntervalInverted) if the minimum range value
     ///   is greater than the maximum.
+    /// - [NotRepresentable](ConnectionIntervalError::NotRepresentable) if an interval is not an
+    ///   exact multiple of 1.25 ms or the timeout is not an exact multiple of 10 ms.
     /// - [BadConnectionLatency](ConnectionIntervalError::BadConnectionLatency) if the connection
     ///   latency is 500 or more.
     /// - [SupervisionTimeoutTooShort](ConnectionIntervalError::SupervisionTimeoutTooShort) if the
@@ -224,6 +224,16 @@ impl ConnectionIntervalBuilder {
                 interval.0, interval.1,
             ));
         }
+        let interval_ticks = (
+            duration_to_u16_ticks(interval.0, u128::from(INTERVAL_QUANTUM_MICROS))
+                .ok_or(ConnectionIntervalError::NotRepresentable(interval.0))?,
+            duration_to_u16_ticks(interval.1, u128::from(INTERVAL_QUANTUM_MICROS))
+                .ok_or(ConnectionIntervalError::NotRepresentable(interval.1))?,
+        );
+        let interval = (
+            interval_duration(interval_ticks.0),
+            interval_duration(interval_ticks.1),
+        );
 
         let conn_latency = self.conn_latency.unwrap();
         const LATENCY_MAX: u16 = 0x1F3;
@@ -232,8 +242,13 @@ impl ConnectionIntervalBuilder {
         }
 
         let supervision_timeout = self.supervision_timeout.unwrap();
-        let computed_timeout_min = interval.1 * (1 + u32::from(conn_latency)) * 2;
         const TIMEOUT_MAX: Duration = Duration::from_secs(32);
+        if supervision_timeout > TIMEOUT_MAX {
+            return Err(ConnectionIntervalError::SupervisionTimeoutTooLong(
+                supervision_timeout,
+            ));
+        }
+        let computed_timeout_min = interval.1 * (1 + u32::from(conn_latency)) * 2;
         if computed_timeout_min >= TIMEOUT_MAX {
             return Err(ConnectionIntervalError::ImpossibleSupervisionTimeout(
                 computed_timeout_min,
@@ -248,17 +263,15 @@ impl ConnectionIntervalBuilder {
                 timeout_min,
             ));
         }
-
-        if supervision_timeout > TIMEOUT_MAX {
-            return Err(ConnectionIntervalError::SupervisionTimeoutTooLong(
-                supervision_timeout,
-            ));
-        }
+        let supervision_timeout_ticks =
+            duration_to_u16_ticks(supervision_timeout, u128::from(TIMEOUT_QUANTUM_MICROS)).ok_or(
+                ConnectionIntervalError::NotRepresentable(supervision_timeout),
+            )?;
 
         Ok(ConnectionInterval {
-            interval_: interval,
+            interval_: interval_ticks,
             conn_latency_: conn_latency,
-            supervision_timeout_: supervision_timeout,
+            supervision_timeout_: supervision_timeout_ticks,
         })
     }
 }
@@ -279,6 +292,8 @@ pub enum ConnectionIntervalError {
     /// The minimum range value is greater than the maximum. Includes the provided minimum and
     /// maximum, respectively.
     IntervalInverted(Duration, Duration),
+    /// A duration is not an exact multiple of its HCI time unit.
+    NotRepresentable(Duration),
     /// The connection latency is 500 or more. Includes the provided value.
     BadConnectionLatency(u16),
     /// The supervision timeout is less than 100 ms, or it is less than the computed minimum: (1 +
@@ -294,12 +309,12 @@ pub enum ConnectionIntervalError {
 
 /// Define a connection interval with its latency and supervision timeout. This value is
 /// returned from the controller.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FixedConnectionInterval {
-    interval_: Duration,
+    interval_: u16,
     conn_latency_: u16,
-    supervision_timeout_: Duration,
+    supervision_timeout_: u16,
 }
 
 impl FixedConnectionInterval {
@@ -320,18 +335,10 @@ impl FixedConnectionInterval {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ConnectionIntervalError> {
         assert!(bytes.len() >= 6);
 
-        // Do the error checking with the standard connection interval builder. The min and max of
-        // the interval range are allowed to be equal.
-        let interval =
-            Duration::from_micros(1_250) * u32::from(u16::from_le_bytes([bytes[0], bytes[1]]));
+        let interval = u16::from_le_bytes([bytes[0], bytes[1]]);
         let latency = u16::from_le_bytes([bytes[2], bytes[3]]);
-        let timeout =
-            Duration::from_millis(10) * u32::from(u16::from_le_bytes([bytes[4], bytes[5]]));
-        ConnectionIntervalBuilder::new()
-            .with_range(interval, interval)
-            .with_latency(latency)
-            .with_supervision_timeout(timeout)
-            .build()?;
+        let timeout = u16::from_le_bytes([bytes[4], bytes[5]]);
+        ConnectionInterval::from_hci_fields(interval, interval, latency, timeout)?;
 
         Ok(FixedConnectionInterval {
             interval_: interval,
@@ -342,7 +349,7 @@ impl FixedConnectionInterval {
 
     /// Returns the connection interval.
     pub fn interval(&self) -> Duration {
-        self.interval_
+        interval_duration(self.interval_)
     }
 
     /// Returns the connection latency, in number of events.
@@ -352,6 +359,6 @@ impl FixedConnectionInterval {
 
     /// Returns the supervision timeout.
     pub fn supervision_timeout(&self) -> Duration {
-        self.supervision_timeout_
+        timeout_duration(self.supervision_timeout_)
     }
 }

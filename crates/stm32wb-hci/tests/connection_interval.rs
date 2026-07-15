@@ -34,6 +34,49 @@ fn valid() {
 }
 
 #[test]
+fn stores_canonical_ticks_and_encodes_fractional_milliseconds_exactly() {
+    let interval = ConnectionIntervalBuilder::new()
+        .with_range(Duration::from_micros(7_500), Duration::from_micros(7_500))
+        .with_latency(0)
+        .with_supervision_timeout(Duration::from_millis(110))
+        .build()
+        .unwrap();
+
+    assert_eq!(core::mem::size_of::<ConnectionInterval>(), 8);
+    assert_eq!(core::mem::size_of::<FixedConnectionInterval>(), 6);
+    assert_eq!(interval.interval().0, Duration::from_micros(7_500));
+    assert_eq!(
+        encode::<_, 8>(&interval),
+        [0x06, 0x00, 0x06, 0x00, 0x00, 0x00, 0x0B, 0x00]
+    );
+}
+
+#[test]
+fn rejects_durations_between_hci_ticks() {
+    let interval_error = ConnectionIntervalBuilder::new()
+        .with_range(Duration::from_micros(7_501), Duration::from_millis(10))
+        .with_latency(0)
+        .with_supervision_timeout(Duration::from_millis(110))
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        interval_error,
+        ConnectionIntervalError::NotRepresentable(Duration::from_micros(7_501))
+    );
+
+    let timeout_error = ConnectionIntervalBuilder::new()
+        .with_range(Duration::from_micros(7_500), Duration::from_micros(7_500))
+        .with_latency(0)
+        .with_supervision_timeout(Duration::from_millis(101))
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        timeout_error,
+        ConnectionIntervalError::NotRepresentable(Duration::from_millis(101))
+    );
+}
+
+#[test]
 fn incomplete() {
     assert_eq!(
         ConnectionIntervalBuilder::new()

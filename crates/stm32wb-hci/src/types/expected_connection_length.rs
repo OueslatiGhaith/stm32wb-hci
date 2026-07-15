@@ -2,14 +2,18 @@
 
 use core::time::Duration;
 
+use super::time_units::{duration_from_ticks, duration_to_u16_ticks};
+
+const QUANTUM_MICROS: u64 = 625;
+
 /// Define an expected connection length range
 ///
 /// There is no minimum. The maximum is bounded by what is representable as a u16 at T = N * 0.625
 /// ms, so max = 65535 * 0.625 ms = 40.959375 seconds.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExpectedConnectionLength {
-    pub range: (Duration, Duration),
+    range: (u16, u16),
 }
 
 impl ExpectedConnectionLength {
@@ -20,6 +24,8 @@ impl ExpectedConnectionLength {
     /// - [Inverted](ExpectedConnectionLengthError::Inverted) if `min` is greater than `max`
     /// - [TooLong](ExpectedConnectionLengthError::TooLong) if `max` is longer than 40.959375
     ///   seconds.
+    /// - [NotRepresentable](ExpectedConnectionLengthError::NotRepresentable) if either duration
+    ///   is not an exact multiple of 0.625 ms.
     pub fn new(
         min: Duration,
         max: Duration,
@@ -29,28 +35,29 @@ impl ExpectedConnectionLength {
         }
 
         const ABSOLUTE_MAX: Duration = Duration::from_micros(40_959_375);
-        assert_eq!(Self::duration_as_u16(ABSOLUTE_MAX), 0xFFFF);
         if max > ABSOLUTE_MAX {
             return Err(ExpectedConnectionLengthError::TooLong(max));
         }
+        let minimum = duration_to_u16_ticks(min, u128::from(QUANTUM_MICROS))
+            .ok_or(ExpectedConnectionLengthError::NotRepresentable(min))?;
+        let maximum = duration_to_u16_ticks(max, u128::from(QUANTUM_MICROS))
+            .ok_or(ExpectedConnectionLengthError::NotRepresentable(max))?;
 
-        Ok(ExpectedConnectionLength { range: (min, max) })
+        Ok(ExpectedConnectionLength {
+            range: (minimum, maximum),
+        })
     }
 
-    fn duration_as_u16(d: Duration) -> u16 {
-        // T = 0.625 ms * N
-        // so N = T / 0.625 ms
-        //      = T / 625 us
-        //
-        // Note: 1600 = 1_000_000 / 625
-        (1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)) as u16
+    /// Returns the minimum and maximum expected connection lengths.
+    pub fn range(&self) -> (Duration, Duration) {
+        (
+            duration_from_ticks(u32::from(self.range.0), QUANTUM_MICROS),
+            duration_from_ticks(u32::from(self.range.1), QUANTUM_MICROS),
+        )
     }
 
     fn hci_fields(&self) -> (u16, u16) {
-        (
-            Self::duration_as_u16(self.range.0),
-            Self::duration_as_u16(self.range.1),
-        )
+        self.range
     }
 }
 
@@ -75,4 +82,6 @@ pub enum ExpectedConnectionLengthError {
     TooLong(Duration),
     /// The min is greater than the max. Returns the min and max, respectively.
     Inverted(Duration, Duration),
+    /// A duration is not an exact multiple of the 0.625 ms HCI unit.
+    NotRepresentable(Duration),
 }

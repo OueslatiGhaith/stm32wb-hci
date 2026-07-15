@@ -7,6 +7,7 @@ mod connection_interval;
 mod expected_connection_length;
 pub mod extended_advertisement;
 mod scan_window;
+mod time_units;
 
 pub use self::address::*;
 pub use self::advertising_type::*;

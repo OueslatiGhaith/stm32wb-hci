@@ -1489,7 +1489,7 @@ stm32wb_hci_macros::wire_type! {
             scan_window: ScanWindow => 4,
         };
         Encode = |value| {
-            (value.scan_type, value.scan_window.clone())
+            (value.scan_type, value.scan_window)
         };
     }
 }
@@ -1517,9 +1517,9 @@ stm32wb_hci_macros::wire_type! {
         };
         Encode = |value| {
             (
-                value.scan_window.clone(),
+                value.scan_window,
                 value.connection_interval,
-                value.expected_connection_length.clone(),
+                value.expected_connection_length,
             )
         };
     }

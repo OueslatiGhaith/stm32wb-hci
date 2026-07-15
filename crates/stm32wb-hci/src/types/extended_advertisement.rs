@@ -1,5 +1,9 @@
 use core::time::Duration;
 
+use super::time_units::{duration_from_ticks, duration_to_u32_ticks};
+
+const ADVERTISING_INTERVAL_QUANTUM_MICROS: u64 = 625;
+
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     bitflags
@@ -49,9 +53,11 @@ stm32wb_hci_macros::wire_type! {
 /// max. The advertising interval min and advertising interval max should not be the same
 /// values to enable the Controller to determine the best advertising interval given other
 /// adctivities, through this implementation allows them to be equal.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExtendedAdvertisingInterval {
     /// The first field is the min, the second is the max
-    interval: (Duration, Duration),
+    interval: (u32, u32),
 }
 
 impl ExtendedAdvertisingInterval {
@@ -64,9 +70,11 @@ impl ExtendedAdvertisingInterval {
     ///   [ScannableUndirected](crate::types::AdvertisingType::ScannableUndirected), then the
     ///   minimum value is 100 ms. In all other cases, the minimum value is 20 ms.
     /// - [TooLong](ExtendedAdvertisingIntervalError::TooLong) if the maximum value is too large. The
-    ///   maximum value is 10.24 seconds.
+    ///   maximum value is 10,485.759375 seconds.
     /// - [Inverted](ExtendedAdvertisingIntervalError::Inverted) if the minimum is greater than the
     ///   maximum.
+    /// - [NotRepresentable](ExtendedAdvertisingIntervalError::NotRepresentable) if either value
+    ///   is not an exact multiple of 0.625 ms.
     pub fn with_range(
         min: Duration,
         max: Duration,
@@ -84,25 +92,26 @@ impl ExtendedAdvertisingInterval {
             return Err(ExtendedAdvertisingIntervalError::Inverted(min, max));
         }
 
+        let minimum = duration_to_u32_ticks(min, u128::from(ADVERTISING_INTERVAL_QUANTUM_MICROS))
+            .ok_or(ExtendedAdvertisingIntervalError::NotRepresentable(min))?;
+        let maximum = duration_to_u32_ticks(max, u128::from(ADVERTISING_INTERVAL_QUANTUM_MICROS))
+            .ok_or(ExtendedAdvertisingIntervalError::NotRepresentable(max))?;
+
         Ok(Self {
-            interval: (min, max),
+            interval: (minimum, maximum),
         })
     }
 
-    fn duration_as_u32(d: Duration) -> u32 {
-        // T = 0.625 ms * N
-        // so N = T / 0.625 ms
-        //      = T / 625 us
-        //
-        // Note: 1600 = 1_000_000 / 625
-        1600 * d.as_secs() as u32 + (d.subsec_micros() / 625)
+    /// Returns the minimum and maximum advertising intervals.
+    pub fn interval(&self) -> (Duration, Duration) {
+        (
+            duration_from_ticks(self.interval.0, ADVERTISING_INTERVAL_QUANTUM_MICROS),
+            duration_from_ticks(self.interval.1, ADVERTISING_INTERVAL_QUANTUM_MICROS),
+        )
     }
 
     fn hci_fields(&self) -> (u32, u32) {
-        (
-            Self::duration_as_u32(self.interval.0),
-            Self::duration_as_u32(self.interval.1),
-        )
+        self.interval
     }
 }
 
@@ -129,6 +138,8 @@ pub enum ExtendedAdvertisingIntervalError {
     /// The minimum value was greater than the maximum value. Includes the provided minimum and
     /// value, respectively.
     Inverted(Duration, Duration),
+    /// A duration is not an exact multiple of the 0.625 ms HCI unit.
+    NotRepresentable(Duration),
 }
 
 stm32wb_hci_macros::wire_type! {
