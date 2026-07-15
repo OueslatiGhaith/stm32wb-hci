@@ -41,6 +41,12 @@ impl embedded_io::ErrorType for RecordingSink {
 }
 
 impl bt_hci::controller::Controller for RecordingSink {
+    type Buffer<'a> = [u8; 259];
+
+    fn alloc_buf(&self) -> Result<Self::Buffer<'_>, Self::Error> {
+        Ok([0u8; 259])
+    }
+
     async fn write_acl_data(
         &self,
         _packet: &bt_hci::data::AclPacket<'_>,
@@ -64,7 +70,7 @@ impl bt_hci::controller::Controller for RecordingSink {
 
     async fn read<'a>(
         &self,
-        _buf: &'a mut [u8],
+        _buf: &'a mut Self::Buffer<'_>,
     ) -> Result<bt_hci::ControllerToHostPacket<'a>, Self::Error> {
         todo!()
     }
@@ -76,8 +82,8 @@ where
 {
     async fn exec(&self, cmd: &C) -> Result<C::Return, bt_hci::cmd::Error<Self::Error>> {
         use bt_hci::FromHciBytes;
-        use bt_hci::WriteHci;
         use bt_hci::transport::WithIndicator;
+        use bt_hci_transport::PacketToController;
 
         let mut data = self.data.lock().unwrap();
 
@@ -97,8 +103,8 @@ where
     C: bt_hci::cmd::AsyncCmd,
 {
     async fn exec(&self, cmd: &C) -> Result<(), bt_hci::cmd::Error<Self::Error>> {
-        use bt_hci::WriteHci;
         use bt_hci::transport::WithIndicator;
+        use bt_hci_transport::PacketToController;
 
         let mut data = self.data.lock().unwrap();
 
