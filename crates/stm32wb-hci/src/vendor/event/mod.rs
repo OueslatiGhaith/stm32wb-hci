@@ -1631,12 +1631,12 @@ stm32wb_hci_macros::wire_type! {
 }
 
 /// Newtype for the 16-bit UUID buffer.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Uuid16(pub u16);
 
 /// Newtype for the 128-bit UUID buffer.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Uuid128(pub [u8; 16]);
 
@@ -1844,12 +1844,6 @@ pub struct HandleValuePair<'a> {
     pub value: &'a [u8],
 }
 
-impl<'a> HandleValuePair<'a> {
-    pub fn uuid(&self) -> u16 {
-        u16::from_le_bytes([self.value[3], self.value[4]])
-    }
-}
-
 impl AttReadResponse<'_> {
     /// Returns the valid part of the value data.
     pub fn value(&self) -> &[u8] {
@@ -1921,9 +1915,49 @@ pub struct AttributeData<'a> {
     pub value: &'a [u8],
 }
 
+/// UUID carried by an ATT attribute-group record.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AttributeUuid {
+    /// Bluetooth 16-bit UUID.
+    Uuid16(Uuid16),
+    /// Bluetooth 128-bit UUID.
+    Uuid128(Uuid128),
+}
+
+/// An ATT attribute-group value did not contain a complete UUID.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttributeUuidError {
+    actual_length: usize,
+}
+
+impl AttributeUuidError {
+    /// Number of UUID bytes present in the attribute-group value.
+    pub const fn actual_length(self) -> usize {
+        self.actual_length
+    }
+}
+
 impl<'a> AttributeData<'a> {
-    pub fn uuid(&self) -> u16 {
-        u16::from_le_bytes([self.value[0], self.value[1]])
+    /// Decode the service UUID carried by this attribute-group value.
+    ///
+    /// ATT Read By Group Type responses carry either a 16-bit or 128-bit UUID.
+    /// Other value lengths are reported instead of indexing beyond the record.
+    pub fn uuid(&self) -> Result<AttributeUuid, AttributeUuidError> {
+        match self.value {
+            [low, high] => Ok(AttributeUuid::Uuid16(Uuid16(u16::from_le_bytes([
+                *low, *high,
+            ])))),
+            bytes if bytes.len() == 16 => {
+                let mut uuid = [0; 16];
+                uuid.copy_from_slice(bytes);
+                Ok(AttributeUuid::Uuid128(Uuid128(uuid)))
+            }
+            bytes => Err(AttributeUuidError {
+                actual_length: bytes.len(),
+            }),
+        }
     }
 }
 
@@ -2924,11 +2958,62 @@ mod tests {
         assert_eq!(first.attribute_handle, AttributeHandle(0x0001));
         assert_eq!(first.attribute_end_handle, AttributeHandle(0x0005));
         assert_eq!(first.value, &[0x0D, 0x18]);
+        assert_eq!(first.uuid(), Ok(AttributeUuid::Uuid16(Uuid16(0x180D))));
         let second = groups.next().expect("second group");
         assert_eq!(second.attribute_handle, AttributeHandle(0x0006));
         assert_eq!(second.attribute_end_handle, AttributeHandle(0x0009));
         assert_eq!(second.value, &[0x0F, 0x18]);
+        assert_eq!(second.uuid(), Ok(AttributeUuid::Uuid16(Uuid16(0x180F))));
         assert!(groups.next().is_none());
+    }
+
+    #[test]
+    fn short_att_records_expose_total_accessors() {
+        let read_by_type = [
+            0x06, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x02, 0x02, // handle-only record and total byte length
+            0x34, 0x12, // attribute handle
+        ];
+        let VendorEvent::AttReadByTypeResponse(event) =
+            VendorEvent::new(&read_by_type).expect("valid handle-only record")
+        else {
+            panic!("unexpected event variant");
+        };
+        let pair = event
+            .handle_value_pair_iter()
+            .next()
+            .expect("one handle-value pair");
+        assert_eq!(pair.handle, AttributeHandle(0x1234));
+        assert!(pair.value.is_empty());
+
+        let read_by_group = [
+            0x0A, 0x0C, // event code
+            0x23, 0x01, // connection handle
+            0x04, 0x04, // handle-only group and total byte length
+            0x01, 0x00, 0x05, 0x00, // start and end handles
+        ];
+        let VendorEvent::AttReadByGroupTypeResponse(event) =
+            VendorEvent::new(&read_by_group).expect("valid handle-only group")
+        else {
+            panic!("unexpected event variant");
+        };
+        let group = event
+            .attribute_data_iter()
+            .next()
+            .expect("one attribute group");
+        assert_eq!(group.uuid().unwrap_err().actual_length(), 0);
+    }
+
+    #[test]
+    fn attribute_group_uuid_accepts_the_full_128_bit_form() {
+        let uuid = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let group = AttributeData {
+            attribute_handle: AttributeHandle(1),
+            attribute_end_handle: AttributeHandle(5),
+            value: &uuid,
+        };
+        assert_eq!(group.uuid(), Ok(AttributeUuid::Uuid128(Uuid128(uuid))));
     }
 
     #[cfg(before_fw_0_22_0)]
