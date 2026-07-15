@@ -10,6 +10,7 @@ use stm32wb_hci_schema::{
 /// Generate the complete command type directly from the shared schema.
 pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
     let name = &command.name;
+    let params_name = format_ident!("{}Params", name);
     let cgid = command.cgid;
     let cid = command.cid;
     let fields = command.params.fields().map_or(&[][..], Fields::fields);
@@ -24,13 +25,22 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
             const _: () = crate::vendor::command::assert_hci_field_list_length(#params_len);
         }
     });
-    let constructor = expand_constructor(command, &field_names, &field_types, &params_value);
+    let params_constructor =
+        expand_params_constructor(command, &field_names, &field_types, &params_value);
+    let command_constructor =
+        expand_command_constructor(command, &params_name, &field_names, &field_types);
     let completion_impl = expand_completion(command);
     let lifetime = command.params.lifetime.as_ref();
     let impl_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
     let type_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
     let default_impl = command.params.fields().is_none().then(|| {
         quote! {
+            impl Default for #params_name {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+
             impl Default for #name {
                 fn default() -> Self {
                     Self::new()
@@ -43,10 +53,46 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
         #schema_validations
         #params_length_assert
 
-        #[allow(missing_docs)]
-        pub struct #name #impl_generics(
+        #[doc = concat!("Parameters for [`", stringify!(#name), "`].")]
+        pub struct #params_name #impl_generics(
             crate::vendor::command::DeclarativeParams<#params_type>
         );
+
+        impl #impl_generics #params_name #type_generics {
+            #params_constructor
+
+            /// Number of parameter bytes in the HCI wire representation.
+            #[inline]
+            pub fn encoded_len(&self) -> usize {
+                ::bt_hci::WriteHci::size(self)
+            }
+        }
+
+        impl #impl_generics ::bt_hci::WriteHci for #params_name #type_generics {
+            #[inline]
+            fn size(&self) -> usize {
+                ::bt_hci::WriteHci::size(&self.0)
+            }
+
+            #[inline]
+            fn write_hci<W: ::embedded_io::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                ::bt_hci::WriteHci::write_hci(&self.0, writer)
+            }
+
+            #[inline]
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                ::bt_hci::WriteHci::write_hci_async(&self.0, writer).await
+            }
+        }
+
+        #[doc = concat!("STM32WB vendor command using [`", stringify!(#params_name), "`].")]
+        pub struct #name #impl_generics(#params_name #type_generics);
 
         impl #impl_generics #name #type_generics {
             /// STM32 vendor command-group ID.
@@ -56,7 +102,25 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
             /// Vendor-specific Opcode Command Field.
             pub const OCF: u16 = crate::vendor::command::vendor_ocf(Self::CGID, Self::CID);
 
-            #constructor
+            #command_constructor
+
+            /// Build the command from its already validated parameters.
+            #[inline]
+            pub fn from_params(params: #params_name #type_generics) -> Self {
+                Self(params)
+            }
+
+            /// Borrow the command's domain-specific parameters.
+            #[inline]
+            pub fn params(&self) -> &#params_name #type_generics {
+                &self.0
+            }
+
+            /// Consume the command and return its domain-specific parameters.
+            #[inline]
+            pub fn into_params(self) -> #params_name #type_generics {
+                self.0
+            }
         }
 
         impl #impl_generics ::bt_hci::cmd::Cmd for #name #type_generics {
@@ -64,7 +128,7 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
                 ::bt_hci::cmd::OpcodeGroup::VENDOR_SPECIFIC,
                 Self::OCF,
             );
-            type Params = crate::vendor::command::DeclarativeParams<#params_type>;
+            type Params = #params_name #type_generics;
 
             fn params(&self) -> &Self::Params {
                 &self.0
@@ -113,7 +177,7 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
     }
 }
 
-fn expand_constructor(
+fn expand_params_constructor(
     command: &VendorCommand,
     field_names: &[&syn::Ident],
     field_types: &[&syn::Type],
@@ -170,6 +234,51 @@ fn expand_constructor(
                 }
             }
         }
+    }
+}
+
+fn expand_command_constructor(
+    command: &VendorCommand,
+    params_name: &syn::Ident,
+    field_names: &[&syn::Ident],
+    field_types: &[&syn::Type],
+) -> TokenStream2 {
+    let has_variable_params = command.params.lifetime.is_some();
+    match (has_variable_params, &command.constraints) {
+        (false, None) => quote! {
+            #[allow(clippy::too_many_arguments)]
+            #[allow(missing_docs)]
+            pub fn new(#(#field_names: #field_types),*) -> Self {
+                Self(#params_name::new(#(#field_names),*))
+            }
+        },
+        (false, Some(_)) => quote! {
+            #[allow(clippy::too_many_arguments)]
+            #[allow(missing_docs)]
+            pub fn try_new(
+                #(#field_names: #field_types),*
+            ) -> Result<Self, crate::vendor::command::HciConstraintError> {
+                #params_name::try_new(#(#field_names),*).map(Self)
+            }
+        },
+        (true, Some(_)) => quote! {
+            #[allow(clippy::too_many_arguments)]
+            #[allow(missing_docs)]
+            pub fn try_new(
+                #(#field_names: #field_types),*
+            ) -> Result<Self, crate::vendor::command::HciValidationError> {
+                #params_name::try_new(#(#field_names),*).map(Self)
+            }
+        },
+        (true, None) => quote! {
+            #[allow(clippy::too_many_arguments)]
+            #[allow(missing_docs)]
+            pub fn try_new(
+                #(#field_names: #field_types),*
+            ) -> Result<Self, crate::vendor::command::HciLengthError> {
+                #params_name::try_new(#(#field_names),*).map(Self)
+            }
+        },
     }
 }
 

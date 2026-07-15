@@ -1,9 +1,10 @@
 //! Declarative STM32WB vendor commands and their wire-format support.
 //!
-//! Each `vendor_cmd!` declaration generates a public command type in its
-//! protocol module. Construct that type with `new` (unconstrained fixed-size
-//! parameters) or `try_new` (variable-size parameters or declarative
-//! constraints), then execute it through
+//! Each `vendor_cmd!` declaration generates a public command type and a
+//! command-specific `*Params` type in its protocol module. Construct either
+//! type with `new` (unconstrained fixed-size parameters) or `try_new`
+//! (variable-size parameters or declarative constraints), then execute the
+//! command through
 //! [`bt_hci::cmd::SyncCmd::exec`] or [`bt_hci::cmd::AsyncCmd::exec`] according
 //! to the command's declared completion mechanism.
 
@@ -65,10 +66,10 @@ impl HciDecodeField<7> for crate::types::BdAddrType {
 }
 
 #[doc(hidden)]
-pub struct DeclarativeField<T, const N: usize>(pub T);
+pub(crate) struct DeclarativeField<T, const N: usize>(pub T);
 
 #[doc(hidden)]
-pub struct DeclarativeParams<T>(pub T);
+pub(crate) struct DeclarativeParams<T>(pub T);
 
 /// A variable-length value does not satisfy its declarative wire bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,14 +204,16 @@ impl From<HciConstraintError> for HciValidationError {
 }
 
 #[doc(hidden)]
-pub struct TaggedField<T, const MAX_LEN: usize> {
+pub(crate) struct TaggedField<T, const MAX_LEN: usize> {
     bytes: [u8; MAX_LEN],
     len: usize,
     _value: core::marker::PhantomData<T>,
 }
 
 impl<T, const MAX_LEN: usize> TaggedField<T, MAX_LEN> {
-    pub fn try_new<const MIN_LEN: usize, Fields>(fields: Fields) -> Result<Self, HciLengthError>
+    pub(crate) fn try_new<const MIN_LEN: usize, Fields>(
+        fields: Fields,
+    ) -> Result<Self, HciLengthError>
     where
         Fields: DeclarativeFieldList,
     {
@@ -237,7 +240,8 @@ impl<T, const MAX_LEN: usize> TaggedField<T, MAX_LEN> {
 }
 
 #[doc(hidden)]
-pub trait HciBitmap: Copy {
+#[allow(dead_code)]
+pub(crate) trait HciBitmap: Copy {
     fn to_usize(self) -> usize;
 }
 
@@ -260,7 +264,8 @@ impl HciBitmap for u32 {
 }
 
 #[doc(hidden)]
-pub struct BitmapItems<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize> {
+#[allow(dead_code)]
+pub(crate) struct BitmapItems<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize> {
     value: T,
     _item: core::marker::PhantomData<Item>,
 }
@@ -270,7 +275,8 @@ impl<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize>
 where
     T: AsRef<[Item]>,
 {
-    pub fn try_new<B: HciBitmap>(
+    #[allow(dead_code)]
+    pub(crate) fn try_new<B: HciBitmap>(
         value: T,
         bitmap: B,
         allowed_mask: usize,
@@ -293,7 +299,13 @@ where
 }
 
 #[doc(hidden)]
-pub struct CountedBytes<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize> {
+pub(crate) struct CountedBytes<
+    T,
+    C,
+    const COUNT_LEN: usize,
+    const MIN_LEN: usize,
+    const MAX_LEN: usize,
+> {
     value: T,
     count: C,
 }
@@ -304,7 +316,7 @@ where
     T: AsRef<[u8]>,
     C: HciCount<COUNT_LEN>,
 {
-    pub fn try_new(value: T) -> Result<Self, HciLengthError> {
+    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
         let actual = value.as_ref().len();
         let maximum = core::cmp::min(MAX_LEN, C::MAX);
         let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_LEN, maximum))?;
@@ -316,7 +328,8 @@ where
 }
 
 #[doc(hidden)]
-pub struct TrailingBytes<T, const MIN_LEN: usize, const MAX_LEN: usize> {
+#[allow(dead_code)]
+pub(crate) struct TrailingBytes<T, const MIN_LEN: usize, const MAX_LEN: usize> {
     value: T,
 }
 
@@ -324,7 +337,8 @@ impl<T, const MIN_LEN: usize, const MAX_LEN: usize> TrailingBytes<T, MIN_LEN, MA
 where
     T: AsRef<[u8]>,
 {
-    pub fn try_new(value: T) -> Result<Self, HciLengthError> {
+    #[allow(dead_code)]
+    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
         let actual = value.as_ref().len();
         if !(MIN_LEN..=MAX_LEN).contains(&actual) {
             return Err(HciLengthError::new(actual, MIN_LEN, MAX_LEN));
@@ -334,7 +348,7 @@ where
 }
 
 #[doc(hidden)]
-pub struct CountedItems<
+pub(crate) struct CountedItems<
     T,
     Item,
     C,
@@ -361,7 +375,7 @@ where
     T: AsRef<[Item]>,
     C: HciCount<COUNT_LEN>,
 {
-    pub fn try_new(value: T) -> Result<Self, HciLengthError> {
+    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
         let actual = value.as_ref().len();
         let maximum = core::cmp::min(MAX_ITEMS, C::MAX);
         let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_ITEMS, maximum))?;
@@ -461,12 +475,12 @@ where
 }
 
 #[doc(hidden)]
-pub const fn assert_hci_field_list_length(length: usize) {
+pub(crate) const fn assert_hci_field_list_length(length: usize) {
     ::core::assert!(length <= u8::MAX as usize);
 }
 
 #[doc(hidden)]
-pub trait DeclarativeFieldList {
+pub(crate) trait DeclarativeFieldList {
     fn size(&self) -> usize;
 
     fn write<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
@@ -475,7 +489,7 @@ pub trait DeclarativeFieldList {
 }
 
 #[doc(hidden)]
-pub trait DeclarativeEncodedField {
+pub(crate) trait DeclarativeEncodedField {
     fn size(&self) -> usize;
 
     fn write<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;

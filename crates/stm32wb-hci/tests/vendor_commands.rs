@@ -22,12 +22,12 @@ use hci::vendor::command::{
         GapConfigureWhitelist, GapGetBondedDevices, GapInit, GapPassKeyResponse,
         GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetAuthenticationRequirement,
         GapSetBroadcastMode, GapSetDirectConnectable, GapSetDiscoverable, GapSetEventMask,
-        GapSetIoCapability, GapSetLimitedDiscoverable, GapSetNonConnectable, GapSetNonDiscoverable,
-        GapSetOobData, GapSetUnidirectedConnectable, GapTerminate, GapTerminateProcedure,
-        GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
-        OptionalAdvertisingIntervalBound, PassKey, PowerAmplifierOutputLevel, PrivacyMode,
-        Procedure, Role, ScanType, ScanningFilterPolicy, SecondaryAdvertisingMaximumSkip,
-        SecureConnectionSupport, TerminationReason,
+        GapSetIoCapability, GapSetIoCapabilityParams, GapSetLimitedDiscoverable,
+        GapSetNonConnectable, GapSetNonDiscoverable, GapSetOobData, GapSetUnidirectedConnectable,
+        GapTerminate, GapTerminateProcedure, GapUpdateAdvertisingData, IoCapability, OobDataLength,
+        OobDataType, OobDeviceType, OptionalAdvertisingIntervalBound, PassKey,
+        PowerAmplifierOutputLevel, PrivacyMode, Procedure, Role, ScanType, ScanningFilterPolicy,
+        SecondaryAdvertisingMaximumSkip, SecureConnectionSupport, TerminationReason,
     },
     gatt::{
         AccessPermission, CharacteristicEvent, CharacteristicPermission, CharacteristicProperty,
@@ -881,17 +881,22 @@ async fn declarative_gap_nondiscoverable_has_no_wire_parameters() {
 
 #[tokio::test]
 async fn proc_macro_gap_io_capability_preserves_the_legacy_contract() {
+    fn assert_domain_params<C: Cmd<Params = GapSetIoCapabilityParams>>() {}
+
     let sink = RecordingSink::new();
+    let params = GapSetIoCapabilityParams::new(IoCapability::KeyboardDisplay);
 
     assert_eq!(GapSetIoCapability::CGID, 0x1);
     assert_eq!(GapSetIoCapability::CID, 0x05);
     assert_eq!(GapSetIoCapability::OCF, 0x085);
     assert_eq!(<GapSetIoCapability as Cmd>::OPCODE.to_raw(), 0xFC85);
+    assert_domain_params::<GapSetIoCapability>();
+    assert_eq!(params.encoded_len(), 1);
 
-    GapSetIoCapability::new(IoCapability::KeyboardDisplay)
-        .exec(&sink)
-        .await
-        .unwrap();
+    let command = GapSetIoCapability::from_params(params);
+    let _: &GapSetIoCapabilityParams = command.params();
+    let command = GapSetIoCapability::from_params(command.into_params());
+    command.exec(&sink).await.unwrap();
 
     assert_eq!(sink.written_data(), [1, 0x85, 0xFC, 1, 0x04]);
 }

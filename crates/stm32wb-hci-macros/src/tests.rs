@@ -25,6 +25,10 @@ fn directly_generates_fixed_command_complete_unit_return() {
     });
     let generated = expand_vendor_command(&command).to_string();
     assert!(generated.contains("pub struct GapSetIoCapability"));
+    assert!(generated.contains("pub struct GapSetIoCapabilityParams"));
+    assert!(generated.contains("type Params = GapSetIoCapabilityParams"));
+    assert!(generated.contains("pub fn from_params"));
+    assert!(generated.contains("pub fn into_params"));
     assert!(generated.contains("SyncCmd for GapSetIoCapability"));
     assert!(!generated.contains("vendor_cmd !"));
 }
