@@ -3,12 +3,12 @@
 mod decode;
 
 pub use decode::{
-    BoundedBytes, BoundedItems, HciDecodeCountedBytes, HciDecodeCountedItems,
-    HciDecodeTrailingBytes,
+    BoundedBytes, BoundedItems, EventBytes, EventItems, EventItemsIter, HciDecodeCountedBytes,
+    HciDecodeCountedItems, HciDecodeTrailingBytes,
 };
 pub(crate) use decode::{
     DecodeError, decode_counted_bytes, decode_counted_items, decode_fixed_field,
-    decode_fixed_items, decode_prefixed_bytes, decode_trailing_bytes,
+    decode_prefixed_bytes, decode_trailing_bytes,
 };
 
 /// A value with an exact, canonical representation in an HCI request.
@@ -54,6 +54,15 @@ pub trait HciDecodeField<const N: usize>: Sized {
 pub trait HciEventField<const N: usize>: Sized {
     /// Decode one exact-width vendor-event field.
     fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, crate::vendor::event::Error>;
+}
+
+/// An event item that can be reconstructed infallibly after its bytes have
+/// already passed [`HciEventField`] validation.
+///
+/// This is an implementation detail of borrowed counted-item event views.
+#[doc(hidden)]
+pub trait HciEventItem<const N: usize>: HciEventField<N> {
+    fn from_validated_hci_event_field(bytes: &[u8; N]) -> Self;
 }
 
 /// An integer type that can prefix a counted declarative field.

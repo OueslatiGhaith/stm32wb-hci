@@ -3,9 +3,21 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use stm32wb_hci_schema::{EventPayload, Field, FieldEncoding, VariableEncodingShape, VendorEvents};
+use syn::visit::{self, Visit};
 
-/// Generate the complete event enum, owned payload types, and wire dispatcher.
+/// Generate the complete event enum, borrowing payload types, and wire dispatcher.
 pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
+    let borrows_payload = catalog
+        .events
+        .iter()
+        .any(|event| payload_borrows(&event.payload));
+    let event_generics = borrows_payload.then(|| quote!(<'a>));
+    let impl_generics = borrows_payload.then(|| quote!(<'a>));
+    let buffer_type = if borrows_payload {
+        quote!(&'a [u8])
+    } else {
+        quote!(&[u8])
+    };
     let variants = catalog.events.iter().map(|event| {
         let attrs = &event.attrs;
         let name = &event.name;
@@ -14,10 +26,18 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
                 #(#attrs)*
                 #name,
             },
-            EventPayload::Fields(_) => quote! {
-                #(#attrs)*
-                #name(#name),
-            },
+            EventPayload::Fields(_) if payload_borrows(&event.payload) => {
+                quote! {
+                    #(#attrs)*
+                    #name(#name<'a>),
+                }
+            }
+            EventPayload::Fields(_) => {
+                quote! {
+                    #(#attrs)*
+                    #name(#name),
+                }
+            }
         }
     });
     let payload_types = catalog.events.iter().filter_map(|event| {
@@ -36,15 +56,27 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
             .iter()
             .map(|field| &field.ty)
             .collect::<Vec<_>>();
-        Some(quote! {
-            #(#attrs)*
-            #[derive(Copy, Clone, Debug)]
-            #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-            #[allow(missing_docs)]
-            pub struct #name {
-                #(pub #field_names: #field_types,)*
-            }
-        })
+        if payload_borrows(&event.payload) {
+            Some(quote! {
+                #(#attrs)*
+                #[derive(Copy, Clone, Debug)]
+                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[allow(missing_docs)]
+                pub struct #name<'a> {
+                    #(pub #field_names: #field_types,)*
+                }
+            })
+        } else {
+            Some(quote! {
+                #(#attrs)*
+                #[derive(Copy, Clone, Debug)]
+                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[allow(missing_docs)]
+                pub struct #name {
+                    #(pub #field_names: #field_types,)*
+                }
+            })
+        }
     });
     let match_arms = catalog.events.iter().map(|event| {
         let cfg_attrs = event
@@ -62,10 +94,9 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
 
     quote! {
         /// Vendor-specific events for the STM32WB5x radio coprocessor.
-        #[allow(clippy::large_enum_variant)]
         #[derive(Clone, Copy, Debug)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-        pub enum VendorEvent {
+        pub enum VendorEvent #event_generics {
             /// If the host fails to read events from the controller quickly enough, the
             /// controller will generate this event. This event is never lost; it is inserted as
             /// soon as space is available in the Tx queue.
@@ -76,9 +107,12 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
 
         #(#payload_types)*
 
-        impl VendorEvent {
+        impl #impl_generics VendorEvent #event_generics {
             /// Decode a two-byte STM32 vendor event code and its complete payload.
-            pub fn new(buffer: &[u8]) -> Result<Self, Error> {
+            ///
+            /// Variable-length fields borrow from `buffer`; decoding performs no
+            /// allocation and does not copy maximum-capacity payload arrays.
+            pub fn new(buffer: #buffer_type) -> Result<Self, Error> {
                 if buffer.len() < 2 {
                     return Err(Error::BadLength(buffer.len(), 2));
                 }
@@ -92,6 +126,28 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
             }
         }
     }
+}
+
+fn payload_borrows(payload: &EventPayload) -> bool {
+    let EventPayload::Fields(fields) = payload else {
+        return false;
+    };
+    fields.fields().iter().any(|field| type_borrows(&field.ty))
+}
+
+fn type_borrows(ty: &syn::Type) -> bool {
+    struct EventLifetime(bool);
+
+    impl<'ast> Visit<'ast> for EventLifetime {
+        fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+            self.0 |= lifetime.ident == "a";
+            visit::visit_lifetime(self, lifetime);
+        }
+    }
+
+    let mut lifetime = EventLifetime(false);
+    lifetime.visit_type(ty);
+    lifetime.0
 }
 
 fn expand_event_payload_decoder(name: &syn::Ident, payload: &EventPayload) -> TokenStream2 {
@@ -253,7 +309,7 @@ fn expand_event_field_decoder(
                 }}
             }
             VariableEncodingShape::Tagged(_) | VariableEncodingShape::BitmapItems { .. } => {
-                unreachable!("the shared parser rejects event encodings without owned decoders")
+                unreachable!("the shared parser rejects event encodings without view decoders")
             }
         },
     };

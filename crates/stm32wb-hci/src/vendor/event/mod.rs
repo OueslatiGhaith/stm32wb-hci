@@ -16,8 +16,8 @@ pub use crate::vendor::command::l2cap::{
     L2CocMtu, L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm,
     L2SignalIdentifier,
 };
-pub use crate::wire::{BoundedBytes, BoundedItems, HciEventField};
-use crate::wire::{HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes};
+use crate::wire::HciCount;
+pub use crate::wire::{EventBytes, EventItems, EventItemsIter, HciEventField, HciEventItem};
 use bt_hci::param::{BdAddr, ConnHandle};
 
 stm32wb_hci_macros::wire_type! {
@@ -242,15 +242,30 @@ impl From<VendorError> for Error {
     }
 }
 
+impl HciEventItem<1> for L2CocChannelIndex {
+    fn from_validated_hci_event_field(bytes: &[u8; 1]) -> Self {
+        Self::new(bytes[0])
+    }
+}
+
+impl HciEventItem<2> for AttributeHandle {
+    fn from_validated_hci_event_field(bytes: &[u8; 2]) -> Self {
+        Self(u16::from_le_bytes(*bytes))
+    }
+}
+
 /// Event-specific diagnostics for a count-prefixed byte-field target.
 #[doc(hidden)]
 pub trait HciEventCountedBytesTarget<
+    'a,
     C,
     const COUNT_LEN: usize,
     const MIN_LEN: usize,
     const MAX_LEN: usize,
->: HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>
+>: Sized
 {
+    fn from_event_counted_bytes(bytes: &'a [u8]) -> Self;
+
     fn truncated_counted_bytes_error(
         _declared_len: Option<usize>,
         _actual: usize,
@@ -268,24 +283,52 @@ pub trait HciEventCountedBytesTarget<
     }
 }
 
-impl<C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
-    HciEventCountedBytesTarget<C, COUNT_LEN, MIN_LEN, MAX_LEN> for BoundedBytes<MAX_LEN>
+impl<'a, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
+    HciEventCountedBytesTarget<'a, C, COUNT_LEN, MIN_LEN, MAX_LEN> for EventBytes<'a, MAX_LEN>
 {
+    fn from_event_counted_bytes(bytes: &'a [u8]) -> Self {
+        Self::from_bytes(bytes)
+    }
 }
 
-/// Owned target for a record-width and byte-length prefixed event field.
+/// Borrowing target for a counted sequence of fixed-width event items.
 #[doc(hidden)]
-pub trait HciEventRecordTarget<const MIN_RECORD_LEN: usize, const MAX_LEN: usize>: Sized {
+pub trait HciEventCountedItemsTarget<
+    'a,
+    Item,
+    C,
+    const COUNT_LEN: usize,
+    const ITEM_LEN: usize,
+    const MAX_ITEMS: usize,
+>: Sized
+{
+    fn from_event_counted_items(bytes: &'a [u8]) -> Self;
+}
+
+impl<'a, Item, C, const COUNT_LEN: usize, const ITEM_LEN: usize, const MAX_ITEMS: usize>
+    HciEventCountedItemsTarget<'a, Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>
+    for EventItems<'a, Item, ITEM_LEN, MAX_ITEMS>
+{
+    fn from_event_counted_items(bytes: &'a [u8]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Borrowing target for a record-width and byte-length prefixed event field.
+#[doc(hidden)]
+pub trait HciEventRecordTarget<'a, const MIN_RECORD_LEN: usize, const MAX_LEN: usize>:
+    Sized
+{
     fn invalid_record_layout() -> Error;
 
     fn prefixed_record_length_error(_actual: usize, _required: usize) -> Option<Error> {
         None
     }
 
-    fn from_event_records(record_len: usize, records: &[u8]) -> Self;
+    fn from_event_records(record_len: usize, records: &'a [u8]) -> Self;
 }
 
-/// Owned target that reports an unknown tag in a `tagged_items` event field.
+/// Target that reports an unknown tag in a `tagged_items` event field.
 #[doc(hidden)]
 pub trait HciEventTaggedItemsTarget<Tag>: Sized {
     fn unknown_tag(tag: Tag) -> Error;
@@ -295,16 +338,35 @@ pub trait HciEventTaggedItemsTarget<Tag>: Sized {
     }
 }
 
-/// One tag-selected fixed-width item representation for an owned event field.
+/// One tag-selected fixed-width item representation for a borrowed event field.
 #[doc(hidden)]
-pub trait HciEventTaggedItemsVariant<Tag, Item: Copy, const ITEM_LEN: usize, const MAX_ITEMS: usize>:
-    Sized
+pub trait HciEventTaggedItemsVariant<
+    'a,
+    Tag,
+    Item: Copy,
+    const ITEM_LEN: usize,
+    const MAX_ITEMS: usize,
+>: Sized
 {
-    fn padding() -> Item;
-
     fn invalid_items(tag: Tag) -> Error;
 
-    fn from_tagged_items(tag: Tag, items: [Item; MAX_ITEMS], len: usize) -> Self;
+    fn from_tagged_items(tag: Tag, records: &'a [u8]) -> Self;
+}
+
+/// Borrowing target for a field that consumes the remaining event bytes.
+#[doc(hidden)]
+pub trait HciEventTrailingBytesTarget<'a, const MIN_LEN: usize, const MAX_LEN: usize>:
+    Sized
+{
+    fn from_event_trailing_bytes(bytes: &'a [u8]) -> Self;
+}
+
+impl<'a, const MIN_LEN: usize, const MAX_LEN: usize>
+    HciEventTrailingBytesTarget<'a, MIN_LEN, MAX_LEN> for EventBytes<'a, MAX_LEN>
+{
+    fn from_event_trailing_bytes(bytes: &'a [u8]) -> Self {
+        Self::from_bytes(bytes)
+    }
 }
 
 fn decode_hci_event_field<T, const N: usize>(
@@ -345,23 +407,24 @@ fn map_event_decode_error(
 }
 
 fn decode_hci_event_counted_bytes<
+    'a,
     T,
     C,
     const COUNT_LEN: usize,
     const MIN_LEN: usize,
     const MAX_LEN: usize,
 >(
-    data: &[u8],
+    data: &'a [u8],
     original_len: usize,
-) -> Result<(T, &[u8]), Error>
+) -> Result<(T, &'a [u8]), Error>
 where
-    T: HciEventCountedBytesTarget<C, COUNT_LEN, MIN_LEN, MAX_LEN>,
+    T: HciEventCountedBytesTarget<'a, C, COUNT_LEN, MIN_LEN, MAX_LEN>,
     C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
     let (value, rest) = crate::wire::decode_counted_bytes::<T, _, COUNT_LEN, MIN_LEN, MAX_LEN>(
         data,
         |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
-        <T as HciDecodeCountedBytes<C, COUNT_LEN, MAX_LEN>>::from_counted_bytes,
+        T::from_event_counted_bytes,
     )
     .map_err(|error| {
         match &error {
@@ -400,6 +463,7 @@ where
 }
 
 fn decode_hci_event_counted_items<
+    'a,
     T,
     Item,
     C,
@@ -408,34 +472,46 @@ fn decode_hci_event_counted_items<
     const MIN_ITEMS: usize,
     const MAX_ITEMS: usize,
 >(
-    data: &[u8],
+    data: &'a [u8],
     original_len: usize,
-) -> Result<(T, &[u8]), Error>
+) -> Result<(T, &'a [u8]), Error>
 where
-    T: HciDecodeCountedItems<Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
+    T: HciEventCountedItemsTarget<'a, Item, C, COUNT_LEN, ITEM_LEN, MAX_ITEMS>,
     Item: Copy + HciEventField<ITEM_LEN>,
     C: HciEventField<COUNT_LEN> + HciCount<COUNT_LEN>,
 {
-    crate::wire::decode_counted_items::<T, Item, C, _, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>(
-        data,
-        |bytes| C::from_hci_event_field(bytes).map(HciCount::to_usize),
-        Item::from_hci_event_field,
-    )
-    .map_err(|error| {
-        if let crate::wire::DecodeError::Truncated { required } = error
-            && data.len() >= COUNT_LEN
-            && ITEM_LEN != 0
-        {
-            return Error::BadLength(
-                data.len().saturating_sub(COUNT_LEN) / ITEM_LEN,
-                required.saturating_sub(COUNT_LEN) / ITEM_LEN,
-            );
-        }
-        map_event_decode_error(error, data.len(), original_len)
+    let (len, remaining) = crate::wire::decode_fixed_field(data, |bytes| {
+        C::from_hci_event_field(bytes).map(HciCount::to_usize)
     })
+    .map_err(|error| map_event_decode_error(error, data.len(), original_len))?;
+    if len < MIN_ITEMS {
+        return Err(Error::BadLength(len, MIN_ITEMS));
+    }
+    if len > MAX_ITEMS {
+        return Err(Error::BadLength(len, MAX_ITEMS));
+    }
+    let required_items = ITEM_LEN
+        .checked_mul(len)
+        .ok_or(Error::BadLength(len, MAX_ITEMS))?;
+    if remaining.len() < required_items {
+        let actual = if ITEM_LEN == 0 {
+            0
+        } else {
+            remaining.len() / ITEM_LEN
+        };
+        return Err(Error::BadLength(actual, len));
+    }
+    let (records, rest) = remaining.split_at(required_items);
+    for item in records.chunks_exact(ITEM_LEN) {
+        let item = <&[u8; ITEM_LEN]>::try_from(item)
+            .map_err(|_| Error::BadLength(records.len(), ITEM_LEN))?;
+        Item::from_hci_event_field(item)?;
+    }
+    Ok((T::from_event_counted_items(records), rest))
 }
 
 fn decode_hci_event_length_prefixed_records<
+    'a,
     T,
     RecordLen,
     Length,
@@ -444,11 +520,11 @@ fn decode_hci_event_length_prefixed_records<
     const MIN_RECORD_LEN: usize,
     const MAX_LEN: usize,
 >(
-    data: &[u8],
+    data: &'a [u8],
     original_len: usize,
-) -> Result<(T, &[u8]), Error>
+) -> Result<(T, &'a [u8]), Error>
 where
-    T: HciEventRecordTarget<MIN_RECORD_LEN, MAX_LEN>,
+    T: HciEventRecordTarget<'a, MIN_RECORD_LEN, MAX_LEN>,
     RecordLen: HciEventField<RECORD_LEN_WIDTH> + HciCount<RECORD_LEN_WIDTH>,
     Length: HciEventField<LENGTH_WIDTH> + HciCount<LENGTH_WIDTH>,
 {
@@ -516,6 +592,7 @@ where
 }
 
 fn decode_hci_event_tagged_items_variant<
+    'a,
     T,
     Tag: Copy,
     Item,
@@ -523,32 +600,35 @@ fn decode_hci_event_tagged_items_variant<
     const MAX_ITEMS: usize,
 >(
     tag: Tag,
-    records: &[u8],
+    records: &'a [u8],
 ) -> Result<T, Error>
 where
-    T: HciEventTaggedItemsVariant<Tag, Item, ITEM_LEN, MAX_ITEMS>,
+    T: HciEventTaggedItemsVariant<'a, Tag, Item, ITEM_LEN, MAX_ITEMS>,
     Item: Copy + HciEventField<ITEM_LEN>,
 {
-    crate::wire::decode_fixed_items(
-        records,
-        Item::from_hci_event_field,
-        || T::invalid_items(tag),
-        T::padding(),
-        |items, len| T::from_tagged_items(tag, items, len),
-    )
-    .map_err(|error| map_event_decode_error(error, records.len(), records.len()))
+    if ITEM_LEN == 0
+        || !records.len().is_multiple_of(ITEM_LEN)
+        || records.len() / ITEM_LEN > MAX_ITEMS
+    {
+        return Err(T::invalid_items(tag));
+    }
+    for item in records.chunks_exact(ITEM_LEN) {
+        let item = <&[u8; ITEM_LEN]>::try_from(item).map_err(|_| T::invalid_items(tag))?;
+        Item::from_hci_event_field(item)?;
+    }
+    Ok(T::from_tagged_items(tag, records))
 }
 
 #[allow(dead_code)]
-fn decode_hci_event_trailing_bytes<T, const MIN_LEN: usize, const MAX_LEN: usize>(
-    data: &[u8],
-) -> Result<(T, &[u8]), Error>
+fn decode_hci_event_trailing_bytes<'a, T, const MIN_LEN: usize, const MAX_LEN: usize>(
+    data: &'a [u8],
+) -> Result<(T, &'a [u8]), Error>
 where
-    T: HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>,
+    T: HciEventTrailingBytesTarget<'a, MIN_LEN, MAX_LEN>,
 {
     crate::wire::decode_trailing_bytes::<T, Error, MIN_LEN, MAX_LEN>(
         data,
-        <T as HciDecodeTrailingBytes<MIN_LEN, MAX_LEN>>::from_trailing_bytes,
+        T::from_event_trailing_bytes,
     )
     .map_err(|error| map_event_decode_error(error, data.len(), data.len()))
 }
@@ -617,7 +697,7 @@ stm32wb_hci_macros::vendor_event! {
     HalFirmwareError(0x0006) {
         Payload = {
             fw_error_type: FirmwareError => 1,
-            data: BoundedBytes<251> => {
+            data: EventBytes<'a, 251> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 251,
@@ -681,7 +761,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             procedure: GapProcedureKind => 1,
             status: GapProcedureStatus => 1,
-            data: BoundedBytes<250> => {
+            data: EventBytes<'a, 250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 250,
@@ -766,7 +846,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             identifier: L2SignalIdentifier => 1,
             reason: L2CapRejectionReason => 2,
-            data: BoundedBytes<247> => {
+            data: EventBytes<'a, 247> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 247,
@@ -796,7 +876,7 @@ stm32wb_hci_macros::vendor_event! {
             mps: L2CocMps => 2,
             initial_credits: L2CocInitialCredits => 2,
             result: L2CocConnectionResult => 2,
-            channel_indices: BoundedItems<L2CocChannelIndex, 242> => {
+            channel_indices: EventItems<'a, L2CocChannelIndex, 1, 242> => {
                 kind: counted_items,
                 count: u8 => 1,
                 item: L2CocChannelIndex => 1,
@@ -812,7 +892,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
-            channel_indices: BoundedItems<L2CocChannelIndex, 246> => {
+            channel_indices: EventItems<'a, L2CocChannelIndex, 1, 246> => {
                 kind: counted_items,
                 count: u8 => 1,
                 item: L2CocChannelIndex => 1,
@@ -859,7 +939,7 @@ stm32wb_hci_macros::vendor_event! {
     L2CapCocRxData(0x0816) {
         Payload = {
             channel_index: L2CocChannelIndex => 1,
-            data: BoundedBytes<250> => {
+            data: EventBytes<'a, 250> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 250,
@@ -884,7 +964,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             attr_handle: AttributeHandle => 2,
             offset: u16 => 2,
-            data: BoundedBytes<245> => {
+            data: EventBytes<'a, 245> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 245,
@@ -908,7 +988,7 @@ stm32wb_hci_macros::vendor_event! {
     AttFindInformationResponse(0x0C04) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            handle_uuid_pairs: HandleUuidPairs => {
+            handle_uuid_pairs: HandleUuidPairs<'a> => {
                 kind: tagged_items,
                 tag: u8 => 1,
                 length: u8 => 1,
@@ -930,7 +1010,7 @@ stm32wb_hci_macros::vendor_event! {
     AttFindByTypeValueResponse(0x0C05) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            handles: BoundedItems<HandleInfoPair, 62> => {
+            handles: EventItems<'a, HandleInfoPair, 4, 62> => {
                 kind: counted_items,
                 count: u8 => 1,
                 item: HandleInfoPair => 4,
@@ -942,7 +1022,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadByTypeResponse(0x0C06) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            pairs: HandleValuePairs => {
+            pairs: HandleValuePairs<'a> => {
                 kind: length_prefixed_records,
                 record_len: u8 => 1,
                 length: u8 => 1,
@@ -955,7 +1035,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadResponse(0x0C07) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            value: BoundedBytes<250> => {
+            value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 250,
@@ -968,7 +1048,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadBlobResponse(0x0C08) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            value: BoundedBytes<250> => {
+            value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 250,
@@ -981,7 +1061,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadMultipleResponse(0x0C09) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            value: BoundedBytes<250> => {
+            value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 250,
@@ -993,7 +1073,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadByGroupTypeResponse(0x0C0A) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            groups: AttributeGroups => {
+            groups: AttributeGroups<'a> => {
                 kind: length_prefixed_records,
                 record_len: u8 => 1,
                 length: u8 => 1,
@@ -1009,7 +1089,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
-            value: BoundedBytes<246> => {
+            value: EventBytes<'a, 246> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 246,
@@ -1026,7 +1106,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            value: BoundedBytes<248> => {
+            value: EventBytes<'a, 248> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 248,
@@ -1038,7 +1118,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            value: BoundedBytes<248> => {
+            value: EventBytes<'a, 248> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 248,
@@ -1077,7 +1157,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            value: BoundedBytes<248> => {
+            value: EventBytes<'a, 248> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 248,
@@ -1099,7 +1179,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
-            value: BoundedBytes<248> => {
+            value: EventBytes<'a, 248> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 248,
@@ -1131,7 +1211,7 @@ stm32wb_hci_macros::vendor_event! {
     AttReadMultiplePermitRequest(0x0C15) {
         Payload = {
             conn_handle: ConnHandle => 2,
-            handles: BoundedItems<AttributeHandle, 125> => {
+            handles: EventItems<'a, AttributeHandle, 2, 125> => {
                 kind: counted_items,
                 count: u8 => 1,
                 item: AttributeHandle => 2,
@@ -1167,7 +1247,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
-            value: BoundedBytes<246> => {
+            value: EventBytes<'a, 246> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 246,
@@ -1199,7 +1279,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             offset: u16 => 2,
-            data: BoundedBytes<247> => {
+            data: EventBytes<'a, 247> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 247,
@@ -1226,7 +1306,7 @@ stm32wb_hci_macros::vendor_event! {
         Payload = {
             conn_handle: ConnHandle => 2,
             offset: u16 => 2,
-            value: BoundedBytes<247> => {
+            value: EventBytes<'a, 247> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 247,
@@ -1244,7 +1324,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
-            value: BoundedBytes<245> => {
+            value: EventBytes<'a, 245> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 245,
@@ -1262,7 +1342,7 @@ stm32wb_hci_macros::vendor_event! {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
-            value: BoundedBytes<245> => {
+            value: EventBytes<'a, 245> => {
                 kind: counted_bytes,
                 count: u16 => 2,
                 max_len: 245,
@@ -1330,13 +1410,11 @@ stm32wb_hci_macros::wire_type! {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptyL2CapData;
 
-impl HciDecodeCountedBytes<u8, 1, 250> for EmptyL2CapData {
-    fn from_counted_bytes(_bytes: &[u8]) -> Self {
+impl<'a> HciEventCountedBytesTarget<'a, u8, 1, 0, 250> for EmptyL2CapData {
+    fn from_event_counted_bytes(_bytes: &'a [u8]) -> Self {
         Self
     }
-}
 
-impl HciEventCountedBytesTarget<u8, 1, 0, 250> for EmptyL2CapData {
     fn truncated_counted_bytes_error(
         declared_len: Option<usize>,
         actual: usize,
@@ -1453,7 +1531,7 @@ stm32wb_hci_macros::wire_type! {
     EventError = Error::Vendor;
 }
 
-impl GattAttributeModified {
+impl GattAttributeModified<'_> {
     /// Returns the attribute offset from which data has been written.
     pub fn offset(&self) -> usize {
         usize::from(self.offset & 0x7FFF)
@@ -1466,25 +1544,21 @@ impl GattAttributeModified {
     }
 }
 
-impl AttFindInformationResponse {
+impl AttFindInformationResponse<'_> {
     /// The Find Information Response shall have complete handle-UUID pairs. Such pairs shall not be
     /// split across response packets; this also implies that a handleUUID pair shall fit into a
     /// single response packet. The handle-UUID pairs shall be returned in ascending order of
     /// attribute handles.
     pub fn handle_uuid_pair_iter(&self) -> HandleUuidPairIterator<'_> {
         match self.handle_uuid_pairs {
-            HandleUuidPairs::Format16(count, ref data) => {
+            HandleUuidPairs::Format16(data) => {
                 HandleUuidPairIterator::Format16(HandleUuid16PairIterator {
-                    data,
-                    count,
-                    next_index: 0,
+                    chunks: data.chunks_exact(4),
                 })
             }
-            HandleUuidPairs::Format128(count, ref data) => {
+            HandleUuidPairs::Format128(data) => {
                 HandleUuidPairIterator::Format128(HandleUuid128PairIterator {
-                    data,
-                    count,
-                    next_index: 0,
+                    chunks: data.chunks_exact(18),
                 })
             }
         }
@@ -1569,12 +1643,12 @@ pub struct Uuid128(pub [u8; 16]);
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
-pub enum HandleUuidPairs {
-    Format16(usize, [HandleUuid16Pair; MAX_FORMAT16_PAIR_COUNT]),
-    Format128(usize, [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT]),
+pub enum HandleUuidPairs<'a> {
+    Format16(&'a [u8]),
+    Format128(&'a [u8]),
 }
 
-impl HciEventTaggedItemsTarget<u8> for HandleUuidPairs {
+impl HciEventTaggedItemsTarget<u8> for HandleUuidPairs<'_> {
     fn unknown_tag(tag: u8) -> Error {
         Error::Vendor(VendorError::BadAttFindInformationResponseFormat(tag))
     }
@@ -1584,82 +1658,41 @@ impl HciEventTaggedItemsTarget<u8> for HandleUuidPairs {
     }
 }
 
-impl HciEventTaggedItemsVariant<u8, HandleUuid16Pair, 4, MAX_FORMAT16_PAIR_COUNT>
-    for HandleUuidPairs
+impl<'a> HciEventTaggedItemsVariant<'a, u8, HandleUuid16Pair, 4, MAX_FORMAT16_PAIR_COUNT>
+    for HandleUuidPairs<'a>
 {
-    fn padding() -> HandleUuid16Pair {
-        HandleUuid16Pair {
-            handle: AttributeHandle(0),
-            uuid: Uuid16(0),
-        }
-    }
-
     fn invalid_items(_tag: u8) -> Error {
         Error::Vendor(VendorError::AttFindInformationResponsePartialPair16)
     }
 
-    fn from_tagged_items(
-        _tag: u8,
-        items: [HandleUuid16Pair; MAX_FORMAT16_PAIR_COUNT],
-        len: usize,
-    ) -> Self {
-        Self::Format16(len, items)
+    fn from_tagged_items(_tag: u8, records: &'a [u8]) -> Self {
+        Self::Format16(records)
     }
 }
 
-impl HciEventTaggedItemsVariant<u8, HandleUuid128Pair, 18, MAX_FORMAT128_PAIR_COUNT>
-    for HandleUuidPairs
+impl<'a> HciEventTaggedItemsVariant<'a, u8, HandleUuid128Pair, 18, MAX_FORMAT128_PAIR_COUNT>
+    for HandleUuidPairs<'a>
 {
-    fn padding() -> HandleUuid128Pair {
-        HandleUuid128Pair {
-            handle: AttributeHandle(0),
-            uuid: Uuid128([0; 16]),
-        }
-    }
-
     fn invalid_items(_tag: u8) -> Error {
         Error::Vendor(VendorError::AttFindInformationResponsePartialPair128)
     }
 
-    fn from_tagged_items(
-        _tag: u8,
-        items: [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT],
-        len: usize,
-    ) -> Self {
-        Self::Format128(len, items)
+    fn from_tagged_items(_tag: u8, records: &'a [u8]) -> Self {
+        Self::Format128(records)
     }
 }
 
-impl Debug for HandleUuidPairs {
+impl Debug for HandleUuidPairs<'_> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{{")?;
-        match *self {
-            HandleUuidPairs::Format16(count, pairs) => {
-                for handle_uuid_pair in &pairs[..count] {
-                    write!(
-                        f,
-                        "{{{:?}, {:?}}}",
-                        handle_uuid_pair.handle, handle_uuid_pair.uuid
-                    )?
-                }
-            }
-            HandleUuidPairs::Format128(count, pairs) => {
-                for handle_uuid_pair in &pairs[..count] {
-                    write!(
-                        f,
-                        "{{{:?}, {:?}}}",
-                        handle_uuid_pair.handle, handle_uuid_pair.uuid
-                    )?
-                }
-            }
+        match self {
+            HandleUuidPairs::Format16(bytes) => f.debug_tuple("Format16").field(bytes).finish(),
+            HandleUuidPairs::Format128(bytes) => f.debug_tuple("Format128").field(bytes).finish(),
         }
-        write!(f, "}}")
     }
 }
 
 /// Possible iterators over handle-UUID pairs that can be returnedby the
 /// [ATT find information response](AttFindInformationResponse). All pairs from the same event have the same format.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HandleUuidPairIterator<'a> {
     /// The event contains 16-bit UUIDs.
     Format16(HandleUuid16PairIterator<'a>),
@@ -1668,52 +1701,44 @@ pub enum HandleUuidPairIterator<'a> {
 }
 
 /// Iterator over handle-UUID pairs for 16-bit UUIDs.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandleUuid16PairIterator<'a> {
-    data: &'a [HandleUuid16Pair; MAX_FORMAT16_PAIR_COUNT],
-    count: usize,
-    next_index: usize,
+    chunks: core::slice::ChunksExact<'a, u8>,
 }
 
 impl<'a> Iterator for HandleUuid16PairIterator<'a> {
     type Item = HandleUuid16Pair;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.count {
-            return None;
-        }
-
-        let index = self.next_index;
-        self.next_index += 1;
-        Some(self.data[index])
+        let bytes = self.chunks.next()?;
+        Some(HandleUuid16Pair {
+            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
+            uuid: Uuid16(u16::from_le_bytes([bytes[2], bytes[3]])),
+        })
     }
 }
 
 /// Iterator over handle-UUID pairs for 128-bit UUIDs.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandleUuid128PairIterator<'a> {
-    data: &'a [HandleUuid128Pair; MAX_FORMAT128_PAIR_COUNT],
-    count: usize,
-    next_index: usize,
+    chunks: core::slice::ChunksExact<'a, u8>,
 }
 
 impl<'a> Iterator for HandleUuid128PairIterator<'a> {
     type Item = HandleUuid128Pair;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.count {
-            return None;
-        }
-
-        let index = self.next_index;
-        self.next_index += 1;
-        Some(self.data[index])
+        let bytes = self.chunks.next()?;
+        let mut uuid = [0; 16];
+        uuid.copy_from_slice(&bytes[2..]);
+        Some(HandleUuid128Pair {
+            handle: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
+            uuid: Uuid128(uuid),
+        })
     }
 }
 
-impl AttFindByTypeValueResponse {
+impl AttFindByTypeValueResponse<'_> {
     /// Returns an iterator over the Handles Information List as defined in Bluetooth Core v4.1
     /// spec.
-    pub fn handle_pairs_iter(&self) -> impl Iterator<Item = HandleInfoPair> + '_ {
-        self.handles.as_slice().iter().copied()
+    pub fn handle_pairs_iter(&self) -> EventItemsIter<'_, HandleInfoPair, 4> {
+        self.handles.iter()
     }
 }
 
@@ -1733,6 +1758,12 @@ impl HandleInfoPair {
             attribute: AttributeHandle(u16::from_le_bytes([bytes[0], bytes[1]])),
             group_end: GroupEndHandle(u16::from_le_bytes([bytes[2], bytes[3]])),
         }
+    }
+}
+
+impl HciEventItem<4> for HandleInfoPair {
+    fn from_validated_hci_event_field(bytes: &[u8; 4]) -> Self {
+        Self::from_wire_bytes(bytes)
     }
 }
 
@@ -1764,16 +1795,15 @@ impl crate::vendor::command::HciDecodeField<4> for HandleInfoPair {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupEndHandle(pub u16);
 
-/// Owned ATT handle-value records decoded from a Read By Type response.
+/// Borrowed ATT handle-value records decoded from a Read By Type response.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HandleValuePairs {
-    data: [u8; 249],
-    len: usize,
+pub struct HandleValuePairs<'a> {
+    data: &'a [u8],
     value_len: usize,
 }
 
-impl HciEventRecordTarget<2, 249> for HandleValuePairs {
+impl<'a> HciEventRecordTarget<'a, 2, 249> for HandleValuePairs<'a> {
     fn invalid_record_layout() -> Error {
         Error::Vendor(VendorError::AttReadByTypeResponsePartial)
     }
@@ -1782,23 +1812,20 @@ impl HciEventRecordTarget<2, 249> for HandleValuePairs {
         Some(Error::BadLength(actual, required))
     }
 
-    fn from_event_records(pair_len: usize, records: &[u8]) -> Self {
-        let len = records.len();
-        let mut value = [0; 249];
-        value[..len].copy_from_slice(records);
+    fn from_event_records(pair_len: usize, records: &'a [u8]) -> Self {
         Self {
-            data: value,
-            len,
+            data: records,
             value_len: pair_len - 2,
         }
     }
 }
 
-impl AttReadByTypeResponse {
+impl AttReadByTypeResponse<'_> {
     /// Return an iterator over all valid handle-value pairs returned with the response.
     pub fn handle_value_pair_iter(&self) -> impl Iterator<Item = HandleValuePair<'_>> {
         let record_len = self.pairs.value_len + 2;
-        self.pairs.data[..self.pairs.len]
+        self.pairs
+            .data
             .chunks_exact(record_len)
             .map(|record| HandleValuePair {
                 handle: AttributeHandle(u16::from_le_bytes([record[0], record[1]])),
@@ -1823,37 +1850,36 @@ impl<'a> HandleValuePair<'a> {
     }
 }
 
-impl AttReadResponse {
+impl AttReadResponse<'_> {
     /// Returns the valid part of the value data.
     pub fn value(&self) -> &[u8] {
         self.value.as_slice()
     }
 }
 
-impl AttReadBlobResponse {
+impl AttReadBlobResponse<'_> {
     /// Returns the valid part of the value data.
     pub fn value(&self) -> &[u8] {
         self.value.as_slice()
     }
 }
 
-impl AttReadMultipleResponse {
+impl AttReadMultipleResponse<'_> {
     /// Returns the valid part of the value data.
     pub fn value(&self) -> &[u8] {
         self.value.as_slice()
     }
 }
 
-/// Owned ATT attribute groups decoded from a Read By Group Type response.
+/// Borrowed ATT attribute groups decoded from a Read By Group Type response.
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttributeGroups {
-    data: [u8; 249],
-    len: usize,
+pub struct AttributeGroups<'a> {
+    data: &'a [u8],
     group_len: usize,
 }
 
-impl HciEventRecordTarget<4, 249> for AttributeGroups {
+impl<'a> HciEventRecordTarget<'a, 4, 249> for AttributeGroups<'a> {
     fn invalid_record_layout() -> Error {
         Error::Vendor(VendorError::AttReadByGroupTypeResponsePartial)
     }
@@ -1862,22 +1888,19 @@ impl HciEventRecordTarget<4, 249> for AttributeGroups {
         Some(Error::BadLength(actual, required))
     }
 
-    fn from_event_records(group_len: usize, records: &[u8]) -> Self {
-        let len = records.len();
-        let mut value = [0; 249];
-        value[..len].copy_from_slice(records);
+    fn from_event_records(group_len: usize, records: &'a [u8]) -> Self {
         Self {
-            data: value,
-            len,
+            data: records,
             group_len,
         }
     }
 }
 
-impl AttReadByGroupTypeResponse {
+impl AttReadByGroupTypeResponse<'_> {
     /// Create and return an iterator for the attribute data returned with the response.
     pub fn attribute_data_iter(&self) -> impl Iterator<Item = AttributeData<'_>> {
-        self.groups.data[..self.groups.len]
+        self.groups
+            .data
             .chunks_exact(self.groups.group_len)
             .map(|record| AttributeData {
                 attribute_handle: AttributeHandle(u16::from_le_bytes([record[0], record[1]])),
@@ -1904,7 +1927,7 @@ impl<'a> AttributeData<'a> {
     }
 }
 
-impl AttPrepareWriteResponse {
+impl AttPrepareWriteResponse<'_> {
     /// Returns the partial value of the attribute to be written.
     pub fn value(&self) -> &[u8] {
         self.value.as_slice()
@@ -1925,13 +1948,13 @@ macro_rules! impl_attribute_value_accessor {
 }
 
 impl_attribute_value_accessor!(
-    GattIndication,
-    GattNotification,
-    GattDiscoverOrReadCharacteristicByUuidResponse,
-    AttWritePermitRequest,
-    GattReadExt,
-    GattIndicationExt,
-    GattNotificationExt,
+    GattIndication<'_>,
+    GattNotification<'_>,
+    GattDiscoverOrReadCharacteristicByUuidResponse<'_>,
+    AttWritePermitRequest<'_>,
+    GattReadExt<'_>,
+    GattIndicationExt<'_>,
+    GattNotificationExt<'_>,
 );
 
 stm32wb_hci_macros::wire_type! {
@@ -2148,14 +2171,14 @@ stm32wb_hci_macros::wire_type! {
     EventError = Error::Vendor;
 }
 
-impl AttReadMultiplePermitRequest {
-    /// Returns the valid attribute handles returned by the ATT Read Multiple Permit Request event.
-    pub fn handles(&self) -> &[AttributeHandle] {
-        self.handles.as_slice()
+impl AttReadMultiplePermitRequest<'_> {
+    /// Iterates over the attribute handles in the ATT Read Multiple Permit Request event.
+    pub fn handles(&self) -> EventItemsIter<'_, AttributeHandle, 2> {
+        self.handles.iter()
     }
 }
 
-impl AttPrepareWritePermitRequest {
+impl AttPrepareWritePermitRequest<'_> {
     /// Returns the data to be written.
     pub fn value(&self) -> &[u8] {
         self.value.as_slice()
@@ -2242,7 +2265,7 @@ stm32wb_hci_macros::wire_type! {
     EventError = core::convert::identity;
 }
 
-impl HalFirmwareError {
+impl HalFirmwareError<'_> {
     pub fn data(&self) -> &[u8] {
         self.data.as_slice()
     }
@@ -2313,6 +2336,20 @@ stm32wb_hci_macros::wire_type! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_event_is_a_compact_packet_view() {
+        let bytes = [0x07, 0x0C, 0x23, 0x01, 0x02, 0xAA, 0xBB];
+        let VendorEvent::AttReadResponse(event) =
+            VendorEvent::new(&bytes).expect("valid read response")
+        else {
+            panic!("unexpected event variant");
+        };
+
+        assert_eq!(event.value.as_slice(), &[0xAA, 0xBB]);
+        assert_eq!(event.value.as_slice().as_ptr(), bytes[5..].as_ptr());
+        assert!(core::mem::size_of::<VendorEvent<'static>>() <= 64);
+    }
 
     #[cfg(since_fw_0_17_0)]
     #[test]
@@ -2651,10 +2688,9 @@ mod tests {
         };
         assert_eq!(event.mtu.value(), 64);
         assert_eq!(event.mps.value(), 32);
-        assert_eq!(
-            event.channel_indices.as_slice(),
-            &[L2CocChannelIndex::new(0x07)]
-        );
+        let mut channels = event.channel_indices.iter();
+        assert_eq!(channels.next(), Some(L2CocChannelIndex::new(0x07)));
+        assert!(channels.next().is_none());
     }
 
     #[test]
@@ -2721,10 +2757,10 @@ mod tests {
         let VendorEvent::AttReadMultiplePermitRequest(event) = event else {
             panic!("unexpected event variant");
         };
-        assert_eq!(
-            event.handles(),
-            &[AttributeHandle(0x1234), AttributeHandle(0x5678)]
-        );
+        let mut handles = event.handles();
+        assert_eq!(handles.next(), Some(AttributeHandle(0x1234)));
+        assert_eq!(handles.next(), Some(AttributeHandle(0x5678)));
+        assert!(handles.next().is_none());
     }
 
     #[test]

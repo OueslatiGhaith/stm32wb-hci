@@ -77,14 +77,15 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
 ///
 /// Each declaration owns its 16-bit vendor event code and complete payload
 /// schema. Unit payloads generate unit `VendorEvent` variants; inline payloads
-/// generate an owned public payload structure and a tuple variant carrying it.
-/// Fixed fields use `field: Type => width`. Owned variable payload fields may
+/// generate a public payload structure and a tuple variant carrying it.
+/// Fixed fields use `field: Type => width`. Borrowed variable payload fields may
 /// use `counted_bytes`, `counted_items`, `length_prefixed_records`,
 /// `tagged_items`, or `trailing_bytes`.
 ///
 /// The generated `VendorEvent::new` requires the two-byte event code, decodes
 /// every declared field in order, and rejects both truncated and trailing
-/// bytes. Event `cfg` attributes gate the enum variant, payload type, and
+/// bytes. Its lifetime is tied to variable fields retained as packet views.
+/// Event `cfg` attributes gate the enum variant, payload type, and
 /// dispatch arm. Complementary `before_fw_*` and `since_fw_*` declarations may
 /// therefore reuse a name or wire code when a firmware boundary changes its
 /// shape.

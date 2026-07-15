@@ -106,7 +106,8 @@ proprietary ST HCI specification. Standard commands and events come directly fro
 `bt_hci` re-export. Vendor commands are generated command types: construct one, then call
 `SyncCmd::exec` for a Command Complete command or `AsyncCmd::exec` for a Command Status command.
 The adapter executes both standard and vendor types through `ControllerCmdSync` and
-`ControllerCmdAsync`.
+`ControllerCmdAsync`. Decoded vendor events borrow variable-length fields directly from the
+controller packet, so they remain compact and cannot outlive the read buffer.
 
 The controller's `read` method may have to be polled for commands to complete. A channel or other
 method may be used so that packet reads remain active while commands execute.

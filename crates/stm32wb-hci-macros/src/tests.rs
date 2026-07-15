@@ -236,11 +236,11 @@ fn directly_generates_event_enum_payloads_dispatch_and_cfg() {
 }
 
 #[test]
-fn directly_generates_every_owned_variable_event_decoder() {
+fn directly_generates_every_borrowed_variable_event_decoder() {
     let events = parse_events(quote! {
         Counted(0x0001) {
             Payload = {
-                data: BoundedBytes<8> => {
+                data: EventBytes<'a, 8> => {
                     kind: counted_bytes,
                     count: u8 => 1,
                     max_len: 8,
@@ -249,7 +249,7 @@ fn directly_generates_every_owned_variable_event_decoder() {
         }
         Items(0x0002) {
             Payload = {
-                values: BoundedItems<Item, 3> => {
+                values: EventItems<'a, Item, 2, 3> => {
                     kind: counted_items,
                     count: u8 => 1,
                     item: Item => 2,
@@ -259,7 +259,7 @@ fn directly_generates_every_owned_variable_event_decoder() {
         }
         Records(0x0003) {
             Payload = {
-                value: Records => {
+                value: Records<'a> => {
                     kind: length_prefixed_records,
                     record_len: u8 => 1,
                     length: u8 => 1,
@@ -270,7 +270,7 @@ fn directly_generates_every_owned_variable_event_decoder() {
         }
         Tagged(0x0004) {
             Payload = {
-                value: Tagged => {
+                value: Tagged<'a> => {
                     kind: tagged_items,
                     tag: u8 => 1,
                     length: u8 => 1,
@@ -284,7 +284,7 @@ fn directly_generates_every_owned_variable_event_decoder() {
         }
         Trailing(0x0005) {
             Payload = {
-                value: BoundedBytes<4> => {
+                value: EventBytes<'a, 4> => {
                     kind: trailing_bytes,
                     min_len: 0,
                     max_len: 4,
@@ -298,6 +298,8 @@ fn directly_generates_every_owned_variable_event_decoder() {
     assert!(generated.contains("decode_hci_event_length_prefixed_records"));
     assert!(generated.contains("decode_hci_event_tagged_items_variant"));
     assert!(generated.contains("decode_hci_event_trailing_bytes"));
+    assert!(generated.contains("pub enum VendorEvent < 'a >"));
+    assert!(generated.contains("pub struct Counted < 'a >"));
     assert!(generated.contains("__stm32wb_event_data"));
     assert!(!generated.contains("vendor_event !"));
 }

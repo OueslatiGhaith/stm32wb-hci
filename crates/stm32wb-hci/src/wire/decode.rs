@@ -5,6 +5,7 @@
 //! collection construction live here so command returns and events cannot
 //! drift into subtly different wire behavior.
 
+use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
 /// Owned, bounded bytes decoded from a variable-length HCI field.
@@ -71,6 +72,115 @@ impl<T: Copy + core::fmt::Debug, const MAX_ITEMS: usize> core::fmt::Debug
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_list().entries(self.as_slice()).finish()
     }
+}
+
+/// A bounded variable-length event byte field borrowed from the HCI packet.
+#[derive(Clone, Copy)]
+pub struct EventBytes<'a, const MAX_LEN: usize> {
+    bytes: &'a [u8],
+}
+
+impl<'a, const MAX_LEN: usize> EventBytes<'a, MAX_LEN> {
+    pub(crate) const fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    /// Returns the bytes present on the wire.
+    pub const fn as_slice(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+impl<const MAX_LEN: usize> AsRef<[u8]> for EventBytes<'_, MAX_LEN> {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
+impl<const MAX_LEN: usize> core::fmt::Debug for EventBytes<'_, MAX_LEN> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries(self.bytes).finish()
+    }
+}
+
+/// Fixed-width items retained as canonical wire bytes inside a decoded event.
+///
+/// Items are decoded on iteration so the event view occupies one slice rather
+/// than an array sized for the schema's maximum item count.
+#[derive(Clone, Copy)]
+pub struct EventItems<'a, T, const ITEM_LEN: usize, const MAX_ITEMS: usize> {
+    bytes: &'a [u8],
+    item: PhantomData<fn() -> T>,
+}
+
+impl<'a, T, const ITEM_LEN: usize, const MAX_ITEMS: usize> EventItems<'a, T, ITEM_LEN, MAX_ITEMS> {
+    pub(crate) const fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            item: PhantomData,
+        }
+    }
+
+    /// Number of items present on the wire.
+    pub const fn len(&self) -> usize {
+        self.bytes.len() / ITEM_LEN
+    }
+
+    /// Whether the wire collection is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Decode the retained items in wire order.
+    pub fn iter(&self) -> EventItemsIter<'a, T, ITEM_LEN>
+    where
+        T: crate::wire::HciEventItem<ITEM_LEN>,
+    {
+        EventItemsIter {
+            chunks: self.bytes.chunks_exact(ITEM_LEN),
+            item: PhantomData,
+        }
+    }
+}
+
+impl<T, const ITEM_LEN: usize, const MAX_ITEMS: usize> core::fmt::Debug
+    for EventItems<'_, T, ITEM_LEN, MAX_ITEMS>
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("EventItems")
+            .field("len", &self.len())
+            .field("bytes", &self.bytes)
+            .finish()
+    }
+}
+
+/// Iterator decoding fixed-width items from an [`EventItems`] view.
+pub struct EventItemsIter<'a, T, const ITEM_LEN: usize> {
+    chunks: core::slice::ChunksExact<'a, u8>,
+    item: PhantomData<fn() -> T>,
+}
+
+impl<T, const ITEM_LEN: usize> Iterator for EventItemsIter<'_, T, ITEM_LEN>
+where
+    T: crate::wire::HciEventItem<ITEM_LEN>,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk = self.chunks.next()?;
+        let bytes = <&[u8; ITEM_LEN]>::try_from(chunk).ok()?;
+        Some(T::from_validated_hci_event_field(bytes))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.chunks.size_hint()
+    }
+}
+
+impl<T, const ITEM_LEN: usize> ExactSizeIterator for EventItemsIter<'_, T, ITEM_LEN> where
+    T: crate::wire::HciEventItem<ITEM_LEN>
+{
 }
 
 /// Construction contract for a count-prefixed byte-field target.
@@ -150,6 +260,22 @@ impl<T: Copy + defmt::Format, const MAX_ITEMS: usize> defmt::Format for BoundedI
     }
 }
 
+#[cfg(feature = "defmt")]
+impl<const MAX_LEN: usize> defmt::Format for EventBytes<'_, MAX_LEN> {
+    fn format(&self, formatter: defmt::Formatter) {
+        defmt::write!(formatter, "{=[u8]}", self.bytes);
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<T, const ITEM_LEN: usize, const MAX_ITEMS: usize> defmt::Format
+    for EventItems<'_, T, ITEM_LEN, MAX_ITEMS>
+{
+    fn format(&self, formatter: defmt::Formatter) {
+        defmt::write!(formatter, "{=[u8]}", self.bytes);
+    }
+}
+
 /// A catalog-independent failure while decoding one declarative field.
 pub(crate) enum DecodeError<E> {
     /// The semantic field decoder rejected the field's bytes.
@@ -190,16 +316,17 @@ pub(crate) fn decode_fixed_field<T, E, const N: usize>(
 
 /// Decode a count-prefixed byte field and construct its owned representation.
 pub(crate) fn decode_counted_bytes<
+    'a,
     T,
     E,
     const COUNT_LEN: usize,
     const MIN_LEN: usize,
     const MAX_LEN: usize,
 >(
-    data: &[u8],
+    data: &'a [u8],
     decode_count: impl FnOnce(&[u8; COUNT_LEN]) -> Result<usize, E>,
-    build: impl FnOnce(&[u8]) -> T,
-) -> Result<(T, &[u8]), DecodeError<E>> {
+    build: impl FnOnce(&'a [u8]) -> T,
+) -> Result<(T, &'a [u8]), DecodeError<E>> {
     let (len, after_count) = decode_fixed_field(data, decode_count)?;
     if len < MIN_LEN {
         return Err(DecodeError::CountTooSmall {
@@ -268,43 +395,11 @@ pub(crate) fn decode_prefixed_bytes<
     Ok((prefix, bytes, rest))
 }
 
-/// Decode an exact raw byte slice into homogeneous fixed-width items.
-pub(crate) fn decode_fixed_items<
-    T,
-    Item: Copy,
-    E,
-    const ITEM_LEN: usize,
-    const MAX_ITEMS: usize,
->(
-    data: &[u8],
-    decode_item: impl Fn(&[u8; ITEM_LEN]) -> Result<Item, E>,
-    invalid_layout: impl FnOnce() -> E,
-    padding: Item,
-    build: impl FnOnce([Item; MAX_ITEMS], usize) -> T,
-) -> Result<T, DecodeError<E>> {
-    if ITEM_LEN == 0 || !data.len().is_multiple_of(ITEM_LEN) {
-        return Err(DecodeError::Field(invalid_layout()));
-    }
-    let len = data.len() / ITEM_LEN;
-    if len > MAX_ITEMS {
-        return Err(DecodeError::Field(invalid_layout()));
-    }
-
-    let mut items = [padding; MAX_ITEMS];
-    for (slot, bytes) in items.iter_mut().zip(data.chunks_exact(ITEM_LEN)) {
-        let bytes = bytes
-            .try_into()
-            .expect("chunks_exact returned the declared item width");
-        *slot = decode_item(bytes).map_err(DecodeError::Field)?;
-    }
-    Ok(build(items, len))
-}
-
 /// Decode all remaining bytes when their length is within the declared range.
-pub(crate) fn decode_trailing_bytes<T, E, const MIN_LEN: usize, const MAX_LEN: usize>(
-    data: &[u8],
-    build: impl FnOnce(&[u8]) -> T,
-) -> Result<(T, &[u8]), DecodeError<E>> {
+pub(crate) fn decode_trailing_bytes<'a, T, E, const MIN_LEN: usize, const MAX_LEN: usize>(
+    data: &'a [u8],
+    build: impl FnOnce(&'a [u8]) -> T,
+) -> Result<(T, &'a [u8]), DecodeError<E>> {
     let len = data.len();
     if !(MIN_LEN..=MAX_LEN).contains(&len) {
         return Err(DecodeError::LengthOutOfRange {
