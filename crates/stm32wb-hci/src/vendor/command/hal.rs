@@ -149,6 +149,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 46,
+                storage_max_len: 254,
             },
         };
         Constraints = {
@@ -171,6 +172,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 count: u8 => 1,
                 min_len: 1,
                 max_len: 16,
+                storage_max_len: 251,
             },
         };
     }

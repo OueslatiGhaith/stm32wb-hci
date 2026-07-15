@@ -238,6 +238,12 @@ pub struct VariableEncoding {
     pub min_len: usize,
     /// Maximum encoded field size.
     pub max_len: usize,
+    /// Generated C storage capacity for this field.
+    ///
+    /// This defaults to `max_len`. A larger value is an explicit declaration
+    /// that the Rust API intentionally enforces a narrower semantic domain
+    /// than the generated transport buffer can store.
+    pub storage_max_len: usize,
     /// Whether this field consumes every remaining payload byte.
     pub consumes_remainder: bool,
 }
@@ -1464,6 +1470,17 @@ impl Parse for VariableEncoding {
         };
 
         let (min_len, max_len, consumes_remainder) = variable_bounds(input, &shape)?;
+        let storage_max_len = if next_label_is(input, "storage_max_len")? {
+            parse_integer_value(input, "storage_max_len")?.value
+        } else {
+            max_len
+        };
+        if storage_max_len < max_len {
+            return Err(input.error(format!(
+                "variable field storage maximum {storage_max_len} is smaller than semantic maximum {max_len}"
+            )));
+        }
+        validate_storage_max_len(input, &shape, storage_max_len)?;
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after declarative variable field"));
         }
@@ -1471,9 +1488,41 @@ impl Parse for VariableEncoding {
             shape,
             min_len,
             max_len,
+            storage_max_len,
             consumes_remainder,
         })
     }
+}
+
+fn validate_storage_max_len(
+    input: ParseStream<'_>,
+    shape: &VariableEncodingShape,
+    storage_max_len: usize,
+) -> syn::Result<()> {
+    let (prefix, element_width) = match shape {
+        VariableEncodingShape::CountedBytes { count, .. } => (count.width.value, 1),
+        VariableEncodingShape::CountedItems { count, item, .. } => {
+            (count.width.value, item.width.value)
+        }
+        VariableEncodingShape::Tagged(tagged) => (tagged.tag.width.value, 1),
+        VariableEncodingShape::LengthPrefixedRecords {
+            record_len, length, ..
+        } => (record_len.width.value + length.width.value, 1),
+        VariableEncodingShape::TaggedItems(tagged) => {
+            (tagged.tag.width.value + tagged.length.width.value, 1)
+        }
+        VariableEncodingShape::TrailingBytes { .. } => (0, 1),
+        VariableEncodingShape::BitmapItems { item, .. } => (0, item.width.value),
+    };
+    let payload = storage_max_len
+        .checked_sub(prefix)
+        .ok_or_else(|| input.error("variable field storage maximum is smaller than its prefix"))?;
+    if payload % element_width != 0 {
+        return Err(input.error(format!(
+            "variable field storage maximum leaves {payload} bytes, which is not divisible by its {element_width}-byte item width"
+        )));
+    }
+    Ok(())
 }
 
 fn variable_bounds(
@@ -1894,6 +1943,7 @@ mod tests {
                             kind: counted_bytes,
                             count: u8 => 1,
                             max_len: 16,
+                            storage_max_len: 33,
                         },
                     };
                     Constraints = {
@@ -1915,6 +1965,7 @@ mod tests {
             panic!("expected a variable encoding");
         };
         assert_eq!((encoding.min_len, encoding.max_len), (1, 17));
+        assert_eq!(encoding.storage_max_len, 33);
         let VariableEncodingShape::CountedBytes {
             count,
             min_len,

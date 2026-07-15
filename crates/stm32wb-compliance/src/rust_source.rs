@@ -362,31 +362,40 @@ fn field_segments(field: &stm32wb_hci_schema::Field) -> Vec<WireSegment> {
         FieldEncoding::Fixed(encoding) => {
             vec![WireSegment::fixed(wire_width(encoding.width))]
         }
-        FieldEncoding::Variable(encoding) => variable_segments(&encoding.shape),
+        FieldEncoding::Variable(encoding) => variable_segments(encoding),
     }
 }
 
-fn variable_segments(shape: &VariableEncodingShape) -> Vec<WireSegment> {
-    match shape {
+fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<WireSegment> {
+    let storage_max_len = encoding.storage_max_len;
+    match &encoding.shape {
         VariableEncodingShape::CountedBytes {
             count,
             min_len,
-            max_len,
+            max_len: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
-            WireSegment::variable(1, wire_width(min_len.value), wire_width(max_len.value)),
+            WireSegment::variable(
+                1,
+                wire_width(min_len.value),
+                wire_width(storage_max_len - count.width.value),
+            ),
         ],
         VariableEncodingShape::CountedItems {
             count,
             item,
             min_items,
-            max_items,
+            max_items: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
             WireSegment::variable(
                 wire_width(item.width.value),
                 wire_width(min_items.value),
-                wire_width(max_items.value),
+                wire_width(
+                    (storage_max_len - count.width.value)
+                        .checked_div(item.width.value)
+                        .expect("item wire width is nonzero"),
+                ),
             ),
         ],
         VariableEncodingShape::Tagged(tagged) => {
@@ -396,36 +405,49 @@ fn variable_segments(shape: &VariableEncodingShape) -> Vec<WireSegment> {
                 WireSegment::variable(
                     1,
                     wire_width(tagged.min_len.value - tag_width),
-                    wire_width(tagged.max_len.value - tag_width),
+                    wire_width(storage_max_len - tag_width),
                 ),
             ]
         }
         VariableEncodingShape::LengthPrefixedRecords {
             record_len,
             length,
-            max_len,
+            max_len: _,
             ..
         } => vec![
             WireSegment::fixed(wire_width(record_len.width.value)),
             WireSegment::fixed(wire_width(length.width.value)),
-            WireSegment::variable(1, 0, wire_width(max_len.value)),
+            WireSegment::variable(
+                1,
+                0,
+                wire_width(storage_max_len - record_len.width.value - length.width.value),
+            ),
         ],
         VariableEncodingShape::TaggedItems(tagged) => vec![
             WireSegment::fixed(wire_width(tagged.tag.width.value)),
             WireSegment::fixed(wire_width(tagged.length.width.value)),
-            WireSegment::variable(1, 0, wire_width(tagged.max_len.value)),
+            WireSegment::variable(
+                1,
+                0,
+                wire_width(storage_max_len - tagged.tag.width.value - tagged.length.width.value),
+            ),
         ],
-        VariableEncodingShape::TrailingBytes { min_len, max_len } => vec![WireSegment::variable(
+        VariableEncodingShape::TrailingBytes {
+            min_len,
+            max_len: _,
+        } => vec![WireSegment::variable(
             1,
             wire_width(min_len.value),
-            wire_width(max_len.value),
+            wire_width(storage_max_len),
         )],
-        VariableEncodingShape::BitmapItems {
-            item, max_items, ..
-        } => vec![WireSegment::variable(
+        VariableEncodingShape::BitmapItems { item, .. } => vec![WireSegment::variable(
             wire_width(item.width.value),
             0,
-            wire_width(max_items.value),
+            wire_width(
+                storage_max_len
+                    .checked_div(item.width.value)
+                    .expect("item wire width is nonzero"),
+            ),
         )],
     }
 }

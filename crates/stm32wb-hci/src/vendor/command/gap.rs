@@ -142,6 +142,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 31,
+                storage_max_len: 243,
             },
             conn_interval_min: u16 => 2,
             conn_interval_max: u16 => 2,
@@ -183,6 +184,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 31,
+                storage_max_len: 243,
             },
             conn_interval_min: u16 => 2,
             conn_interval_max: u16 => 2,
@@ -395,6 +397,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 31,
+                storage_max_len: 255,
             },
         };
         Completion = CommandComplete;
@@ -616,6 +619,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 31,
+                storage_max_len: 248,
             },
             white_list: &'a [PeerAddrType] => {
                 kind: counted_items,

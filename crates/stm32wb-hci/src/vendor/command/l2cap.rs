@@ -198,6 +198,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 count: u8 => 1,
                 item: L2CocChannelIndex => 1,
                 max_items: 5,
+                storage_max_len: 251,
             },
         };
     }
@@ -222,6 +223,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 count: u8 => 1,
                 item: L2CocChannelIndex => 1,
                 max_items: 5,
+                storage_max_len: 251,
             },
         };
     }
@@ -239,6 +241,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 item: L2CocChannelIndex => 1,
                 min_items: 1,
                 max_items: 5,
+                storage_max_len: 249,
             },
         };
         Completion = CommandComplete;

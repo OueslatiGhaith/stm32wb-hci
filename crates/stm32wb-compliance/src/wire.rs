@@ -337,16 +337,15 @@ fn compare_envelope(
                 && actual_envelope.maximum() == expected_envelope.maximum()
         }
         EnvelopeRelation::RequestCapacity => {
-            // The C wrapper's command buffer proves a safe outer capacity,
-            // while public parameter constraints can intentionally be
-            // narrower. The entire Rust envelope must fit within that proof.
+            // Semantic bounds may be narrower than storage bounds. The
+            // segment comparison below still requires every storage capacity
+            // to match, so containment cannot hide an accidental truncation.
             actual_envelope.minimum() >= expected_envelope.minimum()
                 && actual_envelope.maximum() <= expected_envelope.maximum()
         }
         EnvelopeRelation::ResponseCapacity => {
-            // A capacity-sized C response buffer is an outer storage bound.
-            // Rust may preserve stricter command semantics, but must never
-            // decode outside the proven prefix/capacity envelope.
+            // Response semantics may be narrower than the generated buffer;
+            // exact storage capacity is checked independently per segment.
             actual_envelope.minimum() >= expected_envelope.minimum()
                 && actual_envelope.maximum() <= expected_envelope.maximum()
         }
@@ -420,7 +419,7 @@ fn compatible_segments(
                                 && actual_maximum == expected_maximum
                         }
                         EnvelopeRelation::RequestCapacity | EnvelopeRelation::ResponseCapacity => {
-                            actual_minimum >= expected_minimum && actual_maximum <= expected_maximum
+                            actual_minimum >= expected_minimum && actual_maximum == expected_maximum
                         }
                     }
                 }
@@ -963,6 +962,46 @@ mod tests {
         );
 
         assert_eq!(report.differences.len(), 1);
+    }
+
+    #[test]
+    fn narrower_semantics_require_an_explicit_matching_storage_capacity() {
+        let expected_layout =
+            WireLayout::from_segments(vec![WireSegment::fixed(1), WireSegment::variable(1, 0, 10)])
+                .unwrap();
+        let silently_narrowed =
+            WireLayout::from_segments(vec![WireSegment::fixed(1), WireSegment::variable(1, 0, 5)])
+                .unwrap();
+        let explicit_capacity = WireLayout::with_envelope(
+            silently_narrowed.envelope(),
+            vec![WireSegment::fixed(1), WireSegment::variable(1, 0, 10)],
+        )
+        .unwrap();
+        let expectation = || EnvelopeExpectation {
+            layout: expected_layout.clone(),
+            relation: EnvelopeRelation::RequestCapacity,
+        };
+
+        let mut report = WireReport::default();
+        compare_envelope(
+            1,
+            "ImplicitSubset",
+            "request payload",
+            Ok(expectation()),
+            &silently_narrowed,
+            &mut report,
+        );
+        compare_envelope(
+            2,
+            "ExplicitSubset",
+            "request payload",
+            Ok(expectation()),
+            &explicit_capacity,
+            &mut report,
+        );
+
+        assert_eq!(report.differences.len(), 1);
+        assert_eq!(report.differences[0].command, "ImplicitSubset");
     }
 
     #[test]
