@@ -129,6 +129,20 @@ pub enum Evidence<T> {
 /// Extracted evidence for a validated wire envelope.
 pub type WireLayoutEvidence = Evidence<WireLayout>;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedFieldRole {
+    #[default]
+    Data,
+    Status,
+}
+
+impl FixedFieldRole {
+    const fn is_data(&self) -> bool {
+        matches!(self, Self::Data)
+    }
+}
+
 /// One ordered component of an encoded payload.
 ///
 /// Keeping fixed fields separate preserves field boundaries. Variable fields
@@ -139,6 +153,8 @@ pub type WireLayoutEvidence = Evidence<WireLayout>;
 pub enum WireSegment {
     Fixed {
         length: u32,
+        #[serde(default, skip_serializing_if = "FixedFieldRole::is_data")]
+        role: FixedFieldRole,
     },
     Variable {
         element_width: u32,
@@ -149,7 +165,17 @@ pub enum WireSegment {
 
 impl WireSegment {
     pub const fn fixed(length: u32) -> Self {
-        Self::Fixed { length }
+        Self::Fixed {
+            length,
+            role: FixedFieldRole::Data,
+        }
+    }
+
+    pub const fn status() -> Self {
+        Self::Fixed {
+            length: 1,
+            role: FixedFieldRole::Status,
+        }
     }
 
     pub const fn variable(
@@ -174,7 +200,7 @@ impl WireSegment {
 
     const fn minimum_length(&self) -> Option<u32> {
         match self {
-            Self::Fixed { length } => Some(*length),
+            Self::Fixed { length, .. } => Some(*length),
             Self::Variable {
                 element_width,
                 minimum_elements,
@@ -185,7 +211,7 @@ impl WireSegment {
 
     const fn maximum_length(&self) -> Option<u32> {
         match self {
-            Self::Fixed { length } => Some(*length),
+            Self::Fixed { length, .. } => Some(*length),
             Self::Variable {
                 element_width,
                 maximum_elements,
@@ -278,17 +304,12 @@ impl WireLayout {
 }
 
 fn normalize_segments(segments: Vec<WireSegment>) -> Option<Vec<WireSegment>> {
-    let mut normalized = Vec::<WireSegment>::new();
-    for segment in segments {
-        match (normalized.last_mut(), segment) {
-            (Some(WireSegment::Fixed { length: previous }), WireSegment::Fixed { length }) => {
-                *previous = previous.checked_add(length)?
-            }
-            (_, WireSegment::Fixed { length: 0 }) => {}
-            (_, segment) => normalized.push(segment),
-        }
-    }
-    Some(normalized)
+    Some(
+        segments
+            .into_iter()
+            .filter(|segment| !matches!(segment, WireSegment::Fixed { length: 0, .. }))
+            .collect(),
+    )
 }
 
 impl PartialEq<Envelope> for WireLayout {
@@ -736,6 +757,28 @@ fn event_scope_order(scope: EventScope) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wire_layout_preserves_fixed_field_boundaries_and_roles() {
+        let layout = WireLayout::from_segments(vec![
+            WireSegment::fixed(1),
+            WireSegment::fixed(2),
+            WireSegment::status(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            layout.segments(),
+            Some(
+                [
+                    WireSegment::fixed(1),
+                    WireSegment::fixed(2),
+                    WireSegment::status(),
+                ]
+                .as_slice()
+            )
+        );
+    }
 
     #[test]
     fn schema_serialization_is_validated_and_deterministic() {

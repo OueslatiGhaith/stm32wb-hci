@@ -11,8 +11,8 @@ use crate::c_preprocessor::TaggedCPreprocessor;
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
-    CatalogFamily, CatalogSchema, CommandScope, Envelope, EventScope, Evidence, WireLayout,
-    WireLayoutEvidence, WireSegment,
+    CatalogFamily, CatalogSchema, CommandScope, Envelope, EventScope, Evidence, FixedFieldRole,
+    WireLayout, WireLayoutEvidence, WireSegment,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -1296,21 +1296,17 @@ fn normalized_struct_return_layout(layout: WireLayout) -> WireLayoutEvidence {
             "CubeWB Command Complete response structure has no field schema".to_owned(),
         );
     };
-    let Some(WireSegment::Fixed { length }) = segments.first_mut() else {
+    let Some(WireSegment::Fixed {
+        length: 1,
+        role: FixedFieldRole::Status,
+    }) = segments.first()
+    else {
         return WireLayoutEvidence::Unresolved(
-            "CubeWB Command Complete response does not start with a fixed status byte".to_owned(),
+            "CubeWB Command Complete response does not start with a one-byte `Status` field"
+                .to_owned(),
         );
     };
-    let Some(remaining) = length.checked_sub(1) else {
-        return WireLayoutEvidence::Unresolved(
-            "CubeWB Command Complete response cannot contain its status byte".to_owned(),
-        );
-    };
-    if remaining == 0 {
-        segments.remove(0);
-    } else {
-        *length = remaining;
-    }
+    segments.remove(0);
     WireLayout::with_envelope(Envelope::bounded(minimum, maximum), segments)
         .map(Evidence::Known)
         .unwrap_or_else(|| {
@@ -1385,6 +1381,7 @@ struct PackedMultiplicity {
 
 #[derive(Clone, Debug)]
 struct PackedEnvelopeField {
+    name: String,
     type_name: String,
     multiplicity: PackedMultiplicity,
 }
@@ -1487,7 +1484,10 @@ fn packed_envelope_fields(body: Node<'_>, source: &str) -> Option<Vec<PackedEnve
             return None;
         }
         for declarator in declarators {
+            let name = declarator_identifier(declarator)
+                .map(|identifier| node_text(identifier, source).to_owned())?;
             fields.push(PackedEnvelopeField {
+                name,
                 type_name: type_name.clone(),
                 multiplicity: packed_field_multiplicity(declarator, source)?,
             });
@@ -1538,7 +1538,8 @@ fn packed_struct_envelope(
         segments: Vec::new(),
     };
     for field in fields {
-        let element = primitive_c_size(&field.type_name).map_or_else(
+        let primitive_size = primitive_c_size(&field.type_name);
+        let element = primitive_size.map_or_else(
             || known.get(&field.type_name).cloned().flatten(),
             |size| {
                 Some(PackedEnvelope {
@@ -1576,10 +1577,17 @@ fn packed_struct_envelope(
                     }
                 } else {
                     let length = element.maximum.checked_mul(fixed_count)?;
-                    if length != 0 {
-                        layout
-                            .segments
-                            .push(WireSegment::fixed(u32::try_from(length).ok()?));
+                    if length != 0 && primitive_size.is_some() {
+                        let segment = if field.name.eq_ignore_ascii_case("status") && length == 1 {
+                            WireSegment::status()
+                        } else {
+                            WireSegment::fixed(u32::try_from(length).ok()?)
+                        };
+                        layout.segments.push(segment);
+                    } else if length != 0 {
+                        for _ in 0..fixed_count {
+                            layout.segments.extend(element.segments.iter().cloned());
+                        }
                     }
                 }
             }
@@ -1990,7 +1998,14 @@ mod tests {
         };
         assert_eq!(
             layout.segments(),
-            Some([WireSegment::fixed(2), WireSegment::variable(1, 0, 253),].as_slice())
+            Some(
+                [
+                    WireSegment::fixed(1),
+                    WireSegment::fixed(1),
+                    WireSegment::variable(1, 0, 253),
+                ]
+                .as_slice()
+            )
         );
     }
 
@@ -2054,7 +2069,13 @@ mod tests {
         let Evidence::Known(layout) = &commands[0].request else {
             panic!("all cpN structures should resolve");
         };
-        assert_eq!(layout.segments(), Some([WireSegment::fixed(17)].as_slice()));
+        let segments = layout.segments().expect("cpN fields retain boundaries");
+        assert_eq!(segments.len(), 17);
+        assert!(
+            segments
+                .iter()
+                .all(|segment| segment == &WireSegment::fixed(1))
+        );
     }
 
     #[test]
@@ -2417,6 +2438,12 @@ mod tests {
 
             typedef __PACKED_STRUCT
             {
+                uint8_t Result;
+                uint8_t Status;
+            } misplaced_status_rp0;
+
+            typedef __PACKED_STRUCT
+            {
                 uint8_t Address_Type;
                 uint8_t Address[6];
             } Bonded_Device_Entry_t;
@@ -2465,6 +2492,10 @@ mod tests {
         assert_eq!(returns[2].bounds(), Some((1, 246)));
         assert_eq!(returns[3].bounds(), Some((4, 251)));
         assert_eq!(returns[4].bounds(), Some((1, 251)));
+        assert!(matches!(
+            return_layout_for_struct("misplaced_status_rp0".to_owned(), &layouts),
+            WireLayoutEvidence::Unresolved(reason) if reason.contains("one-byte `Status` field")
+        ));
         assert!(matches!(
             return_layout_for_struct("missing_rp0".to_owned(), &layouts),
             WireLayoutEvidence::Unresolved(reason) if reason.contains("missing_rp0")
@@ -2552,7 +2583,11 @@ mod tests {
                 minimum: 3,
                 maximum: 251,
                 variable: true,
-                segments: vec![WireSegment::fixed(3), WireSegment::variable(4, 0, 62),],
+                segments: vec![
+                    WireSegment::fixed(2),
+                    WireSegment::fixed(1),
+                    WireSegment::variable(4, 0, 62),
+                ],
             }))
         );
     }

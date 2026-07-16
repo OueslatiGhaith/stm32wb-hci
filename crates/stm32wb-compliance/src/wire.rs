@@ -389,9 +389,11 @@ fn compatible_segments(
                 (
                     WireSegment::Fixed {
                         length: expected_length,
+                        ..
                     },
                     WireSegment::Fixed {
                         length: actual_length,
+                        ..
                     },
                 ) => expected_length == actual_length,
                 (
@@ -956,6 +958,30 @@ mod tests {
             Ok(EnvelopeExpectation {
                 layout: expected_layout,
                 relation: EnvelopeRelation::RequestCapacity,
+            }),
+            &actual_layout,
+            &mut report,
+        );
+
+        assert_eq!(report.differences.len(), 1);
+    }
+
+    #[test]
+    fn equal_envelopes_do_not_hide_reordered_fixed_fields() {
+        let expected_layout =
+            WireLayout::from_segments(vec![WireSegment::fixed(1), WireSegment::fixed(2)]).unwrap();
+        let actual_layout =
+            WireLayout::from_segments(vec![WireSegment::fixed(2), WireSegment::fixed(1)]).unwrap();
+        assert_eq!(expected_layout.envelope(), actual_layout.envelope());
+
+        let mut report = WireReport::default();
+        compare_envelope(
+            1,
+            "ReorderedFields",
+            "request payload",
+            Ok(EnvelopeExpectation {
+                layout: expected_layout,
+                relation: EnvelopeRelation::Exact,
             }),
             &actual_layout,
             &mut report,

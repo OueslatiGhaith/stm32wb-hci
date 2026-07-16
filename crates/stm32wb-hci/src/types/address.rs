@@ -43,6 +43,27 @@ pub fn to_bd_addr_type(address_type: u8, address: BdAddr) -> Result<BdAddrType, 
     }
 }
 
+impl BdAddrType {
+    fn hci_fields(&self) -> (u8, BdAddr) {
+        match *self {
+            Self::Public(address) => (0, address),
+            Self::Random(address) => (1, address),
+        }
+    }
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    composite
+    BdAddrType => 7 {
+        Fields = {
+            kind: u8 => 1,
+            address: BdAddr => 6,
+        };
+        Encode = |value| { value.hci_fields() };
+    }
+}
+
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed

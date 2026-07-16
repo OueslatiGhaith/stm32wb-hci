@@ -25,37 +25,6 @@ const fn vendor_ocf(cgid: u16, cid: u16) -> u16 {
     (cgid << 7) | cid
 }
 
-impl HciEncodeField<7> for crate::types::BdAddrType {
-    fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        match self {
-            crate::types::BdAddrType::Public(address) => {
-                writer.write_all(&[0])?;
-                writer.write_all(&address.0)
-            }
-            crate::types::BdAddrType::Random(address) => {
-                writer.write_all(&[1])?;
-                writer.write_all(&address.0)
-            }
-        }
-    }
-
-    async fn write_hci_field_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        match self {
-            crate::types::BdAddrType::Public(address) => {
-                writer.write_all(&[0]).await?;
-                writer.write_all(&address.0).await
-            }
-            crate::types::BdAddrType::Random(address) => {
-                writer.write_all(&[1]).await?;
-                writer.write_all(&address.0).await
-            }
-        }
-    }
-}
-
 impl HciDecodeField<7> for crate::types::BdAddrType {
     fn from_hci_field(bytes: &[u8; 7]) -> Result<Self, bt_hci::FromHciBytesError> {
         let mut address = [0; 6];

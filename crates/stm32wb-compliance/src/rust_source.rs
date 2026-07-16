@@ -9,10 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use stm32wb_hci_schema::{
-    Completion as SchemaCompletion, FieldEncoding, Fields, VariableEncodingShape, VendorCommand,
-    VendorEvents as SchemaVendorEvents,
+    Completion as SchemaCompletion, FieldEncoding, Fields, SemanticWireType, VariableEncodingShape,
+    VendorCommand, VendorEvents as SchemaVendorEvents, WireTypeDeclaration,
 };
-use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath};
+use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath, Type};
 
 use crate::FirmwareVersion;
 use crate::catalog::{Envelope, WireLayout, WireSegment};
@@ -102,12 +102,21 @@ struct SourceUnit {
     file: File,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WireTypeComponent {
+    type_name: Option<String>,
+    width: u32,
+}
+
+type WireTypeShapes = BTreeMap<String, Vec<WireTypeComponent>>;
+
 /// Load the declarative vendor command and event catalogs for one selected
 /// firmware feature.
 pub(crate) fn load_rust_catalog(
     crate_dir: &Path,
     firmware: FirmwareVersion,
 ) -> Result<RustCatalog, String> {
+    let wire_type_shapes = load_wire_type_shapes(&crate_dir.join("src"), firmware)?;
     let command_root = crate_dir.join("src/vendor/command/mod.rs");
     let command_root_file = read_rust_file(&command_root)?;
     let mut command_sources = Vec::new();
@@ -120,13 +129,178 @@ pub(crate) fn load_rust_catalog(
         &mut command_sources,
     )?;
 
-    let commands = collect_commands(&command_sources, firmware)?;
+    let commands = collect_commands(&command_sources, firmware, &wire_type_shapes)?;
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
     let event_file = read_rust_file(&event_path)?;
-    let events = parse_vendor_event_declarations(&event_file, firmware, &event_path)?;
+    let events =
+        parse_vendor_event_declarations(&event_file, firmware, &event_path, &wire_type_shapes)?;
 
     Ok(RustCatalog { commands, events })
+}
+
+fn load_wire_type_shapes(
+    source_dir: &Path,
+    firmware: FirmwareVersion,
+) -> Result<WireTypeShapes, String> {
+    let mut paths = Vec::new();
+    collect_rust_paths(source_dir, &mut paths)?;
+    paths.sort();
+
+    let mut shapes = WireTypeShapes::new();
+    for path in paths {
+        let file = read_rust_file(&path)?;
+        collect_wire_type_shapes_from_items(&file.items, firmware, &path, &mut shapes)?;
+    }
+    Ok(shapes)
+}
+
+fn collect_rust_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read an entry in {}: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_paths(&path, paths)?;
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn collect_wire_type_shapes_from_items(
+    items: &[Item],
+    firmware: FirmwareVersion,
+    path: &Path,
+    shapes: &mut WireTypeShapes,
+) -> Result<(), String> {
+    for item in items {
+        if !item_is_active(item, firmware, path)? {
+            continue;
+        }
+        match item {
+            Item::Macro(item) if is_macro_named(&item.mac.path, "wire_type") => {
+                let declaration = syn::parse2::<SemanticWireType>(item.mac.tokens.clone())
+                    .map_err(|error| {
+                        format!(
+                            "{}: unsupported wire_type! declaration: {error}",
+                            path.display()
+                        )
+                    })?;
+                let WireTypeDeclaration::Composite(composite) = declaration.declaration else {
+                    continue;
+                };
+                let name = simple_type_name(&composite.ty).ok_or_else(|| {
+                    format!(
+                        "{}: composite wire type must use a path type",
+                        path.display()
+                    )
+                })?;
+                let components = composite
+                    .fields
+                    .iter()
+                    .map(|field| -> syn::Result<WireTypeComponent> {
+                        Ok(WireTypeComponent {
+                            type_name: simple_type_name(&field.ty),
+                            width: field.width.base10_parse::<u32>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| {
+                        format!(
+                            "{}: composite wire type `{name}` has an invalid field width: {error}",
+                            path.display()
+                        )
+                    })?;
+                if let Some(previous) = shapes.get(&name) {
+                    if previous
+                        .iter()
+                        .map(|component| component.width)
+                        .ne(components.iter().map(|component| component.width))
+                    {
+                        return Err(format!(
+                            "{}: composite wire type `{name}` has conflicting active shapes",
+                            path.display()
+                        ));
+                    }
+                    let merged = previous
+                        .iter()
+                        .zip(components)
+                        .map(|(previous, current)| WireTypeComponent {
+                            type_name: (previous.type_name == current.type_name)
+                                .then(|| previous.type_name.clone())
+                                .flatten(),
+                            width: previous.width,
+                        })
+                        .collect();
+                    shapes.insert(name, merged);
+                } else {
+                    shapes.insert(name, components);
+                }
+            }
+            Item::Mod(module) if module.content.is_some() => {
+                let (_, nested) = module.content.as_ref().expect("checked above");
+                collect_wire_type_shapes_from_items(nested, firmware, path, shapes)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn simple_type_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Path(path) => path
+            .qself
+            .is_none()
+            .then(|| {
+                path.path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string())
+            })
+            .flatten(),
+        Type::Reference(reference) => simple_type_name(&reference.elem),
+        _ => None,
+    }
+}
+
+fn expanded_wire_type_shape(
+    name: &str,
+    width: u32,
+    shapes: &WireTypeShapes,
+    resolving: &mut BTreeSet<String>,
+) -> Option<Vec<u32>> {
+    let components = shapes.get(name)?;
+    if components
+        .iter()
+        .map(|component| component.width)
+        .sum::<u32>()
+        != width
+        || !resolving.insert(name.to_owned())
+    {
+        return None;
+    }
+    let mut widths = Vec::new();
+    for component in components {
+        let nested = component.type_name.as_deref().and_then(|type_name| {
+            expanded_wire_type_shape(type_name, component.width, shapes, resolving)
+        });
+        if let Some(nested) = nested {
+            widths.extend(nested);
+        } else {
+            widths.push(component.width);
+        }
+    }
+    resolving.remove(name);
+    Some(widths)
 }
 
 fn read_rust_file(path: &Path) -> Result<File, String> {
@@ -264,6 +438,7 @@ fn module_path_override(module: &ItemMod) -> Result<Option<String>, String> {
 fn collect_commands(
     sources: &[SourceUnit],
     firmware: FirmwareVersion,
+    wire_type_shapes: &WireTypeShapes,
 ) -> Result<BTreeMap<String, CommandDeclaration>, String> {
     let mut commands = BTreeMap::<String, CommandDeclaration>::new();
     let mut codes = BTreeMap::<u16, CommandDeclaration>::new();
@@ -279,7 +454,7 @@ fn collect_commands(
                 continue;
             }
 
-            let command = parse_vendor_command(item, &source.path)?;
+            let command = parse_vendor_command(item, &source.path, wire_type_shapes)?;
 
             if let Some(previous) = commands.get(&command.name) {
                 return Err(format!(
@@ -308,7 +483,11 @@ fn collect_commands(
     Ok(commands)
 }
 
-fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclaration, String> {
+fn parse_vendor_command(
+    item: &ItemMacro,
+    path: &Path,
+    wire_type_shapes: &WireTypeShapes,
+) -> Result<CommandDeclaration, String> {
     let command = syn::parse2::<VendorCommand>(item.mac.tokens.clone()).map_err(|error| {
         format!(
             "{}: unsupported vendor_cmd! declaration: {error}",
@@ -319,6 +498,7 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
     let request = wire_layout(
         command.params.fields(),
         command.params.max_len().min(usize::from(u8::MAX)),
+        wire_type_shapes,
     );
     let completion = match command.completion {
         SchemaCompletion::CommandComplete => {
@@ -327,7 +507,7 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
                 .as_ref()
                 .expect("the shared parser requires Return for CommandComplete");
             CommandCompletion::CommandComplete {
-                returns: wire_layout(returns.fields(), returns.max_len()),
+                returns: wire_layout(returns.fields(), returns.max_len(), wire_type_shapes),
             }
         }
         SchemaCompletion::CommandStatus => CommandCompletion::CommandStatus,
@@ -342,12 +522,16 @@ fn parse_vendor_command(item: &ItemMacro, path: &Path) -> Result<CommandDeclarat
     })
 }
 
-fn wire_layout(fields: Option<&Fields>, maximum: usize) -> WireLayout {
+fn wire_layout(
+    fields: Option<&Fields>,
+    maximum: usize,
+    wire_type_shapes: &WireTypeShapes,
+) -> WireLayout {
     let segments = fields.map_or_else(Vec::new, |fields| {
         fields
             .fields()
             .iter()
-            .flat_map(field_segments)
+            .flat_map(|field| field_segments(field, wire_type_shapes))
             .collect::<Vec<_>>()
     });
     let minimum = fields.map_or(0, Fields::min_len);
@@ -357,11 +541,24 @@ fn wire_layout(fields: Option<&Fields>, maximum: usize) -> WireLayout {
         .expect("the shared schema's field layout must cover its envelope")
 }
 
-fn field_segments(field: &stm32wb_hci_schema::Field) -> Vec<WireSegment> {
+fn field_segments(
+    field: &stm32wb_hci_schema::Field,
+    wire_type_shapes: &WireTypeShapes,
+) -> Vec<WireSegment> {
     match &field.encoding {
-        FieldEncoding::Fixed(encoding) => {
-            vec![WireSegment::fixed(wire_width(encoding.width))]
-        }
+        FieldEncoding::Fixed(encoding) => simple_type_name(&field.ty)
+            .and_then(|name| {
+                expanded_wire_type_shape(
+                    &name,
+                    wire_width(encoding.width),
+                    wire_type_shapes,
+                    &mut BTreeSet::new(),
+                )
+            })
+            .map_or_else(
+                || vec![WireSegment::fixed(wire_width(encoding.width))],
+                |widths| widths.into_iter().map(WireSegment::fixed).collect(),
+            ),
         FieldEncoding::Variable(encoding) => variable_segments(encoding),
     }
 }
@@ -460,6 +657,7 @@ fn parse_vendor_event_declarations(
     file: &File,
     firmware: FirmwareVersion,
     path: &Path,
+    wire_type_shapes: &WireTypeShapes,
 ) -> Result<BTreeMap<u16, EventDeclaration>, String> {
     if !attrs_active(&file.attrs, firmware, path)? {
         return Err(format!(
@@ -493,7 +691,11 @@ fn parse_vendor_event_declarations(
         let event = EventDeclaration {
             name: definition.name.to_string(),
             code: definition.code,
-            payload: wire_layout(definition.payload.fields(), definition.payload.max_len()),
+            payload: wire_layout(
+                definition.payload.fields(),
+                definition.payload.max_len(),
+                wire_type_shapes,
+            ),
             location: path.to_path_buf(),
         };
         if let Some(previous) = events.insert(event.code, event.clone()) {
@@ -586,7 +788,12 @@ mod tests {
             path: path.clone(),
             file: syn::parse_file(source).unwrap(),
         };
-        collect_commands(std::slice::from_ref(&unit), firmware).unwrap()
+        collect_commands(
+            std::slice::from_ref(&unit),
+            firmware,
+            &WireTypeShapes::new(),
+        )
+        .unwrap()
     }
 
     fn assert_complete_envelope(completion: &CommandCompletion, expected: Envelope) {
@@ -769,7 +976,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("trailing_bytes must be the final declarative field"));
     }
 
@@ -790,7 +998,8 @@ mod tests {
             let Item::Macro(item) = &file.items[0] else {
                 panic!("expected vendor_cmd! macro item");
             };
-            let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+            let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+                .unwrap_err();
             assert!(error.contains(expected), "{error}");
         }
 
@@ -804,7 +1013,12 @@ mod tests {
             )
             .unwrap(),
         };
-        let error = collect_commands(std::slice::from_ref(&unit), version(0, 17, 0)).unwrap_err();
+        let error = collect_commands(
+            std::slice::from_ref(&unit),
+            version(0, 17, 0),
+            &WireTypeShapes::new(),
+        )
+        .unwrap_err();
         assert!(error.contains("both declare active vendor OCF 0x082"));
     }
 
@@ -902,7 +1116,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("unknown parameter(s): missing"), "{error}");
     }
 
@@ -943,7 +1158,8 @@ mod tests {
             let Item::Macro(item) = &file.items[0] else {
                 panic!("expected vendor_cmd! macro item");
             };
-            let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+            let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+                .unwrap_err();
             assert!(
                 error.contains("unknown declarative variable kind `payload`"),
                 "{error}"
@@ -982,7 +1198,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("variants require 3..=17"));
 
         let bad_bitmap = r#"
@@ -1006,7 +1223,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("mask selects 2 bits but max_items is 3"));
     }
 
@@ -1037,7 +1255,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("payload field `typo` is not bound"));
     }
 
@@ -1056,7 +1275,8 @@ mod tests {
         let Item::Macro(item) = &file.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("CommandStatus and must not declare Return"));
     }
 
@@ -1069,7 +1289,8 @@ mod tests {
         let Item::Macro(item) = &missing_completion.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("missing a `Completion = ...` declaration"));
 
         let return_buffer = syn::parse_file(
@@ -1087,7 +1308,8 @@ mod tests {
         let Item::Macro(item) = &return_buffer.items[0] else {
             panic!("expected vendor_cmd! macro item");
         };
-        let error = parse_vendor_command(item, Path::new("fixture.rs")).unwrap_err();
+        let error = parse_vendor_command(item, Path::new("fixture.rs"), &WireTypeShapes::new())
+            .unwrap_err();
         assert!(error.contains("expected `()` or an inline named field body"));
     }
 
@@ -1244,12 +1466,22 @@ mod tests {
             file: syn::parse_file(source).unwrap(),
         };
         let firmware = version(0, 17, 0);
-        let declarations = collect_commands(std::slice::from_ref(&unit), firmware).unwrap();
+        let declarations = collect_commands(
+            std::slice::from_ref(&unit),
+            firmware,
+            &WireTypeShapes::new(),
+        )
+        .unwrap();
         assert_eq!(declarations.len(), 1);
         assert!(declarations.contains_key("Current"));
         assert!(!declarations.contains_key("Retained"));
 
-        let future = collect_commands(std::slice::from_ref(&unit), version(0, 18, 0)).unwrap();
+        let future = collect_commands(
+            std::slice::from_ref(&unit),
+            version(0, 18, 0),
+            &WireTypeShapes::new(),
+        )
+        .unwrap();
         assert!(future.contains_key("Current"));
         assert!(future.contains_key("Retained"));
     }
