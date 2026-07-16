@@ -19,6 +19,9 @@ Known payloads use `Evidence<WireLayout>`. A layout retains both its validated
 length envelope and, when the generated source proves it, the ordered fixed and
 variable wire segments. Variable segments preserve element width and
 cardinality, so equal byte ranges no longer erase different field structures.
+Local `cmd!` standard-HCI extensions are parsed as well: their active `Params`
+and `Return` types are compared with the matching generated opcode's request
+and completion layouts, including packed local wire structs.
 When a public API intentionally accepts fewer values than the generated buffer
 can represent, its declarative field uses `storage_min_len` and/or
 `storage_max_len` to record the complete transport range explicitly. Without

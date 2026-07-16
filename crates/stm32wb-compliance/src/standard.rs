@@ -4,29 +4,48 @@
 //! It only validates the STM32WB-specific standard commands declared in
 //! `src/standard.rs` against the selected CubeWB catalog.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream};
-use syn::{Attribute, Ident, Item, LitInt, Token, braced, parenthesized};
+use syn::{
+    Attribute, Expr, ExprLit, Ident, Item, ItemStruct, Lit, LitInt, Token, Type, braced,
+    parenthesized,
+};
 
 use crate::FirmwareVersion;
+use crate::catalog::WireLayout;
 use crate::model::{CoverageEntry, CoverageOrigin};
 use crate::rust_cfg::attrs_active;
+use crate::rust_source::{CommandCompletion, CommandDeclaration};
 
 /// Load the standard-HCI commands implemented directly by this crate for the
 /// selected firmware. Codes are full HCI opcodes, rather than vendor OCFs.
 pub(crate) fn load_local_standard_commands(
     crate_dir: &Path,
     firmware: FirmwareVersion,
-) -> Result<Vec<CoverageEntry>, String> {
+) -> Result<Vec<CommandDeclaration>, String> {
     let path = crate_dir.join("src/standard.rs");
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let file = syn::parse_file(&source)
         .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
-    let mut entries = Vec::new();
+    let structs = file
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Struct(item) = item else {
+                return None;
+            };
+            match attrs_active(&item.attrs, firmware, &path) {
+                Ok(true) => Some(Ok((item.ident.to_string(), item))),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut declarations = Vec::new();
     for item in &file.items {
         let Item::Macro(item) = item else {
             continue;
@@ -54,17 +73,61 @@ pub(crate) fn load_local_standard_commands(
                 header.ocf
             ));
         }
-        entries.push(
+        let request = fixed_type_width(
+            &header.params,
+            &structs,
+            firmware,
+            &path,
+            &mut BTreeSet::new(),
+        )?;
+        let completion = if let Some(returns) = &header.returns {
+            CommandCompletion::CommandComplete {
+                returns: WireLayout::fixed(fixed_type_width(
+                    returns,
+                    &structs,
+                    firmware,
+                    &path,
+                    &mut BTreeSet::new(),
+                )?),
+            }
+        } else {
+            CommandCompletion::CommandStatus
+        };
+        declarations.push(CommandDeclaration {
+            code: (u16::from(ogf) << 10) | header.ocf,
+            name: header.name,
+            request: WireLayout::fixed(request),
+            completion,
+            location: path.clone(),
+        });
+    }
+    declarations.sort_by_key(|entry| (entry.code, entry.name.clone()));
+    for pair in declarations.windows(2) {
+        if pair[0].code == pair[1].code {
+            return Err(format!(
+                "{}: standard commands `{}` and `{}` share opcode 0x{:04X}",
+                path.display(),
+                pair[0].name,
+                pair[1].name,
+                pair[0].code,
+            ));
+        }
+    }
+    Ok(declarations)
+}
+
+pub(crate) fn coverage_entries(declarations: &[CommandDeclaration]) -> Vec<CoverageEntry> {
+    declarations
+        .iter()
+        .map(|declaration| {
             CoverageEntry::new(
-                (u16::from(ogf) << 10) | header.ocf,
-                header.name,
+                declaration.code,
+                &declaration.name,
                 CoverageOrigin::StandardHciExtension,
             )
-            .at(path.clone()),
-        );
-    }
-    sort_and_deduplicate(&mut entries);
-    Ok(entries)
+            .at(declaration.location.clone())
+        })
+        .collect()
 }
 
 fn macro_name_is(mac: &syn::Macro, name: &str) -> bool {
@@ -78,6 +141,8 @@ struct CommandMacroHeader {
     name: String,
     group: String,
     ocf: u16,
+    params: Type,
+    returns: Option<Type>,
 }
 
 /// Small grammar for `[BASE] [attributes] Name(GROUP, OCF) { ... }`.
@@ -102,7 +167,7 @@ impl Parse for CommandMacroHeader {
         }
         let body;
         braced!(body in input);
-        let _body = body.parse::<TokenStream>()?;
+        let body = body.parse::<CommandMacroBody>()?;
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after cmd! declaration"));
         }
@@ -110,6 +175,45 @@ impl Parse for CommandMacroHeader {
             name: name.to_string(),
             group: group.to_string(),
             ocf,
+            params: body.params,
+            returns: body.returns,
+        })
+    }
+}
+
+struct CommandMacroBody {
+    params: Type,
+    returns: Option<Type>,
+}
+
+impl Parse for CommandMacroBody {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut params = None;
+        let mut returns = None;
+        while !input.is_empty() {
+            let label = input.parse::<Ident>()?;
+            input.parse::<Token![=]>()?;
+            let ty = input.parse::<Type>()?;
+            input.parse::<Token![;]>()?;
+            match label.to_string().as_str() {
+                "Params" => {
+                    if params.is_some() {
+                        return Err(input.error("duplicate Params declaration"));
+                    }
+                    params = Some(ty);
+                }
+                "Return" => {
+                    if returns.is_some() {
+                        return Err(input.error("duplicate Return declaration"));
+                    }
+                    returns = Some(ty);
+                }
+                _ => return Err(input.error(format!("unknown command body label `{label}`"))),
+            }
+        }
+        Ok(Self {
+            params: params.ok_or_else(|| input.error("missing Params declaration"))?,
+            returns,
         })
     }
 }
@@ -127,9 +231,126 @@ fn standard_ogf(group: &str) -> Option<u8> {
     }
 }
 
-fn sort_and_deduplicate(entries: &mut Vec<CoverageEntry>) {
-    entries.sort_by_key(|entry| (entry.code, entry.name.clone()));
-    entries.dedup_by(|left, right| left.code == right.code && left.name == right.name);
+fn fixed_type_width(
+    ty: &Type,
+    structs: &BTreeMap<String, &ItemStruct>,
+    firmware: FirmwareVersion,
+    path: &Path,
+    visiting: &mut BTreeSet<String>,
+) -> Result<u32, String> {
+    match ty {
+        Type::Tuple(tuple) if tuple.elems.is_empty() => Ok(0),
+        Type::Tuple(_) => Err(format!(
+            "{}: non-unit tuple is not a supported standard command wire type",
+            path.display()
+        )),
+        Type::Array(array) => {
+            let element = fixed_type_width(&array.elem, structs, firmware, path, visiting)?;
+            let Expr::Lit(ExprLit {
+                lit: Lit::Int(length),
+                ..
+            }) = &array.len
+            else {
+                return Err(format!(
+                    "{}: standard command array length is not an integer literal",
+                    path.display()
+                ));
+            };
+            element
+                .checked_mul(length.base10_parse::<u32>().map_err(|error| {
+                    format!(
+                        "{}: invalid standard command array length: {error}",
+                        path.display()
+                    )
+                })?)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: standard command array width overflows u32",
+                        path.display()
+                    )
+                })
+        }
+        Type::Paren(paren) => fixed_type_width(&paren.elem, structs, firmware, path, visiting),
+        Type::Group(group) => fixed_type_width(&group.elem, structs, firmware, path, visiting),
+        Type::Path(type_path) if type_path.qself.is_none() => {
+            let Some(segment) = type_path.path.segments.last() else {
+                return Err(format!(
+                    "{}: empty standard command type path",
+                    path.display()
+                ));
+            };
+            let name = segment.ident.to_string();
+            if let Some(width) = primitive_width(&name) {
+                return Ok(width);
+            }
+            let item = structs.get(&name).ok_or_else(|| {
+                format!(
+                    "{}: standard command wire type `{name}` has no active packed struct declaration",
+                    path.display()
+                )
+            })?;
+            if !has_repr(&item.attrs, "C") || !has_repr(&item.attrs, "packed") {
+                return Err(format!(
+                    "{}: standard command wire type `{name}` is not #[repr(C, packed)]",
+                    path.display()
+                ));
+            }
+            if !visiting.insert(name.clone()) {
+                return Err(format!(
+                    "{}: recursive standard command wire type `{name}`",
+                    path.display()
+                ));
+            }
+            let mut width = 0_u32;
+            for field in &item.fields {
+                if attrs_active(&field.attrs, firmware, path)? {
+                    width = width
+                        .checked_add(fixed_type_width(
+                            &field.ty, structs, firmware, path, visiting,
+                        )?)
+                        .ok_or_else(|| {
+                            format!(
+                                "{}: standard command struct width overflows u32",
+                                path.display()
+                            )
+                        })?;
+                }
+            }
+            visiting.remove(&name);
+            Ok(width)
+        }
+        _ => Err(format!(
+            "{}: unsupported standard command wire type",
+            path.display()
+        )),
+    }
+}
+
+fn primitive_width(name: &str) -> Option<u32> {
+    match name {
+        "u8" | "i8" => Some(1),
+        "u16" | "i16" => Some(2),
+        "u32" | "i32" | "f32" => Some(4),
+        "u64" | "i64" | "f64" => Some(8),
+        "u128" | "i128" => Some(16),
+        _ => None,
+    }
+}
+
+fn has_repr(attributes: &[Attribute], representation: &str) -> bool {
+    attributes.iter().any(|attribute| {
+        if !attribute.path().is_ident("repr") {
+            return false;
+        }
+        let mut found = false;
+        let _ = attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident(representation) {
+                found = true;
+            }
+            Ok(())
+        });
+        found
+    })
 }
 
 #[cfg(test)]
@@ -164,5 +385,49 @@ mod tests {
         .unwrap();
         assert_eq!(header.name, "LeExtended");
         assert_eq!(header.ocf, 0x41);
+    }
+
+    #[test]
+    fn loads_local_standard_command_wire_layouts() {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
+        let declarations =
+            load_local_standard_commands(&crate_dir, FirmwareVersion::new(0, 24, 0)).unwrap();
+
+        assert_eq!(declarations.len(), 10);
+        let transmitter = declarations
+            .iter()
+            .find(|declaration| declaration.name == "LeTransmitterTest")
+            .unwrap();
+        assert_eq!(transmitter.code, 0x201E);
+        assert_eq!(transmitter.request.envelope(), crate::Envelope::fixed(3));
+        assert!(matches!(
+            transmitter.completion,
+            CommandCompletion::CommandComplete { ref returns }
+                if returns.envelope() == crate::Envelope::fixed(0)
+        ));
+
+        let asynchronous = declarations
+            .iter()
+            .find(|declaration| declaration.name == "LeReadLocalP256PublicKey")
+            .unwrap();
+        assert_eq!(asynchronous.request.envelope(), crate::Envelope::fixed(0));
+        assert_eq!(asynchronous.completion, CommandCompletion::CommandStatus);
+
+        let address = declarations
+            .iter()
+            .find(|declaration| declaration.name == "LeReadPeerResolvableAddress")
+            .unwrap();
+        assert_eq!(address.request.envelope(), crate::Envelope::fixed(7));
+        assert!(matches!(
+            address.completion,
+            CommandCompletion::CommandComplete { ref returns }
+                if returns.envelope() == crate::Envelope::fixed(6)
+        ));
+
+        let timeout = declarations
+            .iter()
+            .find(|declaration| declaration.name == "LeSetResolvablePrivateAddressTimeoutV2")
+            .unwrap();
+        assert_eq!(timeout.request.envelope(), crate::Envelope::fixed(4));
     }
 }

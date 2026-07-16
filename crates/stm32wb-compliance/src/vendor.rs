@@ -631,15 +631,16 @@ fn event_process_layouts(
             }
             let body = function.child_by_field_name("body")?;
             let type_name = c_pointer_variable_type(body, source, "rp0");
+            let callback_name = name.strip_suffix("_process").unwrap_or(&name);
             let layout = type_name.map_or_else(
                 || {
-                    if body_uses_identifier(body, source, "in") {
-                        event_payload_layout(
-                            format!("{}_rp0", name.strip_suffix("_process").unwrap_or(&name)),
-                            packed_layouts,
-                        )
-                    } else {
+                    let derived_type = format!("{callback_name}_rp0");
+                    if packed_layouts.contains_key(&derived_type) {
+                        event_payload_layout(derived_type, packed_layouts)
+                    } else if body_calls_without_arguments(body, source, callback_name) {
                         WireLayoutEvidence::fixed(0)
+                    } else {
+                        event_payload_layout(derived_type, packed_layouts)
                     }
                 },
                 |type_name| event_payload_layout(type_name, packed_layouts),
@@ -649,12 +650,19 @@ fn event_process_layouts(
         .collect()
 }
 
-fn body_uses_identifier(body: Node<'_>, source: &str, identifier: &str) -> bool {
-    let mut identifiers = Vec::new();
-    collect_nodes(body, "identifier", &mut identifiers);
-    identifiers
+fn body_calls_without_arguments(body: Node<'_>, source: &str, function_name: &str) -> bool {
+    let mut calls = Vec::new();
+    collect_nodes(body, "call_expression", &mut calls);
+    let matching = calls
         .into_iter()
-        .any(|node| node_text(node, source) == identifier)
+        .filter_map(|call| {
+            let function = call.child_by_field_name("function")?;
+            (function.kind() == "identifier" && node_text(function, source) == function_name)
+                .then(|| call.child_by_field_name("arguments"))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    matches!(matching.as_slice(), [arguments] if arguments.named_child_count() == 0)
 }
 
 fn c_pointer_variable_type(body: Node<'_>, source: &str, variable: &str) -> Option<String> {
@@ -2445,6 +2453,44 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].name, "current");
         assert_eq!(events[0].code, 0x401);
+    }
+
+    #[test]
+    fn ignored_event_handlers_need_structural_zero_payload_evidence() {
+        let source = r#"
+            static void aci_zero_event_process(const uint8_t* in) {
+                aci_zero_event();
+            }
+            static void aci_ambiguous_event_process(const uint8_t* in) {
+            }
+            static void aci_ignored_event_process(const uint8_t* in) {
+                aci_ignored_event();
+            }
+        "#;
+        let types = r#"
+            typedef __PACKED_STRUCT {
+                uint16_t Value;
+            } aci_ignored_event_rp0;
+        "#;
+        let tree = parse_c_tree(source, EVENT_SOURCE).unwrap();
+        let packed_layouts = parse_packed_struct_envelopes(types);
+        let layouts = event_process_layouts(tree.root_node(), source, &packed_layouts);
+
+        assert_eq!(
+            layouts.get("aci_zero_event_process"),
+            Some(&WireLayoutEvidence::fixed(0))
+        );
+        assert!(matches!(
+            layouts.get("aci_ambiguous_event_process"),
+            Some(WireLayoutEvidence::Unresolved(reason))
+                if reason.contains("aci_ambiguous_event_rp0")
+        ));
+        assert_eq!(
+            layouts
+                .get("aci_ignored_event_process")
+                .and_then(WireLayoutEvidence::bounds),
+            Some((2, 2))
+        );
     }
 
     #[test]

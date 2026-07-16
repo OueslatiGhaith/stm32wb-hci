@@ -135,8 +135,9 @@ pub struct CheckReport {
     missing_events: Vec<CoverageDifference>,
     extraneous_events: Vec<CoverageDifference>,
     unsupported_standard_hci_commands: Vec<CoverageDifference>,
-    /// Envelope-level vendor command and event wire checks. Both definite
-    /// differences and unavailable evidence make the report non-compliant.
+    /// Envelope-level vendor/standard command and vendor-event wire checks.
+    /// Both definite differences and unavailable evidence make the report
+    /// non-compliant.
     wire: WireReport,
     excluded_commands: Vec<ExcludedCode>,
     excluded_events: Vec<ExcludedCode>,

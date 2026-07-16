@@ -77,14 +77,16 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     let catalog = load_catalog(&options.cube_dir, options.firmware)?;
     let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.firmware)
         .map_err(ComplianceError::Source)?;
-    let local_standard_hci_commands =
+    let local_standard_hci_declarations =
         standard::load_local_standard_commands(&options.crate_dir, options.firmware)
             .map_err(ComplianceError::Source)?;
+    let local_standard_hci_commands = standard::coverage_entries(&local_standard_hci_declarations);
 
-    let wire = wire::compare_vendor_wire_with_external_events(
+    let wire = wire::compare_wire_with_external_events(
         &catalog.commands,
         &catalog.events,
         &rust_catalog,
+        &local_standard_hci_declarations,
         &options.external_event_payloads,
     );
     let vendor = catalog.vendor_coverage();

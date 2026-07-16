@@ -31,6 +31,12 @@ enum EnvelopeRelation {
     ResponseCapacity,
 }
 
+#[derive(Clone, Copy)]
+enum ComparisonDetail {
+    Segments,
+    EnvelopeOnly,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct EnvelopeExpectation {
     layout: WireLayout,
@@ -46,8 +52,8 @@ impl EnvelopeExpectation {
     }
 }
 
-/// A definite incompatibility between a generated vendor C wire declaration
-/// and its active Rust command or event declaration.
+/// A definite incompatibility between a generated C wire declaration and its
+/// active Rust command or event declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WireDifference {
     pub code: u16,
@@ -64,7 +70,7 @@ pub struct WireUnavailable {
     pub reason: String,
 }
 
-/// Result of checking active vendor declarations against CubeWB C metadata.
+/// Result of checking active declarations against CubeWB C metadata.
 ///
 /// `checked` counts individual request, return, or event-payload envelopes
 /// compared. Entries in `unavailable` name schema details the checker could
@@ -85,15 +91,17 @@ pub(crate) fn compare_vendor_wire(
     events: &[CatalogEvent],
     crate_coverage: &RustCatalog,
 ) -> WireReport {
-    compare_vendor_wire_with_external_events(commands, events, crate_coverage, &BTreeMap::new())
+    compare_wire_with_external_events(commands, events, crate_coverage, &[], &BTreeMap::new())
 }
 
-/// Compare wire declarations while accepting explicit payload evidence for
-/// transport-only events absent from CubeWB's generated event table.
-pub(crate) fn compare_vendor_wire_with_external_events(
+/// Compare vendor declarations and local standard-HCI commands while accepting
+/// explicit payload evidence for transport-only events absent from CubeWB's
+/// generated event table.
+pub(crate) fn compare_wire_with_external_events(
     commands: &[CatalogCommand],
     events: &[CatalogEvent],
     crate_coverage: &RustCatalog,
+    local_standard_commands: &[CommandDeclaration],
     external_event_payloads: &BTreeMap<u16, WireLayoutEvidence>,
 ) -> WireReport {
     let mut by_ocf = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
@@ -125,8 +133,58 @@ pub(crate) fn compare_vendor_wire_with_external_events(
             continue;
         };
 
-        compare_request(command, declaration, &mut report);
-        compare_completion(command, declaration, &mut report);
+        compare_request(
+            command,
+            declaration,
+            ComparisonDetail::Segments,
+            &mut report,
+        );
+        compare_completion(
+            command,
+            declaration,
+            ComparisonDetail::Segments,
+            &mut report,
+        );
+    }
+
+    let mut by_opcode = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
+    for command in commands {
+        if command.scope() == CommandScope::StandardHci {
+            by_opcode.entry(command.code()).or_default().push(command);
+        }
+    }
+    for declaration in local_standard_commands {
+        let Some(candidates) = by_opcode.get(&declaration.code) else {
+            report.unavailable.push(WireUnavailable {
+                code: declaration.code,
+                command: declaration.name.clone(),
+                reason: "no generated standard-HCI function has this opcode".to_owned(),
+            });
+            continue;
+        };
+        let [command] = candidates.as_slice() else {
+            report.unavailable.push(WireUnavailable {
+                code: declaration.code,
+                command: declaration.name.clone(),
+                reason: format!(
+                    "{} generated standard-HCI functions share this opcode",
+                    candidates.len()
+                ),
+            });
+            continue;
+        };
+        compare_request(
+            command,
+            declaration,
+            ComparisonDetail::EnvelopeOnly,
+            &mut report,
+        );
+        compare_completion(
+            command,
+            declaration,
+            ComparisonDetail::EnvelopeOnly,
+            &mut report,
+        );
     }
 
     let mut events_by_code = BTreeMap::<u16, Vec<&CatalogEvent>>::new();
@@ -212,16 +270,20 @@ fn compare_event_payload_layout(
 fn compare_request(
     command: &CatalogCommand,
     declaration: &CommandDeclaration,
+    detail: ComparisonDetail,
     report: &mut WireReport,
 ) {
-    let expected = extracted_envelope(
-        &command.request,
-        EnvelopeRelation::RequestCapacity,
-        |expression| {
-            format!(
-                "CubeWB request payload length uses unresolved source expression `{expression}`"
-            )
-        },
+    let expected = with_comparison_detail(
+        extracted_envelope(
+            &command.request,
+            EnvelopeRelation::RequestCapacity,
+            |expression| {
+                format!(
+                    "CubeWB request payload length uses unresolved source expression `{expression}`"
+                )
+            },
+        ),
+        detail,
     );
     compare_envelope(
         declaration.code,
@@ -236,6 +298,7 @@ fn compare_request(
 fn compare_completion(
     command: &CatalogCommand,
     declaration: &CommandDeclaration,
+    detail: ComparisonDetail,
     report: &mut WireReport,
 ) {
     match (&command.completion, &declaration.completion) {
@@ -262,9 +325,16 @@ fn compare_completion(
                 declaration.code,
                 &declaration.name,
                 "command return payload",
-                extracted_envelope(expected, EnvelopeRelation::ResponseCapacity, |expression| {
-                    format!("CubeWB command return layout is unresolved: {expression}")
-                }),
+                with_comparison_detail(
+                    extracted_envelope(
+                        expected,
+                        EnvelopeRelation::ResponseCapacity,
+                        |expression| {
+                            format!("CubeWB command return layout is unresolved: {expression}")
+                        },
+                    ),
+                    detail,
+                ),
                 actual,
                 report,
             );
@@ -282,6 +352,19 @@ fn compare_completion(
             format!("CubeWB completion event uses unsupported expression `{expression}`"),
         ),
     }
+}
+
+fn with_comparison_detail(
+    expectation: Result<EnvelopeExpectation, String>,
+    detail: ComparisonDetail,
+) -> Result<EnvelopeExpectation, String> {
+    expectation.map(|mut expectation| {
+        if matches!(detail, ComparisonDetail::EnvelopeOnly) {
+            let envelope = expectation.layout.envelope();
+            expectation.layout = WireLayout::byte_capacity(envelope.minimum(), envelope.maximum());
+        }
+        expectation
+    })
 }
 
 fn extracted_envelope(
@@ -587,6 +670,21 @@ mod tests {
         }
     }
 
+    fn fixture_standard_command(
+        opcode: u16,
+        completion: CatalogCompletion,
+        request: WireLayoutEvidence,
+    ) -> CatalogCommand {
+        CatalogCommand {
+            kind: CatalogCommandKind::StandardHci { opcode },
+            name: format!("hci_fixture_{opcode:04x}"),
+            source_name: "fixture.c".to_owned(),
+            source_offset: 0,
+            completion,
+            request,
+        }
+    }
+
     fn catalog_complete(returns: WireLayoutEvidence) -> CatalogCompletion {
         CatalogCompletion::CommandComplete { returns }
     }
@@ -720,13 +818,13 @@ mod tests {
         assert_eq!(unavailable.unavailable.len(), 1);
 
         let mut external = BTreeMap::from([(0x9200, WireLayoutEvidence::fixed(1))]);
-        let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
+        let report = compare_wire_with_external_events(&[], &[], &coverage, &[], &external);
         assert_eq!(report.checked, 1);
         assert!(report.differences.is_empty());
         assert!(report.unavailable.is_empty());
 
         external.insert(0x9200, WireLayoutEvidence::fixed(2));
-        let report = compare_vendor_wire_with_external_events(&[], &[], &coverage, &external);
+        let report = compare_wire_with_external_events(&[], &[], &coverage, &[], &external);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("is 2 bytes"));
         assert!(report.differences[0].issue.contains("declares 1 bytes"));
@@ -914,6 +1012,45 @@ mod tests {
                 .any(|difference| difference.command == "Dynamic")
         );
         assert!(report.unavailable.is_empty());
+    }
+
+    #[test]
+    fn compares_local_standard_hci_request_and_return_sizes() {
+        let declaration = fixture_declaration(
+            "LeFixture",
+            0x201E,
+            declaration_complete(Envelope::fixed(1)),
+            Envelope::fixed(2),
+        );
+        let command = fixture_standard_command(
+            0x201E,
+            catalog_complete(WireLayoutEvidence::fixed(0)),
+            WireLayoutEvidence::fixed(3),
+        );
+        let coverage = fixture_coverage(Vec::new(), &[]);
+
+        let report = compare_wire_with_external_events(
+            &[command],
+            &[],
+            &coverage,
+            &[declaration],
+            &BTreeMap::new(),
+        );
+
+        assert_eq!(report.checked, 2);
+        assert_eq!(report.differences.len(), 2);
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.issue.contains("request payload"))
+        );
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.issue.contains("command return payload"))
+        );
     }
 
     #[test]
