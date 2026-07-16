@@ -6,6 +6,8 @@ use std::process::Command;
 
 use tree_sitter::{Node, Parser, Tree};
 
+use crate::c_preprocessor::TaggedCPreprocessor;
+#[cfg(test)]
 use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
@@ -24,17 +26,23 @@ const TYPES_SOURCE: &str = "ble_types.h";
 /// CubeWB tag without changing the checkout.
 pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogSchema, String> {
     verify_tag(cube_dir, tag)?;
+    let preprocessor = TaggedCPreprocessor::new(cube_dir, tag)?;
 
     let types_path = format!("{AUTO_SOURCE_DIR}/{TYPES_SOURCE}");
     let types_source = git_show(cube_dir, tag, &types_path)?;
-    let packed_layouts = parse_packed_struct_envelopes(&types_source);
+    let preprocessed_types =
+        preprocessor.preprocess(&format!("auto/{TYPES_SOURCE}"), &types_source)?;
+    let packed_layouts =
+        parse_packed_struct_envelopes_from_preprocessed(&types_source, &preprocessed_types);
 
     let mut catalog = CatalogSchema::new(CatalogFamily::Stm32Wb, tag);
     for file in command_source_files(cube_dir, tag)? {
         let path = format!("{AUTO_SOURCE_DIR}/{file}");
         let source = git_show(cube_dir, tag, &path)?;
-        let commands = extract_command_metadata_with_evidence(
+        let preprocessed = preprocessor.preprocess(&format!("auto/{file}"), &source)?;
+        let commands = extract_command_metadata_from_preprocessed(
             &source,
+            &preprocessed,
             &file,
             CommandScope::VendorAci,
             &packed_layouts,
@@ -44,8 +52,10 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
 
     let path = format!("{AUTO_SOURCE_DIR}/{EVENT_SOURCE}");
     let source = git_show(cube_dir, tag, &path)?;
-    let vendor_events = extract_event_table_with_evidence(
+    let preprocessed_events = preprocessor.preprocess(&format!("auto/{EVENT_SOURCE}"), &source)?;
+    let vendor_events = extract_event_table_from_preprocessed(
         &source,
+        &preprocessed_events,
         "hci_vs_event_table",
         EventScope::VendorAci,
         &packed_layouts,
@@ -54,24 +64,29 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
 
     let standard_path = format!("{AUTO_SOURCE_DIR}/{STANDARD_HCI_SOURCE}");
     let standard_source = git_show(cube_dir, tag, &standard_path)?;
-    let standard_commands = extract_command_metadata_with_evidence(
+    let preprocessed_standard =
+        preprocessor.preprocess(&format!("auto/{STANDARD_HCI_SOURCE}"), &standard_source)?;
+    let standard_commands = extract_command_metadata_from_preprocessed(
         &standard_source,
+        &preprocessed_standard,
         STANDARD_HCI_SOURCE,
         CommandScope::StandardHci,
         &packed_layouts,
     )?;
     catalog.commands.extend(standard_commands);
 
-    let standard_events = extract_event_table_with_evidence(
+    let standard_events = extract_event_table_from_preprocessed(
         &source,
+        &preprocessed_events,
         "hci_event_table",
         EventScope::StandardHci,
         &packed_layouts,
     )?;
     catalog.events.extend(standard_events);
 
-    let le_events = extract_event_table_with_evidence(
+    let le_events = extract_event_table_from_preprocessed(
         &source,
+        &preprocessed_events,
         "hci_le_event_table",
         EventScope::LeMeta,
         &packed_layouts,
@@ -193,15 +208,20 @@ pub fn extract_vendor_events(source: &str) -> Result<Vec<CoverageEntry>, String>
 /// preprocessor extensions: callers validate the specific declarations they
 /// need, rather than rejecting a whole generated file because an unrelated
 /// extension has an error node.
+#[cfg(test)]
 fn parse_c_tree(source: &str, source_name: &str) -> Result<Tree, String> {
     let preprocessed = preprocess_c_source(source, source_name)?;
+    parse_preprocessed_c_tree(&preprocessed, source_name)
+}
+
+fn parse_preprocessed_c_tree(preprocessed: &str, source_name: &str) -> Result<Tree, String> {
     let mut parser = Parser::new();
     let language = tree_sitter_c::LANGUAGE.into();
     parser
         .set_language(&language)
         .map_err(|error| format!("{source_name}: could not load C grammar: {error}"))?;
     parser
-        .parse(&preprocessed, None)
+        .parse(preprocessed, None)
         .ok_or_else(|| format!("{source_name}: C parser did not return a syntax tree"))
 }
 
@@ -301,6 +321,7 @@ pub(crate) fn extract_command_metadata(
     extract_command_metadata_with_evidence(source, source_name, scope, &PackedLayouts::new())
 }
 
+#[cfg(test)]
 fn extract_command_metadata_with_evidence(
     source: &str,
     source_name: &str,
@@ -308,6 +329,27 @@ fn extract_command_metadata_with_evidence(
     packed_layouts: &PackedLayouts,
 ) -> Result<Vec<CatalogCommand>, String> {
     let tree = parse_c_tree(source, source_name)?;
+    extract_command_metadata_from_tree(source, source_name, scope, packed_layouts, &tree)
+}
+
+fn extract_command_metadata_from_preprocessed(
+    source: &str,
+    preprocessed: &str,
+    source_name: &str,
+    scope: CommandScope,
+    packed_layouts: &PackedLayouts,
+) -> Result<Vec<CatalogCommand>, String> {
+    let tree = parse_preprocessed_c_tree(preprocessed, source_name)?;
+    extract_command_metadata_from_tree(source, source_name, scope, packed_layouts, &tree)
+}
+
+fn extract_command_metadata_from_tree(
+    source: &str,
+    source_name: &str,
+    scope: CommandScope,
+    packed_layouts: &PackedLayouts,
+    tree: &Tree,
+) -> Result<Vec<CatalogCommand>, String> {
     let mut functions = Vec::new();
     collect_nodes(tree.root_node(), "function_definition", &mut functions);
 
@@ -409,6 +451,7 @@ pub(crate) fn extract_event_table(
     extract_event_table_with_evidence(source, table_name, scope, &PackedLayouts::new())
 }
 
+#[cfg(test)]
 fn extract_event_table_with_evidence(
     source: &str,
     table_name: &str,
@@ -416,6 +459,27 @@ fn extract_event_table_with_evidence(
     packed_layouts: &PackedLayouts,
 ) -> Result<Vec<CatalogEvent>, String> {
     let tree = parse_c_tree(source, EVENT_SOURCE)?;
+    extract_event_table_from_tree(source, table_name, scope, packed_layouts, &tree)
+}
+
+fn extract_event_table_from_preprocessed(
+    source: &str,
+    preprocessed: &str,
+    table_name: &str,
+    scope: EventScope,
+    packed_layouts: &PackedLayouts,
+) -> Result<Vec<CatalogEvent>, String> {
+    let tree = parse_preprocessed_c_tree(preprocessed, EVENT_SOURCE)?;
+    extract_event_table_from_tree(source, table_name, scope, packed_layouts, &tree)
+}
+
+fn extract_event_table_from_tree(
+    source: &str,
+    table_name: &str,
+    scope: EventScope,
+    packed_layouts: &PackedLayouts,
+    tree: &Tree,
+) -> Result<Vec<CatalogEvent>, String> {
     let table = find_event_table_initializer(tree.root_node(), source, table_name)
         .ok_or_else(|| format!("ble_events.c: {table_name} was not found or has no initializer"))?;
     if table.has_error() {
@@ -1211,13 +1275,25 @@ struct PackedEnvelopeDefinition {
     fields: Option<Vec<PackedEnvelopeField>>,
 }
 
+#[cfg(test)]
 fn parse_packed_struct_envelopes(source: &str) -> PackedLayouts {
+    let Ok(preprocessed) = preprocess_c_source(source, TYPES_SOURCE) else {
+        return BTreeMap::new();
+    };
+    parse_packed_struct_envelopes_from_preprocessed(source, &preprocessed)
+}
+
+fn parse_packed_struct_envelopes_from_preprocessed(
+    source: &str,
+    preprocessed: &str,
+) -> PackedLayouts {
     const PACKED_MARKER: &str = "__PACKED_STRUCT";
     const PARSABLE_MARKER: &str = "struct         ";
     debug_assert_eq!(PACKED_MARKER.len(), PARSABLE_MARKER.len());
 
     let normalized = source.replace(PACKED_MARKER, PARSABLE_MARKER);
-    let Ok(tree) = parse_c_tree(&normalized, TYPES_SOURCE) else {
+    let normalized_preprocessed = preprocessed.replace(PACKED_MARKER, PARSABLE_MARKER);
+    let Ok(tree) = parse_preprocessed_c_tree(&normalized_preprocessed, TYPES_SOURCE) else {
         return BTreeMap::new();
     };
     let mut type_definitions = Vec::new();

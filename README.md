@@ -99,6 +99,12 @@ report non-compliant. All transport-only exceptions—including the coprocessor-
 `0x9200`—come exclusively from the checked-in policy; its one-byte payload envelope is validated
 like generated event metadata, and library defaults do not hide it.
 
+CubeWB conditional branches are evaluated by libclang against the complete BLE core header tree
+from the same immutable Git tag. This resolves included and function-like macros with the real C
+preprocessor instead of approximating `#if` expressions in Rust. Running the compliance checker
+therefore requires a clang driver and a loadable libclang installation (for example,
+`libclang-dev` on Debian or Ubuntu).
+
 ## Usage
 
 This crate works with controllers that implement `bt_hci::controller::Controller` and the

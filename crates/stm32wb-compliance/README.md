@@ -5,6 +5,14 @@
 workspace tool; its catalog, report, and policy representations evolve together
 with this repository and do not carry compatibility version fields.
 
+## Requirements
+
+The tool requires Git, a clang driver, and a loadable libclang installation (for
+example, `libclang-dev` on Debian or Ubuntu). It materializes the BLE core tree
+from the requested immutable CubeWB tag in a temporary directory, then uses
+libclang to evaluate conditional branches with that tag's real include and
+macro environment. The CubeWB checkout is never modified.
+
 ## Catalog and policy
 
 Known payloads use `Evidence<WireLayout>`. A layout retains both its validated
