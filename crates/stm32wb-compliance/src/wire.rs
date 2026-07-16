@@ -422,13 +422,10 @@ fn compatible_segments(
                         EnvelopeRelation::Exact => {
                             expected_minimum == actual_minimum && expected_maximum == actual_maximum
                         }
-                        EnvelopeRelation::EventCapacity => {
-                            actual_minimum >= expected_minimum
-                                && actual_minimum <= expected_maximum
-                                && actual_maximum == expected_maximum
-                        }
-                        EnvelopeRelation::RequestCapacity | EnvelopeRelation::ResponseCapacity => {
-                            actual_minimum >= expected_minimum && actual_maximum == expected_maximum
+                        EnvelopeRelation::EventCapacity
+                        | EnvelopeRelation::RequestCapacity
+                        | EnvelopeRelation::ResponseCapacity => {
+                            expected_minimum == actual_minimum && expected_maximum == actual_maximum
                         }
                     }
                 }
@@ -1123,6 +1120,14 @@ mod tests {
             vec![WireSegment::fixed(1), WireSegment::variable(1, 0, 10)],
         )
         .unwrap();
+        let silently_raised_minimum =
+            WireLayout::from_segments(vec![WireSegment::fixed(1), WireSegment::variable(1, 1, 10)])
+                .unwrap();
+        let explicit_minimum = WireLayout::with_envelope(
+            silently_raised_minimum.envelope(),
+            vec![WireSegment::fixed(1), WireSegment::variable(1, 0, 10)],
+        )
+        .unwrap();
         let expectation = || EnvelopeExpectation {
             layout: expected_layout.clone(),
             relation: EnvelopeRelation::RequestCapacity,
@@ -1145,9 +1150,26 @@ mod tests {
             &explicit_capacity,
             &mut report,
         );
+        compare_envelope(
+            3,
+            "ImplicitMinimum",
+            "request payload",
+            Ok(expectation()),
+            &silently_raised_minimum,
+            &mut report,
+        );
+        compare_envelope(
+            4,
+            "ExplicitMinimum",
+            "request payload",
+            Ok(expectation()),
+            &explicit_minimum,
+            &mut report,
+        );
 
-        assert_eq!(report.differences.len(), 1);
+        assert_eq!(report.differences.len(), 2);
         assert_eq!(report.differences[0].command, "ImplicitSubset");
+        assert_eq!(report.differences[1].command, "ImplicitMinimum");
     }
 
     #[test]

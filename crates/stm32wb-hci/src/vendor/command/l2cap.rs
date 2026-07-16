@@ -241,6 +241,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 item: L2CocChannelIndex => 1,
                 min_items: 1,
                 max_items: 5,
+                storage_min_len: 1,
                 storage_max_len: 249,
             },
         };

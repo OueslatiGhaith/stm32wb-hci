@@ -898,6 +898,7 @@ stm32wb_hci_macros::vendor_event! {
                 item: L2CocChannelIndex => 1,
                 min_items: 1,
                 max_items: 246,
+                storage_min_len: 1,
             },
         };
     }

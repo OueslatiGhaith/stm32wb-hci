@@ -20,9 +20,10 @@ length envelope and, when the generated source proves it, the ordered fixed and
 variable wire segments. Variable segments preserve element width and
 cardinality, so equal byte ranges no longer erase different field structures.
 When a public API intentionally accepts fewer values than the generated buffer
-can store, its declarative field uses `storage_max_len` to record that capacity
-explicitly. Without that opt-in, a contained-but-shorter variable field is a
-wire difference rather than a false compliant result.
+can represent, its declarative field uses `storage_min_len` and/or
+`storage_max_len` to record the complete transport range explicitly. Without
+that opt-in, a narrowed variable field is a wire difference rather than a false
+compliant result.
 Unresolved source expressions remain `Evidence::Unresolved(String)`. Catalog
 construction and deserialization also reject inconsistent layouts, duplicate
 identities, out-of-range wire codes, and inconsistent names.

@@ -172,6 +172,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 count: u8 => 1,
                 min_len: 1,
                 max_len: 16,
+                storage_min_len: 1,
                 storage_max_len: 251,
             },
         };

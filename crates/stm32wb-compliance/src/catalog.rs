@@ -317,7 +317,7 @@ impl WireLayout {
 
     pub fn with_envelope(envelope: Envelope, segments: Vec<WireSegment>) -> Option<Self> {
         let storage = Self::from_segments(segments)?;
-        (storage.envelope.minimum() == envelope.minimum()
+        (storage.envelope.minimum() <= envelope.minimum()
             && storage.envelope.maximum() >= envelope.maximum())
         .then_some(Self {
             envelope,
@@ -361,7 +361,7 @@ impl WireLayout {
             return false;
         }
         Self::from_segments(segments.clone()).is_some_and(|storage| {
-            storage.envelope.minimum() == self.envelope.minimum()
+            storage.envelope.minimum() <= self.envelope.minimum()
                 && storage.envelope.maximum() >= self.envelope.maximum()
         })
     }

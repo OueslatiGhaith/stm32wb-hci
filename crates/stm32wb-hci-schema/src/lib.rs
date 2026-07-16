@@ -238,6 +238,12 @@ pub struct VariableEncoding {
     pub min_len: usize,
     /// Maximum encoded field size.
     pub max_len: usize,
+    /// Generated C storage minimum for this field.
+    ///
+    /// This defaults to `min_len`. A smaller value is an explicit declaration
+    /// that the Rust API intentionally enforces a narrower semantic domain
+    /// than the generated transport buffer can represent.
+    pub storage_min_len: usize,
     /// Generated C storage capacity for this field.
     ///
     /// This defaults to `max_len`. A larger value is an explicit declaration
@@ -1470,6 +1476,16 @@ impl Parse for VariableEncoding {
         };
 
         let (min_len, max_len, consumes_remainder) = variable_bounds(input, &shape)?;
+        let storage_min_len = if next_label_is(input, "storage_min_len")? {
+            parse_integer_value(input, "storage_min_len")?.value
+        } else {
+            min_len
+        };
+        if storage_min_len > min_len {
+            return Err(input.error(format!(
+                "variable field storage minimum {storage_min_len} is larger than semantic minimum {min_len}"
+            )));
+        }
         let storage_max_len = if next_label_is(input, "storage_max_len")? {
             parse_integer_value(input, "storage_max_len")?.value
         } else {
@@ -1480,7 +1496,8 @@ impl Parse for VariableEncoding {
                 "variable field storage maximum {storage_max_len} is smaller than semantic maximum {max_len}"
             )));
         }
-        validate_storage_max_len(input, &shape, storage_max_len)?;
+        validate_storage_bound(input, &shape, storage_min_len, "minimum")?;
+        validate_storage_bound(input, &shape, storage_max_len, "maximum")?;
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after declarative variable field"));
         }
@@ -1488,16 +1505,18 @@ impl Parse for VariableEncoding {
             shape,
             min_len,
             max_len,
+            storage_min_len,
             storage_max_len,
             consumes_remainder,
         })
     }
 }
 
-fn validate_storage_max_len(
+fn validate_storage_bound(
     input: ParseStream<'_>,
     shape: &VariableEncodingShape,
-    storage_max_len: usize,
+    storage_len: usize,
+    bound: &str,
 ) -> syn::Result<()> {
     let (prefix, element_width) = match shape {
         VariableEncodingShape::CountedBytes { count, .. } => (count.width.value, 1),
@@ -1514,12 +1533,14 @@ fn validate_storage_max_len(
         VariableEncodingShape::TrailingBytes { .. } => (0, 1),
         VariableEncodingShape::BitmapItems { item, .. } => (0, item.width.value),
     };
-    let payload = storage_max_len
-        .checked_sub(prefix)
-        .ok_or_else(|| input.error("variable field storage maximum is smaller than its prefix"))?;
+    let payload = storage_len.checked_sub(prefix).ok_or_else(|| {
+        input.error(format!(
+            "variable field storage {bound} is smaller than its prefix"
+        ))
+    })?;
     if payload % element_width != 0 {
         return Err(input.error(format!(
-            "variable field storage maximum leaves {payload} bytes, which is not divisible by its {element_width}-byte item width"
+            "variable field storage {bound} leaves {payload} bytes, which is not divisible by its {element_width}-byte item width"
         )));
     }
     Ok(())
@@ -1942,7 +1963,9 @@ mod tests {
                         data: &'a [u8] => {
                             kind: counted_bytes,
                             count: u8 => 1,
+                            min_len: 1,
                             max_len: 16,
+                            storage_min_len: 1,
                             storage_max_len: 33,
                         },
                     };
@@ -1956,7 +1979,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(command.params.min_len(), 2);
+        assert_eq!(command.params.min_len(), 3);
         assert_eq!(command.params.max_len(), 18);
         assert_eq!(command.params.lifetime.as_ref().unwrap().ident, "a");
         let fields = command.params.fields().unwrap().fields();
@@ -1964,7 +1987,8 @@ mod tests {
         let FieldEncoding::Variable(encoding) = &fields[1].encoding else {
             panic!("expected a variable encoding");
         };
-        assert_eq!((encoding.min_len, encoding.max_len), (1, 17));
+        assert_eq!((encoding.min_len, encoding.max_len), (2, 17));
+        assert_eq!(encoding.storage_min_len, 1);
         assert_eq!(encoding.storage_max_len, 33);
         let VariableEncodingShape::CountedBytes {
             count,
@@ -1975,7 +1999,7 @@ mod tests {
             panic!("expected typed counted-bytes metadata");
         };
         assert_eq!(count.width.value, 1);
-        assert_eq!(min_len.value, 0);
+        assert_eq!(min_len.value, 1);
         assert_eq!(max_len.value, 16);
         let constraints = command.constraints.as_ref().unwrap();
         assert_eq!(

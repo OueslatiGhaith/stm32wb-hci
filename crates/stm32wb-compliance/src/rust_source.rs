@@ -570,17 +570,18 @@ fn variable_segments(
     encoding: &stm32wb_hci_schema::VariableEncoding,
     wire_type_shapes: &WireTypeShapes,
 ) -> Vec<WireSegment> {
+    let storage_min_len = encoding.storage_min_len;
     let storage_max_len = encoding.storage_max_len;
     match &encoding.shape {
         VariableEncodingShape::CountedBytes {
             count,
-            min_len,
+            min_len: _,
             max_len: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
             WireSegment::variable_with_semantic(
                 1,
-                wire_width(min_len.value),
+                wire_width(storage_min_len - count.width.value),
                 wire_width(storage_max_len - count.width.value),
                 VariableSemantic::Counted {
                     prefix_width: wire_width(count.width.value),
@@ -590,13 +591,17 @@ fn variable_segments(
         VariableEncodingShape::CountedItems {
             count,
             item,
-            min_items,
+            min_items: _,
             max_items: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
             WireSegment::variable_with_semantic(
                 wire_width(item.width.value),
-                wire_width(min_items.value),
+                wire_width(
+                    (storage_min_len - count.width.value)
+                        .checked_div(item.width.value)
+                        .expect("item wire width is nonzero"),
+                ),
                 wire_width(
                     (storage_max_len - count.width.value)
                         .checked_div(item.width.value)
@@ -613,7 +618,7 @@ fn variable_segments(
                 WireSegment::fixed(wire_width(tag_width)),
                 WireSegment::variable_with_semantic(
                     1,
-                    wire_width(tagged.min_len.value - tag_width),
+                    wire_width(storage_min_len - tag_width),
                     wire_width(storage_max_len - tag_width),
                     VariableSemantic::Tagged {
                         tag_width: wire_width(tag_width),
@@ -650,7 +655,7 @@ fn variable_segments(
             WireSegment::fixed(wire_width(length.width.value)),
             WireSegment::variable_with_semantic(
                 1,
-                0,
+                wire_width(storage_min_len - record_len.width.value - length.width.value),
                 wire_width(storage_max_len - record_len.width.value - length.width.value),
                 VariableSemantic::LengthPrefixedRecords {
                     record_len_width: wire_width(record_len.width.value),
@@ -664,7 +669,7 @@ fn variable_segments(
             WireSegment::fixed(wire_width(tagged.length.width.value)),
             WireSegment::variable_with_semantic(
                 1,
-                0,
+                wire_width(storage_min_len - tagged.tag.width.value - tagged.length.width.value),
                 wire_width(storage_max_len - tagged.tag.width.value - tagged.length.width.value),
                 VariableSemantic::TaggedItems {
                     tag_width: wire_width(tagged.tag.width.value),
@@ -682,11 +687,11 @@ fn variable_segments(
             ),
         ],
         VariableEncodingShape::TrailingBytes {
-            min_len,
+            min_len: _,
             max_len: _,
         } => vec![WireSegment::variable_with_semantic(
             1,
-            wire_width(min_len.value),
+            wire_width(storage_min_len),
             wire_width(storage_max_len),
             VariableSemantic::TrailingBytes,
         )],
@@ -694,7 +699,11 @@ fn variable_segments(
             bitmap, mask, item, ..
         } => vec![WireSegment::variable_with_semantic(
             wire_width(item.width.value),
-            0,
+            wire_width(
+                storage_min_len
+                    .checked_div(item.width.value)
+                    .expect("item wire width is nonzero"),
+            ),
             wire_width(
                 storage_max_len
                     .checked_div(item.width.value)
