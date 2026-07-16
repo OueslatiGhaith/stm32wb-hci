@@ -306,7 +306,7 @@ fn assignment_value<'tree>(
 
 fn assignment_integer(body: Node<'_>, source: &str, member: &str) -> Option<u16> {
     let value = assignment_value(body, source, "rq", member)?;
-    parse_c_integer(node_text(value, source), 0).map(|(value, _)| value)
+    parse_complete_c_integer(node_text(value, source))
 }
 
 /// Extract generated command functions from `function_definition` AST nodes.
@@ -502,7 +502,7 @@ fn extract_event_table_from_tree(
         let Some(code_node) = entry.named_child(0) else {
             return Err(format!("ble_events.c: malformed {table_name} entry"));
         };
-        let Some((code, _)) = parse_c_integer(node_text(code_node, source), 0) else {
+        let Some(code) = parse_complete_c_integer(node_text(code_node, source)) else {
             return Err(format!("ble_events.c: malformed {table_name} entry code"));
         };
         let Some(handler) = entry.named_child(1) else {
@@ -623,7 +623,7 @@ enum ParsedCompletion {
 fn parsed_completion(body: Node<'_>, source: &str) -> ParsedCompletion {
     match assignment_value(body, source, "rq", "event") {
         None => ParsedCompletion::CommandComplete,
-        Some(value) => match parse_c_integer(node_text(value, source), 0).map(|(value, _)| value) {
+        Some(value) => match parse_complete_c_integer(node_text(value, source)) {
             Some(0x0e) => ParsedCompletion::CommandComplete,
             Some(0x0f) => ParsedCompletion::CommandStatus,
             Some(value) if value <= u16::from(u8::MAX) => ParsedCompletion::Event(value as u8),
@@ -1640,6 +1640,11 @@ fn parse_c_integer(source: &str, start: usize) -> Option<(u16, usize)> {
     Some((value, index))
 }
 
+fn parse_complete_c_integer(source: &str) -> Option<u16> {
+    let (value, end) = parse_c_integer(source, 0)?;
+    source[end..].trim().is_empty().then_some(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1655,6 +1660,45 @@ mod tests {
         assert_eq!(commands[0].code, 0x81);
         assert_eq!(commands[0].name, "aci_gap_a");
         assert_eq!(commands[1].code, 130);
+    }
+
+    #[test]
+    fn integer_metadata_requires_a_complete_literal() {
+        let command_source = r#"
+            tBleStatus aci_fixture(void)
+            {
+                rq.ocf = 0x081 + 1;
+            }
+        "#;
+        let error = extract_command_metadata(command_source, "fixture.c", CommandScope::VendorAci)
+            .unwrap_err();
+        assert!(error.contains("no generated command functions were found"));
+
+        let event_source = r#"
+            const hci_event_table_type hci_vs_event_table[] = {
+                { 0x0400 + 1, aci_fixture_event_process },
+            };
+        "#;
+        let error = extract_event_table(event_source, "hci_vs_event_table", EventScope::VendorAci)
+            .unwrap_err();
+        assert!(error.contains("malformed hci_vs_event_table entry code"));
+
+        let completion_source = r#"
+            tBleStatus aci_fixture(void)
+            {
+                rq.ocf = 0x081;
+                rq.event = 0x0E + 1;
+            }
+        "#;
+        let commands =
+            extract_command_metadata(completion_source, "fixture.c", CommandScope::VendorAci)
+                .unwrap();
+        assert_eq!(
+            commands[0].completion,
+            CatalogCompletion::Unresolved {
+                expression: "0x0E + 1".to_owned(),
+            }
+        );
     }
 
     #[test]
