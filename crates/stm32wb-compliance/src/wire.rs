@@ -325,29 +325,24 @@ fn compare_envelope(
     report.checked += 1;
     let expected_envelope = expected.layout.envelope();
     let actual_envelope = actual.envelope();
+    let actual_storage_envelope = actual
+        .segments()
+        .and_then(|segments| WireLayout::from_segments(segments.to_vec()))
+        .map_or(actual_envelope, |layout| layout.envelope());
+    let envelope_only_storage_compatible =
+        expected.layout.segments().is_some() || actual_storage_envelope == expected_envelope;
     let envelope_compatible = match expected.relation {
         EnvelopeRelation::Exact => actual_envelope == expected_envelope,
-        EnvelopeRelation::EventCapacity => {
-            // The C type proves only its fixed prefix. Rust may add a stricter
-            // semantic minimum, such as requiring one counted item, but must
-            // accept the complete generated event capacity.
-            !actual_envelope.is_fixed()
-                && actual_envelope.minimum() >= expected_envelope.minimum()
-                && actual_envelope.minimum() <= expected_envelope.maximum()
-                && actual_envelope.maximum() == expected_envelope.maximum()
-        }
-        EnvelopeRelation::RequestCapacity => {
-            // Semantic bounds may be narrower than storage bounds. The
-            // segment comparison below still requires every storage capacity
-            // to match, so containment cannot hide an accidental truncation.
+        EnvelopeRelation::EventCapacity
+        | EnvelopeRelation::RequestCapacity
+        | EnvelopeRelation::ResponseCapacity => {
+            // Public semantics may be narrower only when the declarative
+            // schema separately records the complete generated storage range.
+            // This remains enforceable when Cube proves only an envelope and
+            // cannot expose individual segments.
             actual_envelope.minimum() >= expected_envelope.minimum()
                 && actual_envelope.maximum() <= expected_envelope.maximum()
-        }
-        EnvelopeRelation::ResponseCapacity => {
-            // Response semantics may be narrower than the generated buffer;
-            // exact storage capacity is checked independently per segment.
-            actual_envelope.minimum() >= expected_envelope.minimum()
-                && actual_envelope.maximum() <= expected_envelope.maximum()
+                && envelope_only_storage_compatible
         }
     };
     let schema_compatible = compatible_segments(
@@ -703,7 +698,8 @@ mod tests {
 
         coverage.events.get_mut(&0x0401).unwrap().payload = layout(Envelope::bounded(4, 253));
         let report = compare_vendor_wire(&[], &events, &coverage);
-        assert!(report.differences.is_empty());
+        assert_eq!(report.differences.len(), 1);
+        assert!(report.differences[0].issue.contains("4..=253 bytes"));
     }
 
     #[test]
@@ -772,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn capacity_shaped_responses_accept_only_contained_rust_envelopes() {
+    fn capacity_shaped_responses_reject_unannotated_subsets() {
         let contained = fixture_declaration(
             "Contained",
             0x010,
@@ -807,7 +803,13 @@ mod tests {
         let report = compare_vendor_wire(&commands, &[], &coverage);
 
         assert_eq!(report.checked, 6);
-        assert_eq!(report.differences.len(), 2);
+        assert_eq!(report.differences.len(), 3);
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.command == "Contained")
+        );
         assert!(
             report
                 .differences
@@ -902,9 +904,15 @@ mod tests {
         let report = compare_vendor_wire(&commands, &[], &coverage);
 
         assert_eq!(report.checked, 2);
-        assert_eq!(report.differences.len(), 1);
+        assert_eq!(report.differences.len(), 2);
         assert!(report.differences[0].issue.contains("is 3 bytes"));
         assert!(report.differences[0].issue.contains("declares 2 bytes"));
+        assert!(
+            report
+                .differences
+                .iter()
+                .any(|difference| difference.command == "Dynamic")
+        );
         assert!(report.unavailable.is_empty());
     }
 
@@ -984,27 +992,39 @@ mod tests {
     }
 
     #[test]
-    fn request_capacity_requires_the_rust_envelope_to_be_contained() {
+    fn envelope_only_capacity_requires_explicit_matching_storage() {
         let expected = Ok(EnvelopeExpectation {
             layout: layout(Envelope::bounded(2, 255)),
             relation: EnvelopeRelation::RequestCapacity,
         });
 
         let mut report = WireReport::default();
-        let contained = layout(Envelope::bounded(2, 48));
+        let silently_narrowed = layout(Envelope::bounded(2, 48));
         compare_envelope(
             1,
-            "Contained",
+            "ImplicitSubset",
             "request payload",
             expected.clone(),
-            &contained,
+            &silently_narrowed,
             &mut report,
         );
-        assert!(report.differences.is_empty());
+        let explicit_capacity = WireLayout::with_envelope(
+            Envelope::bounded(2, 48),
+            vec![WireSegment::fixed(2), WireSegment::variable(1, 0, 253)],
+        )
+        .unwrap();
+        compare_envelope(
+            2,
+            "ExplicitSubset",
+            "request payload",
+            expected.clone(),
+            &explicit_capacity,
+            &mut report,
+        );
 
         let missing_prefix = layout(Envelope::bounded(1, 48));
         compare_envelope(
-            2,
+            3,
             "MissingPrefix",
             "request payload",
             expected.clone(),
@@ -1013,14 +1033,15 @@ mod tests {
         );
         let too_large = layout(Envelope::bounded(2, 256));
         compare_envelope(
-            3,
+            4,
             "TooLarge",
             "request payload",
             expected,
             &too_large,
             &mut report,
         );
-        assert_eq!(report.differences.len(), 2);
+        assert_eq!(report.differences.len(), 3);
+        assert_eq!(report.differences[0].command, "ImplicitSubset");
     }
 
     #[test]
