@@ -1379,9 +1379,8 @@ fn fixed_packed_size(layouts: &PackedLayouts, type_name: &str) -> Option<usize> 
 }
 
 #[derive(Clone, Debug)]
-enum PackedMultiplicity {
-    Fixed(usize),
-    Capacity(String),
+struct PackedMultiplicity {
+    dimensions: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1499,23 +1498,33 @@ fn packed_envelope_fields(body: Node<'_>, source: &str) -> Option<Vec<PackedEnve
 
 fn packed_field_multiplicity(declarator: Node<'_>, source: &str) -> Option<PackedMultiplicity> {
     match declarator.kind() {
-        "identifier" | "field_identifier" => Some(PackedMultiplicity::Fixed(1)),
+        "identifier" | "field_identifier" => Some(PackedMultiplicity {
+            dimensions: Vec::new(),
+        }),
         "pointer_declarator" | "abstract_pointer_declarator" => None,
         "array_declarator" => {
             let size = declarator.child_by_field_name("size")?;
             let expression = node_text(size, source).trim();
-            if let Some((count, end)) = parse_c_integer(expression, 0)
-                && expression[end..].trim().is_empty()
-            {
-                Some(PackedMultiplicity::Fixed(usize::from(count)))
-            } else {
-                Some(PackedMultiplicity::Capacity(expression.to_owned()))
-            }
+            let inner = declarator.child_by_field_name("declarator")?;
+            let mut multiplicity = packed_field_multiplicity(inner, source)?;
+            multiplicity.dimensions.push(expression.to_owned());
+            Some(multiplicity)
         }
         _ => declarator
             .child_by_field_name("declarator")
             .and_then(|inner| packed_field_multiplicity(inner, source)),
     }
+}
+
+fn expression_uses_transport_capacity(expression: &str) -> bool {
+    expression
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|identifier| {
+            matches!(
+                identifier,
+                "BLE_EVT_MAX_PARAM_LEN" | "BLE_CMD_MAX_PARAM_LEN"
+            )
+        })
 }
 
 fn packed_struct_envelope(
@@ -1540,21 +1549,33 @@ fn packed_struct_envelope(
                 })
             },
         )?;
-        match &field.multiplicity {
-            PackedMultiplicity::Fixed(count) => {
+        let mut fixed_count = 1usize;
+        let mut capacity_count = None;
+        for expression in &field.multiplicity.dimensions {
+            let count = evaluate_capacity_expression(expression, known)?;
+            if expression_uses_transport_capacity(expression) {
+                if capacity_count.replace(count).is_some() {
+                    return None;
+                }
+            } else {
+                fixed_count = fixed_count.checked_mul(count)?;
+            }
+        }
+        match capacity_count {
+            None => {
                 layout.minimum = layout
                     .minimum
-                    .checked_add(element.minimum.checked_mul(*count)?)?;
+                    .checked_add(element.minimum.checked_mul(fixed_count)?)?;
                 layout.maximum = layout
                     .maximum
-                    .checked_add(element.maximum.checked_mul(*count)?)?;
+                    .checked_add(element.maximum.checked_mul(fixed_count)?)?;
                 layout.variable |= element.variable;
                 if element.variable {
-                    for _ in 0..*count {
+                    for _ in 0..fixed_count {
                         layout.segments.extend(element.segments.iter().cloned());
                     }
                 } else {
-                    let length = element.maximum.checked_mul(*count)?;
+                    let length = element.maximum.checked_mul(fixed_count)?;
                     if length != 0 {
                         layout
                             .segments
@@ -1562,19 +1583,19 @@ fn packed_struct_envelope(
                     }
                 }
             }
-            PackedMultiplicity::Capacity(expression) => {
+            Some(capacity_count) => {
                 if element.variable || element.minimum != element.maximum {
                     return None;
                 }
-                let count = evaluate_capacity_expression(expression, known)?;
+                let element_width = element.maximum.checked_mul(fixed_count)?;
                 layout.maximum = layout
                     .maximum
-                    .checked_add(element.maximum.checked_mul(count)?)?;
+                    .checked_add(element_width.checked_mul(capacity_count)?)?;
                 layout.variable = true;
                 layout.segments.push(WireSegment::variable(
-                    u32::try_from(element.maximum).ok()?,
+                    u32::try_from(element_width).ok()?,
                     0,
-                    u32::try_from(count).ok()?,
+                    u32::try_from(capacity_count).ok()?,
                 ));
             }
         }
@@ -2466,6 +2487,43 @@ mod tests {
 
         let layouts = parse_packed_struct_envelopes(types);
         assert_eq!(fixed_packed_size(&layouts, "active_rp0"), Some(3));
+    }
+
+    #[test]
+    fn packed_arrays_preserve_nested_fixed_dimensions_and_explicit_capacities() {
+        let types = r#"
+            #define FIXED_WIDTH 4
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Matrix[2][3];
+                uint8_t Expression_Fixed[2 + 2];
+            } fixed_arrays_t;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Matrix[2][BLE_EVT_MAX_PARAM_LEN / 2];
+            } capacity_array_t;
+
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Unknown[FIXED_WIDTH];
+            } preprocessor_fixed_t;
+        "#;
+
+        let layouts = parse_packed_struct_envelopes(types);
+        assert_eq!(fixed_packed_size(&layouts, "fixed_arrays_t"), Some(10));
+        assert_eq!(fixed_packed_size(&layouts, "capacity_array_t"), None);
+        assert_eq!(
+            layouts.get("capacity_array_t"),
+            Some(&Some(PackedEnvelope {
+                minimum: 0,
+                maximum: 254,
+                variable: true,
+                segments: vec![WireSegment::variable(2, 0, 127)],
+            }))
+        );
+        assert_eq!(layouts.get("preprocessor_fixed_t"), Some(&None));
     }
 
     #[test]
