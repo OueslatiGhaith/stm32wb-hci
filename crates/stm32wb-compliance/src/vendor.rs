@@ -673,6 +673,71 @@ fn c_pointer_variable_type(body: Node<'_>, source: &str, variable: &str) -> Opti
     })
 }
 
+fn request_structure_types(body: Node<'_>, source: &str) -> Result<Vec<String>, String> {
+    let mut declarations = Vec::new();
+    collect_nodes(body, "declaration", &mut declarations);
+    let mut structures = BTreeMap::<usize, (usize, String, String)>::new();
+    for declaration in declarations {
+        let Some(type_node) = declaration.child_by_field_name("type") else {
+            continue;
+        };
+        let mut cursor = declaration.walk();
+        for declarator in declaration.children_by_field_name("declarator", &mut cursor) {
+            let Some(identifier) = declarator_identifier(declarator) else {
+                continue;
+            };
+            let name = node_text(identifier, source);
+            let Some(suffix) = name.strip_prefix("cp") else {
+                continue;
+            };
+            if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            let index = suffix
+                .parse::<usize>()
+                .map_err(|_| format!("request structure pointer `{name}` has an invalid index"))?;
+            if name != format!("cp{index}") {
+                return Err(format!(
+                    "request structure pointer `{name}` does not use a canonical cpN index"
+                ));
+            }
+            if !declarator_has_pointer(declarator) {
+                return Err(format!("request structure `{name}` is not a pointer"));
+            }
+            let type_name = node_text(type_node, source).trim().to_owned();
+            if structures
+                .insert(
+                    index,
+                    (declaration.start_byte(), name.to_owned(), type_name),
+                )
+                .is_some()
+            {
+                return Err(format!(
+                    "request structure pointer index cp{index} is declared more than once"
+                ));
+            }
+        }
+    }
+
+    let mut previous_offset = None;
+    let mut types = Vec::with_capacity(structures.len());
+    for (expected, (index, (offset, name, type_name))) in structures.into_iter().enumerate() {
+        if index != expected {
+            return Err(format!(
+                "request structure pointers are not contiguous: expected cp{expected}, found `{name}`"
+            ));
+        }
+        if previous_offset.is_some_and(|previous| offset < previous) {
+            return Err(format!(
+                "request structure pointer `{name}` is declared out of wire order"
+            ));
+        }
+        previous_offset = Some(offset);
+        types.push(type_name);
+    }
+    Ok(types)
+}
+
 enum ParsedCompletion {
     CommandComplete,
     CommandStatus,
@@ -828,14 +893,10 @@ fn request_layout(
     packed_layouts: &PackedLayouts,
 ) -> WireLayoutEvidence {
     let envelope = request_envelope(function_declarator, body, source, packed_layouts);
-    let mut type_names = Vec::new();
-    for index in 0..16 {
-        let variable = format!("cp{index}");
-        let Some(type_name) = c_pointer_variable_type(body, source, &variable) else {
-            break;
-        };
-        type_names.push(type_name);
-    }
+    let type_names = match request_structure_types(body, source) {
+        Ok(type_names) => type_names,
+        Err(reason) => return WireLayoutEvidence::Unresolved(reason),
+    };
     if type_names.is_empty() {
         return envelope;
     }
@@ -1910,6 +1971,69 @@ mod tests {
             layout.segments(),
             Some([WireSegment::fixed(2), WireSegment::variable(1, 0, 253),].as_slice())
         );
+    }
+
+    #[test]
+    fn request_structure_discovery_rejects_gaps_and_has_no_fixed_limit() {
+        let types = r#"
+            typedef __PACKED_STRUCT
+            {
+                uint8_t Value;
+            } fixture_cp;
+        "#;
+        let gap = r#"
+            typedef uint8_t fixture_cp;
+
+            tBleStatus aci_fixture(void)
+            {
+                struct hci_request rq;
+                fixture_cp *cp0 = 0;
+                fixture_cp *cp2 = 0;
+                rq.ocf = 0x081;
+                rq.clen = 2;
+            }
+        "#;
+        let commands = extract_command_metadata_with_evidence(
+            gap,
+            "fixture.c",
+            CommandScope::VendorAci,
+            &parse_packed_struct_envelopes(types),
+        )
+        .unwrap();
+        let Evidence::Unresolved(reason) = &commands[0].request else {
+            panic!("a cpN gap must leave request structure unresolved");
+        };
+        assert!(reason.contains("expected cp1, found `cp2`"));
+
+        let declarations = (0..17)
+            .map(|index| format!("fixture_cp *cp{index} = 0;"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!(
+            r#"
+                typedef uint8_t fixture_cp;
+
+                tBleStatus aci_fixture(void)
+                {{
+                    struct hci_request rq;
+                    {declarations}
+                    rq.ocf = 0x081;
+                    rq.clen = 17;
+                }}
+            "#
+        );
+        let commands = extract_command_metadata_with_evidence(
+            &source,
+            "fixture.c",
+            CommandScope::VendorAci,
+            &parse_packed_struct_envelopes(types),
+        )
+        .unwrap();
+        assert_eq!(commands[0].request.bounds(), Some((17, 17)));
+        let Evidence::Known(layout) = &commands[0].request else {
+            panic!("all cpN structures should resolve");
+        };
+        assert_eq!(layout.segments(), Some([WireSegment::fixed(17)].as_slice()));
     }
 
     #[test]
