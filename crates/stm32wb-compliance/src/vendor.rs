@@ -280,33 +280,82 @@ fn field_expression_is(node: Node<'_>, source: &str, receiver: &str, field: &str
             .is_some_and(|member| node_text(member, source).trim() == field)
 }
 
-/// Find the first simple `receiver.field = value` assignment in source order.
-/// The AST avoids treating comments, strings, comparisons, or a similarly
-/// named local variable as transport metadata.
+/// Find simple `receiver.field = value` assignments in source order. The AST
+/// avoids treating comments, strings, comparisons, or a similarly named local
+/// variable as transport metadata.
+fn assignment_values<'tree>(
+    body: Node<'tree>,
+    source: &str,
+    receiver: &str,
+    field: &str,
+) -> Vec<(Node<'tree>, Node<'tree>)> {
+    let mut assignments = Vec::new();
+    collect_nodes(body, "assignment_expression", &mut assignments);
+    assignments
+        .into_iter()
+        .filter_map(|assignment| {
+            let operator = assignment.child_by_field_name("operator")?;
+            (node_text(operator, source) == "=")
+                .then_some(())
+                .filter(|_| {
+                    assignment
+                        .child_by_field_name("left")
+                        .is_some_and(|left| field_expression_is(left, source, receiver, field))
+                })
+                .and_then(|_| assignment.child_by_field_name("right"))
+                .map(|value| (assignment, value))
+        })
+        .collect()
+}
+
 fn assignment_value<'tree>(
     body: Node<'tree>,
     source: &str,
     receiver: &str,
     field: &str,
 ) -> Option<Node<'tree>> {
-    let mut assignments = Vec::new();
-    collect_nodes(body, "assignment_expression", &mut assignments);
-    assignments.into_iter().find_map(|assignment| {
-        let operator = assignment.child_by_field_name("operator")?;
-        (node_text(operator, source) == "=")
-            .then_some(())
-            .filter(|_| {
-                assignment
-                    .child_by_field_name("left")
-                    .is_some_and(|left| field_expression_is(left, source, receiver, field))
-            })
-            .and_then(|_| assignment.child_by_field_name("right"))
-    })
+    assignment_values(body, source, receiver, field)
+        .into_iter()
+        .next()
+        .map(|(_, value)| value)
 }
 
 fn assignment_integer(body: Node<'_>, source: &str, member: &str) -> Option<u16> {
     let value = assignment_value(body, source, "rq", member)?;
     parse_complete_c_integer(node_text(value, source))
+}
+
+fn generated_command_prefix(scope: CommandScope) -> &'static str {
+    match scope {
+        CommandScope::VendorAci => "aci_",
+        CommandScope::StandardHci => "hci_",
+    }
+}
+
+fn validate_command_metadata_assignments(
+    body: Node<'_>,
+    source: &str,
+    source_name: &str,
+    command: &str,
+) -> Result<(), String> {
+    for member in ["ogf", "ocf", "event", "clen", "rlen"] {
+        let assignments = assignment_values(body, source, "rq", member);
+        if assignments.len() > 1 {
+            return Err(format!(
+                "{source_name}: generated command `{command}` assigns rq.{member} {} times",
+                assignments.len()
+            ));
+        }
+        if assignments
+            .first()
+            .is_some_and(|(assignment, _)| nested_in_dynamic_control_flow(*assignment, body))
+        {
+            return Err(format!(
+                "{source_name}: generated command `{command}` assigns rq.{member} inside dynamic control flow"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Extract generated command functions from `function_definition` AST nodes.
@@ -368,17 +417,28 @@ fn extract_command_metadata_from_tree(
             continue;
         };
         let name = node_text(name_node, source).to_owned();
+        if !name.starts_with(generated_command_prefix(scope)) {
+            continue;
+        }
         let Some(body) = function.child_by_field_name("body") else {
-            continue;
-        };
-        let Some(ocf) = assignment_integer(body, source, "ocf") else {
-            continue;
+            return Err(format!(
+                "{source_name}: generated command `{name}` has no function body"
+            ));
         };
         if function.has_error() {
             return Err(format!(
                 "{source_name}: generated command `{name}` contains C syntax errors"
             ));
         }
+        validate_command_metadata_assignments(body, source, source_name, &name)?;
+        let Some(ocf) = assignment_integer(body, source, "ocf") else {
+            let expression = assignment_value(body, source, "rq", "ocf")
+                .map(|value| node_text(value, source).trim())
+                .unwrap_or("<missing>");
+            return Err(format!(
+                "{source_name}: generated command `{name}` has unsupported rq.ocf `{expression}`"
+            ));
+        };
         let kind = match scope {
             CommandScope::VendorAci => CatalogCommandKind::VendorAci { ocf },
             CommandScope::StandardHci => {
@@ -1672,7 +1732,7 @@ mod tests {
         "#;
         let error = extract_command_metadata(command_source, "fixture.c", CommandScope::VendorAci)
             .unwrap_err();
-        assert!(error.contains("no generated command functions were found"));
+        assert!(error.contains("unsupported rq.ocf `0x081 + 1`"));
 
         let event_source = r#"
             const hci_event_table_type hci_vs_event_table[] = {
@@ -1719,6 +1779,44 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "aci_fixture");
         assert_eq!(commands[0].ocf(), 0x81);
+    }
+
+    #[test]
+    fn command_metadata_fails_closed_for_missing_or_ambiguous_assignments() {
+        let missing = r#"
+            tBleStatus aci_fixture(void)
+            {
+                struct hci_request rq;
+            }
+        "#;
+        let error =
+            extract_command_metadata(missing, "fixture.c", CommandScope::VendorAci).unwrap_err();
+        assert!(error.contains("unsupported rq.ocf `<missing>`"));
+
+        let duplicate = r#"
+            tBleStatus aci_fixture(void)
+            {
+                struct hci_request rq;
+                rq.ocf = 0x081;
+                rq.ocf = 0x082;
+            }
+        "#;
+        let error =
+            extract_command_metadata(duplicate, "fixture.c", CommandScope::VendorAci).unwrap_err();
+        assert!(error.contains("assigns rq.ocf 2 times"));
+
+        let conditional = r#"
+            tBleStatus aci_fixture(uint8_t select)
+            {
+                struct hci_request rq;
+                if (select) {
+                    rq.ocf = 0x081;
+                }
+            }
+        "#;
+        let error = extract_command_metadata(conditional, "fixture.c", CommandScope::VendorAci)
+            .unwrap_err();
+        assert!(error.contains("assigns rq.ocf inside dynamic control flow"));
     }
 
     #[test]
