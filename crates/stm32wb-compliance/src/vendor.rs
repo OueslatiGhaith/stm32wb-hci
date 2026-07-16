@@ -12,7 +12,7 @@ use crate::c_preprocessor::preprocess_c_source;
 use crate::catalog::{
     CatalogCommand, CatalogCommandKind, CatalogCompletion, CatalogEvent, CatalogEventKind,
     CatalogFamily, CatalogSchema, CommandScope, Envelope, EventScope, Evidence, FixedFieldRole,
-    WireLayout, WireLayoutEvidence, WireSegment,
+    VariableSemantic, WireLayout, WireLayoutEvidence, WireSegment,
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
@@ -1527,6 +1527,77 @@ fn expression_uses_transport_capacity(expression: &str) -> bool {
         })
 }
 
+fn packed_fixed_field_width(
+    field: &PackedEnvelopeField,
+    known: &BTreeMap<String, Option<PackedEnvelope>>,
+) -> Option<u32> {
+    let element_width = primitive_c_size(&field.type_name)
+        .or_else(|| fixed_packed_size(known, &field.type_name))?;
+    let count = field
+        .multiplicity
+        .dimensions
+        .iter()
+        .try_fold(1usize, |count, expression| {
+            (!expression_uses_transport_capacity(expression))
+                .then(|| evaluate_capacity_expression(expression, known))
+                .flatten()
+                .and_then(|dimension| count.checked_mul(dimension))
+        })?;
+    u32::try_from(element_width.checked_mul(count)?).ok()
+}
+
+fn normalized_c_field_name(name: &str) -> String {
+    name.trim_matches('_').to_ascii_lowercase()
+}
+
+fn field_name_is_length_or_count(name: &str) -> bool {
+    let name = normalized_c_field_name(name);
+    name.contains("length")
+        || name.ends_with("_len")
+        || name.starts_with("num_")
+        || name.contains("count")
+}
+
+fn inferred_capacity_semantic(
+    fields: &[PackedEnvelopeField],
+    index: usize,
+    known: &BTreeMap<String, Option<PackedEnvelope>>,
+) -> Option<VariableSemantic> {
+    let length = fields.get(index.checked_sub(1)?)?;
+    if !field_name_is_length_or_count(&length.name) {
+        return None;
+    }
+    let length_width = packed_fixed_field_width(length, known)?;
+    let selector = index
+        .checked_sub(2)
+        .and_then(|selector| fields.get(selector));
+    if let Some(selector) = selector {
+        let selector_name = normalized_c_field_name(&selector.name);
+        let length_name = normalized_c_field_name(&length.name);
+        let selector_width = packed_fixed_field_width(selector, known)?;
+        if selector_name.contains("format") && length_name.contains("length") {
+            return Some(VariableSemantic::TaggedItems {
+                tag_width: selector_width,
+                length_width,
+                variants: Vec::new(),
+            });
+        }
+        if length_name == "data_length"
+            && selector_name.contains("length")
+            && !selector_name.starts_with("event_data")
+        {
+            return Some(VariableSemantic::LengthPrefixedRecords {
+                record_len_width: selector_width,
+                length_width,
+                minimum_record_len: None,
+            });
+        }
+    }
+    Some(VariableSemantic::Counted {
+        prefix_width: length_width,
+    })
+}
+
 fn packed_struct_envelope(
     fields: &[PackedEnvelopeField],
     known: &BTreeMap<String, Option<PackedEnvelope>>,
@@ -1537,7 +1608,7 @@ fn packed_struct_envelope(
         variable: false,
         segments: Vec::new(),
     };
-    for field in fields {
+    for (field_index, field) in fields.iter().enumerate() {
         let primitive_size = primitive_c_size(&field.type_name);
         let element = primitive_size.map_or_else(
             || known.get(&field.type_name).cloned().flatten(),
@@ -1600,11 +1671,20 @@ fn packed_struct_envelope(
                     .maximum
                     .checked_add(element_width.checked_mul(capacity_count)?)?;
                 layout.variable = true;
-                layout.segments.push(WireSegment::variable(
-                    u32::try_from(element_width).ok()?,
-                    0,
-                    u32::try_from(capacity_count).ok()?,
-                ));
+                let element_width = u32::try_from(element_width).ok()?;
+                let capacity_count = u32::try_from(capacity_count).ok()?;
+                let segment = inferred_capacity_semantic(fields, field_index, known).map_or_else(
+                    || WireSegment::variable(element_width, 0, capacity_count),
+                    |semantic| {
+                        WireSegment::variable_with_semantic(
+                            element_width,
+                            0,
+                            capacity_count,
+                            semantic,
+                        )
+                    },
+                );
+                layout.segments.push(segment);
             }
         }
     }
@@ -2002,7 +2082,12 @@ mod tests {
                 [
                     WireSegment::fixed(1),
                     WireSegment::fixed(1),
-                    WireSegment::variable(1, 0, 253),
+                    WireSegment::variable_with_semantic(
+                        1,
+                        0,
+                        253,
+                        VariableSemantic::Counted { prefix_width: 1 },
+                    ),
                 ]
                 .as_slice()
             )
@@ -2127,7 +2212,12 @@ mod tests {
             Some(
                 [
                     WireSegment::fixed(1),
-                    WireSegment::variable(7, 0, 36),
+                    WireSegment::variable_with_semantic(
+                        7,
+                        0,
+                        36,
+                        VariableSemantic::Counted { prefix_width: 1 },
+                    ),
                     WireSegment::fixed(1),
                 ]
                 .as_slice()
@@ -2586,7 +2676,12 @@ mod tests {
                 segments: vec![
                     WireSegment::fixed(2),
                     WireSegment::fixed(1),
-                    WireSegment::variable(4, 0, 62),
+                    WireSegment::variable_with_semantic(
+                        4,
+                        0,
+                        62,
+                        VariableSemantic::Counted { prefix_width: 1 },
+                    ),
                 ],
             }))
         );

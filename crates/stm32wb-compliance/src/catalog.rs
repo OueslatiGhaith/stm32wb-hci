@@ -137,6 +137,49 @@ pub enum FixedFieldRole {
     Status,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum VariableSemantic {
+    Counted {
+        prefix_width: u32,
+    },
+    Tagged {
+        tag_width: u32,
+        variants: Vec<TaggedVariantLayout>,
+    },
+    LengthPrefixedRecords {
+        record_len_width: u32,
+        length_width: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        minimum_record_len: Option<u32>,
+    },
+    TaggedItems {
+        tag_width: u32,
+        length_width: u32,
+        variants: Vec<TaggedItemsVariantLayout>,
+    },
+    TrailingBytes,
+    BitmapItems {
+        bitmap_field: String,
+        mask: u64,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaggedVariantLayout {
+    pub tag: u64,
+    pub payload_widths: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaggedItemsVariantLayout {
+    pub tag: u64,
+    pub item_width: u32,
+    pub maximum_items: u32,
+}
+
 impl FixedFieldRole {
     const fn is_data(&self) -> bool {
         matches!(self, Self::Data)
@@ -160,6 +203,8 @@ pub enum WireSegment {
         element_width: u32,
         minimum_elements: u32,
         maximum_elements: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        semantic: Option<VariableSemantic>,
     },
 }
 
@@ -195,7 +240,25 @@ impl WireSegment {
             element_width,
             minimum_elements,
             maximum_elements,
+            semantic: None,
         }
+    }
+
+    pub fn variable_with_semantic(
+        element_width: u32,
+        minimum_elements: u32,
+        maximum_elements: u32,
+        semantic: VariableSemantic,
+    ) -> Self {
+        let mut segment = Self::variable(element_width, minimum_elements, maximum_elements);
+        let Self::Variable {
+            semantic: value, ..
+        } = &mut segment
+        else {
+            unreachable!()
+        };
+        *value = Some(semantic);
+        segment
     }
 
     const fn minimum_length(&self) -> Option<u32> {
@@ -292,6 +355,7 @@ impl WireLayout {
                 element_width,
                 minimum_elements,
                 maximum_elements,
+                ..
             } => *element_width == 0 || minimum_elements > maximum_elements,
         }) {
             return false;

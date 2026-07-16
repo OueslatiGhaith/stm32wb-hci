@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::catalog::Envelope;
 use crate::catalog::{
     CatalogCommand, CatalogCompletion, CatalogEvent, CommandScope, EventScope, Evidence,
-    WireLayout, WireLayoutEvidence, WireSegment,
+    VariableSemantic, WireLayout, WireLayoutEvidence, WireSegment,
 };
 use crate::rust_source::{CommandCompletion, CommandDeclaration, EventDeclaration, RustCatalog};
 
@@ -401,14 +401,21 @@ fn compatible_segments(
                         element_width: expected_width,
                         minimum_elements: expected_minimum,
                         maximum_elements: expected_maximum,
+                        semantic: expected_semantic,
                     },
                     WireSegment::Variable {
                         element_width: actual_width,
                         minimum_elements: actual_minimum,
                         maximum_elements: actual_maximum,
+                        semantic: actual_semantic,
                     },
                 ) => {
-                    if expected_width != actual_width {
+                    if expected_width != actual_width
+                        || !compatible_variable_semantics(
+                            expected_semantic.as_ref(),
+                            actual_semantic.as_ref(),
+                        )
+                    {
                         return false;
                     }
                     match relation {
@@ -427,6 +434,85 @@ fn compatible_segments(
                 }
                 _ => false,
             })
+}
+
+fn compatible_variable_semantics(
+    expected: Option<&VariableSemantic>,
+    actual: Option<&VariableSemantic>,
+) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let Some(actual) = actual else {
+        return false;
+    };
+    match (expected, actual) {
+        (
+            VariableSemantic::Counted {
+                prefix_width: expected,
+            },
+            VariableSemantic::Counted {
+                prefix_width: actual,
+            },
+        ) => expected == actual,
+        (
+            VariableSemantic::Tagged {
+                tag_width: expected_width,
+                variants: expected_variants,
+            },
+            VariableSemantic::Tagged {
+                tag_width: actual_width,
+                variants: actual_variants,
+            },
+        ) => {
+            expected_width == actual_width
+                && (expected_variants.is_empty() || expected_variants == actual_variants)
+        }
+        (
+            VariableSemantic::LengthPrefixedRecords {
+                record_len_width: expected_record_width,
+                length_width: expected_length_width,
+                minimum_record_len: expected_minimum,
+            },
+            VariableSemantic::LengthPrefixedRecords {
+                record_len_width: actual_record_width,
+                length_width: actual_length_width,
+                minimum_record_len: actual_minimum,
+            },
+        ) => {
+            expected_record_width == actual_record_width
+                && expected_length_width == actual_length_width
+                && expected_minimum.is_none_or(|expected| Some(expected) == *actual_minimum)
+        }
+        (
+            VariableSemantic::TaggedItems {
+                tag_width: expected_tag_width,
+                length_width: expected_length_width,
+                variants: expected_variants,
+            },
+            VariableSemantic::TaggedItems {
+                tag_width: actual_tag_width,
+                length_width: actual_length_width,
+                variants: actual_variants,
+            },
+        ) => {
+            expected_tag_width == actual_tag_width
+                && expected_length_width == actual_length_width
+                && (expected_variants.is_empty() || expected_variants == actual_variants)
+        }
+        (VariableSemantic::TrailingBytes, VariableSemantic::TrailingBytes) => true,
+        (
+            VariableSemantic::BitmapItems {
+                bitmap_field: expected_field,
+                mask: expected_mask,
+            },
+            VariableSemantic::BitmapItems {
+                bitmap_field: actual_field,
+                mask: actual_mask,
+            },
+        ) => expected_field == actual_field && expected_mask == actual_mask,
+        _ => false,
+    }
 }
 
 fn difference(report: &mut WireReport, declaration: &CommandDeclaration, issue: impl Into<String>) {
@@ -958,6 +1044,40 @@ mod tests {
             Ok(EnvelopeExpectation {
                 layout: expected_layout,
                 relation: EnvelopeRelation::RequestCapacity,
+            }),
+            &actual_layout,
+            &mut report,
+        );
+
+        assert_eq!(report.differences.len(), 1);
+    }
+
+    #[test]
+    fn equal_storage_does_not_hide_different_variable_semantics() {
+        let expected_layout = WireLayout::from_segments(vec![
+            WireSegment::fixed(1),
+            WireSegment::variable_with_semantic(
+                1,
+                0,
+                10,
+                VariableSemantic::Counted { prefix_width: 1 },
+            ),
+        ])
+        .unwrap();
+        let actual_layout = WireLayout::from_segments(vec![
+            WireSegment::fixed(1),
+            WireSegment::variable_with_semantic(1, 0, 10, VariableSemantic::TrailingBytes),
+        ])
+        .unwrap();
+
+        let mut report = WireReport::default();
+        compare_envelope(
+            1,
+            "DifferentSemantics",
+            "event payload",
+            Ok(EnvelopeExpectation {
+                layout: expected_layout,
+                relation: EnvelopeRelation::EventCapacity,
             }),
             &actual_layout,
             &mut report,

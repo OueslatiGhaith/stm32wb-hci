@@ -15,7 +15,10 @@ use stm32wb_hci_schema::{
 use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath, Type};
 
 use crate::FirmwareVersion;
-use crate::catalog::{Envelope, WireLayout, WireSegment};
+use crate::catalog::{
+    Envelope, TaggedItemsVariantLayout, TaggedVariantLayout, VariableSemantic, WireLayout,
+    WireSegment,
+};
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage};
 use crate::rust_cfg::attrs_active;
 
@@ -559,11 +562,14 @@ fn field_segments(
                 || vec![WireSegment::fixed(wire_width(encoding.width))],
                 |widths| widths.into_iter().map(WireSegment::fixed).collect(),
             ),
-        FieldEncoding::Variable(encoding) => variable_segments(encoding),
+        FieldEncoding::Variable(encoding) => variable_segments(encoding, wire_type_shapes),
     }
 }
 
-fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<WireSegment> {
+fn variable_segments(
+    encoding: &stm32wb_hci_schema::VariableEncoding,
+    wire_type_shapes: &WireTypeShapes,
+) -> Vec<WireSegment> {
     let storage_max_len = encoding.storage_max_len;
     match &encoding.shape {
         VariableEncodingShape::CountedBytes {
@@ -572,10 +578,13 @@ fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<Wir
             max_len: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
-            WireSegment::variable(
+            WireSegment::variable_with_semantic(
                 1,
                 wire_width(min_len.value),
                 wire_width(storage_max_len - count.width.value),
+                VariableSemantic::Counted {
+                    prefix_width: wire_width(count.width.value),
+                },
             ),
         ],
         VariableEncodingShape::CountedItems {
@@ -585,7 +594,7 @@ fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<Wir
             max_items: _,
         } => vec![
             WireSegment::fixed(wire_width(count.width.value)),
-            WireSegment::variable(
+            WireSegment::variable_with_semantic(
                 wire_width(item.width.value),
                 wire_width(min_items.value),
                 wire_width(
@@ -593,51 +602,97 @@ fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<Wir
                         .checked_div(item.width.value)
                         .expect("item wire width is nonzero"),
                 ),
+                VariableSemantic::Counted {
+                    prefix_width: wire_width(count.width.value),
+                },
             ),
         ],
         VariableEncodingShape::Tagged(tagged) => {
             let tag_width = tagged.tag.width.value;
             vec![
                 WireSegment::fixed(wire_width(tag_width)),
-                WireSegment::variable(
+                WireSegment::variable_with_semantic(
                     1,
                     wire_width(tagged.min_len.value - tag_width),
                     wire_width(storage_max_len - tag_width),
+                    VariableSemantic::Tagged {
+                        tag_width: wire_width(tag_width),
+                        variants: tagged
+                            .variants
+                            .iter()
+                            .map(|variant| TaggedVariantLayout {
+                                tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
+                                payload_widths: variant
+                                    .fields
+                                    .fields()
+                                    .iter()
+                                    .flat_map(|field| field_segments(field, wire_type_shapes))
+                                    .map(|segment| match segment {
+                                        WireSegment::Fixed { length, .. } => length,
+                                        WireSegment::Variable { .. } => unreachable!(
+                                            "tagged variants contain only fixed fields"
+                                        ),
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                    },
                 ),
             ]
         }
         VariableEncodingShape::LengthPrefixedRecords {
             record_len,
             length,
+            min_record_len,
             max_len: _,
-            ..
         } => vec![
             WireSegment::fixed(wire_width(record_len.width.value)),
             WireSegment::fixed(wire_width(length.width.value)),
-            WireSegment::variable(
+            WireSegment::variable_with_semantic(
                 1,
                 0,
                 wire_width(storage_max_len - record_len.width.value - length.width.value),
+                VariableSemantic::LengthPrefixedRecords {
+                    record_len_width: wire_width(record_len.width.value),
+                    length_width: wire_width(length.width.value),
+                    minimum_record_len: Some(wire_width(min_record_len.value)),
+                },
             ),
         ],
         VariableEncodingShape::TaggedItems(tagged) => vec![
             WireSegment::fixed(wire_width(tagged.tag.width.value)),
             WireSegment::fixed(wire_width(tagged.length.width.value)),
-            WireSegment::variable(
+            WireSegment::variable_with_semantic(
                 1,
                 0,
                 wire_width(storage_max_len - tagged.tag.width.value - tagged.length.width.value),
+                VariableSemantic::TaggedItems {
+                    tag_width: wire_width(tagged.tag.width.value),
+                    length_width: wire_width(tagged.length.width.value),
+                    variants: tagged
+                        .variants
+                        .iter()
+                        .map(|variant| TaggedItemsVariantLayout {
+                            tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
+                            item_width: wire_width(variant.item.width.value),
+                            maximum_items: wire_width(variant.max_items.value),
+                        })
+                        .collect(),
+                },
             ),
         ],
         VariableEncodingShape::TrailingBytes {
             min_len,
             max_len: _,
-        } => vec![WireSegment::variable(
+        } => vec![WireSegment::variable_with_semantic(
             1,
             wire_width(min_len.value),
             wire_width(storage_max_len),
+            VariableSemantic::TrailingBytes,
         )],
-        VariableEncodingShape::BitmapItems { item, .. } => vec![WireSegment::variable(
+        VariableEncodingShape::BitmapItems {
+            bitmap, mask, item, ..
+        } => vec![WireSegment::variable_with_semantic(
             wire_width(item.width.value),
             0,
             wire_width(
@@ -645,6 +700,10 @@ fn variable_segments(encoding: &stm32wb_hci_schema::VariableEncoding) -> Vec<Wir
                     .checked_div(item.width.value)
                     .expect("item wire width is nonzero"),
             ),
+            VariableSemantic::BitmapItems {
+                bitmap_field: bitmap.to_string(),
+                mask: u64::try_from(mask.value).expect("HCI bitmaps fit in u64"),
+            },
         )],
     }
 }
@@ -926,6 +985,31 @@ mod tests {
         let declaration = declarations.get("Current").unwrap();
         assert_complete_envelope(&declaration.completion, Envelope::bounded(4, 253));
         assert_eq!(declaration.request, Envelope::bounded(3, 255));
+        assert!(matches!(
+            declaration.request.segments(),
+            Some([
+                WireSegment::Fixed { length: 2, .. },
+                WireSegment::Fixed { length: 1, .. },
+                WireSegment::Variable {
+                    semantic: Some(VariableSemantic::Counted { prefix_width: 1 }),
+                    ..
+                },
+            ])
+        ));
+        let CommandCompletion::CommandComplete { returns } = &declaration.completion else {
+            panic!("expected Command Complete");
+        };
+        assert!(matches!(
+            returns.segments(),
+            Some([
+                WireSegment::Fixed { length: 2, .. },
+                WireSegment::Fixed { length: 2, .. },
+                WireSegment::Variable {
+                    semantic: Some(VariableSemantic::Counted { prefix_width: 2 }),
+                    ..
+                },
+            ])
+        ));
     }
 
     #[test]
@@ -953,6 +1037,16 @@ mod tests {
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.request, Envelope::fixed(1));
         assert_complete_envelope(&declaration.completion, Envelope::bounded(1, 16));
+        let CommandCompletion::CommandComplete { returns } = &declaration.completion else {
+            panic!("expected Command Complete");
+        };
+        assert!(matches!(
+            returns.segments(),
+            Some([WireSegment::Variable {
+                semantic: Some(VariableSemantic::TrailingBytes),
+                ..
+            }])
+        ));
     }
 
     #[test]
@@ -1065,6 +1159,24 @@ mod tests {
         let declaration = declarations.get("Current").unwrap();
         assert_eq!(declaration.completion, CommandCompletion::CommandStatus);
         assert_eq!(declaration.request, Envelope::bounded(4, 28));
+        assert!(matches!(
+            declaration.request.segments(),
+            Some([
+                WireSegment::Fixed { length: 1, .. },
+                WireSegment::Variable {
+                    semantic: Some(VariableSemantic::BitmapItems {
+                        bitmap_field,
+                        mask: 0x05,
+                    }),
+                    ..
+                },
+                WireSegment::Fixed { length: 1, .. },
+                WireSegment::Variable {
+                    semantic: Some(VariableSemantic::Tagged { variants, .. }),
+                    ..
+                },
+            ]) if bitmap_field == "scanning_phys" && variants.len() == 2
+        ));
     }
 
     #[test]
