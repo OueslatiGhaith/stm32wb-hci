@@ -327,13 +327,14 @@ fn from_bytes_supervision_timeout_too_short_absolute() {
 
 #[test]
 fn fixed_from_bytes_supervision_timeout_too_short_absolute() {
-    let bytes = [0x06, 0x00, 0x06, 0x00, 0x00, 0x00, 0x09, 0x00];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
+    let bytes = [0x06, 0x00, 0x00, 0x00, 0x09, 0x00];
+    let error = FixedConnectionInterval::from_bytes(&bytes).unwrap_err();
+
     assert_eq!(
-        err,
+        error,
         ConnectionIntervalError::SupervisionTimeoutTooShort(
             Duration::from_millis(90),
-            Duration::from_millis(100)
+            Duration::from_millis(100),
         )
     );
 }
