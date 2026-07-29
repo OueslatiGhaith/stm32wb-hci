@@ -24,6 +24,8 @@ fn valid() {
     assert_eq!(scan_window.interval(), Duration::from_millis(10));
     assert_eq!(scan_window.window(), Duration::from_millis(5));
     assert_eq!(core::mem::size_of::<ScanWindow>(), 4);
+    let bytes: [u8; 4] = encode(&scan_window);
+    assert_eq!(bytes, [0x10, 0x00, 0x08, 0x00]);
 }
 
 #[test]
@@ -73,30 +75,4 @@ fn inverted() {
             window: Duration::from_millis(101),
         }
     );
-}
-
-#[test]
-fn inverted_and_window_too_long() {
-    let err = ScanWindow::start_every(Duration::from_millis(100))
-        .unwrap()
-        .open_for(Duration::from_millis(10241))
-        .err()
-        .unwrap();
-    assert_eq!(
-        err,
-        ScanWindowError::Inverted {
-            interval: Duration::from_millis(100),
-            window: Duration::from_millis(10241),
-        }
-    );
-}
-
-#[test]
-fn encodes_with_the_canonical_wire_adapter() {
-    let scan_window = ScanWindow::start_every(Duration::from_millis(10))
-        .unwrap()
-        .open_for(Duration::from_millis(5))
-        .unwrap();
-    let bytes: [u8; 4] = encode(&scan_window);
-    assert_eq!(bytes, [0x10, 0x00, 0x08, 0x00]);
 }

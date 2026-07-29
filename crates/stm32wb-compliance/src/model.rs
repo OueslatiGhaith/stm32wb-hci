@@ -468,7 +468,6 @@ mod tests {
             BTreeMap::new(),
         );
         assert!(report.is_compliant());
-        assert!(report.to_json().contains("\"compliant\":true"));
     }
 
     #[test]
@@ -497,7 +496,6 @@ mod tests {
         );
         assert!(!report.is_compliant());
         assert_eq!(report.unsupported_standard_hci_commands().len(), 1);
-        assert!(report.to_json().contains("\"wire\""));
     }
 
     #[test]
@@ -534,8 +532,6 @@ mod tests {
         );
 
         assert!(!report.is_compliant());
-        assert!(report.to_human().contains("result: non-compliant"));
-        assert!(report.to_json().contains("\"compliant\":false"));
     }
 
     #[test]

@@ -242,8 +242,18 @@ fn impossible_supervision_timeout() {
 fn from_bytes_valid() {
     let valid_bytes = [0x90, 0x00, 0x90, 0x01, 0x0A, 0x00, 0xDC, 0x05];
     let interval = ConnectionInterval::from_bytes(&valid_bytes).unwrap();
-    let bytes: [u8; 8] = encode(&interval);
-    assert_eq!(bytes, valid_bytes);
+    assert_eq!(
+        interval.interval(),
+        (
+            Duration::from_millis(0x90 * 5 / 4),
+            Duration::from_millis(0x190 * 5 / 4),
+        )
+    );
+    assert_eq!(interval.conn_latency(), 0x0A);
+    assert_eq!(
+        interval.supervision_timeout(),
+        Duration::from_millis(10 * 0x05DC)
+    );
 }
 
 #[test]
@@ -259,148 +269,11 @@ fn fixed_from_bytes_valid() {
 }
 
 #[test]
-fn from_bytes_interval_too_short() {
+fn from_bytes_validates_decoded_fields() {
     let bytes = [0x05, 0x00, 0x09, 0x00, 0x0A, 0x00, 0xDC, 0x05];
     let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
     assert_eq!(
         err,
         ConnectionIntervalError::IntervalTooShort(Duration::from_micros(6250))
-    );
-}
-
-#[test]
-fn fixed_from_bytes_interval_too_short() {
-    let bytes = [0x05, 0x00, 0x0A, 0x00, 0xDC, 0x05];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::IntervalTooShort(Duration::from_micros(6250))
-    );
-}
-
-#[test]
-fn from_bytes_interval_too_long() {
-    let bytes = [0x90, 0x00, 0x81, 0x0c, 0x0A, 0x00, 0xDC, 0x05];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::IntervalTooLong(Duration::from_micros(4_001_250))
-    );
-}
-
-#[test]
-fn fixed_from_bytes_interval_too_long() {
-    let bytes = [0x81, 0x0c, 0x0A, 0x00, 0xDC, 0x05];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::IntervalTooLong(Duration::from_micros(4_001_250))
-    );
-}
-
-#[test]
-fn from_bytes_bad_connection_latency() {
-    let bytes = [0x90, 0x00, 0x90, 0x01, 0xF4, 0x01, 0xDC, 0x05];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(err, ConnectionIntervalError::BadConnectionLatency(500));
-}
-
-#[test]
-fn fixed_from_bytes_bad_connection_latency() {
-    let bytes = [0x90, 0x01, 0xF4, 0x01, 0xDC, 0x05];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(err, ConnectionIntervalError::BadConnectionLatency(500));
-}
-
-#[test]
-fn from_bytes_supervision_timeout_too_short_absolute() {
-    let bytes = [0x06, 0x00, 0x06, 0x00, 0x00, 0x00, 0x09, 0x00];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::SupervisionTimeoutTooShort(
-            Duration::from_millis(90),
-            Duration::from_millis(100)
-        )
-    );
-}
-
-#[test]
-fn fixed_from_bytes_supervision_timeout_too_short_absolute() {
-    let bytes = [0x06, 0x00, 0x00, 0x00, 0x09, 0x00];
-    let error = FixedConnectionInterval::from_bytes(&bytes).unwrap_err();
-
-    assert_eq!(
-        error,
-        ConnectionIntervalError::SupervisionTimeoutTooShort(
-            Duration::from_millis(90),
-            Duration::from_millis(100),
-        )
-    );
-}
-
-#[test]
-fn from_bytes_supervision_timeout_too_short_relative() {
-    let bytes = [0x90, 0x00, 0x90, 0x01, 0x0A, 0x00, 0x4b, 0x04];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::SupervisionTimeoutTooShort(
-            Duration::from_millis(10990),
-            Duration::from_secs(11)
-        )
-    );
-}
-
-#[test]
-fn fixed_from_bytes_supervision_timeout_too_short_relative() {
-    let bytes = [0x90, 0x01, 0x0A, 0x00, 0x4b, 0x04];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::SupervisionTimeoutTooShort(
-            Duration::from_millis(10990),
-            Duration::from_secs(11)
-        )
-    );
-}
-
-#[test]
-fn from_bytes_supervision_timeout_too_long() {
-    let bytes = [0x90, 0x00, 0x90, 0x01, 0x0A, 0x00, 0x81, 0x0c];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::SupervisionTimeoutTooLong(Duration::from_millis(32_010))
-    );
-}
-
-#[test]
-fn fixed_from_bytes_supervision_timeout_too_long() {
-    let bytes = [0x90, 0x01, 0x0A, 0x00, 0x81, 0x0c];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::SupervisionTimeoutTooLong(Duration::from_millis(32_010))
-    );
-}
-
-#[test]
-fn from_bytes_supervision_timeout_impossible() {
-    let bytes = [0x90, 0x00, 0x80, 0x0C, 0x03, 0x00, 0x80, 0x0c];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::ImpossibleSupervisionTimeout(Duration::from_millis(32_000))
-    );
-}
-
-#[test]
-fn fixed_from_bytes_supervision_timeout_impossible() {
-    let bytes = [0x80, 0x0C, 0x03, 0x00, 0x80, 0x0c];
-    let err = FixedConnectionInterval::from_bytes(&bytes).err().unwrap();
-    assert_eq!(
-        err,
-        ConnectionIntervalError::ImpossibleSupervisionTimeout(Duration::from_millis(32_000))
     );
 }

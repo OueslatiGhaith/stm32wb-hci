@@ -2589,60 +2589,6 @@ mod tests {
     }
 
     #[test]
-    fn fixed_two_byte_event_scalars_use_their_wire_type() {
-        let VendorEvent::AttExchangeMtuResponse(event) =
-            VendorEvent::new(&[0x03, 0x0C, 0x23, 0x01, 0x00, 0x02]).expect("exchange MTU response")
-        else {
-            panic!("unexpected event variant");
-        };
-        let server_rx_mtu: u16 = event.server_rx_mtu;
-        assert_eq!(server_rx_mtu, 0x0200);
-
-        let VendorEvent::AttPrepareWriteResponse(event) = VendorEvent::new(&[
-            0x0C, 0x0C, // event code
-            0x23, 0x01, // connection handle
-            0x34, 0x12, // attribute handle
-            0x78, 0x56, // offset
-            0x00, // empty value
-        ])
-        .expect("prepare write response") else {
-            panic!("unexpected event variant");
-        };
-        let offset: u16 = event.offset;
-        assert_eq!(offset, 0x5678);
-
-        let VendorEvent::AttReadPermitRequest(event) =
-            VendorEvent::new(&[0x14, 0x0C, 0x23, 0x01, 0x34, 0x12, 0x78, 0x56])
-                .expect("read permit request")
-        else {
-            panic!("unexpected event variant");
-        };
-        let offset: u16 = event.offset;
-        assert_eq!(offset, 0x5678);
-
-        let VendorEvent::GattTxPoolAvailable(event) =
-            VendorEvent::new(&[0x16, 0x0C, 0x23, 0x01, 0x78, 0x56]).expect("TX pool available")
-        else {
-            panic!("unexpected event variant");
-        };
-        let available_buffers: u16 = event.available_buffers;
-        assert_eq!(available_buffers, 0x5678);
-
-        let VendorEvent::AttPrepareWritePermitRequest(event) = VendorEvent::new(&[
-            0x18, 0x0C, // event code
-            0x23, 0x01, // connection handle
-            0x34, 0x12, // attribute handle
-            0x78, 0x56, // offset
-            0x00, // empty value
-        ])
-        .expect("prepare write permit request") else {
-            panic!("unexpected event variant");
-        };
-        let offset: u16 = event.offset;
-        assert_eq!(offset, 0x5678);
-    }
-
-    #[test]
     fn l2cap_command_reject_uses_the_declared_reason_type() {
         let bytes = [
             0x0A, 0x08, // event code

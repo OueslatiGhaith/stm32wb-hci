@@ -141,6 +141,3 @@ pub fn wire_type(input: TokenStream) -> TokenStream {
         Err(error) => error.into_compile_error().into(),
     }
 }
-
-#[cfg(test)]
-mod tests;

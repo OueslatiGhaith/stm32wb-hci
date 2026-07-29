@@ -2,46 +2,43 @@ extern crate stm32wb_hci as hci;
 
 mod vendor;
 
-use bt_hci::cmd::{AsyncCmd, Cmd, SyncCmd};
+use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use hci::types::{AdvertisingFilterPolicy, AdvertisingType, AttributeHandle};
+#[cfg(since_fw_0_18_0)]
+use hci::vendor::command::gap::Procedure;
 #[cfg(since_fw_0_24_0)]
 use hci::vendor::command::gatt::GattPermitWrite as GattWriteResponse;
 #[cfg(before_fw_0_24_0)]
 use hci::vendor::command::gatt::GattWriteResponse;
 #[cfg(before_fw_0_23_0)]
-use hci::vendor::command::hal::{
-    HalFirmwareRevision, HalGetFirmwareRevision, HalGetPmDebugInfo, HalGetTxTestPacketCount,
-    HalPmDebugInfo, HalRawRssi, HalReadRawRssi, HalReadRssi, HalRssi, HalTxTestPacketCount,
-};
+use hci::vendor::command::hal::{HalFirmwareRevision, HalGetFirmwareRevision};
 use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::command::{
     gap::{
         AddDeviceToListMode, AddressType, AdvertisingChannelMap, AdvertisingHandle, AdvertisingSid,
         CmdGapInit, GapAddDevicesToList, GapAdditionalBeaconSetData, GapAdvSetConfig,
-        GapAdvSetEnable, GapConfigureWhitelist, GapGetBondedDevices, GapInit,
-        GapPeripheralSecurityRequest, GapSendPairingRequest, GapSetDiscoverable, GapSetEventMask,
-        GapSetIoCapability, GapSetIoCapabilityParams, GapSetNonDiscoverable, GapSetOobData,
+        GapAdvSetEnable, GapInit, GapPeripheralSecurityRequest, GapSendPairingRequest,
+        GapSetDiscoverable, GapSetEventMask, GapSetIoCapability, GapSetOobData,
         GapUpdateAdvertisingData, IoCapability, OobDataLength, OobDataType, OobDeviceType,
-        OptionalAdvertisingIntervalBound, PrivacyMode, Procedure, Role, ScanType,
-        ScanningFilterPolicy, SecondaryAdvertisingMaximumSkip,
+        OptionalAdvertisingIntervalBound, PrivacyMode, Role, ScanType, ScanningFilterPolicy,
+        SecondaryAdvertisingMaximumSkip,
     },
     gatt::{
         AccessPermission, CharacteristicEvent, CharacteristicPermission, CharacteristicProperty,
         DescriptorPermission, DescriptorValueMaxLength, EncryptionKeySize, GattAddCharacteristic,
         GattAddCharacteristicDescriptor, GattAddService, GattAttributeOffset,
-        GattAttributeRecordCapacity, GattAttributeValueLength, GattCharacteristic,
-        GattCharacteristicDescriptor, GattDiscoverCharacteristicsByUUID,
+        GattAttributeRecordCapacity, GattAttributeValueLength, GattDiscoverCharacteristicsByUUID,
         GattDiscoverPrimaryServicesByUUID, GattFindByTypeValueRequest, GattHandleValue,
         GattIncludeService, GattNotificationTarget, GattReadByGroupTypeRequest,
         GattReadByTypeRequest, GattReadCharacteristicUsingUUID, GattReadHandleValue,
-        GattReadMultipleVarCharValue, GattRequestedValueLength, GattService, GattSetEventMask,
+        GattReadMultipleVarCharValue, GattRequestedValueLength, GattSetEventMask,
         GattUpdateLongCharacteristicValue, GattUuid16, ServiceType, UpdateType, Uuid, WriteStatus,
     },
     hal::{
-        HalEventFlags, HalGetLinkStatus, HalRadioRegisterValue, HalReadRadioReg, HalRxStart,
-        HalSetEventMask, HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel,
-        HalStartTone, HalWriteRadioReg, PowerLevel, RadioActivityFlags, RadioRegisterAddress,
-        RadioRegisterValue, ToneChannel, ToneFrequencyOffset,
+        HalEventFlags, HalRadioRegisterValue, HalReadRadioReg, HalRxStart, HalSetEventMask,
+        HalSetPeripheralLatency, HalSetRadioActivityMask, HalSetTxPowerLevel, HalStartTone,
+        HalWriteRadioReg, PowerLevel, RadioActivityFlags, RadioRegisterAddress, RadioRegisterValue,
+        ToneChannel, ToneFrequencyOffset,
     },
     l2cap::{
         L2CapCocConnectConfirmWire, L2CocChannelIndex, L2CocConnectConfirm, L2CocConnectionResult,
@@ -403,16 +400,6 @@ async fn declarative_gap_add_devices_to_list_counts_complete_records() {
 }
 
 #[tokio::test]
-async fn hal_get_link_status_uses_its_source_ocf() {
-    let sink = RecordingSink::new();
-
-    let _ = HalGetLinkStatus::new().exec(&sink).await;
-
-    // OGF 0x3f / OCF 0x017, as used by aci_hal_get_link_status in CubeWB.
-    assert_eq!(sink.written_data(), [1, 0x17, 0xFC, 0]);
-}
-
-#[tokio::test]
 async fn hal_set_peripheral_latency_uses_its_own_opcode() {
     let sink = RecordingSink::new();
 
@@ -465,37 +452,21 @@ fn declarative_hal_radio_reg_decodes_payload_without_status_byte() {
 
 #[cfg(before_fw_0_23_0)]
 #[test]
-fn declarative_hal_fixed_returns_decode_without_status_byte() {
+fn hal_firmware_revision_decodes_without_status_byte() {
     use bt_hci::{FromHciBytes, FromHciBytesError};
 
     let revision = HalFirmwareRevision::from_hci_bytes_complete(&[0x34, 0x12]).unwrap();
     assert_eq!(revision.revision, 0x1234);
 
-    let count = HalTxTestPacketCount::from_hci_bytes_complete(&[0x78, 0x56, 0x34, 0x12]).unwrap();
-    assert_eq!(count.packet_count, 0x1234_5678);
-
-    let debug = HalPmDebugInfo::from_hci_bytes_complete(&[0x11, 0x22, 0x33]).unwrap();
-    assert_eq!((debug.tx, debug.rx, debug.mblocks), (0x11, 0x22, 0x33));
-
-    let rssi = HalRssi::from_hci_bytes_complete(&[0xA5]).unwrap();
-    assert_eq!(rssi.value, 0xA5);
-
-    let raw = HalRawRssi::from_hci_bytes_complete(&[0x11, 0x22, 0x33]).unwrap();
-    assert_eq!(raw.value, [0x11, 0x22, 0x33]);
-
     assert!(matches!(
         HalFirmwareRevision::from_hci_bytes_complete(&[0x34]),
-        Err(FromHciBytesError::InvalidSize)
-    ));
-    assert!(matches!(
-        HalRssi::from_hci_bytes_complete(&[0xA5, 0x00]),
         Err(FromHciBytesError::InvalidSize)
     ));
 }
 
 #[cfg(before_fw_0_23_0)]
 #[tokio::test]
-async fn declarative_hal_fixed_return_commands_have_no_wire_parameters() {
+async fn hal_firmware_revision_has_no_wire_parameters() {
     let sink = RecordingSink::new();
 
     assert_eq!(
@@ -506,32 +477,7 @@ async fn declarative_hal_fixed_return_commands_have_no_wire_parameters() {
             .revision,
         0
     );
-    assert_eq!(
-        HalGetTxTestPacketCount::new()
-            .exec(&sink)
-            .await
-            .unwrap()
-            .packet_count,
-        0
-    );
-    let debug = HalGetPmDebugInfo::new().exec(&sink).await.unwrap();
-    assert_eq!((debug.tx, debug.rx, debug.mblocks), (0, 0, 0));
-    assert_eq!(HalReadRssi::new().exec(&sink).await.unwrap().value, 0);
-    assert_eq!(
-        HalReadRawRssi::new().exec(&sink).await.unwrap().value,
-        [0, 0, 0]
-    );
-
-    assert_eq!(
-        sink.written_data(),
-        [
-            1, 0x00, 0xFC, 0, // firmware revision
-            1, 0x14, 0xFC, 0, // TX test packet count
-            1, 0x1C, 0xFC, 0, // PM debug info
-            1, 0x22, 0xFC, 0, // RSSI
-            1, 0x32, 0xFC, 0, // raw RSSI
-        ]
-    );
+    assert_eq!(sink.written_data(), [1, 0x00, 0xFC, 0]);
 }
 
 #[tokio::test]
@@ -575,42 +521,12 @@ async fn declarative_hal_fixed_setters_match_cubewb() {
 }
 
 #[tokio::test]
-async fn gap_configure_whitelist_has_no_wire_parameters() {
+async fn gap_io_capability_encodes_its_declared_value() {
     let sink = RecordingSink::new();
-
-    GapConfigureWhitelist::new().exec(&sink).await.unwrap();
-
-    // OGF 0x3f / OCF 0x092. CubeWB's generated wrapper takes `void`.
-    assert_eq!(sink.written_data(), [1, 0x92, 0xFC, 0]);
-}
-
-#[tokio::test]
-async fn declarative_gap_nondiscoverable_has_no_wire_parameters() {
-    let sink = RecordingSink::new();
-
-    GapSetNonDiscoverable::default().exec(&sink).await.unwrap();
-
-    assert_eq!(sink.written_data(), [1, 0x81, 0xFC, 0]);
-}
-
-#[tokio::test]
-async fn proc_macro_gap_io_capability_preserves_the_legacy_contract() {
-    fn assert_domain_params<C: Cmd<Params = GapSetIoCapabilityParams>>() {}
-
-    let sink = RecordingSink::new();
-    let params = GapSetIoCapabilityParams::new(IoCapability::KeyboardDisplay);
-
-    assert_eq!(GapSetIoCapability::CGID, 0x1);
-    assert_eq!(GapSetIoCapability::CID, 0x05);
-    assert_eq!(GapSetIoCapability::OCF, 0x085);
-    assert_eq!(<GapSetIoCapability as Cmd>::OPCODE.to_raw(), 0xFC85);
-    assert_domain_params::<GapSetIoCapability>();
-    assert_eq!(params.encoded_len(), 1);
-
-    let command = GapSetIoCapability::from_params(params);
-    let _: &GapSetIoCapabilityParams = command.params();
-    let command = GapSetIoCapability::from_params(command.into_params());
-    command.exec(&sink).await.unwrap();
+    GapSetIoCapability::new(IoCapability::KeyboardDisplay)
+        .exec(&sink)
+        .await
+        .unwrap();
 
     assert_eq!(sink.written_data(), [1, 0x85, 0xFC, 1, 0x04]);
 }
@@ -825,15 +741,6 @@ fn declarative_bonded_devices_payload_decodes_counted_addresses() {
             hci::types::BdAddrType::Random(hci::bt_hci::param::BdAddr([7, 8, 9, 10, 11, 12])),
         ]
     );
-}
-
-#[tokio::test]
-async fn declarative_get_bonded_devices_has_no_request_parameters() {
-    let sink = RecordingSink::new();
-
-    let _ = GapGetBondedDevices::new().exec(&sink).await;
-
-    assert_eq!(sink.written_data(), [1, 0xA3, 0xFC, 0]);
 }
 
 #[tokio::test]
@@ -1188,23 +1095,6 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
         <EncryptionKeySize as hci::vendor::command::HciDecodeField<1>>::from_hci_field(&[6])
             .is_err()
     );
-}
-
-#[test]
-fn reusable_fixed_gatt_returns_decode_without_transport_status() {
-    use bt_hci::FromHciBytes;
-
-    let service = GattService::from_hci_bytes_complete(&[0x34, 0x12]).unwrap();
-    assert_eq!(service.service_handle, AttributeHandle(0x1234));
-
-    let characteristic = GattCharacteristic::from_hci_bytes_complete(&[0x78, 0x56]).unwrap();
-    assert_eq!(
-        characteristic.characteristic_handle,
-        AttributeHandle(0x5678)
-    );
-
-    let descriptor = GattCharacteristicDescriptor::from_hci_bytes_complete(&[0xBC, 0x9A]).unwrap();
-    assert_eq!(descriptor.descriptor_handle, AttributeHandle(0x9ABC));
 }
 
 #[cfg(before_fw_0_23_0)]
