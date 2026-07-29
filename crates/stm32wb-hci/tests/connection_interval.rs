@@ -1,4 +1,4 @@
-extern crate stm32wb_hci as hci;
+use stm32wb_hci as hci;
 
 use hci::types::{
     ConnectionInterval, ConnectionIntervalBuilder, ConnectionIntervalError, FixedConnectionInterval,
@@ -271,7 +271,7 @@ fn fixed_from_bytes_valid() {
 #[test]
 fn from_bytes_validates_decoded_fields() {
     let bytes = [0x05, 0x00, 0x09, 0x00, 0x0A, 0x00, 0xDC, 0x05];
-    let err = ConnectionInterval::from_bytes(&bytes).err().unwrap();
+    let err = ConnectionInterval::from_bytes(&bytes).unwrap_err();
     assert_eq!(
         err,
         ConnectionIntervalError::IntervalTooShort(Duration::from_micros(6250))

@@ -1,4 +1,4 @@
-extern crate stm32wb_hci as hci;
+use stm32wb_hci as hci;
 
 mod vendor;
 
@@ -13,8 +13,11 @@ use hci::standard::{
 use hci::standard::{LeSetResolvablePrivateAddressTimeoutV2, ResolvablePrivateAddressTimeoutRange};
 use vendor::RecordingSink;
 
-#[tokio::test]
-async fn p256_public_key_command_has_the_stm32wb_hci_envelope() {
+#[test]
+fn p256_public_key_command_has_the_stm32wb_hci_envelope() {
+    pollster::block_on(p256_public_key_command_has_the_stm32wb_hci_envelope_async());
+}
+async fn p256_public_key_command_has_the_stm32wb_hci_envelope_async() {
     let sink = RecordingSink::new();
 
     let _ = LeReadLocalP256PublicKey::new().exec(&sink).await;
@@ -23,8 +26,11 @@ async fn p256_public_key_command_has_the_stm32wb_hci_envelope() {
     assert_eq!(sink.written_data(), [1, 0x25, 0x20, 0]);
 }
 
-#[tokio::test]
-async fn generate_dhkey_preserves_the_full_64_byte_key() {
+#[test]
+fn generate_dhkey_preserves_the_full_64_byte_key() {
+    pollster::block_on(generate_dhkey_preserves_the_full_64_byte_key_async());
+}
+async fn generate_dhkey_preserves_the_full_64_byte_key_async() {
     let sink = RecordingSink::new();
     let key = [0xA5; 64];
 
@@ -35,8 +41,11 @@ async fn generate_dhkey_preserves_the_full_64_byte_key() {
     assert_eq!(&bytes[4..], key);
 }
 
-#[tokio::test]
-async fn resolvable_address_command_has_exact_input_and_opcode() {
+#[test]
+fn resolvable_address_command_has_exact_input_and_opcode() {
+    pollster::block_on(resolvable_address_command_has_exact_input_and_opcode_async());
+}
+async fn resolvable_address_command_has_exact_input_and_opcode_async() {
     let sink = RecordingSink::new();
 
     let _ = LeReadPeerResolvableAddress::new([1, 2, 3, 4, 5, 6, 7])
@@ -46,8 +55,11 @@ async fn resolvable_address_command_has_exact_input_and_opcode() {
     assert_eq!(sink.written_data(), [1, 0x2B, 0x20, 7, 1, 2, 3, 4, 5, 6, 7]);
 }
 
-#[tokio::test]
-async fn v2_test_commands_use_their_v2_ocfs() {
+#[test]
+fn v2_test_commands_use_their_v2_ocfs() {
+    pollster::block_on(v2_test_commands_use_their_v2_ocfs_async());
+}
+async fn v2_test_commands_use_their_v2_ocfs_async() {
     let receiver = RecordingSink::new();
     let _ = LeReceiverTestV2::new([1, 2, 3]).exec(&receiver).await;
     assert_eq!(receiver.written_data(), [1, 0x33, 0x20, 3, 1, 2, 3]);
@@ -59,8 +71,11 @@ async fn v2_test_commands_use_their_v2_ocfs() {
     assert_eq!(transmitter.written_data(), [1, 0x34, 0x20, 4, 1, 2, 3, 4]);
 }
 
-#[tokio::test]
-async fn v1_test_commands_use_their_v1_ocfs() {
+#[test]
+fn v1_test_commands_use_their_v1_ocfs() {
+    pollster::block_on(v1_test_commands_use_their_v1_ocfs_async());
+}
+async fn v1_test_commands_use_their_v1_ocfs_async() {
     let receiver = RecordingSink::new();
     let _ = LeReceiverTest::new([1]).exec(&receiver).await;
     assert_eq!(receiver.written_data(), [1, 0x1D, 0x20, 1, 1]);
@@ -71,8 +86,12 @@ async fn v1_test_commands_use_their_v1_ocfs() {
 }
 
 #[cfg(since_fw_0_17_0)]
-#[tokio::test]
-async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
+#[test]
+fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
+    pollster::block_on(dhkey_v2_is_exposed_only_on_firmware_that_has_it_async());
+}
+#[cfg(since_fw_0_17_0)]
+async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it_async() {
     let sink = RecordingSink::new();
     let key = [0x5A; 65];
 
@@ -84,8 +103,12 @@ async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
 }
 
 #[cfg(since_fw_0_23_0)]
-#[tokio::test]
-async fn resolvable_private_address_timeout_v2_uses_its_full_opcode() {
+#[test]
+fn resolvable_private_address_timeout_v2_uses_its_full_opcode() {
+    pollster::block_on(resolvable_private_address_timeout_v2_uses_its_full_opcode_async());
+}
+#[cfg(since_fw_0_23_0)]
+async fn resolvable_private_address_timeout_v2_uses_its_full_opcode_async() {
     let sink = RecordingSink::new();
 
     LeSetResolvablePrivateAddressTimeoutV2::new(

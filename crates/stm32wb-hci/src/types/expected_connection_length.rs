@@ -73,7 +73,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-/// Types of errors that can occure when creating a [`ExpectedConnectionLength`].
+/// Types of errors that can occur when creating an [`ExpectedConnectionLength`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ExpectedConnectionLengthError {

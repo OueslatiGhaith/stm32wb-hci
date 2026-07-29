@@ -3,6 +3,21 @@ name: CI
 on: [pull_request, push]
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --exclude stm32wb55-embassy --all-targets -- -D warnings
+      - name: Test host support crates
+        run: cargo test -p stm32wb-hci-schema -p stm32wb-hci-macros -p stm32wb-compliance
+
   build:
     runs-on: ubuntu-latest
     steps:

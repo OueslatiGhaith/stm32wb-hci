@@ -1,6 +1,4 @@
-#![allow(dead_code)]
-
-use std::{ops::DerefMut, sync::Mutex};
+use std::sync::Mutex;
 
 struct DataBuffer(Vec<u8>);
 
@@ -82,7 +80,7 @@ where
         let mut data = self.data.lock().unwrap();
 
         WithIndicator::new(cmd)
-            .write_hci(data.deref_mut())
+            .write_hci(&mut *data)
             .map_err(|_| bt_hci::cmd::Error::Io(embedded_io::ErrorKind::InvalidData))?;
 
         // Allocate enough zero bytes for any fixed or bounded declarative
@@ -105,7 +103,7 @@ where
         let mut data = self.data.lock().unwrap();
 
         WithIndicator::new(cmd)
-            .write_hci(data.deref_mut())
+            .write_hci(&mut *data)
             .map_err(|_| bt_hci::cmd::Error::Io(embedded_io::ErrorKind::InvalidData))?;
 
         Ok(())

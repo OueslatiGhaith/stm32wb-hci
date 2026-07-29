@@ -1,4 +1,4 @@
-extern crate stm32wb_hci as hci;
+use stm32wb_hci as hci;
 
 mod vendor;
 
@@ -49,8 +49,13 @@ use hci::vendor::command::{
 };
 use vendor::RecordingSink;
 
-#[tokio::test]
-async fn declarative_gap_discoverable_encodes_local_name_and_advertising_counts() {
+#[test]
+fn declarative_gap_discoverable_encodes_local_name_and_advertising_counts() {
+    pollster::block_on(
+        declarative_gap_discoverable_encodes_local_name_and_advertising_counts_async(),
+    );
+}
+async fn declarative_gap_discoverable_encodes_local_name_and_advertising_counts_async() {
     let sink = RecordingSink::new();
     GapSetDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
@@ -76,8 +81,8 @@ async fn declarative_gap_discoverable_encodes_local_name_and_advertising_counts(
     );
 }
 
-#[tokio::test]
-async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
+#[test]
+fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     let name = [0; 242];
     let result = GapSetDiscoverable::try_new(
         AdvertisingType::ConnectableUndirected,
@@ -94,8 +99,11 @@ async fn declarative_gap_discoverable_rejects_an_oversized_aggregate() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn semantic_scan_domains_encode_their_declared_values() {
+#[test]
+fn semantic_scan_domains_encode_their_declared_values() {
+    pollster::block_on(semantic_scan_domains_encode_their_declared_values_async());
+}
+async fn semantic_scan_domains_encode_their_declared_values_async() {
     use core::time::Duration;
     use hci::vendor::command::gap::GapStartGeneralConnectionEstablishmentProcedure;
 
@@ -164,8 +172,11 @@ fn extended_scan_requires_at_least_one_declared_phy() {
     );
 }
 
-#[tokio::test]
-async fn gatt_write_response_uses_a_closed_write_status() {
+#[test]
+fn gatt_write_response_uses_a_closed_write_status() {
+    pollster::block_on(gatt_write_response_uses_a_closed_write_status_async());
+}
+async fn gatt_write_response_uses_a_closed_write_status_async() {
     let sink = RecordingSink::new();
 
     GattWriteResponse::try_new(
@@ -217,8 +228,11 @@ async fn gatt_write_response_uses_a_closed_write_status() {
     .unwrap();
 }
 
-#[tokio::test]
-async fn additional_beacon_data_includes_its_cubewb_length_prefix() {
+#[test]
+fn additional_beacon_data_includes_its_cubewb_length_prefix() {
+    pollster::block_on(additional_beacon_data_includes_its_cubewb_length_prefix_async());
+}
+async fn additional_beacon_data_includes_its_cubewb_length_prefix_async() {
     let sink = RecordingSink::new();
     GapAdditionalBeaconSetData::try_new(&[0xAA, 0xBB])
         .unwrap()
@@ -232,8 +246,11 @@ async fn additional_beacon_data_includes_its_cubewb_length_prefix() {
     assert!(GapAdditionalBeaconSetData::try_new(&too_large).is_err());
 }
 
-#[tokio::test]
-async fn semantic_event_masks_cover_all_cubewb_defined_bits() {
+#[test]
+fn semantic_event_masks_cover_all_cubewb_defined_bits() {
+    pollster::block_on(semantic_event_masks_cover_all_cubewb_defined_bits_async());
+}
+async fn semantic_event_masks_cover_all_cubewb_defined_bits_async() {
     let gap_sink = RecordingSink::new();
     GapSetEventMask::new(
         EventFlags::PROCEDURE_COMPLETE
@@ -262,8 +279,11 @@ async fn semantic_event_masks_cover_all_cubewb_defined_bits() {
     );
 }
 
-#[tokio::test]
-async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
+#[test]
+fn extended_advertising_configuration_enforces_signed_power_and_sid() {
+    pollster::block_on(extended_advertising_configuration_enforces_signed_power_and_sid_async());
+}
+async fn extended_advertising_configuration_enforces_signed_power_and_sid_async() {
     use core::time::Duration;
     use hci::types::extended_advertisement::{
         AdvertisingEvent, AdvertisingMode, AdvertisingPhy, ExtendedAdvertisingInterval,
@@ -308,8 +328,11 @@ async fn extended_advertising_configuration_enforces_signed_power_and_sid() {
     assert_eq!(sink.written_data()[26], 0x81);
 }
 
-#[tokio::test]
-async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
+#[test]
+fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
+    pollster::block_on(declarative_gap_adv_set_enable_derives_and_validates_the_set_count_async());
+}
+async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count_async() {
     use hci::types::extended_advertisement::AdvSet;
 
     let handle = AdvertisingHandle::try_new(0xEF).unwrap();
@@ -346,8 +369,11 @@ async fn declarative_gap_adv_set_enable_derives_and_validates_the_set_count() {
     );
 }
 
-#[tokio::test]
-async fn declarative_gap_set_oob_data_includes_type_and_length() {
+#[test]
+fn declarative_gap_set_oob_data_includes_type_and_length() {
+    pollster::block_on(declarative_gap_set_oob_data_includes_type_and_length_async());
+}
+async fn declarative_gap_set_oob_data_includes_type_and_length_async() {
     let sink = RecordingSink::new();
     GapSetOobData::new(
         OobDeviceType::Remote,
@@ -369,8 +395,11 @@ async fn declarative_gap_set_oob_data_includes_type_and_length() {
     );
 }
 
-#[tokio::test]
-async fn declarative_gap_pairing_request_includes_force_rebond() {
+#[test]
+fn declarative_gap_pairing_request_includes_force_rebond() {
+    pollster::block_on(declarative_gap_pairing_request_includes_force_rebond_async());
+}
+async fn declarative_gap_pairing_request_includes_force_rebond_async() {
     let sink = RecordingSink::new();
     GapSendPairingRequest::new(hci::bt_hci::param::ConnHandle(0x1234), true)
         .exec(&sink)
@@ -380,8 +409,11 @@ async fn declarative_gap_pairing_request_includes_force_rebond() {
     assert_eq!(sink.written_data(), [1, 0x9F, 0xFC, 3, 0x34, 0x12, 1]);
 }
 
-#[tokio::test]
-async fn declarative_gap_add_devices_to_list_counts_complete_records() {
+#[test]
+fn declarative_gap_add_devices_to_list_counts_complete_records() {
+    pollster::block_on(declarative_gap_add_devices_to_list_counts_complete_records_async());
+}
+async fn declarative_gap_add_devices_to_list_counts_complete_records_async() {
     let sink = RecordingSink::new();
     let entries = [hci::types::BdAddrType::Public(hci::bt_hci::param::BdAddr(
         [1, 2, 3, 4, 5, 6],
@@ -399,8 +431,11 @@ async fn declarative_gap_add_devices_to_list_counts_complete_records() {
     );
 }
 
-#[tokio::test]
-async fn hal_set_peripheral_latency_uses_its_own_opcode() {
+#[test]
+fn hal_set_peripheral_latency_uses_its_own_opcode() {
+    pollster::block_on(hal_set_peripheral_latency_uses_its_own_opcode_async());
+}
+async fn hal_set_peripheral_latency_uses_its_own_opcode_async() {
     let sink = RecordingSink::new();
 
     HalSetPeripheralLatency::new(true)
@@ -412,8 +447,11 @@ async fn hal_set_peripheral_latency_uses_its_own_opcode() {
     assert_eq!(sink.written_data(), [1, 0x20, 0xFC, 1, 1]);
 }
 
-#[tokio::test]
-async fn hal_write_radio_reg_matches_cubewb() {
+#[test]
+fn hal_write_radio_reg_matches_cubewb() {
+    pollster::block_on(hal_write_radio_reg_matches_cubewb_async());
+}
+async fn hal_write_radio_reg_matches_cubewb_async() {
     let sink = RecordingSink::new();
 
     HalWriteRadioReg::new(
@@ -428,8 +466,11 @@ async fn hal_write_radio_reg_matches_cubewb() {
     assert_eq!(sink.written_data(), [1, 0x31, 0xFC, 2, 0xAA, 0x55]);
 }
 
-#[tokio::test]
-async fn declarative_hal_read_radio_reg_matches_cubewb() {
+#[test]
+fn declarative_hal_read_radio_reg_matches_cubewb() {
+    pollster::block_on(declarative_hal_read_radio_reg_matches_cubewb_async());
+}
+async fn declarative_hal_read_radio_reg_matches_cubewb_async() {
     let sink = RecordingSink::new();
 
     let value = HalReadRadioReg::new(RadioRegisterAddress::new(0xAA))
@@ -465,8 +506,12 @@ fn hal_firmware_revision_decodes_without_status_byte() {
 }
 
 #[cfg(before_fw_0_23_0)]
-#[tokio::test]
-async fn hal_firmware_revision_has_no_wire_parameters() {
+#[test]
+fn hal_firmware_revision_has_no_wire_parameters() {
+    pollster::block_on(hal_firmware_revision_has_no_wire_parameters_async());
+}
+#[cfg(before_fw_0_23_0)]
+async fn hal_firmware_revision_has_no_wire_parameters_async() {
     let sink = RecordingSink::new();
 
     assert_eq!(
@@ -480,8 +525,11 @@ async fn hal_firmware_revision_has_no_wire_parameters() {
     assert_eq!(sink.written_data(), [1, 0x00, 0xFC, 0]);
 }
 
-#[tokio::test]
-async fn declarative_hal_fixed_setters_match_cubewb() {
+#[test]
+fn declarative_hal_fixed_setters_match_cubewb() {
+    pollster::block_on(declarative_hal_fixed_setters_match_cubewb_async());
+}
+async fn declarative_hal_fixed_setters_match_cubewb_async() {
     let sink = RecordingSink::new();
 
     HalSetTxPowerLevel::new(false, PowerLevel::Plus3dBm)
@@ -520,8 +568,11 @@ async fn declarative_hal_fixed_setters_match_cubewb() {
     );
 }
 
-#[tokio::test]
-async fn gap_io_capability_encodes_its_declared_value() {
+#[test]
+fn gap_io_capability_encodes_its_declared_value() {
+    pollster::block_on(gap_io_capability_encodes_its_declared_value_async());
+}
+async fn gap_io_capability_encodes_its_declared_value_async() {
     let sink = RecordingSink::new();
     GapSetIoCapability::new(IoCapability::KeyboardDisplay)
         .exec(&sink)
@@ -531,8 +582,11 @@ async fn gap_io_capability_encodes_its_declared_value() {
     assert_eq!(sink.written_data(), [1, 0x85, 0xFC, 1, 0x04]);
 }
 
-#[tokio::test]
-async fn declarative_gap_init_matches_cubewb() {
+#[test]
+fn declarative_gap_init_matches_cubewb() {
+    pollster::block_on(declarative_gap_init_matches_cubewb_async());
+}
+async fn declarative_gap_init_matches_cubewb_async() {
     fn assert_sync_contract<C>()
     where
         C: SyncCmd<Return = GapInit, ReturnBuf = [u8; 6]>,
@@ -559,8 +613,11 @@ fn gap_init_rejects_empty_roles_and_boolean_style_privacy_encoding() {
     );
 }
 
-#[tokio::test]
-async fn declarative_gap_command_status_matches_cubewb() {
+#[test]
+fn declarative_gap_command_status_matches_cubewb() {
+    pollster::block_on(declarative_gap_command_status_matches_cubewb_async());
+}
+async fn declarative_gap_command_status_matches_cubewb_async() {
     fn assert_async_contract<C: AsyncCmd>() {}
 
     assert_async_contract::<GapPeripheralSecurityRequest>();
@@ -575,8 +632,11 @@ async fn declarative_gap_command_status_matches_cubewb() {
     assert_eq!(sink.written_data(), [1, 0x8D, 0xFC, 2, 0x23, 0x01]);
 }
 
-#[tokio::test]
-async fn declarative_counted_bytes_write_only_the_used_payload() {
+#[test]
+fn declarative_counted_bytes_write_only_the_used_payload() {
+    pollster::block_on(declarative_counted_bytes_write_only_the_used_payload_async());
+}
+async fn declarative_counted_bytes_write_only_the_used_payload_async() {
     let sink = RecordingSink::new();
 
     GapUpdateAdvertisingData::try_new(&[0xAA, 0xBB])
@@ -743,8 +803,11 @@ fn declarative_bonded_devices_payload_decodes_counted_addresses() {
     );
 }
 
-#[tokio::test]
-async fn gatt_read_handle_value_matches_cubewb() {
+#[test]
+fn gatt_read_handle_value_matches_cubewb() {
+    pollster::block_on(gatt_read_handle_value_matches_cubewb_async());
+}
+async fn gatt_read_handle_value_matches_cubewb_async() {
     let sink = RecordingSink::new();
 
     let _ = GattReadHandleValue::new(
@@ -762,8 +825,11 @@ async fn gatt_read_handle_value_matches_cubewb() {
     );
 }
 
-#[tokio::test]
-async fn gatt_read_multiple_variable_value_uses_command_status_envelope() {
+#[test]
+fn gatt_read_multiple_variable_value_uses_command_status_envelope() {
+    pollster::block_on(gatt_read_multiple_variable_value_uses_command_status_envelope_async());
+}
+async fn gatt_read_multiple_variable_value_uses_command_status_envelope_async() {
     let sink = RecordingSink::new();
 
     GattReadMultipleVarCharValue::try_new(
@@ -793,8 +859,11 @@ fn declarative_counted_items_reject_oversized_input() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn declarative_tagged_uuid16_matches_cubewb() {
+#[test]
+fn declarative_tagged_uuid16_matches_cubewb() {
+    pollster::block_on(declarative_tagged_uuid16_matches_cubewb_async());
+}
+async fn declarative_tagged_uuid16_matches_cubewb_async() {
     let sink = RecordingSink::new();
 
     let uuid = Uuid::Uuid16(0x4567);
@@ -810,8 +879,11 @@ async fn declarative_tagged_uuid16_matches_cubewb() {
     );
 }
 
-#[tokio::test]
-async fn declarative_tagged_uuid128_matches_cubewb() {
+#[test]
+fn declarative_tagged_uuid128_matches_cubewb() {
+    pollster::block_on(declarative_tagged_uuid128_matches_cubewb_async());
+}
+async fn declarative_tagged_uuid128_matches_cubewb_async() {
     let sink = RecordingSink::new();
     let uuid = [
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
@@ -834,8 +906,11 @@ async fn declarative_tagged_uuid128_matches_cubewb() {
     );
 }
 
-#[tokio::test]
-async fn inline_uuid_shape_drives_characteristic_procedures() {
+#[test]
+fn inline_uuid_shape_drives_characteristic_procedures() {
+    pollster::block_on(inline_uuid_shape_drives_characteristic_procedures_async());
+}
+async fn inline_uuid_shape_drives_characteristic_procedures_async() {
     let sink = RecordingSink::new();
 
     let uuid = Uuid::Uuid16(0xCDEF);
@@ -881,8 +956,11 @@ async fn inline_uuid_shape_drives_characteristic_procedures() {
     );
 }
 
-#[tokio::test]
-async fn inline_uuid_shape_drives_add_service() {
+#[test]
+fn inline_uuid_shape_drives_add_service() {
+    pollster::block_on(inline_uuid_shape_drives_add_service_async());
+}
+async fn inline_uuid_shape_drives_add_service_async() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x1234);
     let _ = GattAddService::try_new(
@@ -900,8 +978,11 @@ async fn inline_uuid_shape_drives_add_service() {
     );
 }
 
-#[tokio::test]
-async fn inline_uuid_shape_drives_include_service() {
+#[test]
+fn inline_uuid_shape_drives_include_service() {
+    pollster::block_on(inline_uuid_shape_drives_include_service_async());
+}
+async fn inline_uuid_shape_drives_include_service_async() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0xCDEF);
     let _ = GattIncludeService::try_new(
@@ -922,8 +1003,11 @@ async fn inline_uuid_shape_drives_include_service() {
     );
 }
 
-#[tokio::test]
-async fn declarative_add_characteristic_includes_is_variable_byte() {
+#[test]
+fn declarative_add_characteristic_includes_is_variable_byte() {
+    pollster::block_on(declarative_add_characteristic_includes_is_variable_byte_async());
+}
+async fn declarative_add_characteristic_includes_is_variable_byte_async() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x4567);
     let _ = GattAddCharacteristic::try_new(
@@ -949,8 +1033,11 @@ async fn declarative_add_characteristic_includes_is_variable_byte() {
     );
 }
 
-#[tokio::test]
-async fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
+#[test]
+fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
+    pollster::block_on(inline_uuid_shape_and_counted_value_drive_add_descriptor_async());
+}
+async fn inline_uuid_shape_and_counted_value_drive_add_descriptor_async() {
     let sink = RecordingSink::new();
     let uuid = Uuid::Uuid16(0x2902);
     let _ = GattAddCharacteristicDescriptor::try_new(
@@ -978,8 +1065,11 @@ async fn inline_uuid_shape_and_counted_value_drive_add_descriptor() {
     );
 }
 
-#[tokio::test]
-async fn inline_uuid_shape_drives_read_by_type_commands() {
+#[test]
+fn inline_uuid_shape_drives_read_by_type_commands() {
+    pollster::block_on(inline_uuid_shape_drives_read_by_type_commands_async());
+}
+async fn inline_uuid_shape_drives_read_by_type_commands_async() {
     let uuid = Uuid::Uuid16(0xCDEF);
 
     let sink = RecordingSink::new();
@@ -1019,8 +1109,11 @@ async fn inline_uuid_shape_drives_read_by_type_commands() {
     );
 }
 
-#[tokio::test]
-async fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value() {
+#[test]
+fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value() {
+    pollster::block_on(declarative_find_by_type_value_uses_raw_uuid16_and_counted_value_async());
+}
+async fn declarative_find_by_type_value_uses_raw_uuid16_and_counted_value_async() {
     let sink = RecordingSink::new();
     GattFindByTypeValueRequest::try_new(
         hci::bt_hci::param::ConnHandle(0x0123),
@@ -1098,8 +1191,12 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
 }
 
 #[cfg(before_fw_0_23_0)]
-#[tokio::test]
-async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
+#[test]
+fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
+    pollster::block_on(l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs_async());
+}
+#[cfg(before_fw_0_23_0)]
+async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs_async() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
         hci::bt_hci::param::ConnHandle(0x0123),
@@ -1122,8 +1219,12 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
 }
 
 #[cfg(since_fw_0_23_0)]
-#[tokio::test]
-async fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
+#[test]
+fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
+    pollster::block_on(l2cap_coc_connect_confirm_includes_maximum_channel_count_async());
+}
+#[cfg(since_fw_0_23_0)]
+async fn l2cap_coc_connect_confirm_includes_maximum_channel_count_async() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
         hci::bt_hci::param::ConnHandle(0x0123),
@@ -1144,8 +1245,11 @@ async fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
     );
 }
 
-#[tokio::test]
-async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
+#[test]
+fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices() {
+    pollster::block_on(declarative_l2cap_reconfig_writes_only_the_declared_channel_indices_async());
+}
+async fn declarative_l2cap_reconfig_writes_only_the_declared_channel_indices_async() {
     let sink = RecordingSink::new();
     L2CocReconfig::try_new(
         hci::bt_hci::param::ConnHandle(0x0123),
@@ -1307,8 +1411,12 @@ fn system_reset_options_follow_the_selected_reset_mode() {
 }
 
 #[cfg(since_fw_0_24_0)]
-#[tokio::test]
-async fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
+#[test]
+fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
+    pollster::block_on(current_gatt_permissions_and_extra_data_ranges_are_validated_async());
+}
+#[cfg(since_fw_0_24_0)]
+async fn current_gatt_permissions_and_extra_data_ranges_are_validated_async() {
     use hci::vendor::command::gatt::{
         ExtraDataRangeError, ExtraDataReference, GattPermitRead, GattPermitWrite,
         GattWriteWithoutRespExt, ReadStatus,
@@ -1376,8 +1484,11 @@ async fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
     );
 }
 
-#[tokio::test]
-async fn declarative_l2cap_tx_data_writes_only_the_declared_data() {
+#[test]
+fn declarative_l2cap_tx_data_writes_only_the_declared_data() {
+    pollster::block_on(declarative_l2cap_tx_data_writes_only_the_declared_data_async());
+}
+async fn declarative_l2cap_tx_data_writes_only_the_declared_data_async() {
     let sink = RecordingSink::new();
     L2CocTxData::try_new(L2CocChannelIndex::new(3), &[0xAA, 0xBB])
         .unwrap()

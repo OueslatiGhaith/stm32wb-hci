@@ -110,7 +110,7 @@ impl ScanWindowBuilder {
     }
 }
 
-/// Types of errors that can occure when creating a [`ScanWindow`].
+/// Types of errors that can occur when creating a [`ScanWindow`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ScanWindowError {

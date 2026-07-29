@@ -1,5 +1,6 @@
 [package]
 name = "stm32wb-compliance"
+version = "0.1.0"
 edition = "2024"
 publish = false
 description = "Firmware API compliance checks for stm32wb-hci"

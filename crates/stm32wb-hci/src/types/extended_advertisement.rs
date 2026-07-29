@@ -52,7 +52,7 @@ stm32wb_hci_macros::wire_type! {
 /// The advertising interval min shall be less than or equal to the advertising interval
 /// max. The advertising interval min and advertising interval max should not be the same
 /// values to enable the Controller to determine the best advertising interval given other
-/// adctivities, through this implementation allows them to be equal.
+/// activities, though this implementation allows them to be equal.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExtendedAdvertisingInterval {

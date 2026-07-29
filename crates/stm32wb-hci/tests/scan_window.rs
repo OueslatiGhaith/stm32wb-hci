@@ -1,4 +1,4 @@
-extern crate stm32wb_hci as hci;
+use stm32wb_hci as hci;
 
 use hci::types::{ScanWindow, ScanWindowError};
 use hci::vendor::command::HciEncodeField;
