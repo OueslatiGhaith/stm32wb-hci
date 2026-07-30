@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          toolchain: "1.92"
           components: rustfmt, clippy
       - name: Install libclang
         run: sudo apt-get update && sudo apt-get install --yes libclang-dev
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          toolchain: "1.92"
           target: thumbv7em-none-eabihf
       - name: Build every declared firmware feature
         shell: bash
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          toolchain: "1.92"
           target: thumbv7em-none-eabihf
       - name: Test every declared firmware feature
         shell: bash
@@ -61,6 +61,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.92"
           target: thumbv7em-none-eabi
       - run: cargo check -p stm32wb55-embassy --target thumbv7em-none-eabi
 
@@ -69,6 +70,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92"
       - name: Install libclang
         run: sudo apt-get update && sudo apt-get install --yes libclang-dev
       - name: Fetch STM32CubeWB tags without checking out a worktree
