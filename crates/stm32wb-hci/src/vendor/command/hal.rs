@@ -63,23 +63,23 @@ stm32wb_hci_macros::wire_type! {
         /// Random Bluetooth device address; six bytes.
         RandomAddress = 0x2E,
         /// Additional GAP service record count; one byte.
-        #[cfg(since_fw_0_17_0)]
+        #[cfg(since_fw_1_17_0)]
         GapAdditionalRecordCount = 0x34,
         /// Secure Connections key type; one byte.
-        #[cfg(since_fw_0_17_0)]
+        #[cfg(since_fw_1_17_0)]
         SecureConnectionsKeyType = 0x35,
         /// Security Manager Protocol mode; one byte.
         SmpMode = 0xB0,
         /// Link Layer scan-channel map; one byte.
         LinkLayerScanChannelMap = 0xC0,
         /// Link Layer background-scan mode; one byte.
-        #[cfg(since_fw_0_16_0)]
+        #[cfg(since_fw_1_16_0)]
         LinkLayerBackgroundScanMode = 0xC1,
         /// Link Layer resolvable-private-address mode; one byte.
-        #[cfg(since_fw_0_21_0)]
+        #[cfg(since_fw_1_21_0)]
         LinkLayerResolvablePrivateAddressMode = 0xC3,
         /// Link Layer maximum data-length extension; eight bytes.
-        #[cfg(since_fw_0_21_0)]
+        #[cfg(since_fw_1_21_0)]
         LinkLayerMaximumDataLengthExtension = 0xD1,
     }
 }
@@ -89,15 +89,15 @@ impl From<ConfigWriteOffset> for usize {
         match offset {
             ConfigWriteOffset::PublicAddress | ConfigWriteOffset::RandomAddress => 6,
             ConfigWriteOffset::EncryptionRootKey | ConfigWriteOffset::IdentityRootKey => 16,
-            #[cfg(since_fw_0_17_0)]
+            #[cfg(since_fw_1_17_0)]
             ConfigWriteOffset::GapAdditionalRecordCount
             | ConfigWriteOffset::SecureConnectionsKeyType => 1,
             ConfigWriteOffset::SmpMode | ConfigWriteOffset::LinkLayerScanChannelMap => 1,
-            #[cfg(since_fw_0_16_0)]
+            #[cfg(since_fw_1_16_0)]
             ConfigWriteOffset::LinkLayerBackgroundScanMode => 1,
-            #[cfg(since_fw_0_21_0)]
+            #[cfg(since_fw_1_21_0)]
             ConfigWriteOffset::LinkLayerResolvablePrivateAddressMode => 1,
-            #[cfg(since_fw_0_21_0)]
+            #[cfg(since_fw_1_21_0)]
             ConfigWriteOffset::LinkLayerMaximumDataLengthExtension => 8,
         }
     }
@@ -130,7 +130,7 @@ impl crate::vendor::command::HciDecodeField<16> for [u16; 8] {
     }
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetFirmwareRevision(cgid = 0x0, cid = 0x00) {
         Params = ();
@@ -261,7 +261,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetPmDebugInfo(cgid = 0x0, cid = 0x1C) {
         Params = ();
@@ -345,7 +345,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalStackReset(cgid = 0x0, cid = 0x3B) {
         Params = ();
@@ -354,7 +354,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_20_0)]
+#[cfg(since_fw_1_20_0)]
 stm32wb_hci_macros::vendor_cmd! {
     HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {
@@ -381,7 +381,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_20_0)]
+#[cfg(since_fw_1_20_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed

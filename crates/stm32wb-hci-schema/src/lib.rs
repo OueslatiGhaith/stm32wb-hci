@@ -2111,7 +2111,7 @@ mod tests {
             r#"
                 /// Unit event.
                 Unit(0x0001) { Payload = (); }
-                #[cfg(since_fw_0_17_0)]
+                #[cfg(since_fw_1_17_0)]
                 Counted(0x0002) {
                     Payload = {
                         handle: u16 => 2,
@@ -2211,9 +2211,9 @@ mod tests {
     fn accepts_complementary_firmware_shapes_for_one_event_code() {
         let catalog = syn::parse_str::<VendorEvents>(
             r#"
-                #[cfg(before_fw_0_22_0)]
+                #[cfg(before_fw_1_22_0)]
                 Changed(0x0405) { Payload = (); }
-                #[cfg(since_fw_0_22_0)]
+                #[cfg(since_fw_1_22_0)]
                 Changed(0x0405) { Payload = { handle: u16 => 2, }; }
             "#,
         )
@@ -2236,15 +2236,15 @@ mod tests {
                 "duplicate vendor event code",
             ),
             (
-                "#[cfg(since_fw_0_21_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); }",
+                "#[cfg(since_fw_1_21_0)] First(1) { Payload = (); } #[cfg(since_fw_1_22_0)] Second(1) { Payload = (); }",
                 "complementary `before_fw_*` and `since_fw_*`",
             ),
             (
-                "#[cfg(before_fw_0_21_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); }",
+                "#[cfg(before_fw_1_21_0)] First(1) { Payload = (); } #[cfg(since_fw_1_22_0)] Second(1) { Payload = (); }",
                 "complementary `before_fw_*` and `since_fw_*`",
             ),
             (
-                "#[cfg(before_fw_0_22_0)] First(1) { Payload = (); } #[cfg(since_fw_0_22_0)] Second(1) { Payload = (); } #[cfg(before_fw_0_22_0)] Third(1) { Payload = (); }",
+                "#[cfg(before_fw_1_22_0)] First(1) { Payload = (); } #[cfg(since_fw_1_22_0)] Second(1) { Payload = (); } #[cfg(before_fw_1_22_0)] Third(1) { Payload = (); }",
                 "duplicate vendor event code",
             ),
             (

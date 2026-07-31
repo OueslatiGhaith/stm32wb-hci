@@ -3,13 +3,13 @@ use stm32wb_hci as hci;
 mod vendor;
 
 use hci::bt_hci::cmd::{AsyncCmd, SyncCmd};
-#[cfg(since_fw_0_17_0)]
+#[cfg(since_fw_1_17_0)]
 use hci::standard::LeGenerateDhkeyV2;
 use hci::standard::{
     LeGenerateDhkey, LeReadLocalP256PublicKey, LeReadPeerResolvableAddress, LeReceiverTest,
     LeReceiverTestV2, LeTransmitterTest, LeTransmitterTestV2,
 };
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 use hci::standard::{LeSetResolvablePrivateAddressTimeoutV2, ResolvablePrivateAddressTimeoutRange};
 use vendor::RecordingSink;
 
@@ -85,12 +85,12 @@ async fn v1_test_commands_use_their_v1_ocfs_async() {
     assert_eq!(transmitter.written_data(), [1, 0x1E, 0x20, 3, 1, 2, 3]);
 }
 
-#[cfg(since_fw_0_17_0)]
+#[cfg(since_fw_1_17_0)]
 #[test]
 fn dhkey_v2_is_exposed_only_on_firmware_that_has_it() {
     pollster::block_on(dhkey_v2_is_exposed_only_on_firmware_that_has_it_async());
 }
-#[cfg(since_fw_0_17_0)]
+#[cfg(since_fw_1_17_0)]
 async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it_async() {
     let sink = RecordingSink::new();
     let key = [0x5A; 65];
@@ -102,12 +102,12 @@ async fn dhkey_v2_is_exposed_only_on_firmware_that_has_it_async() {
     assert_eq!(&bytes[4..], key);
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 #[test]
 fn resolvable_private_address_timeout_v2_uses_its_full_opcode() {
     pollster::block_on(resolvable_private_address_timeout_v2_uses_its_full_opcode_async());
 }
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 async fn resolvable_private_address_timeout_v2_uses_its_full_opcode_async() {
     let sink = RecordingSink::new();
 

@@ -187,11 +187,11 @@ mod tests {
     #[test]
     fn evaluates_nested_firmware_cfgs_and_features() {
         let path = Path::new("fixture.rs");
-        let old = FirmwareVersion::new(0, 16, 0);
-        let current = FirmwareVersion::new(0, 17, 0);
+        let old = FirmwareVersion::new(1, 16, 0);
+        let current = FirmwareVersion::new(1, 17, 0);
         let attrs = attributes(
             r#"
-                #[cfg(all(since_fw_0_17_0, not(since_fw_0_17_1)))]
+                #[cfg(all(since_fw_1_17_0, not(since_fw_1_17_1)))]
                 struct Fixture;
             "#,
         );
@@ -200,7 +200,7 @@ mod tests {
 
         let attrs = attributes(
             r#"
-                #[cfg(feature = "fw_0_17_0")]
+                #[cfg(feature = "fw_1_17_0")]
                 struct Fixture;
             "#,
         );
@@ -210,10 +210,10 @@ mod tests {
     #[test]
     fn evaluates_cfg_attr_and_rejects_unknown_predicates() {
         let path = Path::new("fixture.rs");
-        let firmware = FirmwareVersion::new(0, 17, 0);
+        let firmware = FirmwareVersion::new(1, 17, 0);
         let attrs = attributes(
             r#"
-                #[cfg_attr(since_fw_0_17_0, cfg(not(feature = "fw_0_17_0")))]
+                #[cfg_attr(since_fw_1_17_0, cfg(not(feature = "fw_1_17_0")))]
                 struct Fixture;
             "#,
         );

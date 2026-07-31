@@ -4,13 +4,13 @@ mod vendor;
 
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use hci::types::{AdvertisingFilterPolicy, AdvertisingType, AttributeHandle};
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 use hci::vendor::command::gap::Procedure;
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 use hci::vendor::command::gatt::GattPermitWrite as GattWriteResponse;
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 use hci::vendor::command::gatt::GattWriteResponse;
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 use hci::vendor::command::hal::{HalFirmwareRevision, HalGetFirmwareRevision};
 use hci::vendor::command::{gap::EventFlags, gatt::Event as GattEventFlags};
 use hci::vendor::command::{
@@ -137,7 +137,7 @@ async fn semantic_scan_domains_encode_their_declared_values_async() {
     );
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 #[test]
 fn extended_scan_requires_at_least_one_declared_phy() {
     use core::time::Duration;
@@ -491,7 +491,7 @@ fn declarative_hal_radio_reg_decodes_payload_without_status_byte() {
     assert_eq!(value.value, RadioRegisterValue::new(0x55));
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 #[test]
 fn hal_firmware_revision_decodes_without_status_byte() {
     use bt_hci::{FromHciBytes, FromHciBytesError};
@@ -505,12 +505,12 @@ fn hal_firmware_revision_decodes_without_status_byte() {
     ));
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 #[test]
 fn hal_firmware_revision_has_no_wire_parameters() {
     pollster::block_on(hal_firmware_revision_has_no_wire_parameters_async());
 }
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 async fn hal_firmware_revision_has_no_wire_parameters_async() {
     let sink = RecordingSink::new();
 
@@ -1190,12 +1190,12 @@ fn migrated_uuid_commands_reject_invalid_lengths_before_writing() {
     );
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 #[test]
 fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs() {
     pollster::block_on(l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs_async());
 }
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs_async() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
@@ -1218,12 +1218,12 @@ async fn l2cap_coc_connect_confirm_uses_only_its_five_cubewb_inputs_async() {
     );
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 #[test]
 fn l2cap_coc_connect_confirm_includes_maximum_channel_count() {
     pollster::block_on(l2cap_coc_connect_confirm_includes_maximum_channel_count_async());
 }
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 async fn l2cap_coc_connect_confirm_includes_maximum_channel_count_async() {
     let sink = RecordingSink::new();
     let _ = L2CocConnectConfirm::new(
@@ -1344,7 +1344,7 @@ fn gatt_long_updates_validate_intrinsic_and_cross_field_domains() {
     );
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 #[test]
 fn legacy_gatt_deny_read_accepts_only_documented_att_errors() {
     use hci::vendor::command::gatt::GattDenyRead;
@@ -1357,7 +1357,7 @@ fn legacy_gatt_deny_read_accepts_only_documented_att_errors() {
     assert!(GattDenyRead::try_new(handle, 0xA0).is_err());
 }
 
-#[cfg(since_fw_0_20_0)]
+#[cfg(since_fw_1_20_0)]
 #[test]
 fn ead_decryption_requires_randomizer_and_mic_overhead() {
     use hci::vendor::command::hal::{EadMode, HalEadEncryptDecrypt};
@@ -1369,7 +1369,7 @@ fn ead_decryption_requires_randomizer_and_mic_overhead() {
     assert!(HalEadEncryptDecrypt::try_new(EadMode::Decrypt, &key, &iv, &[0; 9]).is_ok());
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 #[test]
 fn system_reset_options_follow_the_selected_reset_mode() {
     use hci::vendor::command::sys::{
@@ -1410,12 +1410,12 @@ fn system_reset_options_follow_the_selected_reset_mode() {
     );
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 #[test]
 fn current_gatt_permissions_and_extra_data_ranges_are_validated() {
     pollster::block_on(current_gatt_permissions_and_extra_data_ranges_are_validated_async());
 }
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 async fn current_gatt_permissions_and_extra_data_ranges_are_validated_async() {
     use hci::vendor::command::gatt::{
         ExtraDataRangeError, ExtraDataReference, GattPermitRead, GattPermitWrite,

@@ -745,7 +745,7 @@ mod tests {
             r#"
                 adapters: [conversion];
                 closed enum Status: u8 {
-                    #[cfg(since_fw_0_24_0)]
+                    #[cfg(since_fw_1_24_0)]
                     Current = 1,
                 }
                 TryFromError = Error => Error::BadStatus;

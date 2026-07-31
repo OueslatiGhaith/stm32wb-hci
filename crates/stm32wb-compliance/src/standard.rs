@@ -391,7 +391,7 @@ mod tests {
     fn loads_local_standard_command_wire_layouts() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
         let declarations =
-            load_local_standard_commands(&crate_dir, FirmwareVersion::new(0, 24, 0)).unwrap();
+            load_local_standard_commands(&crate_dir, FirmwareVersion::new(1, 24, 0)).unwrap();
 
         assert_eq!(declarations.len(), 10);
         let transmitter = declarations

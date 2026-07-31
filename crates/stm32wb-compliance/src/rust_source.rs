@@ -1437,7 +1437,7 @@ mod tests {
     #[test]
     fn loads_declarative_variable_shapes_from_the_real_crate() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
-        let coverage = load_rust_catalog(&crate_dir, version(0, 17, 1)).unwrap();
+        let coverage = load_rust_catalog(&crate_dir, version(1, 17, 1)).unwrap();
 
         let update = coverage.commands.get("GapUpdateAdvertisingData").unwrap();
         assert_eq!(update.request, Envelope::bounded(1, 32));
@@ -1572,8 +1572,14 @@ mod tests {
     #[test]
     fn selects_commands_from_declaration_cfg() {
         let source = r#"
-            vendor_cmd! { Current(cgid = 0x0, cid = 0x03) { Params = (); Completion = CommandStatus; } }
-            #[cfg(since_fw_0_17_1)]
+            vendor_cmd! { 
+                Current(cgid = 0x0, cid = 0x03) { 
+                    Params = (); 
+                    Completion = CommandStatus; 
+                } 
+            }
+
+            #[cfg(since_fw_1_17_1)]
             vendor_cmd! {
                 Retained(cgid = 0x0, cid = 0x01) {
                     Params = ();
@@ -1581,28 +1587,32 @@ mod tests {
                 }
             }
         "#;
+
         let path = PathBuf::from("fixture.rs");
         let unit = SourceUnit {
             path,
             file: syn::parse_file(source).unwrap(),
         };
-        let firmware = version(0, 17, 0);
+
+        let firmware = version(1, 17, 0);
         let declarations = collect_commands(
             std::slice::from_ref(&unit),
             firmware,
             &WireTypeShapes::new(),
         )
         .unwrap();
+
         assert_eq!(declarations.len(), 1);
         assert!(declarations.contains_key("Current"));
         assert!(!declarations.contains_key("Retained"));
 
         let future = collect_commands(
             std::slice::from_ref(&unit),
-            version(0, 18, 0),
+            version(1, 18, 0),
             &WireTypeShapes::new(),
         )
         .unwrap();
+
         assert!(future.contains_key("Current"));
         assert!(future.contains_key("Retained"));
     }
@@ -1623,7 +1633,7 @@ mod tests {
             &root,
             r#"
                 pub mod current;
-                #[cfg(since_fw_0_17_1)]
+                #[cfg(since_fw_1_17_1)]
                 pub mod future;
             "#,
         )

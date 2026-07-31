@@ -3,10 +3,10 @@ use core::str::FromStr;
 use std::fs;
 use std::path::Path;
 
-/// A BLE coprocessor firmware version.
+/// An STM32CubeWB wireless coprocessor firmware version.
 ///
-/// STM32CubeWB tags use a different major version from the BLE firmware: firmware
-/// `0.15.0` is generated from CubeWB tag `v1.15.0`.
+/// The version matches the corresponding STM32CubeWB release tag:
+/// firmware `1.15.0` corresponds to tag `v1.15.0`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct FirmwareVersion {
     pub major: u16,
@@ -83,11 +83,7 @@ impl FirmwareVersion {
 
     /// The corresponding STM32CubeWB release tag.
     pub fn cube_tag(self) -> String {
-        if self.major == 0 {
-            format!("v1.{}.{}", self.minor, self.patch)
-        } else {
-            format!("v{}.{}.{}", self.major, self.minor, self.patch)
-        }
+        format!("v{}.{}.{}", self.major, self.minor, self.patch)
     }
 
     /// Returns whether a custom version cfg is active for this firmware.
@@ -181,10 +177,7 @@ impl FromStr for FirmwareVersion {
             return Err(FirmwareVersionError(value.to_owned()));
         }
 
-        // The crate historically used 0.x.y for the BLE firmware while ST tags
-        // use v1.x.y. Accept either spelling at the command line, but retain
-        // the crate spelling internally so feature lookup is unambiguous.
-        Ok(Self::new(if major == 1 { 0 } else { major }, minor, patch))
+        Ok(Self::new(major, minor, patch))
     }
 }
 
@@ -201,7 +194,7 @@ impl fmt::Display for FirmwareVersionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "expected a semantic firmware version such as 0.15.0, got {:?}",
+            "expected a semantic firmware version such as 1.15.0, got {:?}",
             self.0
         )
     }
@@ -237,26 +230,26 @@ mod tests {
 
     #[test]
     fn normalizes_firmware_to_cube_tag_and_feature() {
-        let version: FirmwareVersion = "0.15.0".parse().unwrap();
+        let version: FirmwareVersion = "1.15.0".parse().unwrap();
         assert_eq!(version.cube_tag(), "v1.15.0");
-        assert_eq!(version.feature_name(), "fw_0_15_0");
+        assert_eq!(version.feature_name(), "fw_1_15_0");
     }
 
     #[test]
     fn version_cfgs_are_compared_numerically() {
-        let version = FirmwareVersion::new(0, 15, 0);
-        assert_eq!(version.matches_version_cfg("before_fw_0_16_0"), Some(true));
-        assert_eq!(version.matches_version_cfg("only_fw_0_15_0"), Some(true));
-        assert_eq!(version.matches_version_cfg("since_fw_0_15_0"), Some(true));
-        assert_eq!(version.matches_version_cfg("since_fw_0_15_1"), Some(false));
+        let version = FirmwareVersion::new(1, 15, 0);
+        assert_eq!(version.matches_version_cfg("before_fw_1_16_0"), Some(true));
+        assert_eq!(version.matches_version_cfg("only_fw_1_15_0"), Some(true));
+        assert_eq!(version.matches_version_cfg("since_fw_1_15_0"), Some(true));
+        assert_eq!(version.matches_version_cfg("since_fw_1_15_1"), Some(false));
         assert_eq!(version.matches_version_cfg("since_0_14_1"), None);
     }
 
     #[test]
     fn accepts_cube_tag_version_spelling() {
         let version: FirmwareVersion = "v1.15.0".parse().unwrap();
-        assert_eq!(version, FirmwareVersion::new(0, 15, 0));
-        assert_eq!(version.feature_name(), "fw_0_15_0");
+        assert_eq!(version, FirmwareVersion::new(1, 15, 0));
+        assert_eq!(version.feature_name(), "fw_1_15_0");
     }
 
     #[test]
@@ -267,10 +260,10 @@ mod tests {
                 name = "not-a-feature"
 
                 [features] # generated firmware APIs
-                default = ["fw_0_17_1"]
-                fw_0_17_1 = []
-                fw_0_9_0 = []
-                fw_0_15_0 = []
+                default = ["fw_1_17_1"]
+                fw_1_17_1 = []
+                fw_1_9_0 = []
+                fw_1_15_0 = []
 
                 [dependencies]
                 fw_9_9_9 = "not a feature"
@@ -281,23 +274,23 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                FirmwareVersion::new(0, 9, 0),
-                FirmwareVersion::new(0, 15, 0),
-                FirmwareVersion::new(0, 17, 1),
+                FirmwareVersion::new(1, 9, 0),
+                FirmwareVersion::new(1, 15, 0),
+                FirmwareVersion::new(1, 17, 1),
             ]
         );
     }
 
     #[test]
     fn rejects_invalid_toml_instead_of_attempting_line_based_recovery() {
-        let error = firmware_versions_from_manifest("[features\nfw_0_15_0 = []").unwrap_err();
+        let error = firmware_versions_from_manifest("[features\nfw_1_15_0 = []").unwrap_err();
         assert!(error.starts_with("invalid TOML:"));
     }
 
     #[test]
     fn rejects_noncanonical_or_malformed_feature_names() {
-        assert!(FirmwareVersion::from_feature_name("fw_0_015_0").is_err());
-        assert!(FirmwareVersion::from_feature_name("fw_0_15").is_err());
-        assert!(FirmwareVersion::from_feature_name("not_fw_0_15_0").is_err());
+        assert!(FirmwareVersion::from_feature_name("fw_1_015_0").is_err());
+        assert!(FirmwareVersion::from_feature_name("fw_1_15").is_err());
+        assert!(FirmwareVersion::from_feature_name("not_fw_1_15_0").is_err());
     }
 }

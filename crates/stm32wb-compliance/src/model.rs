@@ -458,7 +458,7 @@ mod tests {
             events: vec![],
         };
         let report = CheckReport::new(
-            FirmwareVersion::new(0, 15, 0),
+            FirmwareVersion::new(1, 15, 0),
             vendor.clone(),
             active,
             StandardHciCoverage::default(),
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn standard_and_wire_differences_make_a_report_noncompliant() {
         let report = CheckReport::new(
-            FirmwareVersion::new(0, 17, 1),
+            FirmwareVersion::new(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn unavailable_wire_evidence_makes_a_report_noncompliant() {
         let report = CheckReport::new(
-            FirmwareVersion::new(0, 17, 1),
+            FirmwareVersion::new(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -513,7 +513,7 @@ mod tests {
         assert!(report.is_compliant());
 
         let report = CheckReport::new(
-            FirmwareVersion::new(0, 17, 1),
+            FirmwareVersion::new(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -557,7 +557,7 @@ mod tests {
             events: Vec::new(),
         };
         let report = CheckReport::new(
-            FirmwareVersion::new(0, 15, 0),
+            FirmwareVersion::new(1, 15, 0),
             vendor,
             active_api,
             StandardHciCoverage::default(),
@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "firmware": "0.15.0",
+                "firmware": "1.15.0",
                 "cube_tag": "v1.15.0",
                 "compliant": false,
                 "catalog_counts": {

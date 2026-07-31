@@ -9,7 +9,7 @@
 use bt_hci::cmd::cmd;
 
 /// Invalid minimum/maximum range for the controller's RPA rotation timeout.
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ResolvablePrivateAddressTimeoutError {
@@ -20,7 +20,7 @@ pub enum ResolvablePrivateAddressTimeoutError {
 }
 
 /// Validated minimum and maximum RPA rotation timeouts, in seconds.
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ResolvablePrivateAddressTimeoutRange {
@@ -28,7 +28,7 @@ pub struct ResolvablePrivateAddressTimeoutRange {
     maximum: u16,
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 impl ResolvablePrivateAddressTimeoutRange {
     /// Smallest timeout accepted by the controller, in seconds.
     pub const MINIMUM_SECONDS: u16 = 1;
@@ -63,7 +63,7 @@ impl ResolvablePrivateAddressTimeoutRange {
     }
 }
 
-#[cfg(all(since_fw_0_23_0, feature = "defmt"))]
+#[cfg(all(since_fw_1_23_0, feature = "defmt"))]
 impl defmt::Format for ResolvablePrivateAddressTimeoutRange {
     fn format(&self, formatter: defmt::Formatter) {
         let minimum = self.minimum;
@@ -72,7 +72,7 @@ impl defmt::Format for ResolvablePrivateAddressTimeoutRange {
     }
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 unsafe impl bt_hci::FixedSizeValue for ResolvablePrivateAddressTimeoutRange {
     fn is_valid(data: &[u8]) -> bool {
         if data.len() != 4 {
@@ -168,7 +168,7 @@ cmd! {
     }
 }
 
-#[cfg(since_fw_0_17_0)]
+#[cfg(since_fw_1_17_0)]
 cmd! {
     /// LE Generate DHKey v2 command.
     ///
@@ -180,7 +180,7 @@ cmd! {
     }
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 cmd! {
     /// LE Set Resolvable Private Address Timeout v2 command.
     ///

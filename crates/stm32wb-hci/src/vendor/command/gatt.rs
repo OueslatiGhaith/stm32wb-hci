@@ -684,7 +684,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(cgid = 0x2, cid = 0x1F) {
         Params<'a> = {
@@ -701,7 +701,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicDescriptor(cgid = 0x2, cid = 0x20) {
         Params = {
@@ -713,7 +713,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicDescriptor(cgid = 0x2, cid = 0x21) {
         Params<'a> = {
@@ -729,7 +729,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicDescriptor(cgid = 0x2, cid = 0x22) {
         Params = {
@@ -782,7 +782,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteResponse(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
@@ -805,7 +805,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattPermitWrite(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
@@ -835,7 +835,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattAllowRead(cgid = 0x2, cid = 0x27) {
         Params = {
@@ -846,7 +846,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattPermitRead(cgid = 0x2, cid = 0x27) {
         Params = {
@@ -959,7 +959,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_24_0)]
+#[cfg(before_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattDenyRead(cgid = 0x2, cid = 0x2D) {
         Params = {
@@ -1025,7 +1025,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
         Params = {
@@ -1039,7 +1039,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
         Params = {
@@ -1067,7 +1067,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -1083,7 +1083,7 @@ stm32wb_hci_macros::wire_type! {
 }
 
 /// Invalid range into the controller's extra-data buffer.
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ExtraDataRangeError {
@@ -1094,7 +1094,7 @@ pub enum ExtraDataRangeError {
 }
 
 /// A validated range in the controller's pre-filled extra-data buffer.
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExtraDataReference {
@@ -1102,7 +1102,7 @@ pub struct ExtraDataReference {
     offset: u32,
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 impl ExtraDataReference {
     /// Construct a reference from the occupied byte range in the extra-data buffer.
     pub fn try_new(range: core::ops::Range<u32>) -> Result<Self, ExtraDataRangeError> {
@@ -1130,7 +1130,7 @@ impl ExtraDataReference {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     composite
@@ -1145,7 +1145,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_24_0)]
+#[cfg(since_fw_1_24_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -1275,7 +1275,7 @@ stm32wb_hci_macros::wire_type! {
         /// attribute.
         const CONFIRM_READ = 0x04;
 
-        #[cfg(since_fw_0_17_0)]
+        #[cfg(since_fw_1_17_0)]
         /// The application will be notified when a notification is complete.
         const NOTIFY_NOTIFICATION_COMPLETE = 0x08;
     }

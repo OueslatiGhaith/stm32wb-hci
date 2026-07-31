@@ -24,8 +24,8 @@ fn main() {
         panic!("no `fw_<major>_<minor>_<patch>` features were found in [features]");
     }
 
-    // `FirmwareVersion` has numeric ordering, so 0.17.0 correctly sorts after
-    // 0.9.0. The same ordering is used by the compliance checker when it
+    // `FirmwareVersion` has numeric ordering, so 1.17.0 correctly sorts after
+    // 1.9.0. The same ordering is used by the compliance checker when it
     // evaluates a source-level `before_fw_`/`only_fw_`/`since_fw_` predicate.
     firmwares.sort();
     for pair in firmwares.windows(2) {

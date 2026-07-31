@@ -381,8 +381,8 @@ mod tests {
 
     fn supported() -> Vec<FirmwareVersion> {
         vec![
-            FirmwareVersion::new(0, 15, 0),
-            FirmwareVersion::new(0, 16, 0),
+            FirmwareVersion::new(1, 15, 0),
+            FirmwareVersion::new(1, 16, 0),
         ]
     }
 
@@ -401,21 +401,21 @@ mod tests {
                 [[exclusions]]
                 scope = "transport-event"
                 code = 0x9201
-                firmware = "0.15.0"
+                firmware = "1.15.0"
                 reason = "bounded transport event"
                 payload = { minimum = 1, maximum = 3 }
 
                 [[exclusions]]
                 scope = "command"
                 code = 0x0001
-                firmware = "0.15.0"
+                firmware = "1.15.0"
                 reason = "legacy command"
             "#,
         )
         .unwrap();
         policy.validate_for(&supported()).unwrap();
 
-        let old = policy.active_for(FirmwareVersion::new(0, 15, 0));
+        let old = policy.active_for(FirmwareVersion::new(1, 15, 0));
         assert_eq!(
             old.events.get(&0x9200),
             Some(&"transport | event".to_owned())
@@ -430,7 +430,7 @@ mod tests {
         );
         assert_eq!(old.commands.get(&1), Some(&"legacy command".to_owned()));
 
-        let new = policy.active_for(FirmwareVersion::new(0, 16, 0));
+        let new = policy.active_for(FirmwareVersion::new(1, 16, 0));
         assert!(!new.commands.contains_key(&1));
         assert!(!new.external_event_payloads.contains_key(&0x9201));
     }

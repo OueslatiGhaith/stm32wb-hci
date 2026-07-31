@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn check_options_do_not_hide_transport_events_without_a_policy() {
         let options = CheckOptions::new(
-            FirmwareVersion::new(0, 17, 1),
+            FirmwareVersion::new(1, 17, 1),
             PathBuf::from("crate"),
             PathBuf::from("cube"),
         );

@@ -180,7 +180,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
@@ -204,7 +204,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_23_0)]
+#[cfg(since_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {

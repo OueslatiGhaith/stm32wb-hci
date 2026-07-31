@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn batch_json_is_structured() {
-        let firmware = FirmwareVersion::new(0, 15, 0);
+        let firmware = FirmwareVersion::new(1, 15, 0);
         let report = CheckReport::new(
             firmware,
             ProtocolCoverage::default(),
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(value["mode"], "all-supported");
         assert_eq!(value["summary"]["checked"], 1);
         assert_eq!(value["results"][0]["status"], "ok");
-        assert_eq!(value["results"][0]["report"]["firmware"], "0.15.0");
+        assert_eq!(value["results"][0]["report"]["firmware"], "1.15.0");
         assert_eq!(
             value["results"][0]["report"]["cube_provenance"]["commit"],
             "commit"

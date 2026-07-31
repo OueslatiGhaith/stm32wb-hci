@@ -2,7 +2,7 @@
 #
 # Every exclusion declares a scope, numeric wire code, firmware selector, and
 # reviewable reason. `firmware = "*"` selects every declared firmware; an exact
-# version such as `"0.17.0"` selects only that version.
+# version such as `"1.17.0"` selects only that version.
 #
 # Transport-only events must also declare their payload envelope after the
 # two-byte vendor event code. The checker rejects overlaps, unknown firmware

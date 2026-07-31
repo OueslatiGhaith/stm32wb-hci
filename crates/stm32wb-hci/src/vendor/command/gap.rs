@@ -595,7 +595,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_22_0)]
+#[cfg(before_fw_1_22_0)]
 stm32wb_hci_macros::vendor_cmd! {
     CmdGapResolvePrivateAddress(cgid = 0x1, cid = 0x20) {
         Params = {
@@ -675,7 +675,7 @@ impl GapBondedDevices {
     }
 }
 
-#[cfg(before_fw_0_22_0)]
+#[cfg(before_fw_1_22_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapIsDeviceBonded(cgid = 0x1, cid = 0x24) {
         Params = {
@@ -686,7 +686,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_22_0)]
+#[cfg(since_fw_1_22_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapCheckBondedDevice(cgid = 0x1, cid = 0x24) {
         Params = {
@@ -750,7 +750,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(before_fw_0_23_0)]
+#[cfg(before_fw_1_23_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToResolvingList(cgid = 0x1, cid = 0x29) {
         Params<'a> = {
@@ -938,7 +938,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_21_0)]
+#[cfg(since_fw_1_21_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
         Params = {
@@ -950,7 +950,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params = {
@@ -983,7 +983,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -998,7 +998,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     open_scalar
@@ -1010,7 +1010,7 @@ stm32wb_hci_macros::wire_type! {
     pub struct ExtendedScanDuration: u16 => 2;
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     open_scalar
@@ -1022,7 +1022,7 @@ stm32wb_hci_macros::wire_type! {
     pub struct ExtendedScanPeriod: u16 => 2;
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::vendor_cmd! {
     GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params = {
@@ -1375,7 +1375,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -1388,7 +1388,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     bitflags
@@ -1401,7 +1401,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -1414,7 +1414,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     closed
@@ -1429,7 +1429,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     bitflags
@@ -1444,7 +1444,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     ranged
@@ -1457,7 +1457,7 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     ranged
@@ -1471,7 +1471,7 @@ stm32wb_hci_macros::wire_type! {
 }
 
 /// One of the two fixed extended-scan PHY parameter records.
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 pub struct ExtScanPhyParams {
     /// Passive or active scanning for this PHY.
     pub scan_type: ScanType,
@@ -1479,7 +1479,7 @@ pub struct ExtScanPhyParams {
     pub scan_window: ScanWindow,
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     composite
@@ -1495,7 +1495,7 @@ stm32wb_hci_macros::wire_type! {
 }
 
 /// One of the three fixed extended-connection PHY parameter records.
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 pub struct ExtConnectionPhyParams {
     /// Validated scan interval and window for this PHY.
     pub scan_window: ScanWindow,
@@ -1505,7 +1505,7 @@ pub struct ExtConnectionPhyParams {
     pub expected_connection_length: ExpectedConnectionLength,
 }
 
-#[cfg(since_fw_0_18_0)]
+#[cfg(since_fw_1_18_0)]
 stm32wb_hci_macros::wire_type! {
     adapters: [command];
     composite

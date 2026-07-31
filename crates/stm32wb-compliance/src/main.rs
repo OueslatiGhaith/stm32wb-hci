@@ -473,7 +473,7 @@ mod tests {
         let CliCommand::Check(args) = cli.command else {
             panic!("expected check arguments");
         };
-        assert_eq!(args.firmware, Some(FirmwareVersion::new(0, 15, 0)));
+        assert_eq!(args.firmware, Some(FirmwareVersion::new(1, 15, 0)));
         assert!(args.deny);
         assert!(args.skip_build);
 
@@ -493,25 +493,25 @@ mod tests {
     #[test]
     fn parses_version_diff_arguments_and_rejects_check_only_flags() {
         let cli = parse_cli(&[
-            "diff", "--from", "0.15.0", "--to", "v1.17.1", "--json", "--deny",
+            "diff", "--from", "1.15.0", "--to", "v1.17.1", "--json", "--deny",
         ])
         .unwrap();
         let CliCommand::Diff(args) = cli.command else {
             panic!("expected diff arguments");
         };
-        assert_eq!(args.from, FirmwareVersion::new(0, 15, 0));
-        assert_eq!(args.to, FirmwareVersion::new(0, 17, 1));
+        assert_eq!(args.from, FirmwareVersion::new(1, 15, 0));
+        assert_eq!(args.to, FirmwareVersion::new(1, 17, 1));
         assert!(args.json);
         assert!(args.deny);
 
         let error =
-            parse_cli(&["diff", "--from", "0.15.0", "--to", "0.17.1", "--skip-build"]).unwrap_err();
+            parse_cli(&["diff", "--from", "1.15.0", "--to", "1.17.1", "--skip-build"]).unwrap_err();
         assert!(error.contains("unexpected argument '--skip-build'"));
     }
 
     #[test]
     fn rejects_ambiguous_firmware_selection() {
-        let error = parse_cli(&["check", "--all-supported", "--firmware", "0.15.0"]).unwrap_err();
+        let error = parse_cli(&["check", "--all-supported", "--firmware", "1.15.0"]).unwrap_err();
         assert!(error.contains("cannot be used with"));
     }
 
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn deny_fails_when_wire_evidence_is_unavailable() {
-        let firmware = FirmwareVersion::new(0, 17, 1);
+        let firmware = FirmwareVersion::new(1, 17, 1);
         let report = CheckReport::new(
             firmware,
             ProtocolCoverage::default(),

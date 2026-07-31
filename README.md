@@ -10,42 +10,22 @@ and events from the specification, and vendor-specific commands and events.
 ## Firmware selection
 
 One crate release can target several STM32WB wireless-firmware versions. Select exactly one
-firmware feature; `fw_0_24_0` is the default. The feature names retain this crate's historical
-`0.x.y` compatibility notation, while the corresponding STM32CubeWB tags use `v1.x.y`.
+firmware feature; `fw_1_24_0` is the default.
 
-The `[features]` table in `Cargo.toml` is the source of truth. To see the complete, current set
-without relying on this documentation table, run:
+The `[features]` table in `Cargo.toml` is the source of truth. To see the complete, current set, run:
 
 ```sh
 cargo run -p stm32wb-compliance -- list-supported
 ```
 
-| Cargo feature | STM32CubeWB tag |
-| ------------- | --------------- |
-| `fw_0_15_0`   | `v1.15.0`       |
-| `fw_0_16_0`   | `v1.16.0`       |
-| `fw_0_17_0`   | `v1.17.0`       |
-| `fw_0_17_1`   | `v1.17.1`       |
-| `fw_0_17_2`   | `v1.17.2`       |
-| `fw_0_17_3`   | `v1.17.3`       |
-| `fw_0_18_0`   | `v1.18.0`       |
-| `fw_0_19_0`   | `v1.19.0`       |
-| `fw_0_19_1`   | `v1.19.1`       |
-| `fw_0_20_0`   | `v1.20.0`       |
-| `fw_0_21_0`   | `v1.21.0`       |
-| `fw_0_22_0`   | `v1.22.0`       |
-| `fw_0_22_1`   | `v1.22.1`       |
-| `fw_0_23_0`   | `v1.23.0`       |
-| `fw_0_24_0`   | `v1.24.0`       |
-
 For a non-default firmware, disable default features before selecting it:
 
 ```sh
-cargo build --no-default-features --features fw_0_15_0
+cargo build --no-default-features --features fw_1_15_0
 ```
 
 The build script makes these internal conditional-compilation predicates available to the crate:
-`before_fw_0_17_0`, `only_fw_0_17_0`, and `since_fw_0_17_0`. `before` is a strict comparison;
+`before_fw_1_17_0`, `only_fw_1_17_0`, and `since_fw_1_17_0`. `before` is a strict comparison;
 `since` includes the named firmware. Do not use
 `--all-features`, because firmware features are intentionally mutually exclusive.
 
@@ -60,7 +40,7 @@ internal normalized catalog, JSON report, and TOML exclusion policy.
 
 ```sh
 # STM32CubeWB is expected at ./STM32CubeWB by default.
-cargo run -p stm32wb-compliance -- check --firmware 0.15.0 --deny
+cargo run -p stm32wb-compliance -- check --firmware 1.15.0 --deny
 
 # Discover every fw_* feature in Cargo.toml and check all of them.
 cargo run -p stm32wb-compliance -- check --all-supported --deny

@@ -653,7 +653,7 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// Application use cases indlude synchronizing notifications with connection intervals, switching
     /// antenna at the end of advertising or performing flash erase while radio is idle.
-    #[cfg(before_fw_0_24_0)]
+    #[cfg(before_fw_1_24_0)]
     HalEndOfRadioActivity(0x0004) {
         Payload = {
             last_state: RadioEvent => 1,
@@ -664,7 +664,7 @@ stm32wb_hci_macros::vendor_event! {
         };
     }
     /// End-of-radio-activity event code used by STM32CubeWB 1.24 and newer.
-    #[cfg(since_fw_0_24_0)]
+    #[cfg(since_fw_1_24_0)]
     HalEndOfRadioActivity(0x1804) {
         Payload = {
             last_state: RadioEvent => 1,
@@ -678,7 +678,7 @@ stm32wb_hci_macros::vendor_event! {
     /// scheduled to be transmitted.
     ///
     /// Note: RSSI in this event is valid only when privacy is not used
-    #[cfg(before_fw_0_24_0)]
+    #[cfg(before_fw_1_24_0)]
     HalScanReqReport(0x0005) {
         Payload = {
             rssi: u8 => 1,
@@ -686,7 +686,7 @@ stm32wb_hci_macros::vendor_event! {
         };
     }
     /// Scan-request report event code used by STM32CubeWB 1.24 and newer.
-    #[cfg(since_fw_0_24_0)]
+    #[cfg(since_fw_1_24_0)]
     HalScanReqReport(0x1805) {
         Payload = {
             rssi: u8 => 1,
@@ -734,7 +734,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated when the peripheral security request is successfully sent to the
     /// central device.
-    #[cfg(before_fw_0_22_0)]
+    #[cfg(before_fw_1_22_0)]
     GapPeripheralSecurityInitiated(0x0404) {
         Payload = ();
     }
@@ -746,12 +746,12 @@ stm32wb_hci_macros::vendor_event! {
     /// is called to reestablish a bond with a peripheral but the peripheral has lost the bond. In
     /// order to create a new bond the central device has to launch `gap_send_pairing_request` with
     /// `force_rebond` set to `true`.
-    #[cfg(before_fw_0_22_0)]
+    #[cfg(before_fw_1_22_0)]
     GapBondLost(0x0405) {
         Payload = ();
     }
     /// Bond-lost payload used by STM32CubeWB 1.22 and newer.
-    #[cfg(since_fw_0_22_0)]
+    #[cfg(since_fw_1_22_0)]
     GapBondLost(0x0405) {
         Payload = { conn_handle: ConnHandle => 2, };
     }
@@ -797,7 +797,7 @@ stm32wb_hci_macros::vendor_event! {
         };
     }
     /// This event asks the application to accept or reject an incoming pairing request.
-    #[cfg(since_fw_0_21_0)]
+    #[cfg(since_fw_1_21_0)]
     GapPairingRequest(0x040B) {
         Payload = {
             connection_handle: ConnHandle => 2,
@@ -1257,7 +1257,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event informs the application of a change in status of the enhanced ATT bearer handled
     /// by the special L2CAP channel.
-    #[cfg(before_fw_0_23_0)]
+    #[cfg(before_fw_1_23_0)]
     GattEattBrearer(0x0C19) {
         Payload = {
             channel_index: L2CocChannelIndex => 1,
@@ -1266,7 +1266,7 @@ stm32wb_hci_macros::vendor_event! {
         };
     }
     /// Enhanced ATT bearer payload used by STM32CubeWB 1.23 and newer.
-    #[cfg(since_fw_0_23_0)]
+    #[cfg(since_fw_1_23_0)]
     GattEattBrearer(0x0C19) {
         Payload = {
             conn_handle: ConnHandle => 2,
@@ -1291,7 +1291,7 @@ stm32wb_hci_macros::vendor_event! {
     /// the a local update of a characteristic value (if it is enabled at the creation of the characteristic
     /// with [GATT Notify Notification Completion](crate::vendor::command::gatt::CharacteristicEvent) mask
     /// and if the characteristic supports notifications).
-    #[cfg(since_fw_0_17_0)]
+    #[cfg(since_fw_1_17_0)]
     GattNotificationComplete(0x0C1B) {
         Payload = { attr_handle: AttributeHandle => 2, };
     }
@@ -2386,7 +2386,7 @@ mod tests {
         assert!(core::mem::size_of::<VendorEvent<'static>>() <= 64);
     }
 
-    #[cfg(since_fw_0_17_0)]
+    #[cfg(since_fw_1_17_0)]
     #[test]
     fn parses_gatt_notification_complete_event() {
         let bytes = [0x1B, 0x0C, 0x23, 0x01];
@@ -2400,9 +2400,9 @@ mod tests {
         ));
     }
 
-    #[cfg(before_fw_0_17_0)]
+    #[cfg(before_fw_1_17_0)]
     #[test]
-    fn rejects_gatt_notification_complete_before_fw_0_17_0() {
+    fn rejects_gatt_notification_complete_before_fw_1_17_0() {
         let bytes = [0x1B, 0x0C, 0x23, 0x01];
         let err = VendorEvent::new(&bytes).expect_err("event was introduced in Cube v1.17.0");
 
@@ -2412,7 +2412,7 @@ mod tests {
         ));
     }
 
-    #[cfg(before_fw_0_23_0)]
+    #[cfg(before_fw_1_23_0)]
     #[test]
     fn parses_gatt_eatt_bearer_event() {
         // 0x0C19 + channel_index(2) + eab_state(created) + status(success)
@@ -2429,7 +2429,7 @@ mod tests {
         }
     }
 
-    #[cfg(since_fw_0_23_0)]
+    #[cfg(since_fw_1_23_0)]
     #[test]
     fn parses_current_gatt_eatt_bearer_event() {
         let bytes = [0x19, 0x0C, 0x23, 0x01, 0x02, 0x02, 0x40, 0x00];
@@ -2963,7 +2963,7 @@ mod tests {
         assert_eq!(group.uuid(), Ok(AttributeUuid::Uuid128(Uuid128(uuid))));
     }
 
-    #[cfg(before_fw_0_22_0)]
+    #[cfg(before_fw_1_22_0)]
     #[test]
     fn bond_lost_has_no_payload() {
         assert!(matches!(
@@ -2976,7 +2976,7 @@ mod tests {
         );
     }
 
-    #[cfg(since_fw_0_22_0)]
+    #[cfg(since_fw_1_22_0)]
     #[test]
     fn bond_lost_carries_its_connection_handle() {
         let VendorEvent::GapBondLost(event) = VendorEvent::new(&[0x05, 0x04, 0x23, 0x01]).unwrap()

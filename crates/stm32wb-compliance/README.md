@@ -46,7 +46,7 @@ payload = { minimum = 1, maximum = 1 }
 Supported scopes are `command`, `event`, and `transport-event`.
 
 - `firmware = "*"` selects every firmware declared by the crate; an exact
-  version such as `"0.17.0"` selects one firmware.
+  version such as `"1.17.0"` selects one firmware.
 - `command` and `event` exclusions must not contain `payload`.
 - `transport-event` exclusions require a payload envelope measured after the
   two-byte vendor event code.
@@ -64,11 +64,11 @@ Options are owned by their subcommand and must appear after `check`, `diff`, or
 
 ```sh
 # Check one firmware and fail on differences.
-cargo run -p stm32wb-compliance -- check --firmware 0.17.0 --deny
+cargo run -p stm32wb-compliance -- check --firmware 1.17.0 --deny
 
 # Emit the machine-readable report.
-cargo run -p stm32wb-compliance -- check --firmware 0.17.0 --json
+cargo run -p stm32wb-compliance -- check --firmware 1.17.0 --json
 
 # Compare two normalized catalogs and emit JSON.
-cargo run -p stm32wb-compliance -- diff --from 0.16.0 --to 0.17.0 --json
+cargo run -p stm32wb-compliance -- diff --from 1.16.0 --to 1.17.0 --json
 ```
