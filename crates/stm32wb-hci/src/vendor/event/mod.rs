@@ -724,9 +724,9 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated to report firmware error information
     HalFirmwareError(0x0006) {
-        Payload = {
+        Payload<'packet> = {
             fw_error_type: FirmwareError => 1,
-            data: EventBytes<'a, 251> => {
+            data: EventBytes<'packet, 251> => {
                 kind: counted_bytes,
                 count: u8 => 1,
                 max_len: 251,
@@ -787,7 +787,7 @@ stm32wb_hci_macros::vendor_event! {
     /// This event is sent by the GAP to the upper layers when a procedure previously started has
     /// been terminated by the upper layer or has completed for any other reason
     GapProcedureComplete(0x0407) {
-        Payload = {
+        Payload<'a> = {
             procedure: GapProcedureKind => 1,
             status: GapProcedureStatus => 1,
             data: EventBytes<'a, 250> => {
@@ -871,7 +871,7 @@ stm32wb_hci_macros::vendor_event! {
     /// when the Central responds to the Connection Update Request packet with a
     /// Command Reject packet).
     L2CapCommandReject(0x080A) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             identifier: L2SignalIdentifier => 1,
             reason: L2CapRejectionReason => 2,
@@ -899,7 +899,7 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocConnectConfirm(0x0811) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
@@ -917,7 +917,7 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// See Bluetooth spec. v.5.4 [Vol 3, Part A].
     L2CapCocReconfig(0x0812) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             mtu: L2CocMtu => 2,
             mps: L2CocMps => 2,
@@ -967,7 +967,7 @@ stm32wb_hci_macros::vendor_event! {
     /// two octets followed by the K-frame information payload. For the next K-frames of the SDU, the
     /// information data only contains the K-frame information payload.
     L2CapCocRxData(0x0816) {
-        Payload = {
+        Payload<'a> = {
             channel_index: L2CocChannelIndex => 1,
             data: EventBytes<'a, 250> => {
                 kind: counted_bytes,
@@ -990,7 +990,7 @@ stm32wb_hci_macros::vendor_event! {
     /// - write long characteristic value
     /// - reliable write
     GattAttributeModified(0x0C01) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attr_handle: AttributeHandle => 2,
             offset: u16 => 2,
@@ -1016,7 +1016,7 @@ stm32wb_hci_macros::vendor_event! {
     /// This event is generated in response to a Find Information Request. See Find Information
     /// Response in Bluetooth Core v4.0 spec.
     AttFindInformationResponse(0x0C04) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             handle_uuid_pairs: HandleUuidPairs<'a> => {
                 kind: tagged_items,
@@ -1038,7 +1038,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated in response to a Find By Type Value Request.
     AttFindByTypeValueResponse(0x0C05) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             handles: EventItems<'a, HandleInfoPair, 4, 62> => {
                 kind: counted_items,
@@ -1050,7 +1050,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated in response to a Read by Type Request.
     AttReadByTypeResponse(0x0C06) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             pairs: HandleValuePairs<'a> => {
                 kind: length_prefixed_records,
@@ -1063,7 +1063,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated in response to a Read Request.
     AttReadResponse(0x0C07) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
@@ -1076,7 +1076,7 @@ stm32wb_hci_macros::vendor_event! {
     /// partial value starting from the offset in the request. See the Bluetooth Core v4.1 spec, Vol
     /// 3, section 3.4.4.5 and 3.4.4.6.
     AttReadBlobResponse(0x0C08) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
@@ -1089,7 +1089,7 @@ stm32wb_hci_macros::vendor_event! {
     /// the set of values requested from the request. See the Bluetooth Core v4.1 spec, Vol 3,
     /// section 3.4.4.7 and 3.4.4.8.
     AttReadMultipleResponse(0x0C09) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             value: EventBytes<'a, 250> => {
                 kind: counted_bytes,
@@ -1101,7 +1101,7 @@ stm32wb_hci_macros::vendor_event! {
     /// This event is generated in response to a Read By Group Type Request. See the Bluetooth Core
     /// v4.1 spec, Vol 3, section 3.4.4.9 and 3.4.4.10.
     AttReadByGroupTypeResponse(0x0C0A) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             groups: AttributeGroups<'a> => {
                 kind: length_prefixed_records,
@@ -1115,7 +1115,7 @@ stm32wb_hci_macros::vendor_event! {
     /// This event is generated in response to a Prepare Write Request. See the Bluetooth Core v4.1
     /// spec, Vol 3, Part F, section 3.4.6.1 and 3.4.6.2
     AttPrepareWriteResponse(0x0C0C) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
@@ -1133,7 +1133,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated when an indication is received from the server.
     GattIndication(0x0C0E) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: EventBytes<'a, 248> => {
@@ -1145,7 +1145,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated when an notification is received from the server.
     GattNotification(0x0C0F) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: EventBytes<'a, 248> => {
@@ -1184,7 +1184,7 @@ stm32wb_hci_macros::vendor_event! {
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part G, section 4.6.2 (discover characteristics by
     /// UUID), and section 4.8.2 (read using characteristic using UUID).
     GattDiscoverOrReadCharacteristicByUuidResponse(0x0C12) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: EventBytes<'a, 248> => {
@@ -1206,7 +1206,7 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.5.
     AttWritePermitRequest(0x0C13) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             value: EventBytes<'a, 248> => {
@@ -1239,7 +1239,7 @@ stm32wb_hci_macros::vendor_event! {
     ///
     /// See the Bluetooth Core v4.1 spec, Vol 3, Part F, section 3.4.4.
     AttReadMultiplePermitRequest(0x0C15) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             handles: EventItems<'a, AttributeHandle, 2, 125> => {
                 kind: counted_items,
@@ -1273,7 +1273,7 @@ stm32wb_hci_macros::vendor_event! {
     /// and an error response will be sent to the client, with the error code as specified by the
     /// application.
     AttPrepareWritePermitRequest(0x0C18) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
@@ -1306,7 +1306,7 @@ stm32wb_hci_macros::vendor_event! {
     }
     /// This event is generated when a Multiple Handle Value Notification is received from the server.
     GattMultiNotification(0x0C1A) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             offset: u16 => 2,
             data: EventBytes<'a, 247> => {
@@ -1333,7 +1333,7 @@ stm32wb_hci_macros::vendor_event! {
     /// (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattReadExt(0x0C1D) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             offset: u16 => 2,
             value: EventBytes<'a, 247> => {
@@ -1350,7 +1350,7 @@ stm32wb_hci_macros::vendor_event! {
     /// `ATT_MTU > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattIndicationExt(0x0C1E) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,
@@ -1368,7 +1368,7 @@ stm32wb_hci_macros::vendor_event! {
     /// `ATT_MTU > (BLE_EVT_MAX_PARAM_LEN - 4)` i.e. `ATT_MTU > 251` for `BLE_EVT_MAX_PARAM_LEN`
     /// default value.
     GattNotificationExt(0x0C1F) {
-        Payload = {
+        Payload<'a> = {
             conn_handle: ConnHandle => 2,
             attribute_handle: AttributeHandle => 2,
             offset: u16 => 2,

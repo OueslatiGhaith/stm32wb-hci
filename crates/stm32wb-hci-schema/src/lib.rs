@@ -18,7 +18,7 @@ pub use wire_type::{
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
 use syn::{
     Expr, LitInt, Type,
     parse::{Parse, ParseStream},
@@ -64,21 +64,34 @@ pub struct VendorEvent {
     pub payload: EventPayload,
 }
 
-/// Unit or inline-field event payload.
-pub enum EventPayload {
+/// Event payload syntax, including its optional borrowing lifetime.
+pub struct EventPayload {
+    /// Lifetime declared by `Payload<'a>`, if present.
+    pub lifetime: Option<syn::Lifetime>,
+    /// Unit or inline-field event shape.
+    pub shape: EventPayloadShape,
+}
+
+/// Unit or inline-field event payload shape.
+pub enum EventPayloadShape {
     /// `Payload = ();`
     Unit,
-    /// `Payload = { ... };`
+    /// `Payload = { ... };` or `Payload<'a> = { ... };`
     Fields(Fields),
 }
 
 impl EventPayload {
     /// Parsed fields, if the payload is not unit.
     pub const fn fields(&self) -> Option<&Fields> {
-        match self {
-            Self::Unit => None,
-            Self::Fields(fields) => Some(fields),
+        match &self.shape {
+            EventPayloadShape::Unit => None,
+            EventPayloadShape::Fields(fields) => Some(fields),
         }
+    }
+
+    /// Whether the generated payload type borrows from the event packet.
+    pub const fn borrows(&self) -> bool {
+        self.lifetime.is_some()
     }
 
     /// Minimum encoded payload size, excluding the two-byte event code.
@@ -837,21 +850,31 @@ impl Parse for VendorEvents {
             if payload_label != "Payload" {
                 return Err(body.error(format!("expected `Payload`, found `{payload_label}`")));
             }
+            let lifetime = parse_optional_declared_lifetime(&body, "Payload")?;
             body.parse::<syn::Token![=]>()?;
-            let payload = if body.peek(syn::token::Brace) {
+            let shape = if body.peek(syn::token::Brace) {
                 let fields;
                 syn::braced!(fields in body);
-                EventPayload::Fields(fields.parse::<Fields>()?)
+                let fields = fields.parse::<Fields>()?;
+                validate_field_lifetimes("Payload", lifetime.as_ref(), &fields)?;
+                EventPayloadShape::Fields(fields)
             } else if body.peek(syn::token::Paren) {
                 let unit;
                 syn::parenthesized!(unit in body);
                 if !unit.is_empty() {
                     return Err(unit.error("unit event payload must be `()`"));
                 }
-                EventPayload::Unit
+                if lifetime.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        &payload_label,
+                        "unit Payload must not declare a lifetime",
+                    ));
+                }
+                EventPayloadShape::Unit
             } else {
                 return Err(body.error("event Payload must be `()` or a declarative field body"));
             };
+            let payload = EventPayload { lifetime, shape };
             body.parse::<syn::Token![;]>()?;
             if !body.is_empty() {
                 return Err(body.error("unexpected tokens after event Payload"));
@@ -950,17 +973,31 @@ struct ParamsLifetime(Option<syn::Lifetime>);
 
 impl Parse for ParamsLifetime {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(Self(None));
-        }
-        input.parse::<syn::Token![<]>()?;
-        let lifetime = input.parse::<syn::Lifetime>()?;
-        input.parse::<syn::Token![>]>()?;
+        let lifetime = parse_optional_declared_lifetime(input, "Params")?;
         if !input.is_empty() {
             return Err(input.error("Params accepts at most one lifetime parameter"));
         }
-        Ok(Self(Some(lifetime)))
+        Ok(Self(lifetime))
     }
+}
+
+fn parse_optional_declared_lifetime(
+    input: ParseStream<'_>,
+    declaration: &str,
+) -> syn::Result<Option<syn::Lifetime>> {
+    if !input.peek(syn::Token![<]) {
+        return Ok(None);
+    }
+    input.parse::<syn::Token![<]>()?;
+    let lifetime = input.parse::<syn::Lifetime>()?;
+    input.parse::<syn::Token![>]>()?;
+    if lifetime.ident == "static" || lifetime.ident == "_" {
+        return Err(syn::Error::new_spanned(
+            lifetime,
+            format!("{declaration} must declare a named, non-`'static` lifetime"),
+        ));
+    }
+    Ok(Some(lifetime))
 }
 
 fn require_empty_header(header: &TokenStream, label: &syn::Ident) -> syn::Result<()> {
@@ -987,10 +1024,174 @@ fn parse_params(value: TokenStream, lifetime: Option<syn::Lifetime>) -> syn::Res
             shape: ParamsShape::Unit,
         });
     }
-    parse_braced_fields(value).map(|fields| Params {
+    let fields = parse_braced_fields(value)?;
+    validate_field_lifetimes("Params", lifetime.as_ref(), &fields)?;
+    Ok(Params {
         lifetime,
         shape: ParamsShape::Fields(fields),
     })
+}
+
+fn validate_field_lifetimes(
+    declaration: &str,
+    declared: Option<&syn::Lifetime>,
+    fields: &Fields,
+) -> syn::Result<()> {
+    let mut errors = None;
+    let mut declared_is_used = false;
+
+    for field in fields.fields() {
+        let mut lifetimes = FreeLifetimes::default();
+        lifetimes.visit_type(&field.ty);
+
+        for lifetime in lifetimes.named {
+            if lifetime.ident == "_" {
+                combine_error(
+                    &mut errors,
+                    syn::Error::new_spanned(
+                        &lifetime,
+                        format!("field types must name the {declaration} lifetime explicitly"),
+                    ),
+                );
+                continue;
+            }
+
+            match declared {
+                Some(expected) if lifetime.ident == expected.ident => declared_is_used = true,
+                Some(expected) => combine_error(
+                    &mut errors,
+                    syn::Error::new_spanned(
+                        &lifetime,
+                        format!(
+                            "field lifetime `'{}'` does not match declared {declaration} lifetime `'{}'`",
+                            lifetime.ident, expected.ident,
+                        ),
+                    ),
+                ),
+                None => combine_error(
+                    &mut errors,
+                    syn::Error::new_spanned(
+                        &lifetime,
+                        format!(
+                            "undeclared field lifetime `'{}'`; declare `{declaration}<'{}>`",
+                            lifetime.ident, lifetime.ident,
+                        ),
+                    ),
+                ),
+            }
+        }
+
+        for span in lifetimes.elided_references {
+            combine_error(
+                &mut errors,
+                syn::Error::new(
+                    span,
+                    format!("field references must name the {declaration} lifetime explicitly"),
+                ),
+            );
+        }
+    }
+
+    if let Some(lifetime) = declared.filter(|_| !declared_is_used) {
+        combine_error(
+            &mut errors,
+            syn::Error::new_spanned(
+                lifetime,
+                format!(
+                    "declared {declaration} lifetime `'{}'` is not used by any field",
+                    lifetime.ident,
+                ),
+            ),
+        );
+    }
+
+    errors.map_or(Ok(()), Err)
+}
+
+#[derive(Default)]
+struct FreeLifetimes {
+    bound: Vec<BTreeSet<String>>,
+    named: Vec<syn::Lifetime>,
+    elided_references: Vec<Span>,
+}
+
+impl FreeLifetimes {
+    fn visit_with_bound_lifetimes(
+        &mut self,
+        bound_lifetimes: Option<&syn::BoundLifetimes>,
+        visit_body: impl FnOnce(&mut Self),
+    ) {
+        let names = bound_lifetimes
+            .into_iter()
+            .flat_map(|lifetimes| &lifetimes.lifetimes)
+            .filter_map(|parameter| match parameter {
+                syn::GenericParam::Lifetime(parameter) => {
+                    Some(parameter.lifetime.ident.to_string())
+                }
+                syn::GenericParam::Type(_) | syn::GenericParam::Const(_) => None,
+            })
+            .collect();
+        self.bound.push(names);
+
+        if let Some(bound_lifetimes) = bound_lifetimes {
+            for parameter in &bound_lifetimes.lifetimes {
+                if let syn::GenericParam::Lifetime(parameter) = parameter {
+                    for bound in &parameter.bounds {
+                        self.visit_lifetime(bound);
+                    }
+                }
+            }
+        }
+        visit_body(self);
+        self.bound.pop();
+    }
+
+    fn lifetime_is_bound(&self, lifetime: &syn::Lifetime) -> bool {
+        self.bound
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(&lifetime.ident.to_string()))
+    }
+}
+
+impl<'ast> Visit<'ast> for FreeLifetimes {
+    fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+        if lifetime.ident != "static" && !self.lifetime_is_bound(lifetime) {
+            self.named.push(lifetime.clone());
+        }
+    }
+
+    fn visit_type_reference(&mut self, reference: &'ast syn::TypeReference) {
+        if reference.lifetime.is_none() {
+            self.elided_references.push(reference.and_token.span);
+        }
+        visit::visit_type_reference(self, reference);
+    }
+
+    fn visit_type_bare_fn(&mut self, function: &'ast syn::TypeBareFn) {
+        self.visit_with_bound_lifetimes(function.lifetimes.as_ref(), |visitor| {
+            for input in &function.inputs {
+                visitor.visit_type(&input.ty);
+            }
+            if let syn::ReturnType::Type(_, output) = &function.output {
+                visitor.visit_type(output);
+            }
+        });
+    }
+
+    fn visit_trait_bound(&mut self, bound: &'ast syn::TraitBound) {
+        self.visit_with_bound_lifetimes(bound.lifetimes.as_ref(), |visitor| {
+            visitor.visit_path(&bound.path);
+        });
+    }
+}
+
+fn combine_error(errors: &mut Option<syn::Error>, error: syn::Error) {
+    if let Some(errors) = errors {
+        errors.combine(error);
+    } else {
+        *errors = Some(error);
+    }
 }
 
 fn parse_returns(value: TokenStream) -> syn::Result<Returns> {
@@ -2129,9 +2330,9 @@ mod tests {
                 Unit(0x0001) { Payload = (); }
                 #[cfg(since_fw_1_17_0)]
                 Counted(0x0002) {
-                    Payload = {
+                    Payload<'packet> = {
                         handle: u16 => 2,
-                        bytes: BoundedBytes<8> => {
+                        bytes: BoundedBytes<'packet, 8> => {
                             kind: counted_bytes,
                             count: u8 => 1,
                             max_len: 8,
@@ -2188,9 +2389,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(catalog.events.len(), 6);
-        assert!(matches!(catalog.events[0].payload, EventPayload::Unit));
+        assert!(matches!(
+            catalog.events[0].payload.shape,
+            EventPayloadShape::Unit
+        ));
         assert_eq!(catalog.events[1].code, 0x0002);
         assert_eq!(catalog.events[1].attrs.len(), 1);
+        assert_eq!(
+            catalog.events[1].payload.lifetime.as_ref().unwrap().ident,
+            "packet"
+        );
+        assert!(catalog.events[1].payload.borrows());
+        assert!(!catalog.events[2].payload.borrows());
         assert_eq!(
             (
                 catalog.events[1].payload.min_len(),
@@ -2221,6 +2431,64 @@ mod tests {
             encoding.shape,
             VariableEncodingShape::TaggedItems(_)
         ));
+    }
+
+    #[test]
+    fn validates_declared_event_payload_lifetimes() {
+        for (source, expected) in [
+            (
+                "Borrowed(1) { Payload = { value: View<'packet> => 1, }; }",
+                "undeclared field lifetime `'packet'`; declare `Payload<'packet>`",
+            ),
+            (
+                "Borrowed(1) { Payload<'packet> = { value: View<'other> => 1, }; }",
+                "field lifetime `'other'` does not match declared Payload lifetime `'packet'`",
+            ),
+            (
+                "Owned(1) { Payload<'packet> = { value: Owned => 1, }; }",
+                "declared Payload lifetime `'packet'` is not used by any field",
+            ),
+            (
+                "Unit(1) { Payload<'packet> = (); }",
+                "unit Payload must not declare a lifetime",
+            ),
+            (
+                "Borrowed(1) { Payload = { value: &u8 => 1, }; }",
+                "field references must name the Payload lifetime explicitly",
+            ),
+            (
+                "Borrowed(1) { Payload<'static> = { value: View<'static> => 1, }; }",
+                "Payload must declare a named, non-`'static` lifetime",
+            ),
+        ] {
+            let error = syn::parse_str::<VendorEvents>(source)
+                .err()
+                .expect("fixture must be rejected")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn validates_declared_command_parameter_lifetimes() {
+        for (params, expected) in [
+            (
+                "Params<'packet> = { value: &'other [u8] => 1, };",
+                "field lifetime `'other'` does not match declared Params lifetime `'packet'`",
+            ),
+            (
+                "Params<'packet> = { value: u8 => 1, };",
+                "declared Params lifetime `'packet'` is not used by any field",
+            ),
+        ] {
+            let source =
+                format!("Bad(cgid = 0, cid = 1) {{ {params} Completion = CommandStatus; }}");
+            let error = syn::parse_str::<VendorCommand>(&source)
+                .err()
+                .expect("fixture must be rejected")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]

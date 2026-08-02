@@ -3,36 +3,33 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use stm32wb_hci_schema::{EventPayload, Field, FieldEncoding, VariableEncodingShape, VendorEvents};
-use syn::visit::{self, Visit};
+use syn::fold::Fold;
 
 /// Generate the complete event enum, borrowing payload types, and wire dispatcher.
 pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
-    let borrows_payload = catalog
-        .events
-        .iter()
-        .any(|event| payload_borrows(&event.payload));
-    let event_generics = borrows_payload.then(|| quote!(<'a>));
-    let impl_generics = borrows_payload.then(|| quote!(<'a>));
+    let borrows_payload = catalog.events.iter().any(|event| event.payload.borrows());
+    let event_generics = borrows_payload.then(|| quote!(<'event>));
+    let impl_generics = borrows_payload.then(|| quote!(<'event>));
     let buffer_type = if borrows_payload {
-        quote!(&'a [u8])
+        quote!(&'event [u8])
     } else {
         quote!(&[u8])
     };
     let variants = catalog.events.iter().map(|event| {
         let attrs = &event.attrs;
         let name = &event.name;
-        match &event.payload {
-            EventPayload::Unit => quote! {
+        match event.payload.fields() {
+            None => quote! {
                 #(#attrs)*
                 #name,
             },
-            EventPayload::Fields(_) if payload_borrows(&event.payload) => {
+            Some(_) if event.payload.borrows() => {
                 quote! {
                     #(#attrs)*
-                    #name(#name<'a>),
+                    #name(#name<'event>),
                 }
             }
-            EventPayload::Fields(_) => {
+            Some(_) => {
                 quote! {
                     #(#attrs)*
                     #name(#name),
@@ -41,11 +38,11 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
         }
     });
     let payload_types = catalog.events.iter().filter_map(|event| {
-        let EventPayload::Fields(fields) = &event.payload else {
-            return None;
-        };
+        let fields = event.payload.fields()?;
         let attrs = &event.attrs;
         let name = &event.name;
+        let lifetime = event.payload.lifetime.as_ref();
+        let generics = lifetime.map(|lifetime| quote!(<#lifetime>));
         let field_declarations = fields.fields().iter().map(|field| {
             let attrs = &field.attrs;
             let name = &field.name;
@@ -55,27 +52,15 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
                 pub #name: #ty,
             }
         });
-        if payload_borrows(&event.payload) {
-            Some(quote! {
-                #(#attrs)*
-                #[derive(Copy, Clone, Debug)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-                #[allow(missing_docs)]
-                pub struct #name<'a> {
-                    #(#field_declarations)*
-                }
-            })
-        } else {
-            Some(quote! {
-                #(#attrs)*
-                #[derive(Copy, Clone, Debug)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-                #[allow(missing_docs)]
-                pub struct #name {
-                    #(#field_declarations)*
-                }
-            })
-        }
+        Some(quote! {
+            #(#attrs)*
+            #[derive(Copy, Clone, Debug)]
+            #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+            #[allow(missing_docs)]
+            pub struct #name #generics {
+                #(#field_declarations)*
+            }
+        })
     });
     let match_arms = catalog.events.iter().map(|event| {
         let cfg_attrs = event
@@ -127,30 +112,8 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
     }
 }
 
-fn payload_borrows(payload: &EventPayload) -> bool {
-    let EventPayload::Fields(fields) = payload else {
-        return false;
-    };
-    fields.fields().iter().any(|field| type_borrows(&field.ty))
-}
-
-fn type_borrows(ty: &syn::Type) -> bool {
-    struct EventLifetime(bool);
-
-    impl<'ast> Visit<'ast> for EventLifetime {
-        fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
-            self.0 |= lifetime.ident == "a";
-            visit::visit_lifetime(self, lifetime);
-        }
-    }
-
-    let mut lifetime = EventLifetime(false);
-    lifetime.visit_type(ty);
-    lifetime.0
-}
-
 fn expand_event_payload_decoder(name: &syn::Ident, payload: &EventPayload) -> TokenStream2 {
-    let EventPayload::Fields(fields) = payload else {
+    let Some(fields) = payload.fields() else {
         return quote! {{
             if !payload.is_empty() {
                 return Err(Error::BadLength(payload.len(), 0));
@@ -166,10 +129,9 @@ fn expand_event_payload_decoder(name: &syn::Ident, payload: &EventPayload) -> To
         .iter()
         .map(|field| &field.name)
         .collect::<Vec<_>>();
-    let decoders = fields
-        .fields()
-        .iter()
-        .map(|field| expand_event_field_decoder(field, &cursor, &original_len));
+    let decoders = fields.fields().iter().map(|field| {
+        expand_event_field_decoder(field, payload.lifetime.as_ref(), &cursor, &original_len)
+    });
 
     quote! {{
         let #original_len = payload.len();
@@ -187,11 +149,12 @@ fn expand_event_payload_decoder(name: &syn::Ident, payload: &EventPayload) -> To
 
 fn expand_event_field_decoder(
     field: &Field,
+    payload_lifetime: Option<&syn::Lifetime>,
     cursor: &syn::Ident,
     original_len: &syn::Ident,
 ) -> TokenStream2 {
     let name = &field.name;
-    let ty = &field.ty;
+    let ty = decoder_field_type(&field.ty, payload_lifetime);
     let decoder = match &field.encoding {
         FieldEncoding::Fixed(encoding) => {
             let width = &encoding.width_literal;
@@ -315,5 +278,31 @@ fn expand_event_field_decoder(
 
     quote! {
         let (#name, #cursor): (#ty, &[u8]) = #decoder?;
+    }
+}
+
+fn decoder_field_type(ty: &syn::Type, payload_lifetime: Option<&syn::Lifetime>) -> syn::Type {
+    let Some(payload_lifetime) = payload_lifetime else {
+        return ty.clone();
+    };
+    let mut replacement = DecoderLifetime {
+        declared: payload_lifetime,
+        generated: syn::Lifetime::new("'event", Span::mixed_site()),
+    };
+    replacement.fold_type(ty.clone())
+}
+
+struct DecoderLifetime<'a> {
+    declared: &'a syn::Lifetime,
+    generated: syn::Lifetime,
+}
+
+impl Fold for DecoderLifetime<'_> {
+    fn fold_lifetime(&mut self, lifetime: syn::Lifetime) -> syn::Lifetime {
+        if lifetime.ident == self.declared.ident {
+            self.generated.clone()
+        } else {
+            lifetime
+        }
     }
 }
