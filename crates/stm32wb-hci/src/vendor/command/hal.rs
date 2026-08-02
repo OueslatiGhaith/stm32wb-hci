@@ -153,7 +153,7 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            len_eq(value, offset);
+            self.value.len() == self.offset;
         };
         Completion = CommandComplete;
         Return = ();
@@ -368,7 +368,7 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            implies_len_at_least(mode, EadMode::Decrypt, data, 9);
+            self.mode == EadMode::Decrypt implies self.data.len() >= 9;
         };
         Completion = CommandComplete;
         Return = HalEadEncryptDecryptReturn {

@@ -373,8 +373,16 @@ mod tests {
                 maximum: u8,
             };
             Constraints = {
-                range(mode, 1, 2);
-                ordered(minimum, maximum);
+                #[diagnostic("1 <= mode <= 2")]
+                self.mode in 1..3;
+                #[diagnostic("minimum <= maximum")]
+                self.minimum <= self.maximum;
+                #[diagnostic("minimum != 42")]
+                self.minimum != 42;
+                #[diagnostic("minimum < 255")]
+                self.minimum < u8::MAX;
+                #[diagnostic("255 > maximum")]
+                u8::MAX > self.maximum;
             };
             Completion = CommandComplete;
             Return = ();
@@ -507,6 +515,27 @@ mod tests {
                 .unwrap()
                 .constraint(),
             "minimum <= maximum",
+        );
+        assert_eq!(
+            FixedConstraintFixture::try_new(1, 42, 42)
+                .err()
+                .unwrap()
+                .constraint(),
+            "minimum != 42",
+        );
+        assert_eq!(
+            FixedConstraintFixture::try_new(1, u8::MAX, u8::MAX)
+                .err()
+                .unwrap()
+                .constraint(),
+            "minimum < 255",
+        );
+        assert_eq!(
+            FixedConstraintFixture::try_new(1, u8::MAX - 1, u8::MAX)
+                .err()
+                .unwrap()
+                .constraint(),
+            "255 > maximum",
         );
         assert!(FixedConstraintFixture::try_new(1, 1, 2).is_ok());
     }

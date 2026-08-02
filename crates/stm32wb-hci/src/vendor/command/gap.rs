@@ -148,20 +148,23 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_interval_max: u16,
         };
         Constraints = {
-            one_of(advertising_type, [
+            self.advertising_type in [
                 AdvertisingType::ConnectableUndirected,
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
-            ]);
-            paired_value(
-                advertising_interval_min,
-                advertising_interval_max,
-                OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED
-            );
-            ordered(advertising_interval_min, advertising_interval_max);
-            one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
-            one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
-            ordered_when_in_range(conn_interval_min, conn_interval_max, 0x0006, 0x0C80);
+            ];
+            (self.advertising_interval_min
+                == OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED)
+                iff (self.advertising_interval_max
+                    == OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED);
+            self.advertising_interval_min <= self.advertising_interval_max;
+            self.conn_interval_min in [0, 0xFFFF]
+                || self.conn_interval_min in 0x0006..=0x0C80;
+            self.conn_interval_max in [0, 0xFFFF]
+                || self.conn_interval_max in 0x0006..=0x0C80;
+            (self.conn_interval_min in 0x0006..=0x0C80
+                && self.conn_interval_max in 0x0006..=0x0C80)
+                implies self.conn_interval_min <= self.conn_interval_max;
         };
         Completion = CommandStatus;
     }
@@ -190,20 +193,23 @@ stm32wb_hci_macros::vendor_cmd! {
             conn_interval_max: u16,
         };
         Constraints = {
-            one_of(advertising_type, [
+            self.advertising_type in [
                 AdvertisingType::ConnectableUndirected,
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
-            ]);
-            paired_value(
-                advertising_interval_min,
-                advertising_interval_max,
-                OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED
-            );
-            ordered(advertising_interval_min, advertising_interval_max);
-            one_of_or_range(conn_interval_min, [0, 0xFFFF], 0x0006, 0x0C80);
-            one_of_or_range(conn_interval_max, [0, 0xFFFF], 0x0006, 0x0C80);
-            ordered_when_in_range(conn_interval_min, conn_interval_max, 0x0006, 0x0C80);
+            ];
+            (self.advertising_interval_min
+                == OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED)
+                iff (self.advertising_interval_max
+                    == OptionalAdvertisingIntervalBound::CONTROLLER_SELECTED);
+            self.advertising_interval_min <= self.advertising_interval_max;
+            self.conn_interval_min in [0, 0xFFFF]
+                || self.conn_interval_min in 0x0006..=0x0C80;
+            self.conn_interval_max in [0, 0xFFFF]
+                || self.conn_interval_max in 0x0006..=0x0C80;
+            (self.conn_interval_min in 0x0006..=0x0C80
+                && self.conn_interval_max in 0x0006..=0x0C80)
+                implies self.conn_interval_min <= self.conn_interval_max;
         };
         Completion = CommandComplete;
         Return = ();
@@ -220,37 +226,23 @@ stm32wb_hci_macros::vendor_cmd! {
             advertising_interval_max: u16,
         };
         Constraints = {
-            one_of(advertising_type, [
+            self.advertising_type in [
                 AdvertisingType::ConnectableDirectedHighDutyCycle,
                 AdvertisingType::ConnectableDirectedLowDutyCycle,
-            ]);
-            implies_eq(
-                advertising_type,
-                AdvertisingType::ConnectableDirectedHighDutyCycle,
-                advertising_interval_min,
-                0x0006
-            );
-            implies_eq(
-                advertising_type,
-                AdvertisingType::ConnectableDirectedHighDutyCycle,
-                advertising_interval_max,
-                0x0006
-            );
-            implies_range(
-                advertising_type,
-                AdvertisingType::ConnectableDirectedLowDutyCycle,
-                advertising_interval_min,
-                0x0020,
-                0x4000
-            );
-            implies_range(
-                advertising_type,
-                AdvertisingType::ConnectableDirectedLowDutyCycle,
-                advertising_interval_max,
-                0x0020,
-                0x4000
-            );
-            ordered(advertising_interval_min, advertising_interval_max);
+            ];
+            self.advertising_type
+                == AdvertisingType::ConnectableDirectedHighDutyCycle
+                implies self.advertising_interval_min == 0x0006;
+            self.advertising_type
+                == AdvertisingType::ConnectableDirectedHighDutyCycle
+                implies self.advertising_interval_max == 0x0006;
+            self.advertising_type
+                == AdvertisingType::ConnectableDirectedLowDutyCycle
+                implies self.advertising_interval_min in 0x0020..=0x4000;
+            self.advertising_type
+                == AdvertisingType::ConnectableDirectedLowDutyCycle
+                implies self.advertising_interval_max in 0x0020..=0x4000;
+            self.advertising_interval_min <= self.advertising_interval_max;
         };
         Completion = CommandComplete;
         Return = ();
@@ -281,10 +273,13 @@ stm32wb_hci_macros::vendor_cmd! {
             identity_address_type: AddressType,
         };
         Constraints = {
-            range(encryption_key_size_min, 7, 16);
-            range(encryption_key_size_max, 7, 16);
-            ordered(encryption_key_size_min, encryption_key_size_max);
-            one_of(identity_address_type, [AddressType::Public, AddressType::Random]);
+            self.encryption_key_size_min in 7..=16;
+            self.encryption_key_size_max in 7..=16;
+            self.encryption_key_size_min <= self.encryption_key_size_max;
+            self.identity_address_type in [
+                AddressType::Public,
+                AddressType::Random,
+            ];
         };
         Completion = CommandComplete;
         Return = ();
@@ -333,7 +328,7 @@ stm32wb_hci_macros::vendor_cmd! {
             dev_name_characteristic_len: u8,
         };
         Constraints = {
-            non_empty(role);
+            !self.role.is_empty();
         };
         Completion = CommandComplete;
         Return = GapInit {
@@ -351,10 +346,10 @@ stm32wb_hci_macros::vendor_cmd! {
             address_type: AddressType,
         };
         Constraints = {
-            one_of(advertising_type, [
+            self.advertising_type in [
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
-            ]);
+            ];
         };
         Completion = CommandComplete;
         Return = ();
@@ -370,11 +365,11 @@ stm32wb_hci_macros::vendor_cmd! {
             filter_policy: AdvertisingFilterPolicy,
         };
         Constraints = {
-            ordered(advertising_interval_min, advertising_interval_max);
-            one_of(filter_policy, [
+            self.advertising_interval_min <= self.advertising_interval_max;
+            self.filter_policy in [
                 AdvertisingFilterPolicy::AllowConnectionAndScan,
                 AdvertisingFilterPolicy::WhiteListConnectionAndScan,
-            ]);
+            ];
         };
         Completion = CommandComplete;
         Return = ();
@@ -567,7 +562,7 @@ stm32wb_hci_macros::vendor_cmd! {
             procedure: Procedure,
         };
         Constraints = {
-            non_empty(procedure);
+            !self.procedure.is_empty();
         };
         Completion = CommandComplete;
         Return = ();
@@ -629,11 +624,11 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            ordered(advertising_interval_min, advertising_interval_max);
-            one_of(advertising_type, [
+            self.advertising_interval_min <= self.advertising_interval_max;
+            self.advertising_type in [
                 AdvertisingType::ScannableUndirected,
                 AdvertisingType::NonConnectableUndirected,
-            ]);
+            ];
         };
         Completion = CommandComplete;
         Return = ();
@@ -803,8 +798,8 @@ stm32wb_hci_macros::vendor_cmd! {
             pa_level: PowerAmplifierOutputLevel,
         };
         Constraints = {
-            ordered(advertising_interval_min, advertising_interval_max);
-            non_empty(advertising_channel_map);
+            self.advertising_interval_min <= self.advertising_interval_max;
+            !self.advertising_channel_map.is_empty();
         };
         Completion = CommandComplete;
         Return = ();
@@ -851,8 +846,8 @@ stm32wb_hci_macros::vendor_cmd! {
             scan_req_notification_enable: bool,
         };
         Constraints = {
-            non_empty(primary_adv_channel_map);
-            one_of_or_range(adv_tx_power, [127], -127, 20);
+            !self.primary_adv_channel_map.is_empty();
+            self.adv_tx_power in [127] || self.adv_tx_power in -127..=20;
         };
         Completion = CommandComplete;
         Return = ();
@@ -966,18 +961,18 @@ stm32wb_hci_macros::vendor_cmd! {
             le_coded_params: ExtScanPhyParams,
         };
         Constraints = {
-            one_of(procedure, [
+            self.procedure in [
                 Procedure::LIMITED_DISCOVERY,
                 Procedure::GENERAL_DISCOVERY,
                 Procedure::GENERAL_CONNECTION_ESTABLISHMENT,
                 Procedure::SELECTIVE_CONNECTION_ESTABLISHMENT,
                 Procedure::OBSERVATION,
-            ]);
-            one_of(scanning_phys, [
+            ];
+            self.scanning_phys in [
                 ScanningPhy::LE_1M,
                 ScanningPhy::LE_CODED,
                 ScanningPhy::LE_1M | ScanningPhy::LE_CODED,
-            ]);
+            ];
         };
         Completion = CommandStatus;
     }
@@ -1039,16 +1034,16 @@ stm32wb_hci_macros::vendor_cmd! {
             le_coded_params: ExtConnectionPhyParams,
         };
         Constraints = {
-            one_of(procedure, [
+            self.procedure in [
                 Procedure::AUTO_CONNECTION_ESTABLISHMENT,
                 Procedure::DIRECT_CONNECTION_ESTABLISHMENT,
-            ]);
-            one_of(own_address_type, [
+            ];
+            self.own_address_type in [
                 AddressType::Public,
                 AddressType::Random,
                 AddressType::ResolvablePrivate,
-            ]);
-            one_of(initiating_phys, [
+            ];
+            self.initiating_phys in [
                 InitiatingPhy::LE_1M,
                 InitiatingPhy::LE_2M,
                 InitiatingPhy::LE_CODED,
@@ -1056,7 +1051,7 @@ stm32wb_hci_macros::vendor_cmd! {
                 InitiatingPhy::LE_1M | InitiatingPhy::LE_CODED,
                 InitiatingPhy::LE_2M | InitiatingPhy::LE_CODED,
                 InitiatingPhy::LE_1M | InitiatingPhy::LE_2M | InitiatingPhy::LE_CODED,
-            ]);
+            ];
         };
         Completion = CommandStatus;
     }

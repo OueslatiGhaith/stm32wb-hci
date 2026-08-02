@@ -295,7 +295,7 @@ stm32wb_hci_macros::vendor_cmd! {
             is_variable: bool,
         };
         Constraints = {
-            len_at_most(descriptor_value, descriptor_value_max_len);
+            self.descriptor_value.len() <= self.descriptor_value_max_len;
         };
         Completion = CommandComplete;
         Return = GattCharacteristicDescriptor {
@@ -797,8 +797,8 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            implies_eq(write_status, WriteStatus::Allowed, error_code, 0);
-            implies_range(write_status, WriteStatus::Rejected, error_code, 1, u8::MAX);
+            self.write_status == WriteStatus::Allowed implies self.error_code == 0;
+            self.write_status == WriteStatus::Rejected implies self.error_code in 1..=u8::MAX;
         };
         Completion = CommandComplete;
         Return = ();
@@ -820,15 +820,9 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            implies_eq(write_status, WriteStatus::Allowed, error_code, 0);
-            implies_one_of_or_range(
-                write_status,
-                WriteStatus::Rejected,
-                error_code,
-                [0x08],
-                0x80,
-                0x9F
-            );
+            self.write_status == WriteStatus::Allowed implies self.error_code == 0;
+            self.write_status == WriteStatus::Rejected
+                implies self.error_code in [0x08] || self.error_code in 0x80..=0x9F;
         };
         Completion = CommandComplete;
         Return = ();
@@ -856,21 +850,11 @@ stm32wb_hci_macros::vendor_cmd! {
             attribute_handle: AttributeHandle,
         };
         Constraints = {
-            implies_eq(read_status, ReadStatus::Allowed, error_code, 0);
-            implies_eq(
-                read_status,
-                ReadStatus::Allowed,
-                attribute_handle,
-                AttributeHandle(0)
-            );
-            implies_one_of_or_range(
-                read_status,
-                ReadStatus::Rejected,
-                error_code,
-                [0x08],
-                0x80,
-                0x9F
-            );
+            self.read_status == ReadStatus::Allowed implies self.error_code == 0;
+            self.read_status == ReadStatus::Allowed
+                implies self.attribute_handle == AttributeHandle(0);
+            self.read_status == ReadStatus::Rejected
+                implies self.error_code in [0x08] || self.error_code in 0x80..=0x9F;
         };
         Completion = CommandComplete;
         Return = ();
@@ -952,7 +936,7 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            offset_len_at_most(offset, value, total_len);
+            self.offset + self.value.len() <= self.total_len;
         };
         Completion = CommandComplete;
         Return = ();
@@ -967,7 +951,7 @@ stm32wb_hci_macros::vendor_cmd! {
             error_code: u8,
         };
         Constraints = {
-            one_of_or_range(error_code, [0x08], 0x80, 0x9F);
+            self.error_code in [0x08] || self.error_code in 0x80..=0x9F;
         };
         Completion = CommandComplete;
         Return = ();

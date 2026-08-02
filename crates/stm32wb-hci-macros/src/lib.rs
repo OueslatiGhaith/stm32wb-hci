@@ -56,18 +56,25 @@ use wire_type::expand_wire_type;
 /// writes those fields directly according to their declared encodings.
 ///
 /// `Constraints` are evaluated in declaration order and stop at the first
-/// failure. Supported relationships are `ordered`, `ordered_when_in_range`,
-/// `range`, `one_of`, `one_of_or_range`, `paired_value`, `implies_eq`,
-/// `implies_range`, `implies_one_of_or_range`, `implies_len_at_least`,
-/// `implies_len_eq`, `len_eq`, `len_at_most`, `offset_len_at_most`, and
-/// `non_empty`. Intrinsic
-/// validity should remain in the semantic field type; constraints describe
-/// relationships or command-specific subsets.
+/// failure. Their Rust-like surface syntax is normalized to a small predicate
+/// algebra before expansion. Fields use `self.name`; comparisons use the Rust
+/// operators; membership uses `in` with either a set (`[a, b]`) or range
+/// (`a..b` or `a..=b`); and predicates compose with `!`, `&&`, `||`, `implies`,
+/// and `iff`. Lengths use `.len()`, emptiness uses `.is_empty()`, and `+` is
+/// generated as checked length arithmetic. Attach `#[diagnostic("...")]` to
+/// override the derived failure message. For example:
 ///
-/// Selector-dependent checks use
-/// `implies_*(selector, selected_value, dependent_field, ...)`. Length checks
-/// call `.len()` on their field. Sparse domains use a nonempty `[value, ...]`
-/// list followed, for `*_one_of_or_range`, by inclusive range endpoints.
+/// ```text
+/// Constraints = {
+///     self.minimum <= self.maximum;
+///     #[diagnostic("selected data must fit inside total")]
+///     self.mode == Mode::Selected implies self.offset + self.data.len() <= self.total;
+/// };
+/// ```
+///
+/// Intrinsic validity should remain in the semantic field type; constraints
+/// describe relationships or command-specific subsets.
+///
 #[proc_macro]
 pub fn vendor_cmd(input: TokenStream) -> TokenStream {
     match syn::parse::<VendorCommand>(input) {

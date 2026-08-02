@@ -1545,15 +1545,18 @@ mod tests {
                         },
                     };
                     Constraints = {
-                        ordered(minimum, maximum);
-                        range(minimum, 0x20, 0x4000);
-                        one_of(mode, [0x00, 0x02]);
-                        one_of_or_range(maximum, [0], 0x20, 0x4000);
-                        paired_value(minimum, maximum, 0);
-                        ordered_when_in_range(minimum, maximum, 0x20, 0x4000);
-                        implies_eq(mode, 0x00, maximum, 0);
-                        implies_range(mode, 0x02, maximum, 0x20, 0x4000);
-                        len_at_most(data, mode);
+                        self.minimum <= self.maximum;
+                        self.minimum in 0x20..=0x4000;
+                        self.mode in [0x00, 0x02];
+                        self.maximum in [0] || self.maximum in 0x20..=0x4000;
+                        (self.minimum == 0) iff (self.maximum == 0);
+                        (self.minimum in 0x20..=0x4000
+                            && self.maximum in 0x20..=0x4000)
+                            implies self.minimum <= self.maximum;
+                        self.mode == 0x00 implies self.maximum == 0;
+                        self.mode == 0x02 implies self.maximum in 0x20..=0x4000;
+                        self.data.len() <= self.mode;
+                        self.mode == 0x02 implies self.data.len() >= 1;
                     };
                     Completion = CommandStatus;
                 }
@@ -1569,7 +1572,7 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params = { value: u8, };
-                    Constraints = { ordered(value, missing); };
+                    Constraints = { self.value == self.missing; };
                     Completion = CommandStatus;
                 }
             }

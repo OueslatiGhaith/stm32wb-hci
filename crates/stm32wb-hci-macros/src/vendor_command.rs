@@ -3,8 +3,9 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use stm32wb_hci_schema::{
-    Completion, Constraint, Constraints, Field, FieldEncoding, Fields, Returns, TaggedEncoding,
-    VariableEncodingShape, VendorCommand, WireSize,
+    Comparison, Completion, Constraint, Constraints, CountOperand, Field, FieldEncoding, Fields,
+    Operand, Predicate, RangeEnd, Returns, ScalarOperand, TaggedEncoding, VariableEncodingShape,
+    VendorCommand, WireSize,
 };
 
 fn canonical_width(ty: &syn::Type) -> TokenStream2 {
@@ -314,12 +315,10 @@ fn expand_command_constructor(
     }
 }
 
-/// Translate the shared constraint AST into ordered, fail-fast runtime checks.
-/// Each branch preserves the established diagnostic wording because
-/// `HciConstraintError::constraint` is public API.
+/// Compile normalized predicates into ordered, fail-fast runtime checks.
 fn expand_constraint_checks(command: &syn::Ident, constraints: &Constraints) -> TokenStream2 {
     let checks = constraints
-        .nodes()
+        .constraints()
         .iter()
         .map(|constraint| expand_constraint_check(command, constraint));
     quote! {
@@ -331,281 +330,142 @@ fn expand_constraint_checks(command: &syn::Ident, constraints: &Constraints) -> 
 }
 
 fn expand_constraint_check(command: &syn::Ident, constraint: &Constraint) -> TokenStream2 {
-    match constraint {
-        Constraint::Ordered { minimum, maximum } => quote! {
-            if #minimum > #maximum {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(stringify!(#minimum), " <= ", stringify!(#maximum)),
-                ));
-            }
-        },
-        Constraint::OrderedWhenInRange {
+    let predicate = expand_predicate(constraint.predicate());
+    let diagnostic = constraint.diagnostic();
+    quote! {
+        if !(#predicate) {
+            return Err(crate::vendor::command::HciConstraintError::new(
+                stringify!(#command),
+                #diagnostic,
+            ));
+        }
+    }
+}
+
+fn expand_predicate(predicate: &Predicate) -> TokenStream2 {
+    match predicate {
+        Predicate::Compare {
+            left,
+            operator,
+            right,
+        } => expand_comparison(left, *operator, right),
+        Predicate::InRange {
+            value,
             minimum,
             maximum,
-            range_minimum,
-            range_maximum,
-        } => quote! {
-            if ((#range_minimum)..=(#range_maximum)).contains(&#minimum)
-                && ((#range_minimum)..=(#range_maximum)).contains(&#maximum)
-                && #minimum > #maximum
-            {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#minimum),
-                        " <= ",
-                        stringify!(#maximum),
-                        " when both are in ",
-                        stringify!(#range_minimum),
-                        "..=",
-                        stringify!(#range_maximum),
-                    ),
-                ));
+            end,
+        } => {
+            let value = expand_scalar_operand(value);
+            match end {
+                RangeEnd::Exclusive => quote!(((#minimum)..(#maximum)).contains(&(#value))),
+                RangeEnd::Inclusive => quote!(((#minimum)..=(#maximum)).contains(&(#value))),
             }
-        },
-        Constraint::Range {
-            field,
-            minimum,
-            maximum,
-        } => quote! {
-            if !((#minimum)..=(#maximum)).contains(&#field) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#minimum),
-                        " <= ",
-                        stringify!(#field),
-                        " <= ",
-                        stringify!(#maximum),
-                    ),
-                ));
-            }
-        },
-        Constraint::OneOf { field, allowed } => quote! {
-            if ![#(#allowed),*].contains(&#field) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(stringify!(#field), " in ", stringify!([#(#allowed),*])),
-                ));
-            }
-        },
-        Constraint::OneOfOrRange {
-            field,
-            allowed,
-            minimum,
-            maximum,
-        } => quote! {
-            if ![#(#allowed),*].contains(&#field)
-                && !((#minimum)..=(#maximum)).contains(&#field)
-            {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#field),
-                        " in ",
-                        stringify!([#(#allowed),*]),
-                        " or ",
-                        stringify!(#minimum),
-                        " <= ",
-                        stringify!(#field),
-                        " <= ",
-                        stringify!(#maximum),
-                    ),
-                ));
-            }
-        },
-        Constraint::PairedValue { left, right, value } => {
-            let binding = format_ident!("__stm32wb_constraint_value", span = Span::mixed_site());
+        }
+        Predicate::InSet { value, allowed } => {
+            let value = expand_scalar_operand(value);
+            quote!([#(#allowed),*].contains(&(#value)))
+        }
+        Predicate::Empty { field } => quote!(#field.is_empty()),
+        Predicate::All(predicates) => {
+            let predicates = predicates.iter().map(expand_predicate);
+            quote!(true #(&& (#predicates))*)
+        }
+        Predicate::Any(predicates) => {
+            let predicates = predicates.iter().map(expand_predicate);
+            quote!(false #(|| (#predicates))*)
+        }
+        Predicate::Not(predicate) => {
+            let predicate = expand_predicate(predicate);
+            quote!(!(#predicate))
+        }
+        Predicate::Implies {
+            condition,
+            consequence,
+        } => {
+            let condition = expand_predicate(condition);
+            let consequence = expand_predicate(consequence);
+            quote!(!(#condition) || (#consequence))
+        }
+        Predicate::Iff { left, right } => {
+            let left = expand_predicate(left);
+            let right = expand_predicate(right);
+            quote!((#left) == (#right))
+        }
+    }
+}
+
+fn expand_comparison(left: &Operand, operator: Comparison, right: &Operand) -> TokenStream2 {
+    let operator = expand_comparison_operator(operator);
+    match (left, right) {
+        (Operand::Scalar(left), Operand::Scalar(right)) => {
+            let left = expand_scalar_operand(left);
+            let right = expand_scalar_operand(right);
+            quote!((&(#left)) #operator (&(#right)))
+        }
+        (Operand::Count(left), Operand::Count(right)) => {
+            let left = expand_count_operand(left);
+            let right = expand_count_operand(right);
+            let left_binding = format_ident!("__stm32wb_left_count", span = Span::mixed_site());
+            let right_binding = format_ident!("__stm32wb_right_count", span = Span::mixed_site());
             quote! {
-                match #value {
-                    ref #binding => {
-                        if (&#left == #binding) != (&#right == #binding) {
-                            return Err(crate::vendor::command::HciConstraintError::new(
-                                stringify!(#command),
-                                concat!(
-                                    stringify!(#left),
-                                    " and ",
-                                    stringify!(#right),
-                                    " are both ",
-                                    stringify!(#value),
-                                    " or neither is",
-                                ),
-                            ));
-                        }
+                match (#left, #right) {
+                    (Some(#left_binding), Some(#right_binding)) => {
+                        #left_binding #operator #right_binding
                     }
+                    _ => false,
                 }
             }
         }
-        Constraint::ImpliesEq {
-            selector,
-            selected,
-            field,
-            required,
-        } => quote! {
-            if #selector == #selected && #field != #required {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#selector),
-                        " == ",
-                        stringify!(#selected),
-                        " implies ",
-                        stringify!(#field),
-                        " == ",
-                        stringify!(#required),
-                    ),
-                ));
-            }
-        },
-        Constraint::ImpliesRange {
-            selector,
-            selected,
-            field,
-            minimum,
-            maximum,
-        } => quote! {
-            if #selector == #selected && !((#minimum)..=(#maximum)).contains(&#field) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#selector),
-                        " == ",
-                        stringify!(#selected),
-                        " implies ",
-                        stringify!(#minimum),
-                        " <= ",
-                        stringify!(#field),
-                        " <= ",
-                        stringify!(#maximum),
-                    ),
-                ));
-            }
-        },
-        Constraint::ImpliesOneOfOrRange {
-            selector,
-            selected,
-            field,
-            allowed,
-            minimum,
-            maximum,
-        } => quote! {
-            if #selector == #selected
-                && ![#(#allowed),*].contains(&#field)
-                && !((#minimum)..=(#maximum)).contains(&#field)
-            {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#selector),
-                        " == ",
-                        stringify!(#selected),
-                        " implies ",
-                        stringify!(#field),
-                        " in ",
-                        stringify!([#(#allowed),*]),
-                        " or ",
-                        stringify!(#minimum),
-                        " <= ",
-                        stringify!(#field),
-                        " <= ",
-                        stringify!(#maximum),
-                    ),
-                ));
-            }
-        },
-        Constraint::ImpliesLenAtLeast {
-            selector,
-            selected,
-            field,
-            minimum,
-        } => quote! {
-            if #selector == #selected && #field.len() < (#minimum as usize) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#selector),
-                        " == ",
-                        stringify!(#selected),
-                        " implies ",
-                        stringify!(#field),
-                        ".len() >= ",
-                        stringify!(#minimum),
-                    ),
-                ));
-            }
-        },
-        Constraint::ImpliesLenEq {
-            selector,
-            selected,
-            field,
-            required,
-        } => quote! {
-            if #selector == #selected && #field.len() != (#required as usize) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#selector),
-                        " == ",
-                        stringify!(#selected),
-                        " implies ",
-                        stringify!(#field),
-                        ".len() == ",
-                        stringify!(#required),
-                    ),
-                ));
-            }
-        },
-        Constraint::LenEq { field, expected } => quote! {
-            if #field.len() != usize::from(#expected) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#field),
-                        ".len() == usize::from(",
-                        stringify!(#expected),
-                        ")",
-                    ),
-                ));
-            }
-        },
-        Constraint::LenAtMost { field, maximum } => quote! {
-            if #field.len() > usize::from(#maximum) {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(stringify!(#field), ".len() <= ", stringify!(#maximum)),
-                ));
-            }
-        },
-        Constraint::OffsetLenAtMost {
-            offset,
-            field,
-            total,
-        } => quote! {
-            if usize::from(#offset)
-                .checked_add(#field.len())
-                .map_or(true, |end| end > usize::from(#total))
-            {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(
-                        stringify!(#offset),
-                        " + ",
-                        stringify!(#field),
-                        ".len() <= ",
-                        stringify!(#total),
-                    ),
-                ));
-            }
-        },
-        Constraint::NonEmpty { field } => quote! {
-            if #field.is_empty() {
-                return Err(crate::vendor::command::HciConstraintError::new(
-                    stringify!(#command),
-                    concat!(stringify!(#field), " is not empty"),
-                ));
-            }
-        },
+        _ => unreachable!("schema parser rejects mixed scalar and count comparisons"),
+    }
+}
+
+fn expand_comparison_operator(operator: Comparison) -> TokenStream2 {
+    match operator {
+        Comparison::Eq => quote!(==),
+        Comparison::Ne => quote!(!=),
+        Comparison::Lt => quote!(<),
+        Comparison::Le => quote!(<=),
+        Comparison::Gt => quote!(>),
+        Comparison::Ge => quote!(>=),
+    }
+}
+
+fn expand_scalar_operand(operand: &ScalarOperand) -> TokenStream2 {
+    match operand {
+        ScalarOperand::Field(field) => quote!(#field),
+        ScalarOperand::Value(value) => quote!(#value),
+    }
+}
+
+fn expand_count_operand(operand: &CountOperand) -> TokenStream2 {
+    match operand {
+        CountOperand::Field(field) => quote!(Some(usize::from(#field))),
+        CountOperand::Length(field) => quote!(Some(#field.len())),
+        CountOperand::Value(value) => {
+            quote!(::core::convert::TryInto::<usize>::try_into(#value).ok())
+        }
+        CountOperand::CheckedAdd(operands) => {
+            let mut operands = operands.iter();
+            let first = expand_count_operand(
+                operands
+                    .next()
+                    .expect("checked_add contains at least two operands"),
+            );
+            operands.fold(first, |sum, operand| {
+                let operand = expand_count_operand(operand);
+                let sum_binding = format_ident!("__stm32wb_count_sum", span = Span::mixed_site());
+                let operand_binding =
+                    format_ident!("__stm32wb_count_operand", span = Span::mixed_site());
+                quote! {
+                    (#sum).and_then(|#sum_binding| {
+                        (#operand).and_then(|#operand_binding| {
+                            #sum_binding.checked_add(#operand_binding)
+                        })
+                    })
+                }
+            })
+        }
     }
 }
 

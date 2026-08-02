@@ -52,12 +52,8 @@ stm32wb_hci_macros::vendor_cmd! {
             options: SysResetOptions,
         };
         Constraints = {
-            implies_eq(
-                mode,
-                SysResetMode::NoOptionsChange,
-                options,
-                SysResetOptions::empty()
-            );
+            self.mode == SysResetMode::NoOptionsChange
+                implies self.options == SysResetOptions::empty();
         };
         Completion = CommandComplete;
         Return = ();
@@ -87,7 +83,7 @@ stm32wb_hci_macros::vendor_cmd! {
             },
         };
         Constraints = {
-            len_eq(data, offset);
+            self.data.len() == self.offset;
         };
         Completion = CommandComplete;
         Return = ();

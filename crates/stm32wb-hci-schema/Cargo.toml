@@ -8,5 +8,6 @@ repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
 
 [dependencies]
 proc-macro2.workspace = true
+quote = "1"
 syn = { workspace = true, features = ["full", "parsing", "visit"] }
 toml.workspace = true

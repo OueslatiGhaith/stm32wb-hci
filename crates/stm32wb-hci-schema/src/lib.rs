@@ -19,12 +19,18 @@ pub use wire_type::{
 use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
+use quote::ToTokens;
 use syn::{
-    Expr, LitInt, Type,
+    Expr, LitInt, LitStr, Type,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     visit::{self, Visit},
 };
+
+mod constraint_keyword {
+    syn::custom_keyword!(iff);
+    syn::custom_keyword!(implies);
+}
 
 /// A parsed `vendor_cmd!` declaration.
 pub struct VendorCommand {
@@ -582,14 +588,14 @@ pub enum Completion {
 
 /// Parsed constraints in declaration order.
 pub struct Constraints {
-    nodes: Vec<Constraint>,
+    constraints: Vec<Constraint>,
     referenced_fields: BTreeSet<String>,
 }
 
 impl Constraints {
-    /// Structured constraint nodes in source order.
-    pub fn nodes(&self) -> &[Constraint] {
-        &self.nodes
+    /// Normalized constraints in declaration order.
+    pub fn constraints(&self) -> &[Constraint] {
+        &self.constraints
     }
 
     /// Every request field referenced by the constraint body.
@@ -598,100 +604,129 @@ impl Constraints {
     }
 }
 
-/// One semantic relationship between command parameters.
-pub enum Constraint {
-    /// Require `minimum <= maximum`.
-    Ordered {
-        minimum: syn::Ident,
-        maximum: syn::Ident,
+/// One independently reported predicate.
+pub struct Constraint {
+    predicate: Predicate,
+    diagnostic: LitStr,
+}
+
+impl Constraint {
+    /// Normalized predicate evaluated by this constraint.
+    pub const fn predicate(&self) -> &Predicate {
+        &self.predicate
+    }
+
+    /// Stable public diagnostic emitted when the predicate is false.
+    pub const fn diagnostic(&self) -> &LitStr {
+        &self.diagnostic
+    }
+}
+
+/// Boolean predicate algebra shared by macro expansion and schema tooling.
+pub enum Predicate {
+    /// Compare two scalar or count operands.
+    Compare {
+        /// Left operand.
+        left: Operand,
+        /// Comparison operator.
+        operator: Comparison,
+        /// Right operand.
+        right: Operand,
     },
-    /// Require ordering only when both operands are inside the inclusive range.
-    OrderedWhenInRange {
-        minimum: syn::Ident,
-        maximum: syn::Ident,
-        range_minimum: Expr,
-        range_maximum: Expr,
-    },
-    /// Require a field to be inside an inclusive range.
-    Range {
-        field: syn::Ident,
+    /// Require a scalar operand to be inside a range.
+    InRange {
+        /// Value being checked.
+        value: ScalarOperand,
+        /// Inclusive lower bound.
         minimum: Expr,
+        /// Upper bound.
         maximum: Expr,
+        /// Whether the upper bound is included.
+        end: RangeEnd,
     },
-    /// Require a field to equal one expression from a nonempty set.
-    OneOf {
-        field: syn::Ident,
+    /// Require a scalar operand to equal one expression from a nonempty set.
+    InSet {
+        /// Value being checked.
+        value: ScalarOperand,
+        /// Allowed values.
         allowed: Vec<Expr>,
     },
-    /// Require a field to be in a sparse set or an inclusive range.
-    OneOfOrRange {
-        field: syn::Ident,
-        allowed: Vec<Expr>,
-        minimum: Expr,
-        maximum: Expr,
+    /// Require a field to be empty.
+    Empty { field: syn::Ident },
+    /// Require every child predicate.
+    All(Vec<Predicate>),
+    /// Require at least one child predicate.
+    Any(Vec<Predicate>),
+    /// Negate one predicate.
+    Not(Box<Predicate>),
+    /// Require the consequence whenever the condition is true.
+    Implies {
+        /// Conditional predicate.
+        condition: Box<Predicate>,
+        /// Predicate required by the condition.
+        consequence: Box<Predicate>,
     },
-    /// Require both fields to equal a sentinel value, or neither field to do so.
-    PairedValue {
-        left: syn::Ident,
-        right: syn::Ident,
-        value: Expr,
+    /// Require two predicates to have the same truth value.
+    Iff {
+        /// Left predicate.
+        left: Box<Predicate>,
+        /// Right predicate.
+        right: Box<Predicate>,
     },
-    /// Require an exact dependent value when a selector has one value.
-    ImpliesEq {
-        selector: syn::Ident,
-        selected: Expr,
-        field: syn::Ident,
-        required: Expr,
-    },
-    /// Require a dependent field range when a selector has one value.
-    ImpliesRange {
-        selector: syn::Ident,
-        selected: Expr,
-        field: syn::Ident,
-        minimum: Expr,
-        maximum: Expr,
-    },
-    /// Require a dependent field to be in a sparse set or range when selected.
-    ImpliesOneOfOrRange {
-        selector: syn::Ident,
-        selected: Expr,
-        field: syn::Ident,
-        allowed: Vec<Expr>,
-        minimum: Expr,
-        maximum: Expr,
-    },
-    /// Require a dependent collection's minimum length when selected.
-    ImpliesLenAtLeast {
-        selector: syn::Ident,
-        selected: Expr,
-        field: syn::Ident,
-        minimum: Expr,
-    },
-    /// Require a dependent collection's exact length when selected.
-    ImpliesLenEq {
-        selector: syn::Ident,
-        selected: Expr,
-        field: syn::Ident,
-        required: Expr,
-    },
-    /// Require a collection length to equal a semantic scalar field.
-    LenEq {
-        field: syn::Ident,
-        expected: syn::Ident,
-    },
-    /// Require a collection's runtime length not to exceed another field.
-    LenAtMost {
-        field: syn::Ident,
-        maximum: syn::Ident,
-    },
-    /// Require `offset + collection.len()` not to exceed a total-length field.
-    OffsetLenAtMost {
-        offset: syn::Ident,
-        field: syn::Ident,
-        total: syn::Ident,
-    },
-    /// Require a collection or bitflags field to be nonempty.
-    NonEmpty { field: syn::Ident },
+}
+
+/// Operand accepted by a comparison predicate.
+pub enum Operand {
+    /// Value preserving its semantic Rust type.
+    Scalar(ScalarOperand),
+    /// Value normalized to `usize` for length arithmetic.
+    Count(CountOperand),
+}
+
+/// A semantic scalar operand.
+pub enum ScalarOperand {
+    /// Command parameter.
+    Field(syn::Ident),
+    /// Constant or other Rust expression.
+    Value(Expr),
+}
+
+/// A nonnegative operand used for lengths and checked arithmetic.
+pub enum CountOperand {
+    /// Command parameter converted with `usize::from`.
+    Field(syn::Ident),
+    /// Runtime length of a command parameter.
+    Length(syn::Ident),
+    /// Expression converted with `as usize`.
+    Value(Expr),
+    /// Overflow-checked sum of two or more count operands.
+    CheckedAdd(Vec<CountOperand>),
+}
+
+/// Comparison operator in the normalized predicate algebra.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Comparison {
+    /// Equal.
+    Eq,
+    /// Not equal.
+    Ne,
+    /// Less than.
+    Lt,
+    /// Less than or equal.
+    Le,
+    /// Greater than.
+    Gt,
+    /// Greater than or equal.
+    Ge,
+}
+
+/// Upper-bound behavior for a membership range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RangeEnd {
+    /// `minimum..maximum` excludes `maximum`.
+    Exclusive,
+    /// `minimum..=maximum` includes `maximum`.
+    Inclusive,
 }
 
 struct Invocation {
@@ -1457,210 +1492,345 @@ impl Parse for Constraints {
         if input.is_empty() {
             return Err(input.error("Constraints must declare at least one check"));
         }
-        let mut nodes = Vec::new();
-        let mut referenced_fields = BTreeSet::new();
+        let mut constraints = Vec::new();
         while !input.is_empty() {
-            let kind = input.parse::<syn::Ident>()?;
-            let arguments;
-            syn::parenthesized!(arguments in input);
-
-            let node = match kind.to_string().as_str() {
-                "ordered" => {
-                    let minimum = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::Ordered { minimum, maximum }
-                }
-                "ordered_when_in_range" => {
-                    let minimum = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    let (range_minimum, range_maximum) = parse_expression_pair(&arguments)?;
-                    Constraint::OrderedWhenInRange {
-                        minimum,
-                        maximum,
-                        range_minimum,
-                        range_maximum,
-                    }
-                }
-                "range" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
-                    Constraint::Range {
-                        field,
-                        minimum,
-                        maximum,
-                    }
-                }
-                "one_of" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let allowed = parse_nonempty_expression_list(&arguments, "one_of")?;
-                    Constraint::OneOf { field, allowed }
-                }
-                "one_of_or_range" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let allowed = parse_nonempty_expression_list(&arguments, "one_of_or_range")?;
-                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
-                    Constraint::OneOfOrRange {
-                        field,
-                        allowed,
-                        minimum,
-                        maximum,
-                    }
-                }
-                "paired_value" => {
-                    let left = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let right = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let value = arguments.parse::<Expr>()?;
-                    Constraint::PairedValue { left, right, value }
-                }
-                "implies_eq" => {
-                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let selected = arguments.parse::<Expr>()?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let required = arguments.parse::<Expr>()?;
-                    Constraint::ImpliesEq {
-                        selector,
-                        selected,
-                        field,
-                        required,
-                    }
-                }
-                "implies_range" => {
-                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let selected = arguments.parse::<Expr>()?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
-                    Constraint::ImpliesRange {
-                        selector,
-                        selected,
-                        field,
-                        minimum,
-                        maximum,
-                    }
-                }
-                "implies_one_of_or_range" => {
-                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let selected = arguments.parse::<Expr>()?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let allowed =
-                        parse_nonempty_expression_list(&arguments, "implies_one_of_or_range")?;
-                    let (minimum, maximum) = parse_expression_pair(&arguments)?;
-                    Constraint::ImpliesOneOfOrRange {
-                        selector,
-                        selected,
-                        field,
-                        allowed,
-                        minimum,
-                        maximum,
-                    }
-                }
-                "implies_len_at_least" => {
-                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let selected = arguments.parse::<Expr>()?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let minimum = arguments.parse::<Expr>()?;
-                    Constraint::ImpliesLenAtLeast {
-                        selector,
-                        selected,
-                        field,
-                        minimum,
-                    }
-                }
-                "implies_len_eq" => {
-                    let selector = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let selected = arguments.parse::<Expr>()?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let required = arguments.parse::<Expr>()?;
-                    Constraint::ImpliesLenEq {
-                        selector,
-                        selected,
-                        field,
-                        required,
-                    }
-                }
-                "len_eq" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let expected = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::LenEq { field, expected }
-                }
-                "len_at_most" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let maximum = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::LenAtMost { field, maximum }
-                }
-                "offset_len_at_most" => {
-                    let offset = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    arguments.parse::<syn::Token![,]>()?;
-                    let total = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::OffsetLenAtMost {
-                        offset,
-                        field,
-                        total,
-                    }
-                }
-                "non_empty" => {
-                    let field = parse_field_reference(&arguments, &mut referenced_fields)?;
-                    Constraint::NonEmpty { field }
-                }
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        kind,
-                        "unknown declarative constraint",
-                    ));
-                }
+            let attrs = input.call(syn::Attribute::parse_outer)?;
+            let declared_diagnostic = parse_constraint_diagnostic(&attrs)?;
+            let predicate = input.parse::<Predicate>()?;
+            let diagnostic = declared_diagnostic
+                .unwrap_or_else(|| LitStr::new(&predicate_text(&predicate), Span::call_site()));
+            let constraint = Constraint {
+                predicate,
+                diagnostic,
             };
-
-            if !arguments.is_empty() {
-                return Err(arguments.error("unexpected tokens in declarative constraint"));
-            }
             input.parse::<syn::Token![;]>()?;
-            nodes.push(node);
+            constraints.push(constraint);
         }
+
+        let mut referenced_fields = BTreeSet::new();
+        for constraint in &constraints {
+            collect_predicate_fields(&constraint.predicate, &mut referenced_fields);
+        }
+
         Ok(Self {
-            nodes,
+            constraints,
             referenced_fields,
         })
     }
 }
 
-fn parse_field_reference(
-    input: ParseStream<'_>,
-    fields: &mut BTreeSet<String>,
-) -> syn::Result<syn::Ident> {
-    let field = input.parse::<syn::Ident>()?;
-    fields.insert(field.to_string());
-    Ok(field)
+fn parse_constraint_diagnostic(attrs: &[syn::Attribute]) -> syn::Result<Option<LitStr>> {
+    let mut diagnostic = None;
+    for attr in attrs {
+        if !attr.path().is_ident("diagnostic") {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "constraints accept only `diagnostic` attributes",
+            ));
+        }
+        if diagnostic.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "constraint declares more than one diagnostic",
+            ));
+        }
+        diagnostic = Some(attr.parse_args::<LitStr>()?);
+    }
+    Ok(diagnostic)
 }
 
-fn parse_expression_pair(input: ParseStream<'_>) -> syn::Result<(Expr, Expr)> {
-    input.parse::<syn::Token![,]>()?;
-    let first = input.parse::<Expr>()?;
-    input.parse::<syn::Token![,]>()?;
-    let second = input.parse::<Expr>()?;
-    Ok((first, second))
+impl Parse for Predicate {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        parse_iff_predicate(input)
+    }
+}
+
+fn parse_iff_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    let left = parse_implies_predicate(input)?;
+    if !input.peek(constraint_keyword::iff) {
+        return Ok(left);
+    }
+    input.parse::<constraint_keyword::iff>()?;
+    let right = parse_implies_predicate(input)?;
+    if input.peek(constraint_keyword::iff) {
+        return Err(input.error("`iff` is non-associative; add parentheses"));
+    }
+    Ok(Predicate::Iff {
+        left: Box::new(left),
+        right: Box::new(right),
+    })
+}
+
+fn parse_implies_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    let condition = parse_or_predicate(input)?;
+    if !input.peek(constraint_keyword::implies) {
+        return Ok(condition);
+    }
+    input.parse::<constraint_keyword::implies>()?;
+    let consequence = parse_implies_predicate(input)?;
+    Ok(Predicate::Implies {
+        condition: Box::new(condition),
+        consequence: Box::new(consequence),
+    })
+}
+
+fn parse_or_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    let first = parse_and_predicate(input)?;
+    if !input.peek(syn::Token![||]) {
+        return Ok(first);
+    }
+    let mut predicates = vec![first];
+    while input.peek(syn::Token![||]) {
+        input.parse::<syn::Token![||]>()?;
+        predicates.push(parse_and_predicate(input)?);
+    }
+    Ok(Predicate::Any(predicates))
+}
+
+fn parse_and_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    let first = parse_unary_predicate(input)?;
+    if !input.peek(syn::Token![&&]) {
+        return Ok(first);
+    }
+    let mut predicates = vec![first];
+    while input.peek(syn::Token![&&]) {
+        input.parse::<syn::Token![&&]>()?;
+        predicates.push(parse_unary_predicate(input)?);
+    }
+    Ok(Predicate::All(predicates))
+}
+
+fn parse_unary_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    if input.peek(syn::Token![!]) && !input.peek(syn::Token![!=]) {
+        input.parse::<syn::Token![!]>()?;
+        return Ok(Predicate::Not(Box::new(parse_unary_predicate(input)?)));
+    }
+    if input.peek(syn::token::Paren) {
+        let nested;
+        syn::parenthesized!(nested in input);
+        let predicate = parse_iff_predicate(&nested)?;
+        if !nested.is_empty() {
+            return Err(nested.error("unexpected tokens in parenthesized constraint"));
+        }
+        return Ok(predicate);
+    }
+    parse_atomic_predicate(input)
+}
+
+enum ParsedConstraintValue {
+    Operand(Operand),
+    Empty(syn::Ident),
+}
+
+fn parse_atomic_predicate(input: ParseStream<'_>) -> syn::Result<Predicate> {
+    let left = parse_additive_value(input)?;
+    if input.peek(syn::Token![in]) {
+        input.parse::<syn::Token![in]>()?;
+        let ParsedConstraintValue::Operand(Operand::Scalar(value)) = left else {
+            return Err(input.error("membership requires a scalar field or value"));
+        };
+        return parse_membership(input, value);
+    }
+    if let Some(operator) = parse_comparison_operator(input)? {
+        let right = parse_additive_value(input)?;
+        let (left, right) = normalize_comparison_operands(left, right, input)?;
+        return Ok(Predicate::Compare {
+            left,
+            operator,
+            right,
+        });
+    }
+    match left {
+        ParsedConstraintValue::Empty(field) => Ok(Predicate::Empty { field }),
+        ParsedConstraintValue::Operand(_) => {
+            Err(input.error("expected a comparison, membership test, or `.is_empty()` predicate"))
+        }
+    }
+}
+
+fn parse_membership(input: ParseStream<'_>, value: ScalarOperand) -> syn::Result<Predicate> {
+    if input.peek(syn::token::Bracket) {
+        let allowed = parse_nonempty_expression_list(input, "membership")?;
+        return Ok(Predicate::InSet { value, allowed });
+    }
+    let minimum = parse_constant_expression(input)?;
+    let end = if input.peek(syn::Token![..=]) {
+        input.parse::<syn::Token![..=]>()?;
+        RangeEnd::Inclusive
+    } else if input.peek(syn::Token![..]) {
+        input.parse::<syn::Token![..]>()?;
+        RangeEnd::Exclusive
+    } else {
+        return Err(input.error("membership expects a set or `minimum..maximum` range"));
+    };
+    let maximum = parse_constant_expression(input)?;
+    Ok(Predicate::InRange {
+        value,
+        minimum,
+        maximum,
+        end,
+    })
+}
+
+fn parse_comparison_operator(input: ParseStream<'_>) -> syn::Result<Option<Comparison>> {
+    let operator = if input.peek(syn::Token![==]) {
+        input.parse::<syn::Token![==]>()?;
+        Comparison::Eq
+    } else if input.peek(syn::Token![!=]) {
+        input.parse::<syn::Token![!=]>()?;
+        Comparison::Ne
+    } else if input.peek(syn::Token![<=]) {
+        input.parse::<syn::Token![<=]>()?;
+        Comparison::Le
+    } else if input.peek(syn::Token![>=]) {
+        input.parse::<syn::Token![>=]>()?;
+        Comparison::Ge
+    } else if input.peek(syn::Token![<]) {
+        input.parse::<syn::Token![<]>()?;
+        Comparison::Lt
+    } else if input.peek(syn::Token![>]) {
+        input.parse::<syn::Token![>]>()?;
+        Comparison::Gt
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(operator))
+}
+
+fn parse_additive_value(input: ParseStream<'_>) -> syn::Result<ParsedConstraintValue> {
+    let first = parse_constraint_value(input)?;
+    if !input.peek(syn::Token![+]) {
+        return Ok(first);
+    }
+    let mut operands = vec![into_count_operand(first, input)?];
+    while input.peek(syn::Token![+]) {
+        input.parse::<syn::Token![+]>()?;
+        let operand = into_count_operand(parse_constraint_value(input)?, input)?;
+        match operand {
+            CountOperand::CheckedAdd(nested) => operands.extend(nested),
+            operand => operands.push(operand),
+        }
+    }
+    Ok(ParsedConstraintValue::Operand(Operand::Count(
+        CountOperand::CheckedAdd(operands),
+    )))
+}
+
+fn parse_constraint_value(input: ParseStream<'_>) -> syn::Result<ParsedConstraintValue> {
+    if input.peek(syn::Token![self]) {
+        input.parse::<syn::Token![self]>()?;
+        input.parse::<syn::Token![.]>()?;
+        let field = input.parse::<syn::Ident>()?;
+        if !input.peek(syn::Token![.]) {
+            return Ok(ParsedConstraintValue::Operand(Operand::Scalar(
+                ScalarOperand::Field(field),
+            )));
+        }
+        input.parse::<syn::Token![.]>()?;
+        let method = input.parse::<syn::Ident>()?;
+        let arguments;
+        syn::parenthesized!(arguments in input);
+        if !arguments.is_empty() {
+            return Err(arguments.error("constraint field methods take no arguments"));
+        }
+        return match method.to_string().as_str() {
+            "len" => Ok(ParsedConstraintValue::Operand(Operand::Count(
+                CountOperand::Length(field),
+            ))),
+            "is_empty" => Ok(ParsedConstraintValue::Empty(field)),
+            _ => Err(syn::Error::new_spanned(
+                method,
+                "constraints support only `.len()` and `.is_empty()` field methods",
+            )),
+        };
+    }
+    let expression = parse_constant_expression(input)?;
+    Ok(ParsedConstraintValue::Operand(Operand::Scalar(
+        ScalarOperand::Value(expression),
+    )))
+}
+
+fn normalize_comparison_operands(
+    left: ParsedConstraintValue,
+    right: ParsedConstraintValue,
+    input: ParseStream<'_>,
+) -> syn::Result<(Operand, Operand)> {
+    let ParsedConstraintValue::Operand(left) = left else {
+        return Err(input.error("`.is_empty()` cannot be used as a comparison operand"));
+    };
+    let ParsedConstraintValue::Operand(right) = right else {
+        return Err(input.error("`.is_empty()` cannot be used as a comparison operand"));
+    };
+    match (left, right) {
+        (Operand::Count(left), Operand::Count(right)) => {
+            Ok((Operand::Count(left), Operand::Count(right)))
+        }
+        (Operand::Scalar(left), Operand::Scalar(right)) => {
+            Ok((Operand::Scalar(left), Operand::Scalar(right)))
+        }
+        (Operand::Count(left), Operand::Scalar(right)) => Ok((
+            Operand::Count(left),
+            Operand::Count(scalar_into_count(right)),
+        )),
+        (Operand::Scalar(left), Operand::Count(right)) => Ok((
+            Operand::Count(scalar_into_count(left)),
+            Operand::Count(right),
+        )),
+    }
+}
+
+fn into_count_operand(
+    value: ParsedConstraintValue,
+    input: ParseStream<'_>,
+) -> syn::Result<CountOperand> {
+    match value {
+        ParsedConstraintValue::Operand(Operand::Count(operand)) => Ok(operand),
+        ParsedConstraintValue::Operand(Operand::Scalar(operand)) => Ok(scalar_into_count(operand)),
+        ParsedConstraintValue::Empty(_) => {
+            Err(input.error("`.is_empty()` cannot be used in arithmetic"))
+        }
+    }
+}
+
+fn scalar_into_count(operand: ScalarOperand) -> CountOperand {
+    match operand {
+        ScalarOperand::Field(field) => CountOperand::Field(field),
+        ScalarOperand::Value(value) => CountOperand::Value(value),
+    }
+}
+
+fn parse_constant_expression(input: ParseStream<'_>) -> syn::Result<Expr> {
+    let mut tokens = TokenStream::new();
+    while !is_constraint_term_boundary(input) {
+        let token = input.parse::<TokenTree>()?;
+        tokens.extend([token]);
+    }
+    if tokens.is_empty() {
+        return Err(input.error("expected a constraint value"));
+    }
+    syn::parse2(tokens).map_err(|error| {
+        syn::Error::new(error.span(), format!("invalid constraint value: {error}"))
+    })
+}
+
+fn is_constraint_term_boundary(input: ParseStream<'_>) -> bool {
+    input.is_empty()
+        || input.peek(syn::Token![;])
+        || input.peek(syn::Token![,])
+        || input.peek(syn::Token![+])
+        || input.peek(syn::Token![==])
+        || input.peek(syn::Token![!=])
+        || input.peek(syn::Token![<=])
+        || input.peek(syn::Token![>=])
+        || input.peek(syn::Token![<])
+        || input.peek(syn::Token![>])
+        || input.peek(syn::Token![&&])
+        || input.peek(syn::Token![||])
+        || input.peek(syn::Token![..])
+        || input.peek(syn::Token![..=])
+        || input.peek(syn::Token![in])
+        || input.peek(constraint_keyword::implies)
+        || input.peek(constraint_keyword::iff)
 }
 
 fn parse_nonempty_expression_list(input: ParseStream<'_>, kind: &str) -> syn::Result<Vec<Expr>> {
@@ -1671,6 +1841,308 @@ fn parse_nonempty_expression_list(input: ParseStream<'_>, kind: &str) -> syn::Re
         return Err(allowed.error(format!("{kind} must declare at least one allowed value")));
     }
     Ok(values.into_iter().collect())
+}
+
+fn collect_predicate_fields(predicate: &Predicate, fields: &mut BTreeSet<String>) {
+    match predicate {
+        Predicate::Compare { left, right, .. } => {
+            collect_operand_fields(left, fields);
+            collect_operand_fields(right, fields);
+        }
+        Predicate::InRange { value, .. } | Predicate::InSet { value, .. } => {
+            collect_scalar_operand_fields(value, fields);
+        }
+        Predicate::Empty { field } => {
+            fields.insert(field.to_string());
+        }
+        Predicate::All(predicates) | Predicate::Any(predicates) => {
+            for predicate in predicates {
+                collect_predicate_fields(predicate, fields);
+            }
+        }
+        Predicate::Not(predicate) => collect_predicate_fields(predicate, fields),
+        Predicate::Implies {
+            condition,
+            consequence,
+        } => {
+            collect_predicate_fields(condition, fields);
+            collect_predicate_fields(consequence, fields);
+        }
+        Predicate::Iff { left, right } => {
+            collect_predicate_fields(left, fields);
+            collect_predicate_fields(right, fields);
+        }
+    }
+}
+
+fn collect_operand_fields(operand: &Operand, fields: &mut BTreeSet<String>) {
+    match operand {
+        Operand::Scalar(operand) => collect_scalar_operand_fields(operand, fields),
+        Operand::Count(operand) => collect_count_operand_fields(operand, fields),
+    }
+}
+
+fn collect_scalar_operand_fields(operand: &ScalarOperand, fields: &mut BTreeSet<String>) {
+    if let ScalarOperand::Field(field) = operand {
+        fields.insert(field.to_string());
+    }
+}
+
+fn collect_count_operand_fields(operand: &CountOperand, fields: &mut BTreeSet<String>) {
+    match operand {
+        CountOperand::Field(field) | CountOperand::Length(field) => {
+            fields.insert(field.to_string());
+        }
+        CountOperand::Value(_) => {}
+        CountOperand::CheckedAdd(operands) => {
+            for operand in operands {
+                collect_count_operand_fields(operand, fields);
+            }
+        }
+    }
+}
+
+fn expression_text(expression: &Expr) -> String {
+    expression.to_token_stream().to_string()
+}
+
+fn expression_list_text(expressions: &[Expr]) -> String {
+    let values = expressions
+        .iter()
+        .map(expression_text)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
+}
+
+fn predicate_text(predicate: &Predicate) -> String {
+    match predicate {
+        Predicate::Compare {
+            left,
+            operator,
+            right,
+        } => count_length_equality_text(left, *operator, right).unwrap_or_else(|| {
+            format!(
+                "{} {} {}",
+                operand_text(left),
+                comparison_text(*operator),
+                operand_text(right),
+            )
+        }),
+        Predicate::InRange {
+            value,
+            minimum,
+            maximum,
+            end,
+        } => range_predicate_text(value, minimum, maximum, *end),
+        Predicate::InSet { value, allowed } => format!(
+            "{} in {}",
+            scalar_operand_text(value),
+            expression_list_text(allowed),
+        ),
+        Predicate::Empty { field } => format!("{field} is empty"),
+        Predicate::All(predicates) => join_predicate_text(predicates, "and"),
+        Predicate::Any(predicates) => {
+            domain_union_text(predicates).unwrap_or_else(|| join_predicate_text(predicates, "or"))
+        }
+        Predicate::Not(predicate) => match predicate.as_ref() {
+            Predicate::Empty { field } => format!("{field} is not empty"),
+            predicate => format!("not ({})", predicate_text(predicate)),
+        },
+        Predicate::Implies {
+            condition,
+            consequence,
+        } => conditional_order_text(condition, consequence).unwrap_or_else(|| {
+            format!(
+                "{} implies {}",
+                predicate_text(condition),
+                predicate_text(consequence),
+            )
+        }),
+        Predicate::Iff { left, right } => paired_sentinel_text(left, right).unwrap_or_else(|| {
+            format!("({}) iff ({})", predicate_text(left), predicate_text(right),)
+        }),
+    }
+}
+
+fn count_length_equality_text(
+    left: &Operand,
+    operator: Comparison,
+    right: &Operand,
+) -> Option<String> {
+    let (
+        Operand::Count(CountOperand::Length(field)),
+        Comparison::Eq,
+        Operand::Count(CountOperand::Field(expected)),
+    ) = (left, operator, right)
+    else {
+        return None;
+    };
+    Some(format!("{field}.len() == usize::from({expected})"))
+}
+
+fn range_predicate_text(
+    value: &ScalarOperand,
+    minimum: &Expr,
+    maximum: &Expr,
+    end: RangeEnd,
+) -> String {
+    let upper_operator = match end {
+        RangeEnd::Exclusive => "<",
+        RangeEnd::Inclusive => "<=",
+    };
+    format!(
+        "{} <= {} {upper_operator} {}",
+        expression_text(minimum),
+        scalar_operand_text(value),
+        expression_text(maximum),
+    )
+}
+
+fn domain_union_text(predicates: &[Predicate]) -> Option<String> {
+    let [
+        Predicate::InSet {
+            value: ScalarOperand::Field(set_field),
+            allowed,
+        },
+        Predicate::InRange {
+            value: ScalarOperand::Field(range_field),
+            minimum,
+            maximum,
+            end,
+        },
+    ] = predicates
+    else {
+        return None;
+    };
+    if set_field != range_field {
+        return None;
+    }
+    let upper_operator = match end {
+        RangeEnd::Exclusive => "<",
+        RangeEnd::Inclusive => "<=",
+    };
+    Some(format!(
+        "{set_field} in {} or {} <= {range_field} {upper_operator} {}",
+        expression_list_text(allowed),
+        expression_text(minimum),
+        expression_text(maximum),
+    ))
+}
+
+fn paired_sentinel_text(left: &Predicate, right: &Predicate) -> Option<String> {
+    let Predicate::Compare {
+        left: Operand::Scalar(ScalarOperand::Field(left_field)),
+        operator: Comparison::Eq,
+        right: Operand::Scalar(ScalarOperand::Value(left_value)),
+    } = left
+    else {
+        return None;
+    };
+    let Predicate::Compare {
+        left: Operand::Scalar(ScalarOperand::Field(right_field)),
+        operator: Comparison::Eq,
+        right: Operand::Scalar(ScalarOperand::Value(right_value)),
+    } = right
+    else {
+        return None;
+    };
+    let left_value = expression_text(left_value);
+    if left_value != expression_text(right_value) {
+        return None;
+    }
+    Some(format!(
+        "{left_field} and {right_field} are both {left_value} or neither is"
+    ))
+}
+
+fn conditional_order_text(condition: &Predicate, consequence: &Predicate) -> Option<String> {
+    let Predicate::All(conditions) = condition else {
+        return None;
+    };
+    let [
+        Predicate::InRange {
+            value: ScalarOperand::Field(minimum_field),
+            minimum: first_minimum,
+            maximum: first_maximum,
+            end: RangeEnd::Inclusive,
+        },
+        Predicate::InRange {
+            value: ScalarOperand::Field(maximum_field),
+            minimum: second_minimum,
+            maximum: second_maximum,
+            end: RangeEnd::Inclusive,
+        },
+    ] = conditions.as_slice()
+    else {
+        return None;
+    };
+    let Predicate::Compare {
+        left: Operand::Scalar(ScalarOperand::Field(left_field)),
+        operator: Comparison::Le,
+        right: Operand::Scalar(ScalarOperand::Field(right_field)),
+    } = consequence
+    else {
+        return None;
+    };
+    let first_minimum = expression_text(first_minimum);
+    let first_maximum = expression_text(first_maximum);
+    if minimum_field != left_field
+        || maximum_field != right_field
+        || first_minimum != expression_text(second_minimum)
+        || first_maximum != expression_text(second_maximum)
+    {
+        return None;
+    }
+    Some(format!(
+        "{minimum_field} <= {maximum_field} when both are in {first_minimum}..={first_maximum}"
+    ))
+}
+
+fn join_predicate_text(predicates: &[Predicate], operator: &str) -> String {
+    predicates
+        .iter()
+        .map(|predicate| format!("({})", predicate_text(predicate)))
+        .collect::<Vec<_>>()
+        .join(&format!(" {operator} "))
+}
+
+fn operand_text(operand: &Operand) -> String {
+    match operand {
+        Operand::Scalar(operand) => scalar_operand_text(operand),
+        Operand::Count(operand) => count_operand_text(operand),
+    }
+}
+
+fn scalar_operand_text(operand: &ScalarOperand) -> String {
+    match operand {
+        ScalarOperand::Field(field) => field.to_string(),
+        ScalarOperand::Value(value) => expression_text(value),
+    }
+}
+
+fn count_operand_text(operand: &CountOperand) -> String {
+    match operand {
+        CountOperand::Field(field) => field.to_string(),
+        CountOperand::Length(field) => format!("{field}.len()"),
+        CountOperand::Value(value) => expression_text(value),
+        CountOperand::CheckedAdd(operands) => operands
+            .iter()
+            .map(count_operand_text)
+            .collect::<Vec<_>>()
+            .join(" + "),
+    }
+}
+
+const fn comparison_text(comparison: Comparison) -> &'static str {
+    match comparison {
+        Comparison::Eq => "==",
+        Comparison::Ne => "!=",
+        Comparison::Lt => "<",
+        Comparison::Le => "<=",
+        Comparison::Gt => ">",
+        Comparison::Ge => ">=",
+    }
 }
 impl Parse for Fields {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
@@ -2176,9 +2648,9 @@ mod tests {
                         },
                     };
                     Constraints = {
-                        range(limit, 0, 16);
-                        len_at_most(data, limit);
-                        non_empty(data);
+                        self.limit in 0..17;
+                        self.data.len() <= self.limit;
+                        !self.data.is_empty();
                     };
                     Completion = CommandStatus;
                 }
@@ -2213,15 +2685,38 @@ mod tests {
             constraints.referenced_fields(),
             &BTreeSet::from(["data".to_owned(), "limit".to_owned()])
         );
-        assert!(matches!(constraints.nodes()[0], Constraint::Range { .. }));
         assert!(matches!(
-            constraints.nodes()[1],
-            Constraint::LenAtMost { .. }
+            constraints.constraints()[0].predicate(),
+            Predicate::InRange {
+                end: RangeEnd::Exclusive,
+                ..
+            }
         ));
         assert!(matches!(
-            constraints.nodes()[2],
-            Constraint::NonEmpty { .. }
+            constraints.constraints()[1].predicate(),
+            Predicate::Compare {
+                left: Operand::Count(CountOperand::Length(_)),
+                operator: Comparison::Le,
+                right: Operand::Count(CountOperand::Field(_)),
+            }
         ));
+        assert!(matches!(
+            constraints.constraints()[2].predicate(),
+            Predicate::Not(predicate)
+                if matches!(predicate.as_ref(), Predicate::Empty { .. })
+        ));
+        assert_eq!(
+            constraints.constraints()[0].diagnostic().value(),
+            "0 <= limit < 17"
+        );
+        assert_eq!(
+            constraints.constraints()[1].diagnostic().value(),
+            "data.len() <= limit"
+        );
+        assert_eq!(
+            constraints.constraints()[2].diagnostic().value(),
+            "data is not empty"
+        );
     }
 
     #[test]
@@ -2239,7 +2734,7 @@ mod tests {
                         },
                     };
                     Constraints = {
-                        offset_len_at_most(offset, data, total);
+                        self.offset + self.data.len() <= self.total;
                     };
                     Completion = CommandComplete;
                     Return = ();
@@ -2254,9 +2749,17 @@ mod tests {
             &BTreeSet::from(["data".to_owned(), "offset".to_owned(), "total".to_owned(),])
         );
         assert!(matches!(
-            constraints.nodes(),
-            [Constraint::OffsetLenAtMost { .. }]
+            constraints.constraints()[0].predicate(),
+            Predicate::Compare {
+                left: Operand::Count(CountOperand::CheckedAdd(_)),
+                operator: Comparison::Le,
+                right: Operand::Count(CountOperand::Field(_)),
+            }
         ));
+        assert_eq!(
+            constraints.constraints()[0].diagnostic().value(),
+            "offset + data.len() <= total"
+        );
     }
 
     #[test]
@@ -2275,10 +2778,11 @@ mod tests {
                         },
                     };
                     Constraints = {
-                        implies_one_of_or_range(mode, 1, error, [8], 0x80, 0x9F);
-                        implies_len_at_least(mode, 2, data, 9);
-                        implies_len_eq(mode, 3, data, 6);
-                        len_eq(data, limit);
+                        self.mode == 1
+                            implies self.error in [8] || self.error in 0x80..=0x9F;
+                        self.mode == 2 implies self.data.len() >= 9;
+                        self.mode == 3 implies self.data.len() == 6;
+                        self.data.len() == self.limit;
                     };
                     Completion = CommandComplete;
                     Return = ();
@@ -2298,18 +2802,122 @@ mod tests {
             ])
         );
         assert!(matches!(
-            constraints.nodes()[0],
-            Constraint::ImpliesOneOfOrRange { .. }
+            constraints.constraints()[0].predicate(),
+            Predicate::Implies { consequence, .. }
+                if matches!(consequence.as_ref(), Predicate::Any(_))
         ));
         assert!(matches!(
-            constraints.nodes()[1],
-            Constraint::ImpliesLenAtLeast { .. }
+            constraints.constraints()[1].predicate(),
+            Predicate::Implies { consequence, .. }
+                if matches!(
+                    consequence.as_ref(),
+                    Predicate::Compare {
+                        left: Operand::Count(CountOperand::Length(_)),
+                        operator: Comparison::Ge,
+                        ..
+                    }
+                )
         ));
         assert!(matches!(
-            constraints.nodes()[2],
-            Constraint::ImpliesLenEq { .. }
+            constraints.constraints()[2].predicate(),
+            Predicate::Implies { consequence, .. }
+                if matches!(
+                    consequence.as_ref(),
+                    Predicate::Compare {
+                        left: Operand::Count(CountOperand::Length(_)),
+                        operator: Comparison::Eq,
+                        ..
+                    }
+                )
         ));
-        assert!(matches!(constraints.nodes()[3], Constraint::LenEq { .. }));
+        assert!(matches!(
+            constraints.constraints()[3].predicate(),
+            Predicate::Compare {
+                left: Operand::Count(CountOperand::Length(_)),
+                operator: Comparison::Eq,
+                right: Operand::Count(CountOperand::Field(_)),
+            }
+        ));
+        assert_eq!(
+            constraints.constraints()[0].diagnostic().value(),
+            "mode == 1 implies error in [8] or 0x80 <= error <= 0x9F"
+        );
+        assert_eq!(
+            constraints.constraints()[1].diagnostic().value(),
+            "mode == 2 implies data.len() >= 9"
+        );
+        assert_eq!(
+            constraints.constraints()[2].diagnostic().value(),
+            "mode == 3 implies data.len() == 6"
+        );
+        assert_eq!(
+            constraints.constraints()[3].diagnostic().value(),
+            "data.len() == usize::from(limit)"
+        );
+    }
+
+    #[test]
+    fn parses_compositional_predicate_algebra() {
+        let command = syn::parse_str::<VendorCommand>(
+            r#"
+                Normalized(cgid = 0x0, cid = 0x05) {
+                    Params<'a> = {
+                        selector: u8,
+                        minimum: u16,
+                        maximum: u16,
+                        offset: u8,
+                        total: u8,
+                        data: &'a [u8] => {
+                            kind: counted_bytes,
+                            count: u8,
+                            max_len: 16,
+                        },
+                    };
+                    Constraints = {
+                        self.selector == 1
+                            implies !self.data.is_empty()
+                                && self.offset + self.data.len() <= self.total;
+                        (self.minimum == 0) iff (self.maximum == 0);
+                        (self.minimum in 0x20..=0x4000
+                            && self.maximum in 0x20..=0x4000)
+                            implies self.minimum <= self.maximum;
+                    };
+                    Completion = CommandComplete;
+                    Return = ();
+                }
+            "#,
+        )
+        .unwrap();
+
+        let constraints = command.constraints.as_ref().unwrap();
+        assert_eq!(
+            constraints.referenced_fields(),
+            &BTreeSet::from([
+                "data".to_owned(),
+                "maximum".to_owned(),
+                "minimum".to_owned(),
+                "offset".to_owned(),
+                "selector".to_owned(),
+                "total".to_owned(),
+            ])
+        );
+        assert!(matches!(
+            constraints.constraints()[0].predicate(),
+            Predicate::Implies { consequence, .. }
+                if matches!(consequence.as_ref(), Predicate::All(predicates) if predicates.len() == 2)
+        ));
+        assert_eq!(
+            constraints.constraints()[0].diagnostic().value(),
+            "selector == 1 implies (data is not empty) and (offset + data.len() <= total)",
+        );
+        assert_eq!(
+            constraints.constraints()[1].diagnostic().value(),
+            "minimum and maximum are both 0 or neither is",
+        );
+        assert_eq!(
+            constraints.constraints()[2].diagnostic().value(),
+            "minimum <= maximum when both are in 0x20..=0x4000",
+        );
     }
 
     #[test]
@@ -2558,8 +3166,24 @@ mod tests {
                 "declares CommandStatus and must not declare Return",
             ),
             (
-                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { range(missing, 0, 1); }; Completion = CommandStatus; }",
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { self.value == self.missing; }; Completion = CommandStatus; }",
                 "unknown parameter(s): missing",
+            ),
+            (
+                "Bad(cgid = 0, cid = 1) { Params = { minimum: u8, maximum: u8, }; Constraints = { ordered(minimum, maximum); }; Completion = CommandStatus; }",
+                "expected a comparison, membership test, or `.is_empty()` predicate",
+            ),
+            (
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { self.value.is_empty() == 0; }; Completion = CommandStatus; }",
+                "`.is_empty()` cannot be used as a comparison operand",
+            ),
+            (
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { self.value + self.value.is_empty() <= self.value; }; Completion = CommandStatus; }",
+                "`.is_empty()` cannot be used in arithmetic",
+            ),
+            (
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { require(eq(field(value), value(1))); }; Completion = CommandStatus; }",
+                "expected a comparison, membership test, or `.is_empty()` predicate",
             ),
             (
                 "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = {}; Completion = CommandStatus; }",
