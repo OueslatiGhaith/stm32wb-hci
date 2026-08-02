@@ -7,10 +7,10 @@ forked from [bluetooth_hci](https://github.com/danielgallagher0/bluetooth-hci)
 This crate defines a pure Rust implementation of the [Bluetooth Host-Controller Interface](https://github.com/STMicroelectronics/STM32CubeWB/) for the STM32WB family of microcontrollers. It defines commands
 and events from the specification, and vendor-specific commands and events.
 
-## Firmware selection
+## Cube release and wireless binary selection
 
-One crate release can target several STM32WB wireless-firmware versions. Select exactly one
-firmware feature; `fw_1_24_0` is the default.
+One crate release can target several STM32CubeWB protocol releases. Select exactly one `fw_*`
+feature; `fw_1_24_0` is the default.
 
 The `[features]` table in `Cargo.toml` is the source of truth. To see the complete, current set, run:
 
@@ -29,18 +29,26 @@ The build script makes these internal conditional-compilation predicates availab
 `since` includes the named firmware. Do not use
 `--all-features`, because firmware features are intentionally mutually exclusive.
 
-## Firmware compliance
+## Wireless-binary compliance
 
-The `stm32wb-compliance` workspace tool compares the selected feature surface against the matching
-tag in a local STM32CubeWB clone. It reads tagged blobs with `git show`, so running it does not
-checkout, modify, or otherwise disturb `STM32CubeWB`.
+The `stm32wb-compliance` workspace tool compares the selected feature surface against an explicit
+`{Cube release, MCU family, stack profile}` target in a local STM32CubeWB clone. It reads tagged
+blobs with `git show`, so running it does not checkout, modify, or otherwise disturb
+`STM32CubeWB`.
+
+The generated C wrappers describe Cube's complete shared host interface. Binary membership is
+resolved separately from the same tag: `STM32WB_BLE_Wireless_Interface.html` supplies the
+BF/PO/LO/LB/BO command and event availability tables, and the selected family's wireless-binary
+release notes map those profiles to exact `.bin` names. The default target is the WB5x
+`BLE_Stack_full_extended` binary, for which Cube documents the complete interface.
 
 The compliance tool's [guide](crates/stm32wb-compliance/README.md) documents its
 internal normalized catalog, JSON report, and TOML exclusion policy.
 
 ```sh
 # STM32CubeWB is expected at ./STM32CubeWB by default.
-cargo run -p stm32wb-compliance -- check --firmware 1.15.0 --deny
+cargo run -p stm32wb-compliance -- check --release 1.15.0 \
+  --family wb5x --profile full-extended --deny
 
 # Discover every fw_* feature in Cargo.toml and check all of them.
 cargo run -p stm32wb-compliance -- check --all-supported --deny
@@ -51,8 +59,8 @@ inspect the report, or pass `--json` for machine-readable output. `--all-support
 canonical `fw_<major>_<minor>_<patch>` entries directly from the crate's `[features]` table, so
 adding a firmware feature automatically puts it in the compliance and CI loops.
 
-The checker reports the requested CubeWB tag, the tag object, and the resolved commit, making a
-result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
+The checker reports the requested CubeWB tag, the tag object, resolved commit, exact binary path,
+and binary Git blob, making a result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
 checked-in [TOML policy](crates/stm32wb-compliance/exclusions.toml). The policy requires a reason
 for every exception and rejects malformed, overlapping, unsupported-version, or stale entries; an
 exception must actively suppress a real coverage difference. System-channel events must be present

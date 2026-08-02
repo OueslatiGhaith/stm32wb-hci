@@ -8,7 +8,7 @@ mod firmware;
 mod wire_type;
 
 pub use firmware::{
-    FirmwareFeatureError, FirmwareManifestError, FirmwareVersion, FirmwareVersionError,
+    CubeRelease, FirmwareFeatureError, FirmwareManifestError, FirmwareVersion, FirmwareVersionError,
 };
 pub use wire_type::{
     BitflagsWireType, ClosedEnumWireType, CompositeWireType, OpenEnumWireType, OpenScalarWireType,

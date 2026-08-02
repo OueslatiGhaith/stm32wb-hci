@@ -3,18 +3,23 @@ use core::str::FromStr;
 use std::fs;
 use std::path::Path;
 
-/// An STM32CubeWB wireless coprocessor firmware version.
+/// An STM32CubeWB release used to select a tagged protocol source tree.
 ///
-/// The version matches the corresponding STM32CubeWB release tag:
-/// firmware `1.15.0` corresponds to tag `v1.15.0`.
+/// The release alone does not identify a wireless coprocessor binary. Release
+/// `1.15.0` corresponds to Cube tag `v1.15.0`; callers that make binary-level
+/// claims must also select an MCU family and stack profile.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct FirmwareVersion {
+pub struct CubeRelease {
     pub major: u16,
     pub minor: u16,
     pub patch: u16,
 }
 
-impl FirmwareVersion {
+/// Backwards-compatible name retained for Cargo feature/cfg code. New
+/// compliance-domain APIs should use [`CubeRelease`].
+pub type FirmwareVersion = CubeRelease;
+
+impl CubeRelease {
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -158,13 +163,13 @@ fn firmware_versions_from_manifest(manifest: &str) -> Result<Vec<FirmwareVersion
     Ok(features)
 }
 
-impl fmt::Display for FirmwareVersion {
+impl fmt::Display for CubeRelease {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
 
-impl FromStr for FirmwareVersion {
+impl FromStr for CubeRelease {
     type Err = FirmwareVersionError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -194,7 +199,7 @@ impl fmt::Display for FirmwareVersionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "expected a semantic firmware version such as 1.15.0, got {:?}",
+            "expected an STM32CubeWB release such as 1.15.0, got {:?}",
             self.0
         )
     }

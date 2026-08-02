@@ -6,6 +6,7 @@
 //! The normalized catalog and machine-readable check report are internal
 //! representations validated at their construction boundaries.
 
+mod availability;
 mod c_preprocessor;
 mod catalog;
 mod diff;
@@ -14,6 +15,7 @@ mod model;
 mod rust_cfg;
 mod rust_source;
 mod standard;
+mod target;
 mod vendor;
 mod wire;
 
@@ -31,7 +33,8 @@ pub use model::{
     CheckReport, CoverageDifference, CoverageEntry, CoverageOrigin, ProtocolCoverage,
     StandardHciCoverage,
 };
-pub use stm32wb_hci_schema::FirmwareVersion;
+pub use stm32wb_hci_schema::{CubeRelease, FirmwareVersion};
+pub use target::{ComplianceTarget, McuFamily, StackProfile, TargetParseError};
 pub use wire::{WireDifference, WireReport, WireUnavailable};
 
 use std::collections::BTreeMap;
@@ -42,7 +45,7 @@ use thiserror::Error;
 
 #[derive(Clone, Debug)]
 pub struct CheckOptions {
-    pub firmware: FirmwareVersion,
+    pub target: ComplianceTarget,
     pub cube_dir: PathBuf,
     pub crate_dir: PathBuf,
     pub skip_build: bool,
@@ -51,9 +54,9 @@ pub struct CheckOptions {
 }
 
 impl CheckOptions {
-    pub fn new(firmware: FirmwareVersion, crate_dir: PathBuf, cube_dir: PathBuf) -> Self {
+    pub fn new(target: ComplianceTarget, crate_dir: PathBuf, cube_dir: PathBuf) -> Self {
         Self {
-            firmware,
+            target,
             cube_dir,
             crate_dir,
             skip_build: false,
@@ -67,14 +70,14 @@ impl CheckOptions {
 /// generated STM32CubeWB API at the matching tag.
 pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     if !options.skip_build {
-        cargo_check(&options.crate_dir, &options.firmware.feature_name())?;
+        cargo_check(&options.crate_dir, &options.target.release.feature_name())?;
     }
 
-    let catalog = load_catalog(&options.cube_dir, options.firmware)?;
-    let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.firmware)
+    let catalog = load_catalog(&options.cube_dir, options.target)?;
+    let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.target.release)
         .map_err(ComplianceError::Source)?;
     let local_standard_hci_declarations =
-        standard::load_local_standard_commands(&options.crate_dir, options.firmware)
+        standard::load_local_standard_commands(&options.crate_dir, options.target.release)
             .map_err(ComplianceError::Source)?;
     let local_standard_hci_commands = standard::coverage_entries(&local_standard_hci_declarations);
 
@@ -89,7 +92,7 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     let active_api = rust_catalog.coverage();
 
     Ok(CheckReport::new(
-        options.firmware,
+        options.target,
         vendor,
         active_api,
         standard_hci,
@@ -100,14 +103,18 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     ))
 }
 
-/// Load the normalized generated protocol catalog for one firmware version.
+/// Load the normalized protocol catalog for one exact wireless-binary target.
 /// This does not build or inspect the Rust crate, so it can be used by release
 /// comparison tooling independently of feature compliance checks.
 pub fn load_catalog(
     cube_dir: &Path,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
 ) -> Result<CatalogSchema, ComplianceError> {
-    vendor::load_vendor_catalog(cube_dir, &firmware.cube_tag()).map_err(ComplianceError::Source)
+    let mut catalog =
+        vendor::load_vendor_catalog(cube_dir, target).map_err(ComplianceError::Source)?;
+    availability::resolve_target_catalog(cube_dir, target, &mut catalog)
+        .map_err(ComplianceError::Source)?;
+    Ok(catalog)
 }
 
 /// Locate the crate root from the current directory or one of its parents.
@@ -190,7 +197,11 @@ mod tests {
     #[test]
     fn check_options_do_not_hide_events_without_a_policy() {
         let options = CheckOptions::new(
-            FirmwareVersion::new(1, 17, 1),
+            ComplianceTarget::new(
+                FirmwareVersion::new(1, 17, 1),
+                McuFamily::Wb5x,
+                StackProfile::FullExtended,
+            ),
             PathBuf::from("crate"),
             PathBuf::from("cube"),
         );

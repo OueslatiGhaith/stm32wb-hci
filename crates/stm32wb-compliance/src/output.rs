@@ -23,13 +23,19 @@ pub(super) fn version_diff_to_json(
     serde_json::to_string(&VersionDiffJson {
         mode: "version-diff",
         from: DiffEndpointJson {
-            firmware: from.to_string(),
+            cube_release: from.to_string(),
             feature: from.feature_name(),
+            mcu_family: diff.from.mcu_family.to_string(),
+            stack_profile: diff.from.stack_profile.to_string(),
+            binary: &diff.from.binary,
             cube_provenance: cube_provenance_json(from_provenance, display_root),
         },
         to: DiffEndpointJson {
-            firmware: to.to_string(),
+            cube_release: to.to_string(),
             feature: to.feature_name(),
+            mcu_family: diff.to.mcu_family.to_string(),
+            stack_profile: diff.to.stack_profile.to_string(),
+            binary: &diff.to.binary,
             cube_provenance: cube_provenance_json(to_provenance, display_root),
         },
         commands: &diff.commands,
@@ -49,8 +55,11 @@ struct VersionDiffJson<'a> {
 
 #[derive(Serialize)]
 struct DiffEndpointJson<'a> {
-    firmware: String,
+    cube_release: String,
     feature: String,
+    mcu_family: String,
+    stack_profile: String,
+    binary: &'a str,
     cube_provenance: CubeProvenanceJson<'a>,
 }
 
@@ -65,8 +74,13 @@ pub(super) fn diff_to_human(
     let mut output = String::new();
     let _ = writeln!(
         output,
-        "STM32CubeWB version diff: {from} ({}) -> {to} ({})",
+        "STM32CubeWB target diff: {from} ({}) -> {to} ({})",
         diff.from.cube_tag, diff.to.cube_tag
+    );
+    let _ = writeln!(
+        output,
+        "target: {} / {}",
+        diff.from.mcu_family, diff.from.stack_profile
     );
     let _ = writeln!(
         output,
@@ -75,13 +89,19 @@ pub(super) fn diff_to_human(
     );
     let _ = writeln!(
         output,
-        "  from: {} ({})",
-        from_provenance.tag, from_provenance.commit
+        "  from: {} ({}) / {} (blob {})",
+        from_provenance.tag,
+        from_provenance.commit,
+        from_provenance.binary_path.display(),
+        from_provenance.binary_blob
     );
     let _ = writeln!(
         output,
-        "  to: {} ({})",
-        to_provenance.tag, to_provenance.commit
+        "  to: {} ({}) / {} (blob {})",
+        to_provenance.tag,
+        to_provenance.commit,
+        to_provenance.binary_path.display(),
+        to_provenance.binary_blob
     );
     write_command_changes(&mut output, &diff.commands);
     write_event_changes(&mut output, &diff.events);
@@ -223,6 +243,12 @@ pub(super) fn checked_run_to_human(
     let _ = writeln!(output, "  resolved commit: {}", run.provenance.commit);
     let _ = writeln!(
         output,
+        "  binary: {} (blob {})",
+        run.provenance.binary_path.display(),
+        run.provenance.binary_blob
+    );
+    let _ = writeln!(
+        output,
         "exclusion policy: {} ({} command + {} event entries, all actively suppress a difference)",
         policy.display_path(crate_dir),
         run.policy_audit.command_entries,
@@ -248,7 +274,7 @@ fn checked_run_json<'a>(
 ) -> CheckedRunJson<'a> {
     CheckedRunJson {
         report: run.report.json(),
-        firmware_feature: run.firmware.feature_name(),
+        release_feature: run.firmware.feature_name(),
         cube_provenance: cube_provenance_json(&run.provenance, crate_dir),
         exclusion_policy: policy_audit_json(&run.policy_audit, policy, crate_dir),
     }
@@ -258,7 +284,7 @@ fn checked_run_json<'a>(
 struct CheckedRunJson<'a> {
     #[serde(flatten)]
     report: CheckReportJson<'a>,
-    firmware_feature: String,
+    release_feature: String,
     cube_provenance: CubeProvenanceJson<'a>,
     exclusion_policy: PolicyAuditJson,
 }
@@ -286,9 +312,13 @@ pub(super) fn batch_to_human(
                 );
                 output.push_str(&checked_run_to_human(result, policy, crate_dir));
             }
-            BatchResult::Error { firmware, error } => {
+            BatchResult::Error { target, error } => {
                 errors += 1;
-                let _ = writeln!(output, "=== {firmware} ({}) ===", firmware.feature_name());
+                let _ = writeln!(
+                    output,
+                    "=== {target} ({}) ===",
+                    target.release.feature_name()
+                );
                 let _ = writeln!(output, "error: {error}");
             }
         }
@@ -320,13 +350,16 @@ pub(super) fn batch_to_json(
         .iter()
         .map(|result| match result {
             BatchResult::Success(result) => BatchResultJson::Success {
-                firmware: result.firmware.to_string(),
+                release: result.firmware.to_string(),
                 feature: result.firmware.feature_name(),
                 report: Box::new(checked_run_json(result, policy, crate_dir)),
             },
-            BatchResult::Error { firmware, error } => BatchResultJson::Error {
-                firmware: firmware.to_string(),
-                feature: firmware.feature_name(),
+            BatchResult::Error { target, error } => BatchResultJson::Error {
+                release: target.release.to_string(),
+                family: target.family.to_string(),
+                profile: target.profile.to_string(),
+                binary: target.binary_file_name(),
+                feature: target.release.feature_name(),
                 error,
             },
         })
@@ -359,13 +392,16 @@ struct BatchJson<'a> {
 enum BatchResultJson<'a> {
     #[serde(rename = "ok")]
     Success {
-        firmware: String,
+        release: String,
         feature: String,
         report: Box<CheckedRunJson<'a>>,
     },
     #[serde(rename = "error")]
     Error {
-        firmware: String,
+        release: String,
+        family: String,
+        profile: String,
+        binary: String,
         feature: String,
         error: &'a str,
     },
@@ -384,6 +420,8 @@ struct CubeProvenanceJson<'a> {
     tag: &'a str,
     tag_object: &'a str,
     commit: &'a str,
+    binary_path: String,
+    binary_blob: &'a str,
 }
 
 fn cube_provenance_json<'a>(provenance: &'a CubeProvenance, root: &Path) -> CubeProvenanceJson<'a> {
@@ -392,6 +430,8 @@ fn cube_provenance_json<'a>(provenance: &'a CubeProvenance, root: &Path) -> Cube
         tag: &provenance.tag,
         tag_object: &provenance.tag_object,
         commit: &provenance.commit,
+        binary_path: provenance.binary_path.display().to_string(),
+        binary_blob: &provenance.binary_blob,
     }
 }
 
@@ -435,7 +475,10 @@ impl PolicyMetadataJson {
 mod tests {
     use std::path::PathBuf;
 
-    use stm32wb_compliance::{CheckReport, ProtocolCoverage, StandardHciCoverage, WireReport};
+    use stm32wb_compliance::{
+        CheckReport, ComplianceTarget, McuFamily, ProtocolCoverage, StackProfile,
+        StandardHciCoverage, WireReport,
+    };
 
     use super::*;
 
@@ -443,7 +486,7 @@ mod tests {
     fn batch_json_is_structured() {
         let firmware = FirmwareVersion::new(1, 15, 0);
         let report = CheckReport::new(
-            firmware,
+            ComplianceTarget::new(firmware, McuFamily::Wb5x, StackProfile::FullExtended),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -461,6 +504,10 @@ mod tests {
                 tag: "v1.15.0".to_owned(),
                 tag_object: "tag-object".to_owned(),
                 commit: "commit".to_owned(),
+                binary_path: PathBuf::from(
+                    "Projects/STM32WB_Copro_Wireless_Binaries/STM32WB5x/stm32wb5x_BLE_Stack_full_extended_fw.bin",
+                ),
+                binary_blob: "binary-blob".to_owned(),
             },
             policy_audit: PolicyAudit {
                 command_entries: 0,
@@ -473,7 +520,14 @@ mod tests {
         assert_eq!(value["mode"], "all-supported");
         assert_eq!(value["summary"]["checked"], 1);
         assert_eq!(value["results"][0]["status"], "ok");
-        assert_eq!(value["results"][0]["report"]["firmware"], "1.15.0");
+        assert_eq!(
+            value["results"][0]["report"]["target"]["cube_release"],
+            "1.15.0"
+        );
+        assert_eq!(
+            value["results"][0]["report"]["target"]["binary"],
+            "stm32wb5x_BLE_Stack_full_extended_fw.bin"
+        );
         assert_eq!(
             value["results"][0]["report"]["cube_provenance"]["commit"],
             "commit"

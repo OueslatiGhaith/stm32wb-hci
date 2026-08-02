@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::Deserialize;
-use stm32wb_compliance::{CheckReport, FirmwareVersion};
+use stm32wb_compliance::{CheckReport, ComplianceTarget, FirmwareVersion, McuFamily, StackProfile};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CoverageKind {
@@ -27,6 +27,52 @@ impl CoverageKind {
 enum FirmwareSelector {
     All,
     Only(FirmwareVersion),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum FamilySelector {
+    All,
+    Only(McuFamily),
+}
+
+impl FamilySelector {
+    fn parse(value: &str) -> Result<Self, String> {
+        if value == "*" {
+            Ok(Self::All)
+        } else {
+            value
+                .parse()
+                .map(Self::Only)
+                .map_err(|error| format!("{error}"))
+        }
+    }
+
+    fn matches(self, family: McuFamily) -> bool {
+        matches!(self, Self::All) || matches!(self, Self::Only(selected) if selected == family)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ProfileSelector {
+    All,
+    Only(StackProfile),
+}
+
+impl ProfileSelector {
+    fn parse(value: &str) -> Result<Self, String> {
+        if value == "*" {
+            Ok(Self::All)
+        } else {
+            value
+                .parse()
+                .map(Self::Only)
+                .map_err(|error| format!("{error}"))
+        }
+    }
+
+    fn matches(self, profile: StackProfile) -> bool {
+        matches!(self, Self::All) || matches!(self, Self::Only(selected) if selected == profile)
+    }
 }
 
 impl FirmwareSelector {
@@ -53,6 +99,8 @@ struct PolicyEntry {
     kind: CoverageKind,
     code: u16,
     selector: FirmwareSelector,
+    family: FamilySelector,
+    profile: ProfileSelector,
     reason: String,
     index: usize,
 }
@@ -76,7 +124,15 @@ struct PolicyEntryDocument {
     scope: PolicyScope,
     code: u16,
     firmware: String,
+    #[serde(default = "wildcard_selector")]
+    family: String,
+    #[serde(default = "wildcard_selector")]
+    profile: String,
     reason: String,
+}
+
+fn wildcard_selector() -> String {
+    "*".to_owned()
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -111,6 +167,12 @@ impl ExclusionPolicy {
             let selector = FirmwareSelector::parse(&entry.firmware).map_err(|error| {
                 policy_error(&path, index, &format!("invalid firmware selector: {error}"))
             })?;
+            let family = FamilySelector::parse(&entry.family).map_err(|error| {
+                policy_error(&path, index, &format!("invalid family selector: {error}"))
+            })?;
+            let profile = ProfileSelector::parse(&entry.profile).map_err(|error| {
+                policy_error(&path, index, &format!("invalid profile selector: {error}"))
+            })?;
             if entry.reason.trim().is_empty() {
                 return Err(policy_error(
                     &path,
@@ -123,17 +185,19 @@ impl ExclusionPolicy {
                 PolicyScope::Command => CoverageKind::Command,
                 PolicyScope::Event => CoverageKind::Event,
             };
-            if !raw_entries.insert((kind, entry.code, selector)) {
+            if !raw_entries.insert((kind, entry.code, selector, family, profile)) {
                 return Err(policy_error(
                     &path,
                     index,
-                    "this scope, wire code, and firmware selector are declared more than once",
+                    "this scope, wire code, release, family, and profile selector are declared more than once",
                 ));
             }
             entries.push(PolicyEntry {
                 kind,
                 code: entry.code,
                 selector,
+                family,
+                profile,
                 reason: entry.reason,
                 index,
             });
@@ -144,7 +208,8 @@ impl ExclusionPolicy {
 
     /// Reject stale exact versions and selectors which overlap after expansion.
     pub(crate) fn validate_for(&self, declared: &[FirmwareVersion]) -> Result<(), String> {
-        let mut expanded = BTreeMap::<(CoverageKind, u16, FirmwareVersion), usize>::new();
+        let mut expanded =
+            BTreeMap::<(CoverageKind, u16, FirmwareVersion, McuFamily, StackProfile), usize>::new();
         for entry in &self.entries {
             if let FirmwareSelector::Only(firmware) = entry.selector
                 && !declared.contains(&firmware)
@@ -162,30 +227,40 @@ impl ExclusionPolicy {
                 .copied()
                 .filter(|firmware| entry.selector.matches(*firmware))
             {
-                let key = (entry.kind, entry.code, firmware);
-                if let Some(previous) = expanded.insert(key, entry.index) {
-                    return Err(policy_error(
-                        &self.path,
-                        entry.index,
-                        &format!(
-                            "overlaps exclusion {previous}: {} 0x{:04X} would be excluded twice for firmware {firmware}",
-                            entry.kind.as_str(),
-                            entry.code
-                        ),
-                    ));
+                for family in McuFamily::ALL
+                    .into_iter()
+                    .filter(|family| entry.family.matches(*family))
+                {
+                    for profile in StackProfile::ALL
+                        .into_iter()
+                        .filter(|profile| entry.profile.matches(*profile))
+                    {
+                        let key = (entry.kind, entry.code, firmware, family, profile);
+                        if let Some(previous) = expanded.insert(key, entry.index) {
+                            return Err(policy_error(
+                                &self.path,
+                                entry.index,
+                                &format!(
+                                    "overlaps exclusion {previous}: {} 0x{:04X} would be excluded twice for CubeWB {firmware}/{family}/{profile}",
+                                    entry.kind.as_str(),
+                                    entry.code
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn active_for(&self, firmware: FirmwareVersion) -> ActiveExclusions {
+    pub(crate) fn active_for(&self, target: ComplianceTarget) -> ActiveExclusions {
         let mut active = ActiveExclusions::default();
-        for entry in self
-            .entries
-            .iter()
-            .filter(|entry| entry.selector.matches(firmware))
-        {
+        for entry in self.entries.iter().filter(|entry| {
+            entry.selector.matches(target.release)
+                && entry.family.matches(target.family)
+                && entry.profile.matches(target.profile)
+        }) {
             match entry.kind {
                 CoverageKind::Command => {
                     active.commands.insert(entry.code, entry.reason.clone());
@@ -232,7 +307,7 @@ impl ActiveExclusions {
     pub(crate) fn audit(
         &self,
         report: &CheckReport,
-        firmware: FirmwareVersion,
+        target: ComplianceTarget,
     ) -> Result<PolicyAudit, String> {
         let reported_commands = report
             .excluded_commands()
@@ -246,7 +321,7 @@ impl ActiveExclusions {
             .collect::<BTreeMap<_, _>>();
         if reported_commands != self.commands || reported_events != self.events {
             return Err(format!(
-                "checker exclusions for firmware {firmware} do not match the active exclusion policy"
+                "checker exclusions for {target} do not match the active exclusion policy"
             ));
         }
 
@@ -255,14 +330,14 @@ impl ActiveExclusions {
             &self.commands,
             &report.vendor().command_codes(),
             &report.active_api().command_codes(),
-            firmware,
+            target,
         )?;
         audit_exclusion_codes(
             CoverageKind::Event,
             &self.events,
             &report.vendor().event_codes(),
             &report.active_api().event_codes(),
-            firmware,
+            target,
         )?;
         Ok(PolicyAudit {
             command_entries: self.commands.len(),
@@ -276,12 +351,12 @@ fn audit_exclusion_codes(
     exclusions: &BTreeMap<u16, String>,
     expected: &BTreeSet<u16>,
     observed: &BTreeSet<u16>,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
 ) -> Result<(), String> {
     for code in exclusions.keys() {
         if expected.contains(code) == observed.contains(code) {
             return Err(format!(
-                "exclusion policy for {} 0x{code:04X} on firmware {firmware} is stale: it no longer suppresses a coverage difference",
+                "exclusion policy for {} 0x{code:04X} on {target} is stale: it no longer suppresses a coverage difference",
                 kind.as_str(),
             ));
         }
@@ -304,6 +379,10 @@ mod tests {
             FirmwareVersion::new(1, 15, 0),
             FirmwareVersion::new(1, 16, 0),
         ]
+    }
+
+    fn target(release: FirmwareVersion) -> ComplianceTarget {
+        ComplianceTarget::new(release, McuFamily::Wb5x, StackProfile::FullExtended)
     }
 
     #[test]
@@ -333,14 +412,45 @@ mod tests {
         .unwrap();
         policy.validate_for(&supported()).unwrap();
 
-        let old = policy.active_for(FirmwareVersion::new(1, 15, 0));
+        let old = policy.active_for(target(FirmwareVersion::new(1, 15, 0)));
         assert_eq!(old.events.get(&0x9200), Some(&"system | event".to_owned()));
         assert!(old.events.contains_key(&0x9201));
         assert_eq!(old.commands.get(&1), Some(&"legacy command".to_owned()));
 
-        let new = policy.active_for(FirmwareVersion::new(1, 16, 0));
+        let new = policy.active_for(target(FirmwareVersion::new(1, 16, 0)));
         assert!(!new.commands.contains_key(&1));
         assert!(!new.events.contains_key(&0x9201));
+    }
+
+    #[test]
+    fn scopes_exclusions_to_family_and_profile() {
+        let policy = ExclusionPolicy::parse(
+            "test.toml".into(),
+            r#"
+                [[exclusions]]
+                scope = "command"
+                code = 0x0042
+                firmware = "*"
+                family = "wb5x"
+                profile = "light"
+                reason = "target-specific command"
+            "#,
+        )
+        .unwrap();
+        policy.validate_for(&supported()).unwrap();
+
+        let release = FirmwareVersion::new(1, 15, 0);
+        let light = ComplianceTarget::new(release, McuFamily::Wb5x, StackProfile::Light);
+        let full = ComplianceTarget::new(release, McuFamily::Wb5x, StackProfile::FullExtended);
+        let other_family = ComplianceTarget::new(release, McuFamily::Wb3x, StackProfile::Light);
+        assert!(policy.active_for(light).commands.contains_key(&0x0042));
+        assert!(!policy.active_for(full).commands.contains_key(&0x0042));
+        assert!(
+            !policy
+                .active_for(other_family)
+                .commands
+                .contains_key(&0x0042)
+        );
     }
 
     #[test]

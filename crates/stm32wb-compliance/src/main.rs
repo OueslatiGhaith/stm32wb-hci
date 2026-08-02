@@ -13,8 +13,8 @@ use policy::{ExclusionPolicy, PolicyAudit};
 
 use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand};
 use stm32wb_compliance::{
-    CheckOptions, CheckReport, FirmwareVersion, check, diff_catalogs, find_crate_root,
-    load_catalog, workspace_root,
+    CheckOptions, CheckReport, ComplianceTarget, FirmwareVersion, McuFamily, StackProfile, check,
+    diff_catalogs, find_crate_root, load_catalog, workspace_root,
 };
 
 const DEFAULT_POLICY_PATH: &str = "crates/stm32wb-compliance/exclusions.toml";
@@ -77,11 +77,11 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
         declared_firmwares.clone()
     } else {
         let firmware = args
-            .firmware
-            .expect("the parser requires --firmware or --all-supported");
+            .release
+            .expect("the parser requires --release or --all-supported");
         if !declared_firmwares.contains(&firmware) {
             return Err(format!(
-                "firmware {firmware} is not declared by {}; add `{}` to [features] or use `list-supported`",
+                "Cube release {firmware} is not declared by {}; add `{}` to [features] or use `list-supported`",
                 crate_dir.join("Cargo.toml").display(),
                 firmware.feature_name()
             ));
@@ -103,9 +103,10 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
 
     let mut results = Vec::with_capacity(firmwares.len());
     for firmware in firmwares {
-        match run_one_check(firmware, &crate_dir, &cube_dir, &policy, args.skip_build) {
+        let target = ComplianceTarget::new(firmware, args.family, args.profile);
+        match run_one_check(target, &crate_dir, &cube_dir, &policy, args.skip_build) {
             Ok(result) => results.push(BatchResult::Success(Box::new(result))),
-            Err(error) => results.push(BatchResult::Error { firmware, error }),
+            Err(error) => results.push(BatchResult::Error { target, error }),
         }
     }
 
@@ -119,7 +120,7 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
         let result = results
             .into_iter()
             .next()
-            .expect("at least one requested firmware");
+            .expect("at least one requested Cube release");
         match result {
             BatchResult::Success(result) => {
                 if args.json {
@@ -156,7 +157,7 @@ fn run_diff(args: &DiffArgs, current_dir: &Path) -> Result<ExitCode, String> {
     let from = args.from;
     let to = args.to;
     if from == to {
-        return Err("diff requires two different firmware versions".to_owned());
+        return Err("diff requires two different Cube releases".to_owned());
     }
     let crate_dir = args
         .crate_dir
@@ -173,10 +174,12 @@ fn run_diff(args: &DiffArgs, current_dir: &Path) -> Result<ExitCode, String> {
         })?;
     let display_root = crate_dir.as_deref().unwrap_or(current_dir);
 
-    let from_provenance = CubeProvenance::resolve(&cube_dir, from.cube_tag())?;
-    let to_provenance = CubeProvenance::resolve(&cube_dir, to.cube_tag())?;
-    let from_catalog = load_catalog(&cube_dir, from).map_err(|error| error.to_string())?;
-    let to_catalog = load_catalog(&cube_dir, to).map_err(|error| error.to_string())?;
+    let from_target = ComplianceTarget::new(from, args.family, args.profile);
+    let to_target = ComplianceTarget::new(to, args.family, args.profile);
+    let from_provenance = CubeProvenance::resolve(&cube_dir, from_target)?;
+    let to_provenance = CubeProvenance::resolve(&cube_dir, to_target)?;
+    let from_catalog = load_catalog(&cube_dir, from_target).map_err(|error| error.to_string())?;
+    let to_catalog = load_catalog(&cube_dir, to_target).map_err(|error| error.to_string())?;
     let diff = diff_catalogs(&from_catalog, &to_catalog).map_err(|error| error.to_string())?;
 
     if args.json {
@@ -213,16 +216,17 @@ fn run_diff(args: &DiffArgs, current_dir: &Path) -> Result<ExitCode, String> {
 }
 
 fn run_one_check(
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     crate_dir: &Path,
     cube_dir: &Path,
     policy: &ExclusionPolicy,
     skip_build: bool,
 ) -> Result<CheckedRun, String> {
-    let provenance = CubeProvenance::resolve(cube_dir, firmware.cube_tag())?;
-    let active_exclusions = policy.active_for(firmware);
+    let firmware = target.release;
+    let provenance = CubeProvenance::resolve(cube_dir, target)?;
+    let active_exclusions = policy.active_for(target);
 
-    let mut options = CheckOptions::new(firmware, crate_dir.to_path_buf(), cube_dir.to_path_buf());
+    let mut options = CheckOptions::new(target, crate_dir.to_path_buf(), cube_dir.to_path_buf());
     options
         .excluded_commands
         .extend(active_exclusions.commands.clone());
@@ -232,7 +236,7 @@ fn run_one_check(
     options.skip_build = skip_build;
 
     let report = check(&options).map_err(|error| error.to_string())?;
-    let policy_audit = active_exclusions.audit(&report, firmware)?;
+    let policy_audit = active_exclusions.audit(&report, target)?;
 
     Ok(CheckedRun {
         firmware,
@@ -254,7 +258,7 @@ struct CheckedRun {
 enum BatchResult {
     Success(Box<CheckedRun>),
     Error {
-        firmware: FirmwareVersion,
+        target: ComplianceTarget,
         error: String,
     },
 }
@@ -275,13 +279,18 @@ struct CubeProvenance {
     tag: String,
     tag_object: String,
     commit: String,
+    binary_path: PathBuf,
+    binary_blob: String,
 }
 
 impl CubeProvenance {
-    fn resolve(cube_dir: &Path, tag: String) -> Result<Self, String> {
+    fn resolve(cube_dir: &Path, target: ComplianceTarget) -> Result<Self, String> {
+        let tag = target.release.cube_tag();
         let tag_ref = format!("refs/tags/{tag}");
         let tag_object = git_rev_parse(cube_dir, &tag_ref)?;
         let commit = git_rev_parse(cube_dir, &format!("{tag_ref}^{{commit}}"))?;
+        let binary_path = target.binary_path();
+        let binary_blob = git_rev_parse(cube_dir, &format!("{tag}:{}", binary_path.display()))?;
         Ok(Self {
             cube_dir: cube_dir
                 .canonicalize()
@@ -289,6 +298,8 @@ impl CubeProvenance {
             tag,
             tag_object,
             commit,
+            binary_path,
+            binary_blob,
         })
     }
 
@@ -331,11 +342,11 @@ fn display_path(path: &Path, crate_dir: &Path) -> String {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    /// Check one firmware version or every firmware version declared by Cargo.
+    /// Check one Cube release or every release declared by Cargo.
     Check(CheckArgs),
-    /// Compare the generated CubeWB protocol catalogs for two firmware versions.
+    /// Compare target-filtered CubeWB protocol catalogs for two releases.
     Diff(DiffArgs),
-    /// Print the crate's canonical `fw_<major>_<minor>_<patch>` feature names.
+    /// Print the crate's canonical `fw_<major>_<minor>_<patch>` release features.
     #[command(name = "list-supported")]
     ListSupported(ListSupportedArgs),
 }
@@ -345,19 +356,30 @@ enum CliCommand {
     ArgGroup::new("firmware_selection")
         .required(true)
         .multiple(false)
-        .args(["firmware", "all_supported"])
+        .args(["release", "all_supported"])
 ))]
 struct CheckArgs {
     #[arg(
         short = 'f',
-        long,
+        long = "release",
+        visible_alias = "firmware",
         value_name = "VERSION",
-        help = "Firmware version (for example 0.15.0 or v1.15.0)"
+        help = "STM32CubeWB release (for example 1.15.0 or v1.15.0)"
     )]
-    firmware: Option<FirmwareVersion>,
+    release: Option<FirmwareVersion>,
 
-    #[arg(long, help = "Check every firmware feature declared in Cargo.toml")]
+    #[arg(long, help = "Check every release feature declared in Cargo.toml")]
     all_supported: bool,
+
+    #[arg(long, default_value = "wb5x", help = "Target MCU family")]
+    family: McuFamily,
+
+    #[arg(
+        long,
+        default_value = "full-extended",
+        help = "Target wireless BLE binary profile"
+    )]
+    profile: StackProfile,
 
     #[arg(
         long = "crate",
@@ -386,7 +408,7 @@ struct CheckArgs {
     #[arg(long, help = "Exit nonzero when a check is non-compliant")]
     deny: bool,
 
-    #[arg(long, help = "Skip cargo check of each selected firmware feature")]
+    #[arg(long, help = "Skip cargo check of each selected release feature")]
     skip_build: bool,
 }
 
@@ -395,16 +417,26 @@ struct DiffArgs {
     #[arg(
         long,
         value_name = "VERSION",
-        help = "Baseline firmware version (for example 0.15.0 or v1.15.0)"
+        help = "Baseline STM32CubeWB release (for example 1.15.0 or v1.15.0)"
     )]
     from: FirmwareVersion,
 
     #[arg(
         long,
         value_name = "VERSION",
-        help = "Comparison firmware version (for example 0.17.1 or v1.17.1)"
+        help = "Comparison STM32CubeWB release (for example 1.17.1 or v1.17.1)"
     )]
     to: FirmwareVersion,
+
+    #[arg(long, default_value = "wb5x", help = "Target MCU family")]
+    family: McuFamily,
+
+    #[arg(
+        long,
+        default_value = "full-extended",
+        help = "Target wireless BLE binary profile"
+    )]
+    profile: StackProfile,
 
     #[arg(
         long = "crate",
@@ -441,9 +473,9 @@ struct ListSupportedArgs {
 #[derive(Debug, Parser)]
 #[command(
     name = "stm32wb-compliance",
-    about = "Firmware API compliance checks for stm32wb-hci",
+    about = "Wireless-binary API compliance checks for stm32wb-hci",
     disable_version_flag = true,
-    after_help = "`check --all-supported` discovers every canonical `fw_<major>_<minor>_<patch>` feature from [features]. `diff --from <version> --to <version>` compares two generated CubeWB catalogs without building the crate. The checker reads CubeWB tag blobs with git show and never changes the Cube worktree."
+    after_help = "`check --all-supported` discovers every canonical `fw_<major>_<minor>_<patch>` release feature from [features]. `--family` and `--profile` select an exact wireless CPU2 binary. `diff --from <version> --to <version>` compares two target-filtered CubeWB catalogs without building the crate. The checker reads CubeWB tag blobs with git show and never changes the Cube worktree."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -470,7 +502,9 @@ mod tests {
         let CliCommand::Check(args) = cli.command else {
             panic!("expected check arguments");
         };
-        assert_eq!(args.firmware, Some(FirmwareVersion::new(1, 15, 0)));
+        assert_eq!(args.release, Some(FirmwareVersion::new(1, 15, 0)));
+        assert_eq!(args.family, McuFamily::Wb5x);
+        assert_eq!(args.profile, StackProfile::FullExtended);
         assert!(args.deny);
         assert!(args.skip_build);
 
@@ -536,7 +570,7 @@ mod tests {
     fn deny_fails_when_wire_evidence_is_unavailable() {
         let firmware = FirmwareVersion::new(1, 17, 1);
         let report = CheckReport::new(
-            firmware,
+            ComplianceTarget::new(firmware, McuFamily::Wb5x, StackProfile::FullExtended),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),

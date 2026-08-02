@@ -16,6 +16,7 @@ use crate::catalog::{
 };
 #[cfg(test)]
 use crate::model::{CoverageEntry, CoverageOrigin};
+use crate::target::ComplianceTarget;
 
 pub const AUTO_SOURCE_DIR: &str = "Middlewares/ST/STM32_WPAN/ble/core/auto";
 const SHCI_SOURCE: &str = "Middlewares/ST/STM32_WPAN/interface/patterns/ble_thread/shci/shci.h";
@@ -25,21 +26,25 @@ const TYPES_SOURCE: &str = "ble_types.h";
 
 /// Load vendor ACI, system SHCI, standard HCI, and transport-envelope metadata
 /// from a CubeWB tag without changing the checkout.
-pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogSchema, String> {
-    verify_tag(cube_dir, tag)?;
-    let preprocessor = TaggedCPreprocessor::new(cube_dir, tag)?;
+pub(crate) fn load_vendor_catalog(
+    cube_dir: &Path,
+    target: ComplianceTarget,
+) -> Result<CatalogSchema, String> {
+    let tag = target.release.cube_tag();
+    verify_tag(cube_dir, &tag)?;
+    let preprocessor = TaggedCPreprocessor::new(cube_dir, &tag)?;
 
     let types_path = format!("{AUTO_SOURCE_DIR}/{TYPES_SOURCE}");
-    let types_source = git_show(cube_dir, tag, &types_path)?;
+    let types_source = git_show(cube_dir, &tag, &types_path)?;
     let preprocessed_types =
         preprocessor.preprocess(&format!("auto/{TYPES_SOURCE}"), &types_source)?;
     let packed_layouts =
         parse_packed_struct_envelopes_from_preprocessed(&types_source, &preprocessed_types);
 
-    let mut catalog = CatalogSchema::new(CatalogFamily::Stm32Wb, tag);
-    for file in command_source_files(cube_dir, tag)? {
+    let mut catalog = CatalogSchema::new(CatalogFamily::Stm32Wb, target);
+    for file in command_source_files(cube_dir, &tag)? {
         let path = format!("{AUTO_SOURCE_DIR}/{file}");
-        let source = git_show(cube_dir, tag, &path)?;
+        let source = git_show(cube_dir, &tag, &path)?;
         let preprocessed = preprocessor.preprocess(&format!("auto/{file}"), &source)?;
         let commands = extract_command_metadata_from_preprocessed(
             &source,
@@ -52,7 +57,7 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     }
 
     let path = format!("{AUTO_SOURCE_DIR}/{EVENT_SOURCE}");
-    let source = git_show(cube_dir, tag, &path)?;
+    let source = git_show(cube_dir, &tag, &path)?;
     let preprocessed_events = preprocessor.preprocess(&format!("auto/{EVENT_SOURCE}"), &source)?;
     let vendor_events = extract_event_table_from_preprocessed(
         &source,
@@ -64,7 +69,7 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     catalog.events.extend(vendor_events);
 
     let standard_path = format!("{AUTO_SOURCE_DIR}/{STANDARD_HCI_SOURCE}");
-    let standard_source = git_show(cube_dir, tag, &standard_path)?;
+    let standard_source = git_show(cube_dir, &tag, &standard_path)?;
     let preprocessed_standard =
         preprocessor.preprocess(&format!("auto/{STANDARD_HCI_SOURCE}"), &standard_source)?;
     let standard_commands = extract_command_metadata_from_preprocessed(
@@ -94,7 +99,7 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     )?;
     catalog.events.extend(le_events);
 
-    let shci_source = git_show_lossy_utf8(cube_dir, tag, SHCI_SOURCE)?;
+    let shci_source = git_show_lossy_utf8(cube_dir, &tag, SHCI_SOURCE)?;
     catalog.events.extend(extract_shci_events(&shci_source)?);
 
     catalog.normalize()?;

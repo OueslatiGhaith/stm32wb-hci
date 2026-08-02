@@ -13,8 +13,7 @@ use crate::wire::{WireDifference, WireReport, WireUnavailable};
 /// The machine-readable representation of one compliance report.
 #[derive(Serialize)]
 pub struct CheckReportJson<'a> {
-    firmware: String,
-    cube_tag: &'a str,
+    target: CheckTargetJson<'a>,
     compliant: bool,
     catalog_counts: CatalogCounts,
     missing_commands: Vec<CoverageDifferenceJson<'a>>,
@@ -30,8 +29,13 @@ pub struct CheckReportJson<'a> {
 impl<'a> From<&'a CheckReport> for CheckReportJson<'a> {
     fn from(report: &'a CheckReport) -> Self {
         Self {
-            firmware: report.firmware().to_string(),
-            cube_tag: report.cube_tag(),
+            target: CheckTargetJson {
+                cube_release: report.release().to_string(),
+                cube_tag: report.cube_tag(),
+                mcu_family: report.target().family.to_string(),
+                stack_profile: report.target().profile.to_string(),
+                binary: report.target().binary_file_name(),
+            },
             compliant: report.is_compliant(),
             catalog_counts: CatalogCounts::from(report),
             missing_commands: coverage_differences(report.missing_commands()),
@@ -46,6 +50,15 @@ impl<'a> From<&'a CheckReport> for CheckReportJson<'a> {
             excluded_events: excluded_codes(report.excluded_events()),
         }
     }
+}
+
+#[derive(Serialize)]
+struct CheckTargetJson<'a> {
+    cube_release: String,
+    cube_tag: &'a str,
+    mcu_family: String,
+    stack_profile: String,
+    binary: String,
 }
 
 impl CheckReport {

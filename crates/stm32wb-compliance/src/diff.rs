@@ -8,15 +8,19 @@ use thiserror::Error;
 use crate::catalog::{
     CatalogCommand, CatalogEvent, CatalogFamily, CatalogSchema, CommandScope, EventScope,
 };
+use crate::target::{McuFamily, StackProfile};
 
 /// Identity of a catalog in a version-diff report.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CatalogIdentity {
     pub family: CatalogFamily,
     pub cube_tag: String,
+    pub mcu_family: McuFamily,
+    pub stack_profile: StackProfile,
+    pub binary: String,
 }
 
-/// Stable identity for a command across firmware versions.
+/// Stable identity for a command across Cube releases.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct CommandKey {
     pub scope: CommandScope,
@@ -24,7 +28,7 @@ pub struct CommandKey {
     pub code: u16,
 }
 
-/// Stable identity for an event across firmware versions.
+/// Stable identity for an event across Cube releases.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct EventKey {
     pub scope: EventScope,
@@ -94,6 +98,13 @@ pub enum VersionDiffError {
         from: CatalogFamily,
         to: CatalogFamily,
     },
+    #[error("cannot diff different MCU families: {from} and {to}")]
+    McuFamilyMismatch { from: McuFamily, to: McuFamily },
+    #[error("cannot diff different stack profiles: {from} and {to}")]
+    StackProfileMismatch {
+        from: StackProfile,
+        to: StackProfile,
+    },
     #[error("catalog {tag} contains more than one command for {key:?}")]
     DuplicateCommand { tag: String, key: CommandKey },
     #[error("catalog {tag} contains more than one event for {key:?}")]
@@ -157,10 +168,16 @@ pub fn diff_catalogs(
         from: CatalogIdentity {
             family: from.family,
             cube_tag: from.cube_tag.clone(),
+            mcu_family: from.mcu_family,
+            stack_profile: from.stack_profile,
+            binary: from.binary.clone(),
         },
         to: CatalogIdentity {
             family: to.family,
             cube_tag: to.cube_tag.clone(),
+            mcu_family: to.mcu_family,
+            stack_profile: to.stack_profile,
+            binary: to.binary.clone(),
         },
         commands,
         events,
@@ -176,6 +193,18 @@ fn ensure_compatible(from: &CatalogSchema, to: &CatalogSchema) -> Result<(), Ver
         return Err(VersionDiffError::FamilyMismatch {
             from: from.family,
             to: to.family,
+        });
+    }
+    if from.mcu_family != to.mcu_family {
+        return Err(VersionDiffError::McuFamilyMismatch {
+            from: from.mcu_family,
+            to: to.mcu_family,
+        });
+    }
+    if from.stack_profile != to.stack_profile {
+        return Err(VersionDiffError::StackProfileMismatch {
+            from: from.stack_profile,
+            to: to.stack_profile,
         });
     }
     Ok(())
@@ -264,6 +293,9 @@ mod tests {
         CatalogSchema {
             family: CatalogFamily::Stm32Wb,
             cube_tag: tag.to_owned(),
+            mcu_family: McuFamily::Wb5x,
+            stack_profile: StackProfile::FullExtended,
+            binary: "stm32wb5x_BLE_Stack_full_extended_fw.bin".to_owned(),
             commands: Vec::new(),
             events: Vec::new(),
         }

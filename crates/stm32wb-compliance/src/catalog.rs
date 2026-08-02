@@ -11,6 +11,7 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::model::{CoverageEntry, CoverageOrigin, ProtocolCoverage, StandardHciCoverage};
+use crate::target::{ComplianceTarget, McuFamily, StackProfile};
 
 /// Firmware family whose generated catalog produced this schema.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -563,6 +564,9 @@ impl CatalogEvent {
 pub struct CatalogSchema {
     pub family: CatalogFamily,
     pub cube_tag: String,
+    pub mcu_family: McuFamily,
+    pub stack_profile: StackProfile,
+    pub binary: String,
     pub commands: Vec<CatalogCommand>,
     pub events: Vec<CatalogEvent>,
 }
@@ -578,6 +582,9 @@ impl Serialize for CatalogSchema {
         struct CatalogSchemaRef<'a> {
             family: CatalogFamily,
             cube_tag: &'a str,
+            mcu_family: McuFamily,
+            stack_profile: StackProfile,
+            binary: &'a str,
             commands: &'a [CatalogCommand],
             events: &'a [CatalogEvent],
         }
@@ -585,6 +592,9 @@ impl Serialize for CatalogSchema {
         CatalogSchemaRef {
             family: self.family,
             cube_tag: &self.cube_tag,
+            mcu_family: self.mcu_family,
+            stack_profile: self.stack_profile,
+            binary: &self.binary,
             commands: &self.commands,
             events: &self.events,
         }
@@ -602,6 +612,9 @@ impl<'de> Deserialize<'de> for CatalogSchema {
         struct RawCatalogSchema {
             family: CatalogFamily,
             cube_tag: String,
+            mcu_family: McuFamily,
+            stack_profile: StackProfile,
+            binary: String,
             commands: Vec<CatalogCommand>,
             events: Vec<CatalogEvent>,
         }
@@ -610,6 +623,9 @@ impl<'de> Deserialize<'de> for CatalogSchema {
         let schema = Self {
             family: raw.family,
             cube_tag: raw.cube_tag,
+            mcu_family: raw.mcu_family,
+            stack_profile: raw.stack_profile,
+            binary: raw.binary,
             commands: raw.commands,
             events: raw.events,
         };
@@ -619,10 +635,13 @@ impl<'de> Deserialize<'de> for CatalogSchema {
 }
 
 impl CatalogSchema {
-    pub(crate) fn new(family: CatalogFamily, cube_tag: impl Into<String>) -> Self {
+    pub(crate) fn new(family: CatalogFamily, target: ComplianceTarget) -> Self {
         Self {
             family,
-            cube_tag: cube_tag.into(),
+            cube_tag: target.release.cube_tag(),
+            mcu_family: target.family,
+            stack_profile: target.profile,
+            binary: target.binary_file_name(),
             commands: Vec::new(),
             events: Vec::new(),
         }
@@ -654,6 +673,27 @@ impl CatalogSchema {
 
     /// Validate all cross-entry invariants at the catalog boundary.
     pub fn validate(&self) -> Result<(), String> {
+        let release = self
+            .cube_tag
+            .parse::<crate::CubeRelease>()
+            .map_err(|error| {
+                format!("catalog has invalid Cube tag {:?}: {error}", self.cube_tag)
+            })?;
+        if release.cube_tag() != self.cube_tag {
+            return Err(format!(
+                "catalog Cube tag {:?} is not canonical; expected {}",
+                self.cube_tag,
+                release.cube_tag()
+            ));
+        }
+        let expected_binary =
+            ComplianceTarget::new(release, self.mcu_family, self.stack_profile).binary_file_name();
+        if self.binary != expected_binary {
+            return Err(format!(
+                "catalog binary {:?} does not match target {}/{}; expected {expected_binary}",
+                self.binary, self.mcu_family, self.stack_profile
+            ));
+        }
         let mut command_codes = BTreeMap::new();
         let mut command_names = BTreeMap::new();
         for command in &self.commands {
@@ -869,7 +909,14 @@ mod tests {
 
     #[test]
     fn schema_serialization_is_validated_and_deterministic() {
-        let mut schema = CatalogSchema::new(CatalogFamily::Stm32Wb, "v1.17.1");
+        let mut schema = CatalogSchema::new(
+            CatalogFamily::Stm32Wb,
+            ComplianceTarget::new(
+                crate::FirmwareVersion::new(1, 17, 1),
+                McuFamily::Wb5x,
+                StackProfile::FullExtended,
+            ),
+        );
         schema.commands.extend([
             CatalogCommand {
                 kind: CatalogCommandKind::StandardHci { opcode: 0x2002 },
@@ -1032,7 +1079,14 @@ mod tests {
                 .contains("minimum 4 exceeds maximum 3")
         );
 
-        let mut schema = CatalogSchema::new(CatalogFamily::Stm32Wb, "v1.17.1");
+        let mut schema = CatalogSchema::new(
+            CatalogFamily::Stm32Wb,
+            ComplianceTarget::new(
+                crate::FirmwareVersion::new(1, 17, 1),
+                McuFamily::Wb5x,
+                StackProfile::FullExtended,
+            ),
+        );
         schema
             .commands
             .extend([command(1, "First"), command(1, "DuplicateCode")]);

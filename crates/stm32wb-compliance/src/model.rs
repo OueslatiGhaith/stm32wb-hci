@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use crate::FirmwareVersion;
+use crate::target::ComplianceTarget;
 use crate::wire::WireReport;
+use crate::{CubeRelease, FirmwareVersion};
 
 /// The source-level catalog from which an entry was discovered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,7 +123,7 @@ pub struct ExcludedCode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckReport {
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     cube_tag: String,
     /// The complete vendor catalog read at the selected CubeWB tag.
     vendor: ProtocolCoverage,
@@ -150,7 +151,7 @@ impl CheckReport {
     /// Build a report from source inventories and derive every comparison.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        firmware: FirmwareVersion,
+        target: ComplianceTarget,
         vendor: ProtocolCoverage,
         active_api: ProtocolCoverage,
         standard_hci: StandardHciCoverage,
@@ -187,8 +188,8 @@ impl CheckReport {
             unsupported_differences(&standard_hci.commands, &local_standard_hci_commands);
 
         Self {
-            firmware,
-            cube_tag: firmware.cube_tag(),
+            target,
+            cube_tag: target.release.cube_tag(),
             vendor,
             active_api,
             standard_hci,
@@ -204,8 +205,17 @@ impl CheckReport {
         }
     }
 
+    pub const fn release(&self) -> CubeRelease {
+        self.target.release
+    }
+
+    /// Backwards-compatible release accessor for callers using the old name.
     pub const fn firmware(&self) -> FirmwareVersion {
-        self.firmware
+        self.release()
+    }
+
+    pub const fn target(&self) -> ComplianceTarget {
+        self.target
     }
 
     pub fn cube_tag(&self) -> &str {
@@ -272,14 +282,16 @@ impl CheckReport {
 
     pub fn to_human(&self) -> String {
         let mut output = String::new();
+        let _ = writeln!(output, "STM32WB binary compliance: {}", self.target);
         let _ = writeln!(
             output,
-            "STM32WB firmware compliance: {} ({})",
-            self.firmware, self.cube_tag
+            "profile: {} (Cube availability matrix); binary: {}",
+            self.target.profile,
+            self.target.binary_file_name()
         );
         let _ = writeln!(
             output,
-            "scope: active declarative vendor catalogs + local standard-HCI commands"
+            "scope: target-filtered declarative vendor catalogs + local standard-HCI commands"
         );
         let _ = writeln!(
             output,
@@ -442,6 +454,14 @@ fn exclusions_to_vec(exclusions: BTreeMap<u16, String>) -> Vec<ExcludedCode> {
 mod tests {
     use super::*;
 
+    fn target(major: u16, minor: u16, patch: u16) -> ComplianceTarget {
+        ComplianceTarget::new(
+            FirmwareVersion::new(major, minor, patch),
+            crate::McuFamily::Wb5x,
+            crate::StackProfile::FullExtended,
+        )
+    }
+
     #[test]
     fn comparison_is_by_wire_code_not_spelling() {
         let vendor = ProtocolCoverage {
@@ -461,7 +481,7 @@ mod tests {
             events: vec![],
         };
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 15, 0),
+            target(1, 15, 0),
             vendor.clone(),
             active,
             StandardHciCoverage::default(),
@@ -476,7 +496,7 @@ mod tests {
     #[test]
     fn standard_and_wire_differences_make_a_report_noncompliant() {
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 17, 1),
+            target(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -504,7 +524,7 @@ mod tests {
     #[test]
     fn unavailable_wire_evidence_makes_a_report_noncompliant() {
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 17, 1),
+            target(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -516,7 +536,7 @@ mod tests {
         assert!(report.is_compliant());
 
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 17, 1),
+            target(1, 17, 1),
             ProtocolCoverage::default(),
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -548,7 +568,7 @@ mod tests {
             )],
         };
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 17, 1),
+            target(1, 17, 1),
             vendor,
             ProtocolCoverage::default(),
             StandardHciCoverage::default(),
@@ -586,7 +606,7 @@ mod tests {
             events: Vec::new(),
         };
         let report = CheckReport::new(
-            FirmwareVersion::new(1, 15, 0),
+            target(1, 15, 0),
             vendor,
             active_api,
             StandardHciCoverage::default(),
@@ -613,8 +633,13 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "firmware": "1.15.0",
-                "cube_tag": "v1.15.0",
+                "target": {
+                    "cube_release": "1.15.0",
+                    "cube_tag": "v1.15.0",
+                    "mcu_family": "wb5x",
+                    "stack_profile": "full-extended",
+                    "binary": "stm32wb5x_BLE_Stack_full_extended_fw.bin",
+                },
                 "compliant": false,
                 "catalog_counts": {
                     "vendor_command_ids": 1,
