@@ -190,6 +190,13 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetTxTestPacketCount(cgid = 0x0, cid = 0x14) {
         Params = ();
@@ -219,6 +226,13 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetLinkStatus(cgid = 0x0, cid = 0x17) {
         Params = ();
@@ -251,6 +265,18 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    all(
+        since_fw_1_24_0,
+        any(
+            feature = "stack-full",
+            feature = "stack-light",
+            feature = "stack-hci-layer-extended",
+            feature = "stack-hci-layer",
+        )
+    )
+))]
 stm32wb_hci_macros::vendor_cmd! {
     HalSetEventMask(cgid = 0x0, cid = 0x1A) {
         Params = {
@@ -262,6 +288,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_23_0)]
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalGetPmDebugInfo(cgid = 0x0, cid = 0x1C) {
         Params = ();
@@ -274,6 +301,13 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     HalSetPeripheralLatency(cgid = 0x0, cid = 0x20) {
         Params = {
@@ -294,6 +328,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalReadRadioReg(cgid = 0x0, cid = 0x30) {
         Params = {
@@ -306,6 +341,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalWriteRadioReg(cgid = 0x0, cid = 0x31) {
         Params = {
@@ -317,6 +353,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalReadRawRssi(cgid = 0x0, cid = 0x32) {
         Params = ();
@@ -327,6 +364,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalRxStart(cgid = 0x0, cid = 0x33) {
         Params = {
@@ -337,6 +375,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     HalRxStop(cgid = 0x0, cid = 0x34) {
         Params = ();
@@ -355,6 +394,10 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_20_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    all(since_fw_1_24_0, feature = "stack-hci-layer-extended"),
+))]
 stm32wb_hci_macros::vendor_cmd! {
     HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {

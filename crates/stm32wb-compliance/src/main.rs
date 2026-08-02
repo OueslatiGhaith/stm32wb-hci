@@ -73,8 +73,8 @@ fn list_supported(crate_dir: &Path) -> Result<ExitCode, String> {
 fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
     let declared_firmwares =
         FirmwareVersion::declared_in_manifest(&crate_dir).map_err(|error| error.to_string())?;
-    let firmwares = if args.all_supported {
-        declared_firmwares.clone()
+    let targets = if args.all_supported {
+        all_supported_targets(&declared_firmwares)
     } else {
         let firmware = args
             .release
@@ -86,7 +86,11 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
                 firmware.feature_name()
             ));
         }
-        vec![firmware]
+        vec![ComplianceTarget::new(
+            firmware,
+            args.family.unwrap_or(McuFamily::Wb5x),
+            args.profile.unwrap_or(StackProfile::FullExtended),
+        )]
     };
 
     let workspace_dir = workspace_root(&crate_dir);
@@ -101,9 +105,8 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
     let policy = ExclusionPolicy::load(policy_path)?;
     policy.validate_for(&declared_firmwares)?;
 
-    let mut results = Vec::with_capacity(firmwares.len());
-    for firmware in firmwares {
-        let target = ComplianceTarget::new(firmware, args.family, args.profile);
+    let mut results = Vec::with_capacity(targets.len());
+    for target in targets {
         match run_one_check(target, &crate_dir, &cube_dir, &policy, args.skip_build) {
             Ok(result) => results.push(BatchResult::Success(Box::new(result))),
             Err(error) => results.push(BatchResult::Error { target, error }),
@@ -143,6 +146,19 @@ fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn all_supported_targets(firmwares: &[FirmwareVersion]) -> Vec<ComplianceTarget> {
+    let mut targets =
+        Vec::with_capacity(firmwares.len() * McuFamily::ALL.len() * StackProfile::ALL.len());
+    for firmware in firmwares {
+        for family in McuFamily::ALL {
+            for profile in StackProfile::ALL {
+                targets.push(ComplianceTarget::new(*firmware, family, profile));
+            }
+        }
+    }
+    targets
 }
 
 fn report_exit_code(deny: bool, report: &CheckReport) -> ExitCode {
@@ -342,7 +358,7 @@ fn display_path(path: &Path, crate_dir: &Path) -> String {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    /// Check one Cube release or every release declared by Cargo.
+    /// Check one target or every declared release/family/profile combination.
     Check(CheckArgs),
     /// Compare target-filtered CubeWB protocol catalogs for two releases.
     Diff(DiffArgs),
@@ -368,18 +384,25 @@ struct CheckArgs {
     )]
     release: Option<FirmwareVersion>,
 
-    #[arg(long, help = "Check every release feature declared in Cargo.toml")]
+    #[arg(
+        long,
+        help = "Check every declared release, MCU family, and stack profile combination"
+    )]
     all_supported: bool,
-
-    #[arg(long, default_value = "wb5x", help = "Target MCU family")]
-    family: McuFamily,
 
     #[arg(
         long,
-        default_value = "full-extended",
-        help = "Target wireless BLE binary profile"
+        conflicts_with = "all_supported",
+        help = "Target MCU family for --release (default: wb5x)"
     )]
-    profile: StackProfile,
+    family: Option<McuFamily>,
+
+    #[arg(
+        long,
+        conflicts_with = "all_supported",
+        help = "Target wireless BLE binary profile for --release (default: full-extended)"
+    )]
+    profile: Option<StackProfile>,
 
     #[arg(
         long = "crate",
@@ -475,7 +498,7 @@ struct ListSupportedArgs {
     name = "stm32wb-compliance",
     about = "Wireless-binary API compliance checks for stm32wb-hci",
     disable_version_flag = true,
-    after_help = "`check --all-supported` discovers every canonical `fw_<major>_<minor>_<patch>` release feature from [features]. `--family` and `--profile` select an exact wireless CPU2 binary. `diff --from <version> --to <version>` compares two target-filtered CubeWB catalogs without building the crate. The checker reads CubeWB tag blobs with git show and never changes the Cube worktree."
+    after_help = "`check --all-supported` checks the Cartesian product of every canonical `fw_<major>_<minor>_<patch>` release feature, MCU family, and stack profile. `--family` and `--profile` select one exact wireless CPU2 binary with `--release`. `diff --from <version> --to <version>` compares two target-filtered CubeWB catalogs without building the crate. The checker reads CubeWB tag blobs with git show and never changes the Cube worktree."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -503,10 +526,26 @@ mod tests {
             panic!("expected check arguments");
         };
         assert_eq!(args.release, Some(FirmwareVersion::new(1, 15, 0)));
-        assert_eq!(args.family, McuFamily::Wb5x);
-        assert_eq!(args.profile, StackProfile::FullExtended);
+        assert_eq!(args.family, None);
+        assert_eq!(args.profile, None);
         assert!(args.deny);
         assert!(args.skip_build);
+
+        let cli = parse_cli(&[
+            "check",
+            "--release",
+            "1.15.0",
+            "--family",
+            "wb3x",
+            "--profile",
+            "light",
+        ])
+        .unwrap();
+        let CliCommand::Check(args) = cli.command else {
+            panic!("expected check arguments");
+        };
+        assert_eq!(args.family, Some(McuFamily::Wb3x));
+        assert_eq!(args.profile, Some(StackProfile::Light));
 
         let error = parse_cli(&["--deny", "check", "--firmware", "v1.15.0"]).unwrap_err();
         assert!(error.contains("unexpected argument '--deny'"));
@@ -519,6 +558,39 @@ mod tests {
             panic!("expected check arguments");
         };
         assert!(args.all_supported);
+        assert_eq!(args.family, None);
+        assert_eq!(args.profile, None);
+
+        let firmwares = [
+            FirmwareVersion::new(1, 15, 0),
+            FirmwareVersion::new(1, 16, 0),
+        ];
+        let targets = all_supported_targets(&firmwares);
+        assert_eq!(
+            targets.len(),
+            2 * McuFamily::ALL.len() * StackProfile::ALL.len()
+        );
+        assert_eq!(
+            targets.first(),
+            Some(&ComplianceTarget::new(
+                firmwares[0],
+                McuFamily::Wb1x,
+                StackProfile::FullExtended,
+            ))
+        );
+        assert_eq!(
+            targets.last(),
+            Some(&ComplianceTarget::new(
+                firmwares[1],
+                McuFamily::Wb5x,
+                StackProfile::HciAdvScan,
+            ))
+        );
+
+        let error = parse_cli(&["check", "--all-supported", "--family", "wb5x"]).unwrap_err();
+        assert!(error.contains("cannot be used with"));
+        let error = parse_cli(&["check", "--all-supported", "--profile", "full"]).unwrap_err();
+        assert!(error.contains("cannot be used with"));
     }
 
     #[test]

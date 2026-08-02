@@ -29,6 +29,17 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
     let borrows_payload = catalog.events.iter().any(|event| event.payload.borrows());
     let event_generics = borrows_payload.then(|| quote!(<'event>));
     let impl_generics = borrows_payload.then(|| quote!(<'event>));
+    let lifetime_marker = borrows_payload.then(|| {
+        quote! {
+            #[cfg(any(
+                feature = "stack-hci-layer-extended",
+                feature = "stack-hci-layer",
+                feature = "stack-hci-adv-scan",
+            ))]
+            #[doc(hidden)]
+            __Lifetime(::core::marker::PhantomData<&'event ()>),
+        }
+    });
     let buffer_type = if borrows_payload {
         quote!(&'event [u8])
     } else {
@@ -164,6 +175,7 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub enum VendorEvent #event_generics {
             #(#variants)*
+            #lifetime_marker
         }
 
         #(#payload_types)*

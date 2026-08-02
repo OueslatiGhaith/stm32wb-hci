@@ -6,6 +6,15 @@ use std::{
 
 use stm32wb_hci_schema::FirmwareVersion;
 
+const STACK_PROFILES: [&str; 6] = [
+    "stack-full-extended",
+    "stack-full",
+    "stack-light",
+    "stack-hci-layer-extended",
+    "stack-hci-layer",
+    "stack-hci-adv-scan",
+];
+
 fn main() {
     println!("cargo::rerun-if-changed=Cargo.toml");
 
@@ -45,6 +54,10 @@ fn main() {
         }
     }
 
+    for feature in STACK_PROFILES {
+        println!("cargo::rerun-if-env-changed={}", feature_env_var(feature));
+    }
+
     let enabled = firmwares
         .iter()
         .filter(|firmware| env::var_os(feature_env_var(&firmware.feature_name())).is_some())
@@ -80,6 +93,18 @@ fn main() {
             emit_cfg("since", &feature);
         }
     }
+
+    let enabled_profiles = STACK_PROFILES
+        .into_iter()
+        .filter(|feature| env::var_os(feature_env_var(feature)).is_some())
+        .collect::<Vec<_>>();
+    let [_selected_profile] = enabled_profiles.as_slice() else {
+        let enabled = enabled_profiles.join(", ");
+        let available = STACK_PROFILES.join(", ");
+        panic!(
+            "exactly one stack profile feature must be enabled; enabled: [{enabled}]; available: [{available}]"
+        );
+    };
 }
 
 fn manifest_path() -> PathBuf {

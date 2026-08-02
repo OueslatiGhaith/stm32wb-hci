@@ -1,11 +1,22 @@
 //! L2Cap-specific commands and types needed for those commands.
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 use bt_hci::param::ConnHandle;
 
-use crate::{
-    types::{ConnectionInterval, ExpectedConnectionLength},
-    vendor::command::BoundedItems,
-};
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
+use crate::types::ConnectionInterval;
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
+use crate::types::ExpectedConnectionLength;
+#[cfg(feature = "stack-full-extended")]
+use crate::vendor::command::BoundedItems;
 
 stm32wb_hci_macros::wire_type! {
     adapters: [command, event];
@@ -140,6 +151,11 @@ stm32wb_hci_macros::wire_type! {
     };
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
         Params = {
@@ -150,6 +166,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     L2ConnectionParameterUpdateResponse(cgid = 0x3, cid = 0x02) {
         Params = {
@@ -164,6 +181,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnect(cgid = 0x3, cid = 0x08) {
         Params = {
@@ -181,6 +199,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_23_0)]
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
@@ -205,6 +224,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_23_0)]
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
         Params = {
@@ -229,6 +249,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfig(cgid = 0x3, cid = 0x0A) {
         Params<'a> = {
@@ -250,6 +271,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
         Params = {
@@ -261,6 +283,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocDisconnect(cgid = 0x3, cid = 0x0C) {
         Params = {
@@ -271,6 +294,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
         Params = {
@@ -282,6 +306,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     L2CocTxData(cgid = 0x3, cid = 0x0E) {
         Params<'a> = {

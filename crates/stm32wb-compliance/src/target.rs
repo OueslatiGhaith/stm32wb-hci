@@ -95,6 +95,18 @@ impl StackProfile {
         }
     }
 
+    /// Cargo feature selecting this stack profile in `stm32wb-hci`.
+    pub const fn feature_name(self) -> &'static str {
+        match self {
+            Self::FullExtended => "stack-full-extended",
+            Self::Full => "stack-full",
+            Self::Light => "stack-light",
+            Self::HciLayerExtended => "stack-hci-layer-extended",
+            Self::HciLayer => "stack-hci-layer",
+            Self::HciAdvScan => "stack-hci-adv-scan",
+        }
+    }
+
     pub(crate) fn from_documentation_column(value: &str) -> Option<Self> {
         match value.trim() {
             "BF" => Some(Self::Full),
@@ -222,6 +234,7 @@ mod tests {
     fn parses_cli_names_without_losing_profile_identity() {
         assert_eq!("stm32wb3x".parse(), Ok(McuFamily::Wb3x));
         assert_eq!("hci-layer".parse(), Ok(StackProfile::HciLayer));
+        assert_eq!(StackProfile::HciLayer.feature_name(), "stack-hci-layer");
         assert!("extended".parse::<StackProfile>().is_err());
     }
 }

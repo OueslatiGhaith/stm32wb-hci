@@ -304,11 +304,12 @@ pub(super) fn batch_to_human(
             BatchResult::Success(result) => {
                 successful += 1;
                 noncompliant += usize::from(!result.report.is_compliant());
+                let target = result.report.target();
                 let _ = writeln!(
                     output,
-                    "=== {} ({}) ===",
-                    result.firmware,
-                    result.firmware.feature_name()
+                    "=== {target} ({}, {}) ===",
+                    target.release.feature_name(),
+                    target.profile.feature_name(),
                 );
                 output.push_str(&checked_run_to_human(result, policy, crate_dir));
             }
@@ -351,7 +352,11 @@ pub(super) fn batch_to_json(
         .map(|result| match result {
             BatchResult::Success(result) => BatchResultJson::Success {
                 release: result.firmware.to_string(),
+                family: result.report.target().family.to_string(),
+                profile: result.report.target().profile.to_string(),
+                binary: result.report.target().binary_file_name(),
                 feature: result.firmware.feature_name(),
+                profile_feature: result.report.target().profile.feature_name(),
                 report: Box::new(checked_run_json(result, policy, crate_dir)),
             },
             BatchResult::Error { target, error } => BatchResultJson::Error {
@@ -393,7 +398,11 @@ enum BatchResultJson<'a> {
     #[serde(rename = "ok")]
     Success {
         release: String,
+        family: String,
+        profile: String,
+        binary: String,
         feature: String,
+        profile_feature: &'static str,
         report: Box<CheckedRunJson<'a>>,
     },
     #[serde(rename = "error")]
@@ -520,6 +529,12 @@ mod tests {
         assert_eq!(value["mode"], "all-supported");
         assert_eq!(value["summary"]["checked"], 1);
         assert_eq!(value["results"][0]["status"], "ok");
+        assert_eq!(value["results"][0]["family"], "wb5x");
+        assert_eq!(value["results"][0]["profile"], "full-extended");
+        assert_eq!(
+            value["results"][0]["profile_feature"],
+            "stack-full-extended"
+        );
         assert_eq!(
             value["results"][0]["report"]["target"]["cube_release"],
             "1.15.0"
@@ -532,5 +547,9 @@ mod tests {
             value["results"][0]["report"]["cube_provenance"]["commit"],
             "commit"
         );
+
+        let human = batch_to_human(&results, &policy, Path::new("."));
+        assert!(human.contains("CubeWB 1.15.0 / wb5x / stm32wb5x_BLE_Stack_full_extended_fw.bin"));
+        assert!(human.contains("all-supported summary: 1 checked"));
     }
 }

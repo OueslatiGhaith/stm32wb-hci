@@ -14,17 +14,18 @@ use syn::{
     parenthesized,
 };
 
-use crate::FirmwareVersion;
+use crate::ComplianceTarget;
 use crate::catalog::WireLayout;
 use crate::model::{CoverageEntry, CoverageOrigin};
 use crate::rust_cfg::attrs_active;
 use crate::rust_source::{CommandCompletion, CommandDeclaration};
 
 /// Load the standard-HCI commands implemented directly by this crate for the
-/// selected firmware. Codes are full HCI opcodes, rather than vendor OCFs.
+/// selected release/profile target. Codes are full HCI opcodes, rather than
+/// vendor OCFs.
 pub(crate) fn load_local_standard_commands(
     crate_dir: &Path,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
 ) -> Result<Vec<CommandDeclaration>, String> {
     let path = crate_dir.join("src/standard.rs");
     let source = fs::read_to_string(&path)
@@ -38,7 +39,7 @@ pub(crate) fn load_local_standard_commands(
             let Item::Struct(item) = item else {
                 return None;
             };
-            match attrs_active(&item.attrs, firmware, &path) {
+            match attrs_active(&item.attrs, target, &path) {
                 Ok(true) => Some(Ok((item.ident.to_string(), item))),
                 Ok(false) => None,
                 Err(error) => Some(Err(error)),
@@ -50,7 +51,7 @@ pub(crate) fn load_local_standard_commands(
         let Item::Macro(item) = item else {
             continue;
         };
-        if !macro_name_is(&item.mac, "cmd") || !attrs_active(&item.attrs, firmware, &path)? {
+        if !macro_name_is(&item.mac, "cmd") || !attrs_active(&item.attrs, target, &path)? {
             continue;
         }
         let header =
@@ -76,7 +77,7 @@ pub(crate) fn load_local_standard_commands(
         let request = fixed_type_width(
             &header.params,
             &structs,
-            firmware,
+            target,
             &path,
             &mut BTreeSet::new(),
         )?;
@@ -85,7 +86,7 @@ pub(crate) fn load_local_standard_commands(
                 returns: WireLayout::fixed(fixed_type_width(
                     returns,
                     &structs,
-                    firmware,
+                    target,
                     &path,
                     &mut BTreeSet::new(),
                 )?),
@@ -234,7 +235,7 @@ fn standard_ogf(group: &str) -> Option<u8> {
 fn fixed_type_width(
     ty: &Type,
     structs: &BTreeMap<String, &ItemStruct>,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
     visiting: &mut BTreeSet<String>,
 ) -> Result<u32, String> {
@@ -245,7 +246,7 @@ fn fixed_type_width(
             path.display()
         )),
         Type::Array(array) => {
-            let element = fixed_type_width(&array.elem, structs, firmware, path, visiting)?;
+            let element = fixed_type_width(&array.elem, structs, target, path, visiting)?;
             let Expr::Lit(ExprLit {
                 lit: Lit::Int(length),
                 ..
@@ -270,8 +271,8 @@ fn fixed_type_width(
                     )
                 })
         }
-        Type::Paren(paren) => fixed_type_width(&paren.elem, structs, firmware, path, visiting),
-        Type::Group(group) => fixed_type_width(&group.elem, structs, firmware, path, visiting),
+        Type::Paren(paren) => fixed_type_width(&paren.elem, structs, target, path, visiting),
+        Type::Group(group) => fixed_type_width(&group.elem, structs, target, path, visiting),
         Type::Path(type_path) if type_path.qself.is_none() => {
             let Some(segment) = type_path.path.segments.last() else {
                 return Err(format!(
@@ -303,10 +304,10 @@ fn fixed_type_width(
             }
             let mut width = 0_u32;
             for field in &item.fields {
-                if attrs_active(&field.attrs, firmware, path)? {
+                if attrs_active(&field.attrs, target, path)? {
                     width = width
                         .checked_add(fixed_type_width(
-                            &field.ty, structs, firmware, path, visiting,
+                            &field.ty, structs, target, path, visiting,
                         )?)
                         .ok_or_else(|| {
                             format!(
@@ -390,8 +391,15 @@ mod tests {
     #[test]
     fn loads_local_standard_command_wire_layouts() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
-        let declarations =
-            load_local_standard_commands(&crate_dir, FirmwareVersion::new(1, 24, 0)).unwrap();
+        let declarations = load_local_standard_commands(
+            &crate_dir,
+            ComplianceTarget::new(
+                crate::FirmwareVersion::new(1, 24, 0),
+                crate::McuFamily::Wb5x,
+                crate::StackProfile::FullExtended,
+            ),
+        )
+        .unwrap();
 
         assert_eq!(declarations.len(), 10);
         let transmitter = declarations

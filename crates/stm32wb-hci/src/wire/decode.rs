@@ -351,8 +351,10 @@ pub(crate) fn decode_counted_bytes<
 }
 
 /// Decode a fixed prefix and byte length followed by that many raw bytes.
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 type PrefixedBytesResult<'a, P, E> = Result<(P, &'a [u8], &'a [u8]), DecodeError<E>>;
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 pub(crate) fn decode_prefixed_bytes<
     'a,
     P,

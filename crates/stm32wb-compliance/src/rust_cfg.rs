@@ -3,33 +3,33 @@
 //! Compliance extraction must fail closed when it encounters a predicate it
 //! does not understand. Both the vendor catalog and local standard-HCI
 //! extensions use this evaluator so they cannot disagree about which items are
-//! active for a firmware release.
+//! active for a Cube release and stack profile.
 
 use std::path::Path;
 
 use syn::punctuated::Punctuated;
 use syn::{Attribute, Expr, Lit, Meta, Path as SynPath};
 
-use crate::FirmwareVersion;
+use crate::ComplianceTarget;
 
 /// Evaluate all `#[cfg]` and `#[cfg_attr]` attributes on one syntax node.
 pub(crate) fn attrs_active(
     attributes: &[Attribute],
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
 ) -> Result<bool, String> {
     let mut active = true;
     for attribute in attributes {
         if attribute.path().is_ident("cfg") {
-            active &= eval_cfg_attribute(&attribute.meta, firmware, path)?;
+            active &= eval_cfg_attribute(&attribute.meta, target, path)?;
         } else if attribute.path().is_ident("cfg_attr") {
-            active &= eval_cfg_attr_attribute(&attribute.meta, firmware, path)?;
+            active &= eval_cfg_attr_attribute(&attribute.meta, target, path)?;
         }
     }
     Ok(active)
 }
 
-fn eval_cfg_attribute(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
+fn eval_cfg_attribute(meta: &Meta, target: ComplianceTarget, path: &Path) -> Result<bool, String> {
     let Meta::List(list) = meta else {
         return Err(format!("{}: #[cfg] must use parentheses", path.display()));
     };
@@ -41,12 +41,12 @@ fn eval_cfg_attribute(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Re
             path.display()
         ));
     };
-    eval_cfg_meta(condition, firmware, path)
+    eval_cfg_meta(condition, target, path)
 }
 
 fn eval_cfg_attr_attribute(
     meta: &Meta,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
 ) -> Result<bool, String> {
     let Meta::List(list) = meta else {
@@ -60,32 +60,32 @@ fn eval_cfg_attr_attribute(
     let Some(condition) = values.next() else {
         return Err(format!("{}: #[cfg_attr] has no condition", path.display()));
     };
-    if !eval_cfg_meta(condition, firmware, path)? {
+    if !eval_cfg_meta(condition, target, path)? {
         return Ok(true);
     }
 
     let mut active = true;
     for generated in values {
-        active &= eval_generated_cfg_attribute(generated, firmware, path)?;
+        active &= eval_generated_cfg_attribute(generated, target, path)?;
     }
     Ok(active)
 }
 
 fn eval_generated_cfg_attribute(
     generated: &Meta,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
 ) -> Result<bool, String> {
     if generated.path().is_ident("cfg") {
-        return eval_cfg_attribute(generated, firmware, path);
+        return eval_cfg_attribute(generated, target, path);
     }
     if generated.path().is_ident("cfg_attr") {
-        return eval_cfg_attr_attribute(generated, firmware, path);
+        return eval_cfg_attr_attribute(generated, target, path);
     }
     Ok(true)
 }
 
-fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
+fn eval_cfg_meta(meta: &Meta, target: ComplianceTarget, path: &Path) -> Result<bool, String> {
     match meta {
         Meta::Path(path_meta) => {
             let name = path_meta
@@ -98,7 +98,7 @@ fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<
                         cfg_path_name(path_meta)
                     )
                 })?;
-            if let Some(value) = firmware.matches_version_cfg(&name) {
+            if let Some(value) = target.release.matches_version_cfg(&name) {
                 return Ok(value);
             }
             match name.as_str() {
@@ -125,7 +125,8 @@ fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<
                     path.display()
                 ));
             };
-            Ok(feature.value() == firmware.feature_name())
+            Ok(feature.value() == target.release.feature_name()
+                || feature.value() == target.profile.feature_name())
         }
         Meta::NameValue(value) => Err(format!(
             "{}: unsupported cfg key `{}`",
@@ -134,11 +135,11 @@ fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<
         )),
         Meta::List(list) if list.path.is_ident("all") => parse_meta_list(list, path, "cfg list")?
             .iter()
-            .map(|value| eval_cfg_meta(value, firmware, path))
+            .map(|value| eval_cfg_meta(value, target, path))
             .try_fold(true, |active, value| value.map(|value| active && value)),
         Meta::List(list) if list.path.is_ident("any") => parse_meta_list(list, path, "cfg list")?
             .iter()
-            .map(|value| eval_cfg_meta(value, firmware, path))
+            .map(|value| eval_cfg_meta(value, target, path))
             .try_fold(false, |active, value| value.map(|value| active || value)),
         Meta::List(list) if list.path.is_ident("not") => {
             let values = parse_meta_list(list, path, "cfg list")?;
@@ -149,7 +150,7 @@ fn eval_cfg_meta(meta: &Meta, firmware: FirmwareVersion, path: &Path) -> Result<
                     path.display()
                 ));
             };
-            Ok(!eval_cfg_meta(value, firmware, path)?)
+            Ok(!eval_cfg_meta(value, target, path)?)
         }
         Meta::List(list) => Err(format!(
             "{}: unsupported cfg combinator `{}`",
@@ -184,19 +185,23 @@ mod tests {
         syn::parse_str::<syn::ItemStruct>(source).unwrap().attrs
     }
 
+    fn target(release: crate::FirmwareVersion, profile: crate::StackProfile) -> ComplianceTarget {
+        ComplianceTarget::new(release, crate::McuFamily::Wb5x, profile)
+    }
+
     #[test]
     fn evaluates_nested_firmware_cfgs_and_features() {
         let path = Path::new("fixture.rs");
-        let old = FirmwareVersion::new(1, 16, 0);
-        let current = FirmwareVersion::new(1, 17, 0);
+        let old = crate::FirmwareVersion::new(1, 16, 0);
+        let current = crate::FirmwareVersion::new(1, 17, 0);
         let attrs = attributes(
             r#"
                 #[cfg(all(since_fw_1_17_0, not(since_fw_1_17_1)))]
                 struct Fixture;
             "#,
         );
-        assert!(!attrs_active(&attrs, old, path).unwrap());
-        assert!(attrs_active(&attrs, current, path).unwrap());
+        assert!(!attrs_active(&attrs, target(old, crate::StackProfile::Full), path).unwrap());
+        assert!(attrs_active(&attrs, target(current, crate::StackProfile::Full), path).unwrap());
 
         let attrs = attributes(
             r#"
@@ -204,22 +209,33 @@ mod tests {
                 struct Fixture;
             "#,
         );
-        assert!(attrs_active(&attrs, current, path).unwrap());
+        assert!(attrs_active(&attrs, target(current, crate::StackProfile::Full), path).unwrap());
+
+        let attrs = attributes(
+            r#"
+                #[cfg(any(feature = "stack-full-extended", feature = "stack-light"))]
+                struct Fixture;
+            "#,
+        );
+        assert!(attrs_active(&attrs, target(current, crate::StackProfile::Light), path).unwrap());
+        assert!(
+            !attrs_active(&attrs, target(current, crate::StackProfile::HciLayer), path).unwrap()
+        );
     }
 
     #[test]
     fn evaluates_cfg_attr_and_rejects_unknown_predicates() {
         let path = Path::new("fixture.rs");
-        let firmware = FirmwareVersion::new(1, 17, 0);
+        let firmware = crate::FirmwareVersion::new(1, 17, 0);
         let attrs = attributes(
             r#"
                 #[cfg_attr(since_fw_1_17_0, cfg(not(feature = "fw_1_17_0")))]
                 struct Fixture;
             "#,
         );
-        assert!(!attrs_active(&attrs, firmware, path).unwrap());
+        assert!(!attrs_active(&attrs, target(firmware, crate::StackProfile::Full), path).unwrap());
 
         let attrs = attributes("#[cfg(target_os = \"none\")] struct Fixture;");
-        assert!(attrs_active(&attrs, firmware, path).is_err());
+        assert!(attrs_active(&attrs, target(firmware, crate::StackProfile::Full), path).is_err());
     }
 }

@@ -2,13 +2,15 @@
 
 mod decode;
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
+pub(crate) use decode::decode_prefixed_bytes;
 pub use decode::{
     BoundedBytes, BoundedItems, EventBytes, EventItems, EventItemsIter, HciDecodeCountedBytes,
     HciDecodeCountedItems, HciDecodeTrailingBytes,
 };
 pub(crate) use decode::{
     DecodeError, decode_counted_bytes, decode_counted_items, decode_fixed_field,
-    decode_prefixed_bytes, decode_trailing_bytes,
+    decode_trailing_bytes,
 };
 
 /// A semantic value with one exact, canonical HCI wire width.

@@ -1141,13 +1141,37 @@ struct FirmwarePartition {
 ///
 /// Duplicate event names or codes are useful when a firmware release changes a
 /// wire payload. They are safe only when the declarations are exact halves of
-/// one canonical version boundary. Complex cfg expressions deliberately return
-/// `None`: proving that arbitrary boolean cfg expressions do not overlap is
-/// outside the schema parser's scope, so such expressions cannot justify a
-/// duplicate declaration.
+/// one canonical version boundary. A version predicate may be a direct cfg or
+/// one conjunct of `all(...)`, allowing a stack-profile feature predicate to
+/// share the same attribute. Other boolean expressions deliberately return
+/// `None`: proving arbitrary cfg expressions do not overlap is outside the
+/// schema parser's scope.
 fn firmware_partition(attrs: &[syn::Attribute]) -> Option<FirmwarePartition> {
     let cfg = attrs.iter().find(|attr| attr.path().is_ident("cfg"))?;
-    let path = cfg.parse_args::<syn::Path>().ok()?;
+    let meta = cfg.parse_args::<syn::Meta>().ok()?;
+    firmware_partition_from_meta(&meta)
+}
+
+fn firmware_partition_from_meta(meta: &syn::Meta) -> Option<FirmwarePartition> {
+    let path = match meta {
+        syn::Meta::Path(path) => path,
+        syn::Meta::List(list) if list.path.is_ident("all") => {
+            let values = list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .ok()?;
+            let partitions = values
+                .iter()
+                .filter_map(firmware_partition_from_meta)
+                .collect::<Vec<_>>();
+            let [partition] = partitions.as_slice() else {
+                return None;
+            };
+            return Some(*partition);
+        }
+        _ => return None,
+    };
     let ident = path.get_ident()?.to_string();
 
     let (side, feature) = if let Some(version) = ident.strip_prefix("before_") {
@@ -3103,6 +3127,17 @@ mod tests {
 
         assert_eq!(catalog.events.len(), 2);
         assert_eq!(catalog.events[0].code, catalog.events[1].code);
+
+        let profiled = syn::parse_str::<VendorEvents>(
+            r#"
+                #[cfg(all(before_fw_1_22_0, feature = "stack-full"))]
+                Profiled(0x0406) { Payload = (); }
+                #[cfg(all(since_fw_1_22_0, feature = "stack-full"))]
+                Profiled(0x0406) { Payload = { handle: u16, }; }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(profiled.events.len(), 2);
     }
 
     #[test]

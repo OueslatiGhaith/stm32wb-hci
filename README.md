@@ -9,8 +9,9 @@ and events from the specification, and vendor-specific commands and events.
 
 ## Cube release and wireless binary selection
 
-One crate release can target several STM32CubeWB protocol releases. Select exactly one `fw_*`
-feature; `fw_1_24_0` is the default.
+One crate release can target several STM32CubeWB protocol releases and wireless stack profiles.
+Select exactly one `fw_*` feature and one `stack-*` feature; `fw_1_24_0` and
+`stack-full-extended` are the defaults.
 
 The `[features]` table in `Cargo.toml` is the source of truth. To see the complete, current set, run:
 
@@ -21,13 +22,8 @@ cargo run -p stm32wb-compliance -- list-supported
 For a non-default firmware, disable default features before selecting it:
 
 ```sh
-cargo build --no-default-features --features fw_1_15_0
+cargo build --no-default-features --features fw_1_15_0,stack-full-extended
 ```
-
-The build script makes these internal conditional-compilation predicates available to the crate:
-`before_fw_1_17_0`, `only_fw_1_17_0`, and `since_fw_1_17_0`. `before` is a strict comparison;
-`since` includes the named firmware. Do not use
-`--all-features`, because firmware features are intentionally mutually exclusive.
 
 ## Wireless-binary compliance
 
@@ -50,14 +46,15 @@ internal normalized catalog, JSON report, and TOML exclusion policy.
 cargo run -p stm32wb-compliance -- check --release 1.15.0 \
   --family wb5x --profile full-extended --deny
 
-# Discover every fw_* feature in Cargo.toml and check all of them.
+# Check every declared release, MCU family, and stack profile combination.
 cargo run -p stm32wb-compliance -- check --all-supported --deny
 ```
 
 `--deny` makes differences or unavailable wire evidence fail the command for CI; omit it to
-inspect the report, or pass `--json` for machine-readable output. `--all-supported` discovers
-canonical `fw_<major>_<minor>_<patch>` entries directly from the crate's `[features]` table, so
-adding a firmware feature automatically puts it in the compliance and CI loops.
+inspect the report, or pass `--json` for machine-readable output. `--all-supported` takes the
+Cartesian product of canonical `fw_<major>_<minor>_<patch>` entries from the crate's `[features]`
+table, all MCU families, and all stack profiles. `--family` and `--profile` apply only to a
+single `--release` check.
 
 The checker reports the requested CubeWB tag, the tag object, resolved commit, exact binary path,
 and binary Git blob, making a result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the

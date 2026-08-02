@@ -70,14 +70,14 @@ impl CheckOptions {
 /// generated STM32CubeWB API at the matching tag.
 pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
     if !options.skip_build {
-        cargo_check(&options.crate_dir, &options.target.release.feature_name())?;
+        cargo_check(&options.crate_dir, options.target)?;
     }
 
     let catalog = load_catalog(&options.cube_dir, options.target)?;
-    let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.target.release)
+    let rust_catalog = rust_source::load_rust_catalog(&options.crate_dir, options.target)
         .map_err(ComplianceError::Source)?;
     let local_standard_hci_declarations =
-        standard::load_local_standard_commands(&options.crate_dir, options.target.release)
+        standard::load_local_standard_commands(&options.crate_dir, options.target)
             .map_err(ComplianceError::Source)?;
     let local_standard_hci_commands = standard::coverage_entries(&local_standard_hci_declarations);
 
@@ -155,7 +155,12 @@ pub fn workspace_root(crate_dir: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-fn cargo_check(crate_dir: &Path, feature: &str) -> Result<(), ComplianceError> {
+fn cargo_check(crate_dir: &Path, target: ComplianceTarget) -> Result<(), ComplianceError> {
+    let features = format!(
+        "{},{}",
+        target.release.feature_name(),
+        target.profile.feature_name()
+    );
     let status = Command::new("cargo")
         .args([
             "check",
@@ -163,7 +168,7 @@ fn cargo_check(crate_dir: &Path, feature: &str) -> Result<(), ComplianceError> {
             "stm32wb-hci",
             "--no-default-features",
             "--features",
-            feature,
+            &features,
         ])
         .current_dir(crate_dir)
         .status()

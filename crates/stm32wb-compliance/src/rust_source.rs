@@ -2,7 +2,7 @@
 //!
 //! The checker deliberately works from the Rust syntax tree rather than source
 //! text. Command, event, and module cfgs are evaluated structurally for the
-//! selected firmware.
+//! selected Cube release and stack profile.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -14,7 +14,7 @@ use stm32wb_hci_schema::{
 };
 use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath, Type};
 
-use crate::FirmwareVersion;
+use crate::ComplianceTarget;
 use crate::catalog::{
     Envelope, TaggedItemsVariantLayout, TaggedVariantLayout, VariableSemantic, WireLayout,
     WireSegment,
@@ -120,12 +120,12 @@ struct WireTypeShape {
 type WireTypeShapes = BTreeMap<String, WireTypeShape>;
 
 /// Load the declarative vendor command and event catalogs for one selected
-/// firmware feature.
+/// release/profile target.
 pub(crate) fn load_rust_catalog(
     crate_dir: &Path,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
 ) -> Result<RustCatalog, String> {
-    let wire_type_shapes = load_wire_type_shapes(&crate_dir.join("src"), firmware)?;
+    let wire_type_shapes = load_wire_type_shapes(&crate_dir.join("src"), target)?;
     let command_root = crate_dir.join("src/vendor/command/mod.rs");
     let command_root_file = read_rust_file(&command_root)?;
     let mut command_sources = Vec::new();
@@ -133,24 +133,24 @@ pub(crate) fn load_rust_catalog(
     collect_command_sources(
         command_root,
         command_root_file,
-        firmware,
+        target,
         &mut visited,
         &mut command_sources,
     )?;
 
-    let commands = collect_commands(&command_sources, firmware, &wire_type_shapes)?;
+    let commands = collect_commands(&command_sources, target, &wire_type_shapes)?;
 
     let event_path = crate_dir.join("src/vendor/event/mod.rs");
     let event_file = read_rust_file(&event_path)?;
     let events =
-        parse_vendor_event_declarations(&event_file, firmware, &event_path, &wire_type_shapes)?;
+        parse_vendor_event_declarations(&event_file, target, &event_path, &wire_type_shapes)?;
 
     Ok(RustCatalog { commands, events })
 }
 
 fn load_wire_type_shapes(
     source_dir: &Path,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
 ) -> Result<WireTypeShapes, String> {
     let mut paths = Vec::new();
     collect_rust_paths(source_dir, &mut paths)?;
@@ -159,7 +159,7 @@ fn load_wire_type_shapes(
     let mut shapes = WireTypeShapes::new();
     for path in paths {
         let file = read_rust_file(&path)?;
-        collect_wire_type_shapes_from_items(&file.items, firmware, &path, &mut shapes)?;
+        collect_wire_type_shapes_from_items(&file.items, target, &path, &mut shapes)?;
     }
     for (name, shape) in &shapes {
         if shape.width == 0 {
@@ -206,12 +206,12 @@ fn collect_rust_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), 
 
 fn collect_wire_type_shapes_from_items(
     items: &[Item],
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
     shapes: &mut WireTypeShapes,
 ) -> Result<(), String> {
     for item in items {
-        if !item_is_active(item, firmware, path)? {
+        if !item_is_active(item, target, path)? {
             continue;
         }
         match item {
@@ -365,7 +365,7 @@ fn collect_wire_type_shapes_from_items(
             }
             Item::Mod(module) if module.content.is_some() => {
                 let (_, nested) = module.content.as_ref().expect("checked above");
-                collect_wire_type_shapes_from_items(nested, firmware, path, shapes)?;
+                collect_wire_type_shapes_from_items(nested, target, path, shapes)?;
             }
             _ => {}
         }
@@ -481,11 +481,11 @@ fn read_rust_file(path: &Path) -> Result<File, String> {
 fn collect_command_sources(
     path: PathBuf,
     file: File,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     visited: &mut BTreeSet<PathBuf>,
     sources: &mut Vec<SourceUnit>,
 ) -> Result<(), String> {
-    if !attrs_active(&file.attrs, firmware, &path)? {
+    if !attrs_active(&file.attrs, target, &path)? {
         return Ok(());
     }
 
@@ -501,7 +501,7 @@ fn collect_command_sources(
         let Item::Mod(module) = item else {
             continue;
         };
-        if !attrs_active(&module.attrs, firmware, &path)? {
+        if !attrs_active(&module.attrs, target, &path)? {
             continue;
         }
 
@@ -514,14 +514,14 @@ fn collect_command_sources(
                     attrs: Vec::new(),
                     items: items.clone(),
                 },
-                firmware,
+                target,
                 visited,
                 sources,
             )?;
         } else {
             let module_path = external_module_path(&path, module)?;
             let module_file = read_rust_file(&module_path)?;
-            collect_command_sources(module_path, module_file, firmware, visited, sources)?;
+            collect_command_sources(module_path, module_file, target, visited, sources)?;
         }
     }
 
@@ -601,7 +601,7 @@ fn module_path_override(module: &ItemMod) -> Result<Option<String>, String> {
 
 fn collect_commands(
     sources: &[SourceUnit],
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     wire_type_shapes: &WireTypeShapes,
 ) -> Result<BTreeMap<String, CommandDeclaration>, String> {
     let mut commands = BTreeMap::<String, CommandDeclaration>::new();
@@ -613,7 +613,7 @@ fn collect_commands(
                 continue;
             };
             if !is_macro_named(&item.mac.path, "vendor_cmd")
-                || !attrs_active(&item.attrs, firmware, &source.path)?
+                || !attrs_active(&item.attrs, target, &source.path)?
             {
                 continue;
             }
@@ -1039,19 +1039,19 @@ fn storage_elements(
 
 fn parse_vendor_event_declarations(
     file: &File,
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
     wire_type_shapes: &WireTypeShapes,
 ) -> Result<BTreeMap<u16, EventDeclaration>, String> {
-    if !attrs_active(&file.attrs, firmware, path)? {
+    if !attrs_active(&file.attrs, target, path)? {
         return Err(format!(
-            "{}: VendorEvent source is disabled for selected firmware {firmware}",
+            "{}: VendorEvent source is disabled for selected target {target}",
             path.display()
         ));
     }
 
     let mut macros = Vec::new();
-    collect_vendor_event_macros(&file.items, firmware, path, &mut macros)?;
+    collect_vendor_event_macros(&file.items, target, path, &mut macros)?;
     let [item] = macros.as_slice() else {
         return Err(format!(
             "{}: found {} active `vendor_event!` catalogs; expected exactly one",
@@ -1069,7 +1069,7 @@ fn parse_vendor_event_declarations(
 
     let mut events = BTreeMap::new();
     for definition in invocation.events {
-        if !attrs_active(&definition.attrs, firmware, path)? {
+        if !attrs_active(&definition.attrs, target, path)? {
             continue;
         }
         let payload_maximum = resolve_wire_size(&definition.payload.max_size(), wire_type_shapes)?;
@@ -1103,7 +1103,7 @@ fn parse_vendor_event_declarations(
     }
     if events.is_empty() {
         return Err(format!(
-            "{}: vendor_event! has no active declarations for firmware {firmware}",
+            "{}: vendor_event! has no active declarations for {target}",
             path.display()
         ));
     }
@@ -1112,12 +1112,12 @@ fn parse_vendor_event_declarations(
 
 fn collect_vendor_event_macros<'ast>(
     items: &'ast [Item],
-    firmware: FirmwareVersion,
+    target: ComplianceTarget,
     path: &Path,
     macros: &mut Vec<&'ast ItemMacro>,
 ) -> Result<(), String> {
     for item in items {
-        if !item_is_active(item, firmware, path)? {
+        if !item_is_active(item, target, path)? {
             continue;
         }
         match item {
@@ -1126,7 +1126,7 @@ fn collect_vendor_event_macros<'ast>(
             }
             Item::Mod(module) if module.content.is_some() => {
                 let (_, nested) = module.content.as_ref().expect("checked above");
-                collect_vendor_event_macros(nested, firmware, path, macros)?;
+                collect_vendor_event_macros(nested, target, path, macros)?;
             }
             _ => {}
         }
@@ -1134,7 +1134,7 @@ fn collect_vendor_event_macros<'ast>(
     Ok(())
 }
 
-fn item_is_active(item: &Item, firmware: FirmwareVersion, path: &Path) -> Result<bool, String> {
+fn item_is_active(item: &Item, target: ComplianceTarget, path: &Path) -> Result<bool, String> {
     let attributes = match item {
         Item::Const(item) => &item.attrs,
         Item::Enum(item) => &item.attrs,
@@ -1154,7 +1154,7 @@ fn item_is_active(item: &Item, firmware: FirmwareVersion, path: &Path) -> Result
         Item::Verbatim(_) => return Ok(true),
         _ => return Ok(true),
     };
-    attrs_active(attributes, firmware, path)
+    attrs_active(attributes, target, path)
 }
 
 fn is_macro_named(path: &SynPath, name: &str) -> bool {
@@ -1168,20 +1168,33 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn version(major: u16, minor: u16, patch: u16) -> FirmwareVersion {
-        FirmwareVersion::new(major, minor, patch)
+    fn version(major: u16, minor: u16, patch: u16) -> crate::FirmwareVersion {
+        crate::FirmwareVersion::new(major, minor, patch)
+    }
+
+    fn target(firmware: crate::FirmwareVersion) -> ComplianceTarget {
+        ComplianceTarget::new(
+            firmware,
+            crate::McuFamily::Wb5x,
+            crate::StackProfile::FullExtended,
+        )
     }
 
     fn fixture_commands(
         source: &str,
-        firmware: FirmwareVersion,
+        firmware: crate::FirmwareVersion,
     ) -> BTreeMap<String, CommandDeclaration> {
         let path = PathBuf::from("fixture.rs");
         let unit = SourceUnit {
             path: path.clone(),
             file: syn::parse_file(source).unwrap(),
         };
-        collect_commands(std::slice::from_ref(&unit), firmware, &fixture_wire_types()).unwrap()
+        collect_commands(
+            std::slice::from_ref(&unit),
+            target(firmware),
+            &fixture_wire_types(),
+        )
+        .unwrap()
     }
 
     fn fixture_wire_types() -> WireTypeShapes {
@@ -1459,7 +1472,7 @@ mod tests {
         };
         let error = collect_commands(
             std::slice::from_ref(&unit),
-            version(0, 17, 0),
+            target(version(0, 17, 0)),
             &WireTypeShapes::new(),
         )
         .unwrap_err();
@@ -1781,7 +1794,7 @@ mod tests {
     #[test]
     fn loads_declarative_variable_shapes_from_the_real_crate() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
-        let coverage = load_rust_catalog(&crate_dir, version(1, 17, 1)).unwrap();
+        let coverage = load_rust_catalog(&crate_dir, target(version(1, 17, 1))).unwrap();
 
         let update = coverage.commands.get("GapUpdateAdvertisingData").unwrap();
         assert_eq!(update.request, Envelope::bounded(1, 32));
@@ -1908,8 +1921,8 @@ mod tests {
     #[test]
     fn loads_unique_command_ids_for_every_declared_firmware() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stm32wb-hci");
-        for firmware in FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
-            load_rust_catalog(&crate_dir, firmware).unwrap();
+        for firmware in crate::FirmwareVersion::declared_in_manifest(&crate_dir).unwrap() {
+            load_rust_catalog(&crate_dir, target(firmware)).unwrap();
         }
     }
 
@@ -1941,7 +1954,7 @@ mod tests {
         let firmware = version(1, 17, 0);
         let declarations = collect_commands(
             std::slice::from_ref(&unit),
-            firmware,
+            target(firmware),
             &WireTypeShapes::new(),
         )
         .unwrap();
@@ -1952,7 +1965,7 @@ mod tests {
 
         let future = collect_commands(
             std::slice::from_ref(&unit),
-            version(1, 18, 0),
+            target(version(1, 18, 0)),
             &WireTypeShapes::new(),
         )
         .unwrap();
@@ -1990,7 +2003,7 @@ mod tests {
         collect_command_sources(
             root.clone(),
             read_rust_file(&root).unwrap(),
-            version(0, 17, 0),
+            target(version(0, 17, 0)),
             &mut visited,
             &mut sources,
         )
@@ -2030,7 +2043,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = load_wire_type_shapes(&directory, version(1, 24, 0))
+        let error = load_wire_type_shapes(&directory, target(version(1, 24, 0)))
             .err()
             .expect("drifted canonical declaration must be rejected");
         assert!(

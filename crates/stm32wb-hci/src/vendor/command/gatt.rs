@@ -2,7 +2,17 @@
 
 use bt_hci::param::ConnHandle;
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 use crate::types::AttributeHandle;
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 use crate::vendor::command::BoundedBytes;
 use crate::vendor::command::l2cap::L2CocChannelIndex;
 
@@ -160,6 +170,11 @@ impl From<DescriptorValueMaxLength> for usize {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattInit(cgid = 0x2, cid = 0x01) {
         Params = ();
@@ -168,6 +183,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattAddService(cgid = 0x2, cid = 0x02) {
         Params<'a> = {
@@ -197,6 +217,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattIncludeService(cgid = 0x2, cid = 0x03) {
         Params<'a> = {
@@ -227,6 +252,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattAddCharacteristic(cgid = 0x2, cid = 0x04) {
         Params<'a> = {
@@ -261,6 +291,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattAddCharacteristicDescriptor(cgid = 0x2, cid = 0x05) {
         Params<'a> = {
@@ -304,6 +339,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattUpdateCharacteristicValue(cgid = 0x2, cid = 0x06) {
         Params<'a> = {
@@ -321,6 +361,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDeleteCharacterisitic(cgid = 0x2, cid = 0x07) {
         Params = {
@@ -332,6 +377,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDeleteService(cgid = 0x2, cid = 0x08) {
         Params = {
@@ -342,6 +392,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDeleteIncludedService(cgid = 0x2, cid = 0x09) {
         Params = {
@@ -353,6 +408,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattSetEventMask(cgid = 0x2, cid = 0x0A) {
         Params = {
@@ -363,6 +423,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattExchageConfiguration(cgid = 0x2, cid = 0x0B) {
         Params = {
@@ -372,6 +433,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattFindInformationRequest(cgid = 0x2, cid = 0x0C) {
         Params = {
@@ -383,6 +445,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattFindByTypeValueRequest(cgid = 0x2, cid = 0x0D) {
         Params<'a> = {
@@ -400,6 +463,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadByTypeRequest(cgid = 0x2, cid = 0x0E) {
         Params<'a> = {
@@ -427,6 +491,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadByGroupTypeRequest(cgid = 0x2, cid = 0x0F) {
         Params<'a> = {
@@ -454,6 +519,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattPrepareWriteRequest(cgid = 0x2, cid = 0x10) {
         Params<'a> = {
@@ -470,6 +536,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattExecuteWriteRequest(cgid = 0x2, cid = 0x11) {
         Params = {
@@ -480,6 +547,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllPrimaryServices(cgid = 0x2, cid = 0x12) {
         Params = {
@@ -489,6 +557,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverPrimaryServicesByUUID(cgid = 0x2, cid = 0x13) {
         Params<'a> = {
@@ -514,6 +583,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattFindIncludedServices(cgid = 0x2, cid = 0x14) {
         Params = {
@@ -525,6 +595,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllCharacteristicsOfService(cgid = 0x2, cid = 0x15) {
         Params = {
@@ -536,6 +607,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverCharacteristicsByUUID(cgid = 0x2, cid = 0x16) {
         Params<'a> = {
@@ -563,6 +635,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDiscoverAllCharacteristicDescriptors(cgid = 0x2, cid = 0x17) {
         Params = {
@@ -574,6 +647,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicValue(cgid = 0x2, cid = 0x18) {
         Params = {
@@ -584,6 +658,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicUsingUUID(cgid = 0x2, cid = 0x19) {
         Params<'a> = {
@@ -611,6 +686,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicValue(cgid = 0x2, cid = 0x1A) {
         Params = {
@@ -622,6 +698,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadMultipleCharacteristicValues(cgid = 0x2, cid = 0x1B) {
         Params<'a> = {
@@ -637,6 +714,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicValue(cgid = 0x2, cid = 0x1C) {
         Params<'a> = {
@@ -652,6 +730,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicValue(cgid = 0x2, cid = 0x1D) {
         Params<'a> = {
@@ -668,6 +747,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicValueReliably(cgid = 0x2, cid = 0x1E) {
         Params<'a> = {
@@ -685,6 +765,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteLongCharacteristicDescriptor(cgid = 0x2, cid = 0x1F) {
         Params<'a> = {
@@ -702,6 +783,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadLongCharacteristicDescriptor(cgid = 0x2, cid = 0x20) {
         Params = {
@@ -714,6 +796,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteCharacteristicDescriptor(cgid = 0x2, cid = 0x21) {
         Params<'a> = {
@@ -730,6 +813,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadCharacteristicDescriptor(cgid = 0x2, cid = 0x22) {
         Params = {
@@ -740,6 +824,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithoutResponse(cgid = 0x2, cid = 0x23) {
         Params<'a> = {
@@ -756,6 +841,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattSignedWriteWithoutResponse(cgid = 0x2, cid = 0x24) {
         Params<'a> = {
@@ -772,6 +858,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattConfirmIndication(cgid = 0x2, cid = 0x25) {
         Params = {
@@ -783,6 +870,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light"
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteResponse(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
@@ -806,6 +898,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_24_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattPermitWrite(cgid = 0x2, cid = 0x26) {
         Params<'a> = {
@@ -830,6 +927,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light"
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattAllowRead(cgid = 0x2, cid = 0x27) {
         Params = {
@@ -841,6 +943,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_24_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattPermitRead(cgid = 0x2, cid = 0x27) {
         Params = {
@@ -861,6 +968,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattSetSecurityPermission(cgid = 0x2, cid = 0x28) {
         Params = {
@@ -873,6 +985,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattSetDescriptorValue(cgid = 0x2, cid = 0x29) {
         Params<'a> = {
@@ -891,6 +1008,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadHandleValue(cgid = 0x2, cid = 0x2A) {
         Params = {
@@ -910,6 +1032,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 impl GattHandleValue {
     /// Maximum number of value bytes that fit in the response envelope.
     pub const MAX_VALUE_LEN: usize = 247;
@@ -920,6 +1047,11 @@ impl GattHandleValue {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattUpdateLongCharacteristicValue(cgid = 0x2, cid = 0x2C) {
         Params<'a> = {
@@ -944,6 +1076,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_24_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light"
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattDenyRead(cgid = 0x2, cid = 0x2D) {
         Params = {
@@ -958,6 +1095,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattSetAccessPermission(cgid = 0x2, cid = 0x2E) {
         Params = {
@@ -970,6 +1112,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GattStoreDatabase(cgid = 0x2, cid = 0x30) {
         Params = ();
@@ -978,6 +1125,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GattSendMultipleNotification(cgid = 0x2, cid = 0x31) {
         Params<'a> = {
@@ -994,6 +1142,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GattReadMultipleVarCharValue(cgid = 0x2, cid = 0x32) {
         Params<'a> = {
@@ -1010,6 +1159,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithoutRespExt(cgid = 0x2, cid = 0x40) {
         Params = {
@@ -1024,6 +1174,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_24_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GattWriteWithRespExt(cgid = 0x2, cid = 0x41) {
         Params = {

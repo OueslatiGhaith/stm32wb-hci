@@ -33,8 +33,8 @@ jobs:
           firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
           test -n "$firmwares"
           for firmware in $firmwares; do
-            cargo build -p stm32wb-hci --no-default-features --features="$firmware" --release --target=thumbv7em-none-eabihf
-            cargo build -p stm32wb-hci --no-default-features --features="$firmware,defmt" --release --target=thumbv7em-none-eabihf
+            cargo build -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended" --release --target=thumbv7em-none-eabihf
+            cargo build -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended,defmt" --release --target=thumbv7em-none-eabihf
           done
 
   test:
@@ -52,7 +52,7 @@ jobs:
           firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
           test -n "$firmwares"
           for firmware in $firmwares; do
-            cargo test --verbose -p stm32wb-hci --no-default-features --features="$firmware"
+            cargo test --verbose -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended"
           done
 
   example:
@@ -76,5 +76,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes libclang-dev
       - name: Fetch STM32CubeWB tags without checking out a worktree
         run: git clone --filter=blob:none --no-checkout --tags https://github.com/STMicroelectronics/STM32CubeWB.git STM32CubeWB
-      - name: Check every declared firmware feature against its CubeWB tag
+      - name: Check every declared release, MCU family, and stack profile against CubeWB
         run: cargo run -p stm32wb-compliance -- check --all-supported --deny

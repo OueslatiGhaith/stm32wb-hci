@@ -105,6 +105,13 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 cmd! {
     /// LE Read Local P-256 Public Key command.
     ///
@@ -115,6 +122,12 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+    all(since_fw_1_21_0, any(feature = "stack-full", feature = "stack-light")),
+))]
 cmd! {
     /// LE Generate DHKey command.
     ///
@@ -125,6 +138,13 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 cmd! {
     /// LE Read Peer Resolvable Address command.
     ///
@@ -136,6 +156,13 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 cmd! {
     /// LE Read Local Resolvable Address command.
     ///
@@ -147,6 +174,13 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+    all(since_fw_1_19_0, feature = "stack-light"),
+))]
 cmd! {
     /// LE Receiver Test v2 command.
     ///
@@ -157,6 +191,13 @@ cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+    all(since_fw_1_19_0, feature = "stack-light"),
+))]
 cmd! {
     /// LE Transmitter Test v2 command.
     ///
@@ -169,6 +210,11 @@ cmd! {
 }
 
 #[cfg(since_fw_1_17_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 cmd! {
     /// LE Generate DHKey v2 command.
     ///
@@ -181,6 +227,13 @@ cmd! {
 }
 
 #[cfg(since_fw_1_23_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+    feature = "stack-hci-layer-extended",
+    feature = "stack-hci-layer",
+))]
 cmd! {
     /// LE Set Resolvable Private Address Timeout v2 command.
     ///

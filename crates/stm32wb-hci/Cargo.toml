@@ -30,8 +30,14 @@ stm32wb-hci-schema.workspace = true
 pollster = "0.4"
 
 [features]
-default = ["fw_1_24_0"]
+default = ["fw_1_24_0", "stack-full-extended"]
 defmt = ["dep:defmt", "bt-hci/defmt"]
+stack-full-extended = []
+stack-full = []
+stack-light = []
+stack-hci-layer-extended = []
+stack-hci-layer = []
+stack-hci-adv-scan = []
 fw_1_15_0 = []
 fw_1_16_0 = []
 fw_1_17_0 = []

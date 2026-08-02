@@ -1,7 +1,21 @@
 //! GAP commands and types needed for those commands.
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
+use crate::types::AttributeHandle;
 pub use crate::types::BdAddrType;
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    all(feature = "stack-light", before_fw_1_23_0),
+))]
+use crate::types::PeerAddrType;
+#[cfg(feature = "stack-full-extended")]
 pub use crate::types::extended_advertisement::AdvertisingHandle;
+#[cfg(feature = "stack-full-extended")]
 use crate::types::extended_advertisement::{
     AdvSet, AdvertisingEvent, AdvertisingMode, AdvertisingOperation, AdvertisingPhy,
     ExtendedAdvertisingInterval,
@@ -10,8 +24,17 @@ pub use crate::types::{
     AdvertisingFilterPolicy, AdvertisingType, ConnectionInterval, ExpectedConnectionLength,
     OwnAddressType, ScanWindow,
 };
-use crate::types::{AttributeHandle, PeerAddrType};
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 use crate::vendor::command::BoundedItems;
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 use bt_hci::param::{BdAddr, ConnHandle};
 
 stm32wb_hci_macros::wire_type! {
@@ -117,6 +140,11 @@ stm32wb_hci_macros::wire_type! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetNonDiscoverable(cgid = 0x1, cid = 0x01) {
         Params = ();
@@ -125,6 +153,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetLimitedDiscoverable(cgid = 0x1, cid = 0x02) {
         Params<'a> = {
@@ -170,6 +203,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetDiscoverable(cgid = 0x1, cid = 0x03) {
         Params<'a> = {
@@ -216,6 +254,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetDirectConnectable(cgid = 0x1, cid = 0x04) {
         Params = {
@@ -249,6 +292,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetIoCapability(cgid = 0x1, cid = 0x05) {
         Params = {
@@ -259,6 +307,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetAuthenticationRequirement(cgid = 0x1, cid = 0x06) {
         Params = {
@@ -286,6 +339,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetAuthorizationRequirement(cgid = 0x1, cid = 0x07) {
         Params = {
@@ -297,6 +355,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapPassKeyResponse(cgid = 0x1, cid = 0x08) {
         Params = {
@@ -308,6 +371,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAuthorizationResponse(cgid = 0x1, cid = 0x09) {
         Params = {
@@ -319,6 +387,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     CmdGapInit(cgid = 0x1, cid = 0x0A) {
         Params = {
@@ -339,6 +412,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetNonConnectable(cgid = 0x1, cid = 0x0B) {
         Params = {
@@ -356,6 +434,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetUnidirectedConnectable(cgid = 0x1, cid = 0x0C) {
         Params = {
@@ -376,6 +459,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapPeripheralSecurityRequest(cgid = 0x1, cid = 0x0D) {
         Params = {
@@ -385,6 +473,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapUpdateAdvertisingData(cgid = 0x1, cid = 0x0E) {
         Params<'a> = {
@@ -400,6 +493,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapDeleteAdType(cgid = 0x1, cid = 0x0F) {
         Params = {
@@ -412,6 +510,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapGetSecurityLevel(cgid = 0x1, cid = 0x10) {
         Params = {
@@ -425,6 +528,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetEventMask(cgid = 0x1, cid = 0x11) {
         Params = {
@@ -435,6 +543,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapConfigureWhitelist(cgid = 0x1, cid = 0x12) {
         Params = ();
@@ -443,6 +556,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapTerminate(cgid = 0x1, cid = 0x13) {
         Params = {
@@ -453,6 +571,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapClearSecurityDatabase(cgid = 0x1, cid = 0x14) {
         Params = ();
@@ -461,6 +584,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAllowRebond(cgid = 0x1, cid = 0x15) {
         Params = {
@@ -471,6 +599,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartLimitedDiscoveryProcedure(cgid = 0x1, cid = 0x16) {
         Params = {
@@ -482,6 +611,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartGeneralDiscoveryProcedure(cgid = 0x1, cid = 0x17) {
         Params = {
@@ -493,6 +623,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartAutoConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x19) {
         Params<'a> = {
@@ -511,6 +642,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartGeneralConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1A) {
         Params = {
@@ -524,6 +656,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartSelectiveConnectionEstablishmentProcedure(cgid = 0x1, cid = 0x1B) {
         Params<'a> = {
@@ -543,6 +676,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapCreateConnection(cgid = 0x1, cid = 0x1C) {
         Params = {
@@ -556,6 +690,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapTerminateProcedure(cgid = 0x1, cid = 0x1D) {
         Params = {
@@ -569,6 +704,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartConnectionUpdate(cgid = 0x1, cid = 0x1E) {
         Params = {
@@ -580,6 +716,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSendPairingRequest(cgid = 0x1, cid = 0x1F) {
         Params = {
@@ -591,6 +728,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_22_0)]
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
 stm32wb_hci_macros::vendor_cmd! {
     CmdGapResolvePrivateAddress(cgid = 0x1, cid = 0x20) {
         Params = {
@@ -603,6 +741,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetBroadcastMode(cgid = 0x1, cid = 0x21) {
         Params<'a> = {
@@ -635,6 +774,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
 stm32wb_hci_macros::vendor_cmd! {
     GapStartObservationProcedure(cgid = 0x1, cid = 0x22) {
         Params = {
@@ -648,6 +788,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapGetBondedDevices(cgid = 0x1, cid = 0x23) {
         Params = ();
@@ -663,6 +808,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 impl GapBondedDevices {
     /// Addresses reported by the controller.
     pub fn bonded_addresses(&self) -> &[BdAddrType] {
@@ -671,6 +821,11 @@ impl GapBondedDevices {
 }
 
 #[cfg(before_fw_1_22_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light"
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapIsDeviceBonded(cgid = 0x1, cid = 0x24) {
         Params = {
@@ -682,6 +837,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_22_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapCheckBondedDevice(cgid = 0x1, cid = 0x24) {
         Params = {
@@ -694,6 +854,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapConfirmNumericComparisonValue(cgid = 0x1, cid = 0x25) {
         Params = {
@@ -705,6 +870,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapPasskeyInput(cgid = 0x1, cid = 0x26) {
         Params = {
@@ -715,6 +885,11 @@ stm32wb_hci_macros::vendor_cmd! {
         Return = ();
     }
 }
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapGetOobData(cgid = 0x1, cid = 0x27) {
         Params = {
@@ -731,6 +906,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapSetOobData(cgid = 0x1, cid = 0x28) {
         Params = {
@@ -746,6 +926,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(before_fw_1_23_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light"
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToResolvingList(cgid = 0x1, cid = 0x29) {
         Params<'a> = {
@@ -762,6 +947,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapRemoveBondedDevice(cgid = 0x1, cid = 0x2A) {
         Params = {
@@ -772,6 +962,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAddDevicesToList(cgid = 0x1, cid = 0x2B) {
         Params<'a> = {
@@ -788,6 +983,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconStart(cgid = 0x1, cid = 0x30) {
         Params = {
@@ -806,6 +1006,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconStop(cgid = 0x1, cid = 0x31) {
         Params = ();
@@ -814,6 +1019,11 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdditionalBeaconSetData(cgid = 0x1, cid = 0x32) {
         Params<'a> = {
@@ -828,6 +1038,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetConfig(cgid = 0x1, cid = 0x40) {
         Params<'a> = {
@@ -854,6 +1065,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetEnable(cgid = 0x1, cid = 0x41) {
         Params<'a> = {
@@ -870,6 +1082,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetAdvertisingData(cgid = 0x1, cid = 0x42) {
         Params<'a> = {
@@ -887,6 +1100,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetScanResponseData(cgid = 0x1, cid = 0x43) {
         Params<'a> = {
@@ -904,6 +1118,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvRemoveSet(cgid = 0x1, cid = 0x44) {
         Params = {
@@ -914,6 +1129,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvClearSets(cgid = 0x1, cid = 0x45) {
         Params = ();
@@ -922,6 +1138,7 @@ stm32wb_hci_macros::vendor_cmd! {
     }
 }
 
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapAdvSetRandomAddress(cgid = 0x1, cid = 0x46) {
         Params = {
@@ -934,6 +1151,11 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_21_0)]
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
 stm32wb_hci_macros::vendor_cmd! {
     GapPairingRequestReply(cgid = 0x1, cid = 0x2D) {
         Params = {
@@ -946,6 +1168,7 @@ stm32wb_hci_macros::vendor_cmd! {
 }
 
 #[cfg(since_fw_1_18_0)]
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapExtStartScan(cgid = 0x1, cid = 0x50) {
         Params = {
@@ -1018,6 +1241,7 @@ stm32wb_hci_macros::wire_type! {
 }
 
 #[cfg(since_fw_1_18_0)]
+#[cfg(feature = "stack-full-extended")]
 stm32wb_hci_macros::vendor_cmd! {
     GapExtCreateConnection(cgid = 0x1, cid = 0x51) {
         Params = {

@@ -35,6 +35,11 @@ the documented name/code disagrees, if a table contains an unknown marker, or if
 release notes do not establish the binary/profile mapping. System SHCI events remain sourced from
 the tagged `shci.h` system interface rather than the BLE profile tables.
 
+The Rust command and event declarations carry handwritten Cargo feature predicates such as
+`#[cfg(feature = "stack-light")]`. The checker evaluates the selected release and profile features
+against those declarations and audits the result against Cube's tagged availability matrix; it
+does not generate Rust cfgs or a capability manifest from the documentation.
+
 Known payloads use `Evidence<WireLayout>`. A layout retains both its validated
 length envelope and, when the generated source proves it, the ordered fixed and
 variable wire segments. Variable segments preserve element width and
@@ -94,6 +99,9 @@ cargo run -p stm32wb-compliance -- check --release 1.17.0 \
 
 # Emit the machine-readable report.
 cargo run -p stm32wb-compliance -- check --release 1.17.0 --json
+
+# Check every declared release × MCU family × stack profile target.
+cargo run -p stm32wb-compliance -- check --all-supported --deny
 
 # Compare two normalized catalogs and emit JSON.
 cargo run -p stm32wb-compliance -- diff --from 1.16.0 --to 1.17.0 \
