@@ -50,7 +50,9 @@ use wire_type::expand_wire_type;
 /// expose `try_new` with `HciConstraintError`, `HciLengthError`, or their
 /// combined `HciValidationError` as appropriate. Variable construction checks
 /// both each field's declared bound and the aggregate 255-byte HCI parameter
-/// limit.
+/// limit. The generated `*Params` type stores the declared semantic fields and
+/// exposes a same-named getter for each one. Its `WriteHci` implementation
+/// writes those fields directly according to their declared encodings.
 ///
 /// `Constraints` are evaluated in declaration order and stop at the first
 /// failure. Supported relationships are `ordered`, `ordered_when_in_range`,

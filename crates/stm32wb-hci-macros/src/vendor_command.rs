@@ -1,7 +1,7 @@
 //! Expansion backend for declarative vendor commands.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote};
 use stm32wb_hci_schema::{
     Completion, Constraint, Constraints, Field, FieldEncoding, Fields, Returns, TaggedEncoding,
     VariableEncodingShape, VendorCommand,
@@ -16,17 +16,29 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
     let fields = command.params.fields().map_or(&[][..], Fields::fields);
     let field_names = fields.iter().map(|field| &field.name).collect::<Vec<_>>();
     let field_types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-    let params_type = field_list_type(fields);
-    let params_value = field_list_value(fields);
+    let params_fields = fields.iter().map(|field| {
+        let attrs = &field.attrs;
+        let name = &field.name;
+        let ty = &field.ty;
+        quote! {
+            #(#attrs)*
+            #name: #ty,
+        }
+    });
+    let params_getters = expand_params_getters(fields);
+    let params_size = expand_params_size(fields);
+    let params_write = expand_params_write(fields, false);
+    let params_write_async = expand_params_write(fields, true);
+    let field_validations = expand_param_field_validations(fields);
     let schema_validations = expand_schema_validations(fields);
     let params_length_assert = command.params.lifetime.is_none().then(|| {
         let params_len = command.params.max_len();
         quote! {
-            const _: () = crate::vendor::command::assert_hci_field_list_length(#params_len);
+            const _: () = crate::vendor::command::assert_hci_payload_length(#params_len);
         }
     });
     let params_constructor =
-        expand_params_constructor(command, &field_names, &field_types, &params_value);
+        expand_params_constructor(command, &field_names, &field_types, &field_validations);
     let command_constructor =
         expand_command_constructor(command, &params_name, &field_names, &field_types);
     let completion_impl = expand_completion(command);
@@ -54,24 +66,26 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
         #params_length_assert
 
         #[doc = concat!("Parameters for [`", stringify!(#name), "`].")]
-        pub struct #params_name #impl_generics(
-            crate::vendor::command::DeclarativeParams<#params_type>
-        );
+        pub struct #params_name #impl_generics {
+            #(#params_fields)*
+        }
 
         impl #impl_generics #params_name #type_generics {
             #params_constructor
 
+            #params_getters
+
             /// Number of parameter bytes in the HCI wire representation.
             #[inline]
             pub fn encoded_len(&self) -> usize {
-                ::bt_hci::WriteHci::size(self)
+                #params_size
             }
         }
 
         impl #impl_generics ::bt_hci::WriteHci for #params_name #type_generics {
             #[inline]
             fn size(&self) -> usize {
-                ::bt_hci::WriteHci::size(&self.0)
+                self.encoded_len()
             }
 
             #[inline]
@@ -79,7 +93,7 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
                 &self,
                 writer: W,
             ) -> Result<(), W::Error> {
-                ::bt_hci::WriteHci::write_hci(&self.0, writer)
+                #params_write
             }
 
             #[inline]
@@ -87,7 +101,7 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
                 &self,
                 writer: W,
             ) -> Result<(), W::Error> {
-                ::bt_hci::WriteHci::write_hci_async(&self.0, writer).await
+                #params_write_async
             }
         }
 
@@ -181,7 +195,7 @@ fn expand_params_constructor(
     command: &VendorCommand,
     field_names: &[&syn::Ident],
     field_types: &[&syn::Type],
-    params_value: &TokenStream2,
+    field_validations: &TokenStream2,
 ) -> TokenStream2 {
     let has_variable_params = command.params.lifetime.is_some();
     match (has_variable_params, &command.constraints) {
@@ -189,7 +203,7 @@ fn expand_params_constructor(
             #[allow(clippy::too_many_arguments)]
             #[allow(missing_docs)]
             pub fn new(#(#field_names: #field_types),*) -> Self {
-                Self(crate::vendor::command::DeclarativeParams(#params_value))
+                Self { #(#field_names,)* }
             }
         },
         (false, Some(constraints)) => {
@@ -201,7 +215,7 @@ fn expand_params_constructor(
                     #(#field_names: #field_types),*
                 ) -> Result<Self, crate::vendor::command::HciConstraintError> {
                     #checks
-                    Ok(Self(crate::vendor::command::DeclarativeParams(#params_value)))
+                    Ok(Self { #(#field_names,)* })
                 }
             }
         }
@@ -221,8 +235,9 @@ fn expand_params_constructor(
                     #(#field_names: #field_types),*
                 ) -> Result<Self, #error> {
                     #checks
-                    let params = crate::vendor::command::DeclarativeParams(#params_value);
-                    let actual = crate::vendor::command::DeclarativeFieldList::size(&params.0);
+                    #field_validations
+                    let params = Self { #(#field_names,)* };
+                    let actual = params.encoded_len();
                     if actual > u8::MAX as usize {
                         return Err(crate::vendor::command::HciLengthError::new(
                             actual,
@@ -230,7 +245,7 @@ fn expand_params_constructor(
                             u8::MAX as usize,
                         ).into());
                     }
-                    Ok(Self(params))
+                    Ok(params)
                 }
             }
         }
@@ -584,7 +599,7 @@ fn expand_completion(command: &VendorCommand) -> TokenStream2 {
     let type_generics = lifetime.map(|lifetime| quote!(<#lifetime>));
     match (command.completion, &command.returns) {
         (Completion::CommandComplete, Some(Returns::Unit)) => quote! {
-            const _: () = crate::vendor::command::assert_hci_field_list_length(0usize);
+            const _: () = crate::vendor::command::assert_hci_payload_length(0usize);
 
             impl #impl_generics ::bt_hci::cmd::SyncCmd for #name #type_generics {
                 type Return = ();
@@ -611,7 +626,7 @@ fn expand_completion(command: &VendorCommand) -> TokenStream2 {
             let return_len = fields.max_len();
 
             quote! {
-                const _: () = crate::vendor::command::assert_hci_field_list_length(
+                const _: () = crate::vendor::command::assert_hci_payload_length(
                     #return_len
                 );
 
@@ -645,11 +660,15 @@ fn expand_return(return_name: &syn::Ident, fields: &Fields) -> TokenStream2 {
         .iter()
         .map(|field| &field.name)
         .collect::<Vec<_>>();
-    let field_types = fields
-        .fields()
-        .iter()
-        .map(|field| &field.ty)
-        .collect::<Vec<_>>();
+    let field_declarations = fields.fields().iter().map(|field| {
+        let attrs = &field.attrs;
+        let name = &field.name;
+        let ty = &field.ty;
+        quote! {
+            #(#attrs)*
+            pub #name: #ty,
+        }
+    });
     let cursor = format_ident!("__stm32wb_return_data", span = Span::mixed_site());
     let decoders = fields
         .fields()
@@ -661,7 +680,7 @@ fn expand_return(return_name: &syn::Ident, fields: &Fields) -> TokenStream2 {
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         #[allow(missing_docs)]
         pub struct #return_name {
-            #(pub #field_names: #field_types,)*
+            #(#field_declarations)*
         }
 
         impl<'de> ::bt_hci::FromHciBytes<'de> for #return_name {
@@ -743,66 +762,80 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
     }
 }
 
-fn field_list_type(fields: &[Field]) -> TokenStream2 {
-    fields.iter().rev().fold(quote!(()), |tail, field| {
-        let head = encoded_field_type(field);
-        quote!((#head, #tail))
-    })
+fn expand_params_getters(fields: &[Field]) -> TokenStream2 {
+    let getters = fields.iter().map(|field| {
+        let attrs = &field.attrs;
+        let name = &field.name;
+        let ty = &field.ty;
+        let (return_type, value) = match ty {
+            syn::Type::Reference(reference) if reference.mutability.is_none() => {
+                (quote!(#ty), quote!(self.#name))
+            }
+            _ => (quote!(&#ty), quote!(&self.#name)),
+        };
+        quote! {
+            #(#attrs)*
+            #[doc = concat!("Access the `", stringify!(#name), "` command parameter.")]
+            #[inline]
+            pub fn #name(&self) -> #return_type {
+                #value
+            }
+        }
+    });
+    quote!(#(#getters)*)
 }
 
-fn encoded_field_type(field: &Field) -> TokenStream2 {
-    let ty = &field.ty;
+fn expand_params_size(fields: &[Field]) -> TokenStream2 {
+    let sizes = fields.iter().map(expand_field_size);
+    quote!(0usize #(+ #sizes)*)
+}
+
+fn expand_field_size(field: &Field) -> TokenStream2 {
+    let name = &field.name;
     match &field.encoding {
         FieldEncoding::Fixed(encoding) => {
             let width = &encoding.width_literal;
-            quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField<#ty, #width>)
+            quote!(#width)
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
-            VariableEncodingShape::CountedBytes {
-                count,
-                min_len,
-                max_len,
-            } => {
-                let count_ty = &count.ty;
+            VariableEncodingShape::CountedBytes { count, .. } => {
                 let count_width = &count.width.literal;
-                let min_len = &min_len.literal;
-                let max_len = &max_len.literal;
-                quote!(crate::vendor::command::CountedBytes<
-                    #ty, #count_ty, #count_width, #min_len, #max_len
-                >)
+                quote!(
+                    #count_width
+                        + ::core::convert::AsRef::<[u8]>::as_ref(&self.#name).len()
+                )
             }
-            VariableEncodingShape::CountedItems {
-                count,
-                item,
-                min_items,
-                max_items,
-            } => {
-                let count_ty = &count.ty;
+            VariableEncodingShape::CountedItems { count, item, .. } => {
                 let count_width = &count.width.literal;
                 let item_ty = &item.ty;
                 let item_width = &item.width.literal;
-                let min_items = &min_items.literal;
-                let max_items = &max_items.literal;
-                quote!(crate::vendor::command::CountedItems<
-                    #ty, #item_ty, #count_ty, #count_width, #item_width, #min_items, #max_items
-                >)
+                quote!(
+                    #count_width
+                        + #item_width
+                            * ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name).len()
+                )
             }
             VariableEncodingShape::Tagged(tagged) => {
-                let max_len = &tagged.max_len.literal;
-                quote!(crate::vendor::command::TaggedField<#ty, #max_len>)
+                let arms = tagged.variants.iter().map(|variant| {
+                    let pattern = &variant.pattern;
+                    let length = tagged.tag.width.value + variant.fields.max_len();
+                    quote!(#pattern => #length,)
+                });
+                quote!({
+                    #[allow(unused_variables)]
+                    match &self.#name { #(#arms)* }
+                })
             }
-            VariableEncodingShape::TrailingBytes { min_len, max_len } => {
-                let min_len = &min_len.literal;
-                let max_len = &max_len.literal;
-                quote!(crate::vendor::command::TrailingBytes<#ty, #min_len, #max_len>)
-            }
-            VariableEncodingShape::BitmapItems {
-                item, max_items, ..
-            } => {
+            VariableEncodingShape::TrailingBytes { .. } => quote!(
+                ::core::convert::AsRef::<[u8]>::as_ref(&self.#name).len()
+            ),
+            VariableEncodingShape::BitmapItems { item, .. } => {
                 let item_ty = &item.ty;
                 let item_width = &item.width.literal;
-                let max_items = &max_items.literal;
-                quote!(crate::vendor::command::BitmapItems<#ty, #item_ty, #item_width, #max_items>)
+                quote!(
+                    #item_width
+                        * ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name).len()
+                )
             }
             VariableEncodingShape::LengthPrefixedRecords { .. }
             | VariableEncodingShape::TaggedItems(_) => {
@@ -812,22 +845,177 @@ fn encoded_field_type(field: &Field) -> TokenStream2 {
     }
 }
 
-fn field_list_value(fields: &[Field]) -> TokenStream2 {
-    fields.iter().rev().fold(quote!(()), |tail, field| {
-        let head = encoded_field_value(field);
-        quote!((#head, #tail))
-    })
+fn expand_params_write(fields: &[Field], asynchronous: bool) -> TokenStream2 {
+    if fields.is_empty() {
+        return quote! {
+            let _ = writer;
+            Ok(())
+        };
+    }
+
+    let writes = fields
+        .iter()
+        .map(|field| expand_field_write(field, asynchronous));
+    quote! {
+        let mut writer = writer;
+        #(#writes)*
+        Ok(())
+    }
 }
 
-fn encoded_field_value(field: &Field) -> TokenStream2 {
+fn expand_field_write(field: &Field, asynchronous: bool) -> TokenStream2 {
     let name = &field.name;
-    let ty = &field.ty;
     match &field.encoding {
         FieldEncoding::Fixed(encoding) => {
-            let width = &encoding.width_literal;
-            quote_spanned!(width.span()=> crate::vendor::command::DeclarativeField::<_, #width>(#name))
+            expand_fixed_write(quote!(&self.#name), &encoding.width_literal, asynchronous)
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
+            VariableEncodingShape::CountedBytes { count, .. } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let write_count = expand_fixed_write(quote!(&count), count_width, asynchronous);
+                let write_value = if asynchronous {
+                    quote!(
+                        ::embedded_io_async::Write::write_all(&mut writer, value).await?;
+                    )
+                } else {
+                    quote!(::embedded_io::Write::write_all(&mut writer, value)?;)
+                };
+                quote! {
+                    {
+                        let value = ::core::convert::AsRef::<[u8]>::as_ref(&self.#name);
+                        let count = <#count_ty as crate::vendor::command::HciCount<
+                            #count_width
+                        >>::from_usize(value.len()).expect(
+                            "validated counted byte length no longer fits its count type",
+                        );
+                        #write_count
+                        #write_value
+                    }
+                }
+            }
+            VariableEncodingShape::CountedItems { count, item, .. } => {
+                let count_ty = &count.ty;
+                let count_width = &count.width.literal;
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let write_count = expand_fixed_write(quote!(&count), count_width, asynchronous);
+                let write_item = expand_fixed_write(quote!(item), item_width, asynchronous);
+                quote! {
+                    {
+                        let value = ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name);
+                        let count = <#count_ty as crate::vendor::command::HciCount<
+                            #count_width
+                        >>::from_usize(value.len()).expect(
+                            "validated counted item length no longer fits its count type",
+                        );
+                        #write_count
+                        for item in value {
+                            #write_item
+                        }
+                    }
+                }
+            }
+            VariableEncodingShape::Tagged(tagged) => {
+                expand_tagged_write(name, tagged, asynchronous)
+            }
+            VariableEncodingShape::TrailingBytes { .. } => {
+                if asynchronous {
+                    quote! {
+                        ::embedded_io_async::Write::write_all(
+                            &mut writer,
+                            ::core::convert::AsRef::<[u8]>::as_ref(&self.#name),
+                        ).await?;
+                    }
+                } else {
+                    quote! {
+                        ::embedded_io::Write::write_all(
+                            &mut writer,
+                            ::core::convert::AsRef::<[u8]>::as_ref(&self.#name),
+                        )?;
+                    }
+                }
+            }
+            VariableEncodingShape::BitmapItems { item, .. } => {
+                let item_ty = &item.ty;
+                let item_width = &item.width.literal;
+                let write_item = expand_fixed_write(quote!(item), item_width, asynchronous);
+                quote! {
+                    for item in ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name) {
+                        #write_item
+                    }
+                }
+            }
+            VariableEncodingShape::LengthPrefixedRecords { .. }
+            | VariableEncodingShape::TaggedItems(_) => {
+                unreachable!("the shared parser rejects event-only command fields")
+            }
+        },
+    }
+}
+
+fn expand_fixed_write(
+    value: TokenStream2,
+    width: &syn::LitInt,
+    asynchronous: bool,
+) -> TokenStream2 {
+    if asynchronous {
+        quote! {
+            crate::vendor::command::HciEncodeField::<#width>::write_hci_field_async(
+                #value,
+                &mut writer,
+            ).await?;
+        }
+    } else {
+        quote! {
+            crate::vendor::command::HciEncodeField::<#width>::write_hci_field(
+                #value,
+                &mut writer,
+            )?;
+        }
+    }
+}
+
+fn expand_tagged_write(
+    name: &syn::Ident,
+    tagged: &TaggedEncoding,
+    asynchronous: bool,
+) -> TokenStream2 {
+    let tag_ty = &tagged.tag.ty;
+    let tag_width = &tagged.tag.width.literal;
+    let arms = tagged.variants.iter().map(|variant| {
+        let pattern = &variant.pattern;
+        let tag = &variant.tag.literal;
+        let write_tag = expand_fixed_write(quote!(&tag), tag_width, asynchronous);
+        let payload_writes = variant.fields.fields().iter().map(|field| {
+            let field_name = &field.name;
+            let FieldEncoding::Fixed(encoding) = &field.encoding else {
+                unreachable!("tagged payload fields are validated as fixed-width")
+            };
+            expand_fixed_write(quote!(#field_name), &encoding.width_literal, asynchronous)
+        });
+        quote! {
+            #pattern => {
+                let tag: #tag_ty = #tag;
+                #write_tag
+                #(#payload_writes)*
+            }
+        }
+    });
+    quote! {
+        match &self.#name {
+            #(#arms)*
+        }
+    }
+}
+
+fn expand_param_field_validations(fields: &[Field]) -> TokenStream2 {
+    let validations = fields.iter().filter_map(|field| {
+        let name = &field.name;
+        let FieldEncoding::Variable(encoding) = &field.encoding else {
+            return None;
+        };
+        let validation = match &encoding.shape {
             VariableEncodingShape::CountedBytes {
                 count,
                 min_len,
@@ -837,9 +1025,26 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
                 let count_width = &count.width.literal;
                 let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
-                quote!(crate::vendor::command::CountedBytes::<
-                    _, #count_ty, #count_width, #min_len, #max_len
-                >::try_new(#name)?)
+                quote! {
+                    {
+                        let actual = ::core::convert::AsRef::<[u8]>::as_ref(&#name).len();
+                        let maximum = ::core::cmp::min(
+                            #max_len,
+                            <#count_ty as crate::vendor::command::HciCount<#count_width>>::MAX,
+                        );
+                        if <#count_ty as crate::vendor::command::HciCount<
+                            #count_width
+                        >>::from_usize(actual).is_none()
+                            || !(#min_len..=maximum).contains(&actual)
+                        {
+                            return Err(crate::vendor::command::HciLengthError::new(
+                                actual,
+                                #min_len,
+                                maximum,
+                            ).into());
+                        }
+                    }
+                }
             }
             VariableEncodingShape::CountedItems {
                 count,
@@ -850,20 +1055,45 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
                 let count_ty = &count.ty;
                 let count_width = &count.width.literal;
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
                 let min_items = &min_items.literal;
                 let max_items = &max_items.literal;
-                quote!(crate::vendor::command::CountedItems::<
-                    _, #item_ty, #count_ty, #count_width, #item_width, #min_items, #max_items
-                >::try_new(#name)?)
+                quote! {
+                    {
+                        let actual = ::core::convert::AsRef::<[#item_ty]>::as_ref(&#name).len();
+                        let maximum = ::core::cmp::min(
+                            #max_items,
+                            <#count_ty as crate::vendor::command::HciCount<#count_width>>::MAX,
+                        );
+                        if <#count_ty as crate::vendor::command::HciCount<
+                            #count_width
+                        >>::from_usize(actual).is_none()
+                            || !(#min_items..=maximum).contains(&actual)
+                        {
+                            return Err(crate::vendor::command::HciLengthError::new(
+                                actual,
+                                #min_items,
+                                maximum,
+                            ).into());
+                        }
+                    }
+                }
             }
-            VariableEncodingShape::Tagged(tagged) => tagged_field_value(name, ty, tagged),
+            VariableEncodingShape::Tagged(_) => return None,
             VariableEncodingShape::TrailingBytes { min_len, max_len } => {
                 let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
-                quote!(crate::vendor::command::TrailingBytes::<
-                    _, #min_len, #max_len
-                >::try_new(#name)?)
+                quote! {
+                    {
+                        let actual = ::core::convert::AsRef::<[u8]>::as_ref(&#name).len();
+                        if !(#min_len..=#max_len).contains(&actual) {
+                            return Err(crate::vendor::command::HciLengthError::new(
+                                actual,
+                                #min_len,
+                                #max_len,
+                            ).into());
+                        }
+                    }
+                }
             }
             VariableEncodingShape::BitmapItems {
                 bitmap,
@@ -873,59 +1103,38 @@ fn encoded_field_value(field: &Field) -> TokenStream2 {
             } => {
                 let mask = &mask.literal;
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
                 let max_items = &max_items.literal;
-                quote!(crate::vendor::command::BitmapItems::<
-                    _, #item_ty, #item_width, #max_items
-                >::try_new(#name, #bitmap, #mask)?)
+                quote! {
+                    {
+                        let bitmap = crate::vendor::command::HciBitmap::to_usize(#bitmap);
+                        if bitmap & !(#mask) != 0 {
+                            return Err(crate::vendor::command::HciLengthError::new(
+                                bitmap,
+                                0,
+                                #mask,
+                            ).into());
+                        }
+
+                        let expected = (bitmap & #mask).count_ones() as usize;
+                        let actual = ::core::convert::AsRef::<[#item_ty]>::as_ref(&#name).len();
+                        if actual != expected || actual > #max_items {
+                            return Err(crate::vendor::command::HciLengthError::new(
+                                actual,
+                                expected,
+                                expected,
+                            ).into());
+                        }
+                    }
+                }
             }
             VariableEncodingShape::LengthPrefixedRecords { .. }
             | VariableEncodingShape::TaggedItems(_) => {
                 unreachable!("the shared parser rejects event-only command fields")
             }
-        },
-    }
-}
-
-fn tagged_field_value(name: &syn::Ident, ty: &syn::Type, tagged: &TaggedEncoding) -> TokenStream2 {
-    let tag_ty = &tagged.tag.ty;
-    let tag_width = &tagged.tag.width.literal;
-    let min_len = &tagged.min_len.literal;
-    let max_len = &tagged.max_len.literal;
-    let arms = tagged.variants.iter().map(|variant| {
-        let pattern = &variant.pattern;
-        let tag = &variant.tag.literal;
-        let payload = tagged_payload_value(variant.fields.fields());
-        quote! {
-            #pattern => {
-                let tag: #tag_ty = #tag;
-                crate::vendor::command::TaggedField::<#ty, #max_len>::try_new::<#min_len, _>((
-                    crate::vendor::command::DeclarativeField::<#tag_ty, #tag_width>(tag),
-                    #payload,
-                ))?
-            },
-        }
-    });
-    quote! {
-        match &#name {
-            #(#arms)*
-        }
-    }
-}
-
-fn tagged_payload_value(fields: &[Field]) -> TokenStream2 {
-    fields.iter().rev().fold(quote!(()), |tail, field| {
-        let name = &field.name;
-        let ty = &field.ty;
-        let FieldEncoding::Fixed(encoding) = &field.encoding else {
-            unreachable!("tagged payload fields are validated as fixed-width")
         };
-        let width = &encoding.width_literal;
-        quote!((
-            crate::vendor::command::DeclarativeField::<&#ty, #width>(#name),
-            #tail
-        ))
-    })
+        Some(validation)
+    });
+    quote!(#(#validations)*)
 }
 
 fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {

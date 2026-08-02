@@ -46,16 +46,15 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
         };
         let attrs = &event.attrs;
         let name = &event.name;
-        let field_names = fields
-            .fields()
-            .iter()
-            .map(|field| &field.name)
-            .collect::<Vec<_>>();
-        let field_types = fields
-            .fields()
-            .iter()
-            .map(|field| &field.ty)
-            .collect::<Vec<_>>();
+        let field_declarations = fields.fields().iter().map(|field| {
+            let attrs = &field.attrs;
+            let name = &field.name;
+            let ty = &field.ty;
+            quote! {
+                #(#attrs)*
+                pub #name: #ty,
+            }
+        });
         if payload_borrows(&event.payload) {
             Some(quote! {
                 #(#attrs)*
@@ -63,7 +62,7 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
                 #[allow(missing_docs)]
                 pub struct #name<'a> {
-                    #(pub #field_names: #field_types,)*
+                    #(#field_declarations)*
                 }
             })
         } else {
@@ -73,7 +72,7 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
                 #[allow(missing_docs)]
                 pub struct #name {
-                    #(pub #field_names: #field_types,)*
+                    #(#field_declarations)*
                 }
             })
         }

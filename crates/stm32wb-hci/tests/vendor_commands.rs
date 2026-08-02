@@ -867,11 +867,12 @@ async fn declarative_tagged_uuid16_matches_cubewb_async() {
     let sink = RecordingSink::new();
 
     let uuid = Uuid::Uuid16(0x4567);
-    GattDiscoverPrimaryServicesByUUID::try_new(hci::bt_hci::param::ConnHandle(0x0123), &uuid)
-        .unwrap()
-        .exec(&sink)
-        .await
-        .unwrap();
+    let command =
+        GattDiscoverPrimaryServicesByUUID::try_new(hci::bt_hci::param::ConnHandle(0x0123), &uuid)
+            .unwrap();
+    assert!(matches!(command.params().uuid(), Uuid::Uuid16(0x4567)));
+    assert_eq!(command.params().encoded_len(), 5);
+    command.exec(&sink).await.unwrap();
 
     assert_eq!(
         sink.written_data(),

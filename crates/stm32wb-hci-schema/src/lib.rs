@@ -206,6 +206,8 @@ impl Fields {
 
 /// One typed field in a Params, Return, or event payload body.
 pub struct Field {
+    /// Documentation attached to the semantic field.
+    pub attrs: Vec<syn::Attribute>,
     /// Field binding and generated member name.
     pub name: syn::Ident,
     /// Semantic Rust type from the declaration.
@@ -1314,6 +1316,15 @@ impl Parse for Fields {
             if consumes_remainder {
                 return Err(input.error("trailing_bytes must be the final declarative field"));
             }
+            let attrs = input.call(syn::Attribute::parse_outer)?;
+            for attr in &attrs {
+                if !attr.path().is_ident("doc") {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "declarative fields accept only documentation attributes",
+                    ));
+                }
+            }
             let name = input.parse::<syn::Ident>()?;
             if !names.insert(name.to_string()) {
                 return Err(syn::Error::new_spanned(
@@ -1363,7 +1374,12 @@ impl Parse for Fields {
             max_len = max_len
                 .checked_add(field_max_len)
                 .ok_or_else(|| input.error("declarative field length overflows usize"))?;
-            fields.push(Field { name, ty, encoding });
+            fields.push(Field {
+                attrs,
+                name,
+                ty,
+                encoding,
+            });
             input.parse::<syn::Token![,]>()?;
         }
 

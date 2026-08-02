@@ -3,12 +3,11 @@
 //! Each `vendor_cmd!` declaration generates a public command type and a
 //! command-specific `*Params` type in its protocol module. Construct either
 //! type with `new` (unconstrained fixed-size parameters) or `try_new`
-//! (variable-size parameters or declarative constraints), then execute the
-//! command through
+//! (variable-size parameters or declarative constraints). Parameter types
+//! retain their semantic fields behind same-named read-only accessors, then
+//! encode those fields directly for the HCI wire. Execute the command through
 //! [`bt_hci::cmd::SyncCmd::exec`] or [`bt_hci::cmd::AsyncCmd::exec`] according
 //! to the command's declared completion mechanism.
-
-use bt_hci::WriteHci;
 
 pub use crate::wire::{BoundedBytes, BoundedItems};
 #[doc(hidden)]
@@ -33,12 +32,6 @@ impl HciDecodeField<7> for crate::types::BdAddrType {
             .map_err(|_| bt_hci::FromHciBytesError::InvalidValue)
     }
 }
-
-#[doc(hidden)]
-pub(crate) struct DeclarativeField<T, const N: usize>(pub T);
-
-#[doc(hidden)]
-pub(crate) struct DeclarativeParams<T>(pub T);
 
 /// A variable-length value does not satisfy its declarative wire bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,42 +166,6 @@ impl From<HciConstraintError> for HciValidationError {
 }
 
 #[doc(hidden)]
-pub(crate) struct TaggedField<T, const MAX_LEN: usize> {
-    bytes: [u8; MAX_LEN],
-    len: usize,
-    _value: core::marker::PhantomData<T>,
-}
-
-impl<T, const MAX_LEN: usize> TaggedField<T, MAX_LEN> {
-    pub(crate) fn try_new<const MIN_LEN: usize, Fields>(
-        fields: Fields,
-    ) -> Result<Self, HciLengthError>
-    where
-        Fields: DeclarativeFieldList,
-    {
-        let len = fields.size();
-        if !(MIN_LEN..=MAX_LEN).contains(&len) {
-            return Err(HciLengthError::new(len, MIN_LEN, MAX_LEN));
-        }
-
-        let mut bytes = [0; MAX_LEN];
-        let mut remaining = &mut bytes[..len];
-        if fields.write(&mut remaining).is_err() {
-            return Err(HciLengthError::new(len.saturating_add(1), MIN_LEN, MAX_LEN));
-        }
-        if !remaining.is_empty() {
-            return Err(HciLengthError::new(len - remaining.len(), len, len));
-        }
-
-        Ok(Self {
-            bytes,
-            len,
-            _value: core::marker::PhantomData,
-        })
-    }
-}
-
-#[doc(hidden)]
 #[allow(dead_code)]
 pub(crate) trait HciBitmap: Copy {
     fn to_usize(self) -> usize;
@@ -229,133 +186,6 @@ impl HciBitmap for u16 {
 impl HciBitmap for u32 {
     fn to_usize(self) -> usize {
         self as usize
-    }
-}
-
-#[doc(hidden)]
-#[allow(dead_code)]
-pub(crate) struct BitmapItems<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize> {
-    value: T,
-    _item: core::marker::PhantomData<Item>,
-}
-
-impl<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize>
-    BitmapItems<T, Item, ITEM_LEN, MAX_ITEMS>
-where
-    T: AsRef<[Item]>,
-{
-    #[allow(dead_code)]
-    pub(crate) fn try_new<B: HciBitmap>(
-        value: T,
-        bitmap: B,
-        allowed_mask: usize,
-    ) -> Result<Self, HciLengthError> {
-        let bitmap = bitmap.to_usize();
-        if bitmap & !allowed_mask != 0 {
-            return Err(HciLengthError::new(bitmap, 0, allowed_mask));
-        }
-
-        let expected = (bitmap & allowed_mask).count_ones() as usize;
-        let actual = value.as_ref().len();
-        if actual != expected || actual > MAX_ITEMS {
-            return Err(HciLengthError::new(actual, expected, expected));
-        }
-        Ok(Self {
-            value,
-            _item: core::marker::PhantomData,
-        })
-    }
-}
-
-#[doc(hidden)]
-pub(crate) struct CountedBytes<
-    T,
-    C,
-    const COUNT_LEN: usize,
-    const MIN_LEN: usize,
-    const MAX_LEN: usize,
-> {
-    value: T,
-    count: C,
-}
-
-impl<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
-    CountedBytes<T, C, COUNT_LEN, MIN_LEN, MAX_LEN>
-where
-    T: AsRef<[u8]>,
-    C: HciCount<COUNT_LEN>,
-{
-    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
-        let actual = value.as_ref().len();
-        let maximum = core::cmp::min(MAX_LEN, C::MAX);
-        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_LEN, maximum))?;
-        if !(MIN_LEN..=maximum).contains(&actual) {
-            return Err(HciLengthError::new(actual, MIN_LEN, maximum));
-        }
-        Ok(Self { value, count })
-    }
-}
-
-#[doc(hidden)]
-#[allow(dead_code)]
-pub(crate) struct TrailingBytes<T, const MIN_LEN: usize, const MAX_LEN: usize> {
-    value: T,
-}
-
-impl<T, const MIN_LEN: usize, const MAX_LEN: usize> TrailingBytes<T, MIN_LEN, MAX_LEN>
-where
-    T: AsRef<[u8]>,
-{
-    #[allow(dead_code)]
-    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
-        let actual = value.as_ref().len();
-        if !(MIN_LEN..=MAX_LEN).contains(&actual) {
-            return Err(HciLengthError::new(actual, MIN_LEN, MAX_LEN));
-        }
-        Ok(Self { value })
-    }
-}
-
-#[doc(hidden)]
-pub(crate) struct CountedItems<
-    T,
-    Item,
-    C,
-    const COUNT_LEN: usize,
-    const ITEM_LEN: usize,
-    const MIN_ITEMS: usize,
-    const MAX_ITEMS: usize,
-> {
-    value: T,
-    count: C,
-    _item: core::marker::PhantomData<Item>,
-}
-
-impl<
-    T,
-    Item,
-    C,
-    const COUNT_LEN: usize,
-    const ITEM_LEN: usize,
-    const MIN_ITEMS: usize,
-    const MAX_ITEMS: usize,
-> CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>
-where
-    T: AsRef<[Item]>,
-    C: HciCount<COUNT_LEN>,
-{
-    pub(crate) fn try_new(value: T) -> Result<Self, HciLengthError> {
-        let actual = value.as_ref().len();
-        let maximum = core::cmp::min(MAX_ITEMS, C::MAX);
-        let count = C::from_usize(actual).ok_or(HciLengthError::new(actual, MIN_ITEMS, maximum))?;
-        if !(MIN_ITEMS..=maximum).contains(&actual) {
-            return Err(HciLengthError::new(actual, MIN_ITEMS, maximum));
-        }
-        Ok(Self {
-            value,
-            count,
-            _item: core::marker::PhantomData,
-        })
     }
 }
 
@@ -444,234 +274,8 @@ where
 }
 
 #[doc(hidden)]
-pub(crate) const fn assert_hci_field_list_length(length: usize) {
+pub(crate) const fn assert_hci_payload_length(length: usize) {
     ::core::assert!(length <= u8::MAX as usize);
-}
-
-#[doc(hidden)]
-pub(crate) trait DeclarativeFieldList {
-    fn size(&self) -> usize;
-
-    fn write<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
-
-    async fn write_async<W: embedded_io_async::Write>(&self, writer: W) -> Result<(), W::Error>;
-}
-
-#[doc(hidden)]
-pub(crate) trait DeclarativeEncodedField {
-    fn size(&self) -> usize;
-
-    fn write<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
-
-    async fn write_async<W: embedded_io_async::Write>(&self, writer: W) -> Result<(), W::Error>;
-}
-
-impl<T, const N: usize> DeclarativeEncodedField for DeclarativeField<T, N>
-where
-    T: HciEncodeField<N>,
-{
-    fn size(&self) -> usize {
-        N
-    }
-
-    fn write<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        self.0.write_hci_field(writer)
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(&self, writer: W) -> Result<(), W::Error> {
-        self.0.write_hci_field_async(writer).await
-    }
-}
-
-impl<T, const MAX_LEN: usize> DeclarativeEncodedField for TaggedField<T, MAX_LEN> {
-    fn size(&self) -> usize {
-        self.len
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(&self.bytes[..self.len])
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(&self.bytes[..self.len]).await
-    }
-}
-
-impl<T, C, const COUNT_LEN: usize, const MIN_LEN: usize, const MAX_LEN: usize>
-    DeclarativeEncodedField for CountedBytes<T, C, COUNT_LEN, MIN_LEN, MAX_LEN>
-where
-    T: AsRef<[u8]>,
-    C: HciCount<COUNT_LEN>,
-{
-    fn size(&self) -> usize {
-        COUNT_LEN + self.value.as_ref().len()
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        self.count.write_hci_field(&mut writer)?;
-        writer.write_all(self.value.as_ref())
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        self.count.write_hci_field_async(&mut writer).await?;
-        writer.write_all(self.value.as_ref()).await
-    }
-}
-
-impl<T, const MIN_LEN: usize, const MAX_LEN: usize> DeclarativeEncodedField
-    for TrailingBytes<T, MIN_LEN, MAX_LEN>
-where
-    T: AsRef<[u8]>,
-{
-    fn size(&self) -> usize {
-        self.value.as_ref().len()
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        writer.write_all(self.value.as_ref())
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        writer.write_all(self.value.as_ref()).await
-    }
-}
-
-impl<
-    T,
-    Item,
-    C,
-    const COUNT_LEN: usize,
-    const ITEM_LEN: usize,
-    const MIN_ITEMS: usize,
-    const MAX_ITEMS: usize,
-> DeclarativeEncodedField for CountedItems<T, Item, C, COUNT_LEN, ITEM_LEN, MIN_ITEMS, MAX_ITEMS>
-where
-    T: AsRef<[Item]>,
-    Item: HciEncodeField<ITEM_LEN>,
-    C: HciCount<COUNT_LEN>,
-{
-    fn size(&self) -> usize {
-        COUNT_LEN + ITEM_LEN * self.value.as_ref().len()
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        self.count.write_hci_field(&mut writer)?;
-        for item in self.value.as_ref() {
-            item.write_hci_field(&mut writer)?;
-        }
-        Ok(())
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        self.count.write_hci_field_async(&mut writer).await?;
-        for item in self.value.as_ref() {
-            item.write_hci_field_async(&mut writer).await?;
-        }
-        Ok(())
-    }
-}
-
-impl<T, Item, const ITEM_LEN: usize, const MAX_ITEMS: usize> DeclarativeEncodedField
-    for BitmapItems<T, Item, ITEM_LEN, MAX_ITEMS>
-where
-    T: AsRef<[Item]>,
-    Item: HciEncodeField<ITEM_LEN>,
-{
-    fn size(&self) -> usize {
-        ITEM_LEN * self.value.as_ref().len()
-    }
-
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        for item in self.value.as_ref() {
-            item.write_hci_field(&mut writer)?;
-        }
-        Ok(())
-    }
-
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        for item in self.value.as_ref() {
-            item.write_hci_field_async(&mut writer).await?;
-        }
-        Ok(())
-    }
-}
-
-impl DeclarativeFieldList for () {
-    #[inline]
-    fn size(&self) -> usize {
-        0
-    }
-
-    #[inline]
-    fn write<W: embedded_io::Write>(&self, _writer: W) -> Result<(), W::Error> {
-        Ok(())
-    }
-
-    #[inline]
-    async fn write_async<W: embedded_io_async::Write>(&self, _writer: W) -> Result<(), W::Error> {
-        Ok(())
-    }
-}
-
-impl<Head, Tail> DeclarativeFieldList for (Head, Tail)
-where
-    Head: DeclarativeEncodedField,
-    Tail: DeclarativeFieldList,
-{
-    #[inline]
-    fn size(&self) -> usize {
-        self.0.size() + self.1.size()
-    }
-
-    #[inline]
-    fn write<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-        self.0.write(&mut writer)?;
-        self.1.write(writer)
-    }
-
-    #[inline]
-    async fn write_async<W: embedded_io_async::Write>(
-        &self,
-        mut writer: W,
-    ) -> Result<(), W::Error> {
-        self.0.write_async(&mut writer).await?;
-        self.1.write_async(writer).await
-    }
-}
-
-impl<T: DeclarativeFieldList> WriteHci for DeclarativeParams<T> {
-    #[inline]
-    fn size(&self) -> usize {
-        self.0.size()
-    }
-
-    #[inline]
-    fn write_hci<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
-        self.0.write(writer)
-    }
-
-    #[inline]
-    async fn write_hci_async<W: embedded_io_async::Write>(
-        &self,
-        writer: W,
-    ) -> Result<(), W::Error> {
-        self.0.write_async(writer).await
-    }
 }
 
 #[cfg(test)]
@@ -720,6 +324,7 @@ mod tests {
     stm32wb_hci_macros::vendor_cmd! {
         MinimumLengthFixture(cgid = 0x1, cid = 0x0F) {
             Params<'a> = {
+                /// Bytes carried by the fixture.
                 data: &'a [u8] => {
                     kind: counted_bytes,
                     count: u8 => 1,
@@ -729,6 +334,34 @@ mod tests {
             };
             Completion = CommandComplete;
             Return = ();
+        }
+    }
+
+    stm32wb_hci_macros::vendor_cmd! {
+        DirectVariableEncodingFixture(cgid = 0x1, cid = 0x11) {
+            Params<'a> = {
+                bitmap: u8 => 1,
+                selected: &'a [u16] => {
+                    kind: bitmap_items,
+                    bitmap: bitmap,
+                    mask: 0x03,
+                    item: u16 => 2,
+                    max_items: 2,
+                },
+                counted: &'a [u16] => {
+                    kind: counted_items,
+                    count: u8 => 1,
+                    item: u16 => 2,
+                    min_items: 1,
+                    max_items: 2,
+                },
+                trailing: &'a [u8] => {
+                    kind: trailing_bytes,
+                    min_len: 1,
+                    max_len: 3,
+                },
+            };
+            Completion = CommandStatus;
         }
     }
 
@@ -794,6 +427,66 @@ mod tests {
         assert_eq!(error.minimum(), 3);
         assert_eq!(error.maximum(), 4);
         assert!(MinimumLengthFixture::try_new(&[0; 3]).is_ok());
+    }
+
+    #[test]
+    fn semantic_params_expose_fields_and_encode_variable_shapes_directly() {
+        use bt_hci::WriteHci;
+
+        let selected = [0x1122, 0x3344];
+        let counted = [0x5566];
+        let trailing = [0xAA, 0xBB];
+        let command =
+            DirectVariableEncodingFixture::try_new(0x03, &selected, &counted, &trailing).unwrap();
+        let params = command.params();
+
+        assert_eq!(*params.bitmap(), 0x03);
+        assert_eq!(params.selected(), selected);
+        assert_eq!(params.counted(), counted);
+        assert_eq!(params.trailing(), trailing);
+        assert_eq!(params.encoded_len(), 10);
+
+        let mut encoded = [0; 10];
+        let mut remaining = &mut encoded[..];
+        params.write_hci(&mut remaining).unwrap();
+        assert!(remaining.is_empty());
+        assert_eq!(
+            encoded,
+            [0x03, 0x22, 0x11, 0x44, 0x33, 1, 0x66, 0x55, 0xAA, 0xBB],
+        );
+    }
+
+    #[test]
+    fn direct_variable_encodings_preserve_validation_diagnostics() {
+        let selected = [0x1122];
+        let counted = [0x3344];
+        let trailing = [0xAA];
+
+        let error = DirectVariableEncodingFixture::try_new(0x03, &selected, &counted, &trailing)
+            .err()
+            .unwrap();
+        assert_eq!(error.actual(), 1);
+        assert_eq!(error.minimum(), 2);
+        assert_eq!(error.maximum(), 2);
+
+        let error = DirectVariableEncodingFixture::try_new(0x04, &[], &counted, &trailing)
+            .err()
+            .unwrap();
+        assert_eq!(error.actual(), 0x04);
+        assert_eq!(error.maximum(), 0x03);
+
+        let error = DirectVariableEncodingFixture::try_new(0, &[], &[], &trailing)
+            .err()
+            .unwrap();
+        assert_eq!(error.actual(), 0);
+        assert_eq!(error.minimum(), 1);
+
+        let error = DirectVariableEncodingFixture::try_new(0, &[], &counted, &[])
+            .err()
+            .unwrap();
+        assert_eq!(error.actual(), 0);
+        assert_eq!(error.minimum(), 1);
+        assert_eq!(error.maximum(), 3);
     }
 
     #[test]
