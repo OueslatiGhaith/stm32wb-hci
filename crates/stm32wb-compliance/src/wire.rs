@@ -91,18 +91,16 @@ pub(crate) fn compare_vendor_wire(
     events: &[CatalogEvent],
     crate_coverage: &RustCatalog,
 ) -> WireReport {
-    compare_wire_with_external_events(commands, events, crate_coverage, &[], &BTreeMap::new())
+    compare_wire(commands, events, crate_coverage, &[])
 }
 
-/// Compare vendor declarations and local standard-HCI commands while accepting
-/// explicit payload evidence for transport-only events absent from CubeWB's
-/// generated event table.
-pub(crate) fn compare_wire_with_external_events(
+/// Compare proprietary STM32 declarations and local standard-HCI commands
+/// against source-backed wire evidence.
+pub(crate) fn compare_wire(
     commands: &[CatalogCommand],
     events: &[CatalogEvent],
     crate_coverage: &RustCatalog,
     local_standard_commands: &[CommandDeclaration],
-    external_event_payloads: &BTreeMap<u16, WireLayoutEvidence>,
 ) -> WireReport {
     let mut by_ocf = BTreeMap::<u16, Vec<&CatalogCommand>>::new();
     for command in commands {
@@ -189,22 +187,20 @@ pub(crate) fn compare_wire_with_external_events(
 
     let mut events_by_code = BTreeMap::<u16, Vec<&CatalogEvent>>::new();
     for event in events {
-        if event.scope() == EventScope::VendorAci {
+        if matches!(
+            event.scope(),
+            EventScope::VendorAci | EventScope::SystemShci
+        ) {
             events_by_code.entry(event.code).or_default().push(event);
         }
     }
     for metadata in crate_coverage.events.values() {
         let Some(candidates) = events_by_code.get(&metadata.code) else {
-            if let Some(payload) = external_event_payloads.get(&metadata.code) {
-                compare_event_payload_layout(payload, metadata, &mut report);
-            } else {
-                report.unavailable.push(WireUnavailable {
-                    code: metadata.code,
-                    command: metadata.name.clone(),
-                    reason: "no generated vendor event-table entry or external payload declaration has this code"
-                        .to_owned(),
-                });
-            }
+            report.unavailable.push(WireUnavailable {
+                code: metadata.code,
+                command: metadata.name.clone(),
+                reason: "no generated vendor ACI or system SHCI event has this code".to_owned(),
+            });
             continue;
         };
         let [event] = candidates.as_slice() else {
@@ -244,8 +240,8 @@ fn compare_event_payload(
     report: &mut WireReport,
 ) {
     let payload = event
-        .vendor_payload()
-        .expect("wire comparison filters for vendor ACI events");
+        .proprietary_payload()
+        .expect("wire comparison filters for proprietary STM32 events");
     compare_event_payload_layout(payload, metadata, report);
 }
 
@@ -801,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn checks_transport_only_events_from_external_payload_evidence() {
+    fn checks_system_events_from_catalog_payload_evidence() {
         let mut coverage = fixture_coverage(Vec::new(), &[]);
         coverage.events.insert(
             0x9200,
@@ -813,18 +809,24 @@ mod tests {
             },
         );
 
-        let unavailable = compare_vendor_wire(&[], &[], &coverage);
-        assert_eq!(unavailable.checked, 0);
-        assert_eq!(unavailable.unavailable.len(), 1);
-
-        let mut external = BTreeMap::from([(0x9200, WireLayoutEvidence::fixed(1))]);
-        let report = compare_wire_with_external_events(&[], &[], &coverage, &[], &external);
+        let mut event = CatalogEvent {
+            kind: CatalogEventKind::SystemShci {
+                payload: WireLayoutEvidence::fixed(1),
+            },
+            code: 0x9200,
+            name: "SHCI_SUB_EVT_CODE_READY".to_owned(),
+            source_name: "shci.h".to_owned(),
+            source_offset: 0,
+        };
+        let report = compare_vendor_wire(&[], &[event.clone()], &coverage);
         assert_eq!(report.checked, 1);
         assert!(report.differences.is_empty());
         assert!(report.unavailable.is_empty());
 
-        external.insert(0x9200, WireLayoutEvidence::fixed(2));
-        let report = compare_wire_with_external_events(&[], &[], &coverage, &[], &external);
+        event.kind = CatalogEventKind::SystemShci {
+            payload: WireLayoutEvidence::fixed(2),
+        };
+        let report = compare_vendor_wire(&[], &[event], &coverage);
         assert_eq!(report.differences.len(), 1);
         assert!(report.differences[0].issue.contains("is 2 bytes"));
         assert!(report.differences[0].issue.contains("declares 1 bytes"));
@@ -1029,13 +1031,7 @@ mod tests {
         );
         let coverage = fixture_coverage(Vec::new(), &[]);
 
-        let report = compare_wire_with_external_events(
-            &[command],
-            &[],
-            &coverage,
-            &[declaration],
-            &BTreeMap::new(),
-        );
+        let report = compare_wire(&[command], &[], &coverage, &[declaration]);
 
         assert_eq!(report.checked, 2);
         assert_eq!(report.differences.len(), 2);

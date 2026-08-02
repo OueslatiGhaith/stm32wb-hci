@@ -229,9 +229,6 @@ fn run_one_check(
     options
         .excluded_events
         .extend(active_exclusions.events.clone());
-    options
-        .external_event_payloads
-        .extend(active_exclusions.external_event_payloads.clone());
     options.skip_build = skip_build;
 
     let report = check(&options).map_err(|error| error.to_string())?;

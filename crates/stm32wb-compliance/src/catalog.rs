@@ -32,6 +32,7 @@ pub enum CommandScope {
 #[serde(rename_all = "snake_case")]
 pub enum EventScope {
     VendorAci,
+    SystemShci,
     StandardHci,
     LeMeta,
 }
@@ -426,12 +427,13 @@ pub enum CatalogCompletion {
     },
 }
 
-/// Scope-specific event evidence. Vendor ACI events always carry a payload
-/// envelope; standard HCI and LE Meta events are inventory-only.
+/// Scope-specific event evidence. STM32 proprietary events always carry a
+/// payload envelope; standard HCI and LE Meta events are inventory-only.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "scope")]
 pub enum CatalogEventKind {
     VendorAci { payload: WireLayoutEvidence },
+    SystemShci { payload: WireLayoutEvidence },
     StandardHci,
     LeMeta,
 }
@@ -487,14 +489,15 @@ impl CatalogEventKind {
     pub const fn scope(&self) -> EventScope {
         match self {
             Self::VendorAci { .. } => EventScope::VendorAci,
+            Self::SystemShci { .. } => EventScope::SystemShci,
             Self::StandardHci => EventScope::StandardHci,
             Self::LeMeta => EventScope::LeMeta,
         }
     }
 
-    pub const fn vendor_payload(&self) -> Option<&WireLayoutEvidence> {
+    pub const fn proprietary_payload(&self) -> Option<&WireLayoutEvidence> {
         match self {
-            Self::VendorAci { payload } => Some(payload),
+            Self::VendorAci { payload } | Self::SystemShci { payload } => Some(payload),
             Self::StandardHci | Self::LeMeta => None,
         }
     }
@@ -550,8 +553,8 @@ impl CatalogEvent {
         self.kind.scope()
     }
 
-    pub const fn vendor_payload(&self) -> Option<&WireLayoutEvidence> {
-        self.kind.vendor_payload()
+    pub const fn proprietary_payload(&self) -> Option<&WireLayoutEvidence> {
+        self.kind.proprietary_payload()
     }
 }
 
@@ -689,6 +692,7 @@ impl CatalogSchema {
 
         let mut event_codes = BTreeMap::new();
         let mut event_names = BTreeMap::new();
+        let mut proprietary_event_codes = BTreeMap::new();
         for event in &self.events {
             if matches!(event.scope(), EventScope::StandardHci | EventScope::LeMeta)
                 && event.code > u16::from(u8::MAX)
@@ -698,8 +702,16 @@ impl CatalogSchema {
                     event.name, event.code
                 ));
             }
-            if let Some(payload) = event.vendor_payload() {
+            if let Some(payload) = event.proprietary_payload() {
                 validate_evidence(payload, "event payload", &event.name)?;
+                if let Some(previous) =
+                    proprietary_event_codes.insert(event.code, event.name.as_str())
+                {
+                    return Err(format!(
+                        "duplicate proprietary event code 0x{:04X}: {previous} and {}",
+                        event.code, event.name
+                    ));
+                }
             }
 
             let key = (event.scope(), event.code);
@@ -741,9 +753,19 @@ impl CatalogSchema {
             events: self
                 .events
                 .iter()
-                .filter(|event| event.scope() == EventScope::VendorAci)
+                .filter(|event| {
+                    matches!(
+                        event.scope(),
+                        EventScope::VendorAci | EventScope::SystemShci
+                    )
+                })
                 .map(|event| {
-                    CoverageEntry::new(event.code, &event.name, CoverageOrigin::VendorAutoSource)
+                    let origin = match event.scope() {
+                        EventScope::VendorAci => CoverageOrigin::VendorAutoSource,
+                        EventScope::SystemShci => CoverageOrigin::SystemShciSource,
+                        EventScope::StandardHci | EventScope::LeMeta => unreachable!(),
+                    };
+                    CoverageEntry::new(event.code, &event.name, origin)
                 })
                 .collect(),
         }
@@ -813,8 +835,9 @@ fn command_scope_order(scope: CommandScope) -> u8 {
 fn event_scope_order(scope: EventScope) -> u8 {
     match scope {
         EventScope::VendorAci => 0,
-        EventScope::StandardHci => 1,
-        EventScope::LeMeta => 2,
+        EventScope::SystemShci => 1,
+        EventScope::StandardHci => 2,
+        EventScope::LeMeta => 3,
     }
 }
 
@@ -877,6 +900,15 @@ mod tests {
             source_offset: 12,
         });
         schema.events.push(CatalogEvent {
+            kind: CatalogEventKind::SystemShci {
+                payload: WireLayoutEvidence::fixed(1),
+            },
+            code: 0x9200,
+            name: "SHCI_SUB_EVT_CODE_READY".to_owned(),
+            source_name: "shci.h".to_owned(),
+            source_offset: 15,
+        });
+        schema.events.push(CatalogEvent {
             kind: CatalogEventKind::LeMeta,
             code: 0x01,
             name: "le_event".to_owned(),
@@ -897,8 +929,9 @@ mod tests {
         assert_eq!(schema.commands[1].ogf(), Some(8));
         assert_eq!(schema.commands[1].ocf(), 2);
         assert_eq!(value["events"][0]["scope"], "vendor_aci");
-        assert_eq!(value["events"][1]["scope"], "le_meta");
-        assert!(value["events"][1].get("payload").is_none());
+        assert_eq!(value["events"][1]["scope"], "system_shci");
+        assert_eq!(value["events"][2]["scope"], "le_meta");
+        assert!(value["events"][2].get("payload").is_none());
         assert_eq!(
             value["commands"][0]["request"],
             serde_json::json!({
@@ -1055,6 +1088,29 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("event name RepeatedEvent is inconsistent")
+        );
+
+        schema.events = vec![
+            event(
+                CatalogEventKind::VendorAci {
+                    payload: WireLayoutEvidence::fixed(0),
+                },
+                0x9200,
+                "VendorCollision",
+            ),
+            event(
+                CatalogEventKind::SystemShci {
+                    payload: WireLayoutEvidence::fixed(1),
+                },
+                0x9200,
+                "SystemCollision",
+            ),
+        ];
+        assert!(
+            schema
+                .validate()
+                .unwrap_err()
+                .contains("duplicate proprietary event code")
         );
     }
 }

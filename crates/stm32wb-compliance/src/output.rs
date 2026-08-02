@@ -194,6 +194,7 @@ fn command_scope_name(scope: CommandScope) -> &'static str {
 fn event_scope_name(scope: EventScope) -> &'static str {
     match scope {
         EventScope::VendorAci => "vendor ACI event",
+        EventScope::SystemShci => "system SHCI event",
         EventScope::StandardHci => "standard HCI event",
         EventScope::LeMeta => "LE Meta subevent",
     }

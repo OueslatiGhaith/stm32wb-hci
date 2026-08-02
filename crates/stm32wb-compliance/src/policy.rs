@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::Deserialize;
-use stm32wb_compliance::{CheckReport, FirmwareVersion, WireLayoutEvidence};
+use stm32wb_compliance::{CheckReport, FirmwareVersion};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CoverageKind {
@@ -53,7 +53,6 @@ struct PolicyEntry {
     kind: CoverageKind,
     code: u16,
     selector: FirmwareSelector,
-    external_event_payload: Option<WireLayoutEvidence>,
     reason: String,
     index: usize,
 }
@@ -78,7 +77,6 @@ struct PolicyEntryDocument {
     code: u16,
     firmware: String,
     reason: String,
-    payload: Option<PayloadDocument>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -86,14 +84,6 @@ struct PolicyEntryDocument {
 enum PolicyScope {
     Command,
     Event,
-    TransportEvent,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PayloadDocument {
-    minimum: u32,
-    maximum: u32,
 }
 
 impl ExclusionPolicy {
@@ -129,28 +119,9 @@ impl ExclusionPolicy {
                 ));
             }
 
-            let (kind, external_event_payload) = match entry.scope {
-                PolicyScope::Command => {
-                    reject_payload(&path, index, entry.payload.as_ref(), "command")?;
-                    (CoverageKind::Command, None)
-                }
-                PolicyScope::Event => {
-                    reject_payload(&path, index, entry.payload.as_ref(), "event")?;
-                    (CoverageKind::Event, None)
-                }
-                PolicyScope::TransportEvent => {
-                    let payload = entry.payload.ok_or_else(|| {
-                        policy_error(
-                            &path,
-                            index,
-                            "transport-event exclusions require a payload envelope",
-                        )
-                    })?;
-                    (
-                        CoverageKind::Event,
-                        Some(validate_event_payload(&path, index, payload)?),
-                    )
-                }
+            let kind = match entry.scope {
+                PolicyScope::Command => CoverageKind::Command,
+                PolicyScope::Event => CoverageKind::Event,
             };
             if !raw_entries.insert((kind, entry.code, selector)) {
                 return Err(policy_error(
@@ -163,7 +134,6 @@ impl ExclusionPolicy {
                 kind,
                 code: entry.code,
                 selector,
-                external_event_payload,
                 reason: entry.reason,
                 index,
             });
@@ -222,11 +192,6 @@ impl ExclusionPolicy {
                 }
                 CoverageKind::Event => {
                     active.events.insert(entry.code, entry.reason.clone());
-                    if let Some(payload) = &entry.external_event_payload {
-                        active
-                            .external_event_payloads
-                            .insert(entry.code, payload.clone());
-                    }
                 }
             }
         }
@@ -253,50 +218,6 @@ impl ExclusionPolicy {
     }
 }
 
-fn reject_payload(
-    path: &Path,
-    index: usize,
-    payload: Option<&PayloadDocument>,
-    scope: &str,
-) -> Result<(), String> {
-    if payload.is_some() {
-        Err(policy_error(
-            path,
-            index,
-            &format!("{scope} exclusions cannot declare a payload envelope"),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_event_payload(
-    path: &Path,
-    index: usize,
-    payload: PayloadDocument,
-) -> Result<WireLayoutEvidence, String> {
-    const MAX_VENDOR_EVENT_PAYLOAD: u32 = u8::MAX as u32 - 2;
-
-    if payload.minimum > payload.maximum {
-        return Err(policy_error(
-            path,
-            index,
-            "payload envelope requires minimum <= maximum",
-        ));
-    }
-    if payload.maximum > MAX_VENDOR_EVENT_PAYLOAD {
-        return Err(policy_error(
-            path,
-            index,
-            &format!(
-                "payload maximum {} exceeds the {MAX_VENDOR_EVENT_PAYLOAD}-byte vendor-event envelope",
-                payload.maximum
-            ),
-        ));
-    }
-    Ok(WireLayoutEvidence::known(payload.minimum, payload.maximum))
-}
-
 fn policy_error(path: &Path, index: usize, message: &str) -> String {
     format!("{}: exclusion {index}: {message}", path.display())
 }
@@ -305,7 +226,6 @@ fn policy_error(path: &Path, index: usize, message: &str) -> String {
 pub(crate) struct ActiveExclusions {
     pub(crate) commands: BTreeMap<u16, String>,
     pub(crate) events: BTreeMap<u16, String>,
-    pub(crate) external_event_payloads: BTreeMap<u16, WireLayoutEvidence>,
 }
 
 impl ActiveExclusions {
@@ -392,18 +312,16 @@ mod tests {
             "test.toml".into(),
             r#"
                 [[exclusions]]
-                scope = "transport-event"
+                scope = "event"
                 code = 0x9200
                 firmware = "*"
-                reason = "transport | event"
-                payload = { minimum = 1, maximum = 1 }
+                reason = "system | event"
 
                 [[exclusions]]
-                scope = "transport-event"
+                scope = "event"
                 code = 0x9201
                 firmware = "1.15.0"
-                reason = "bounded transport event"
-                payload = { minimum = 1, maximum = 3 }
+                reason = "version-specific system event"
 
                 [[exclusions]]
                 scope = "command"
@@ -416,40 +334,29 @@ mod tests {
         policy.validate_for(&supported()).unwrap();
 
         let old = policy.active_for(FirmwareVersion::new(1, 15, 0));
-        assert_eq!(
-            old.events.get(&0x9200),
-            Some(&"transport | event".to_owned())
-        );
-        assert_eq!(
-            old.external_event_payloads.get(&0x9200),
-            Some(&WireLayoutEvidence::fixed(1))
-        );
-        assert_eq!(
-            old.external_event_payloads.get(&0x9201),
-            Some(&WireLayoutEvidence::known(1, 3))
-        );
+        assert_eq!(old.events.get(&0x9200), Some(&"system | event".to_owned()));
+        assert!(old.events.contains_key(&0x9201));
         assert_eq!(old.commands.get(&1), Some(&"legacy command".to_owned()));
 
         let new = policy.active_for(FirmwareVersion::new(1, 16, 0));
         assert!(!new.commands.contains_key(&1));
-        assert!(!new.external_event_payloads.contains_key(&0x9201));
+        assert!(!new.events.contains_key(&0x9201));
     }
 
     #[test]
-    fn rejects_overlaps_unknown_versions_and_invalid_payloads() {
+    fn rejects_overlaps_and_unknown_versions() {
         let overlapping = ExclusionPolicy::parse(
             "test.toml".into(),
             r#"
                 [[exclusions]]
-                scope = "transport-event"
+                scope = "event"
                 code = 0x9200
                 firmware = "*"
-                reason = "transport event"
-                payload = { minimum = 1, maximum = 1 }
+                reason = "system event"
                 [[exclusions]]
                 scope = "event"
                 code = 0x9200
-                firmware = "0.15.0"
+                firmware = "1.15.0"
                 reason = "same event"
             "#,
         )
@@ -468,35 +375,28 @@ mod tests {
         )
         .unwrap();
         assert!(unknown.validate_for(&supported()).is_err());
-
-        for payload in [
-            "{ minimum = 2, maximum = 1 }",
-            "{ minimum = 1, maximum = 254 }",
-        ] {
-            let source = format!(
-                r#"
-                    [[exclusions]]
-                    scope = "transport-event"
-                    code = 0x9200
-                    firmware = "*"
-                    reason = "transport event"
-                    payload = {payload}
-                "#
-            );
-            assert!(ExclusionPolicy::parse("test.toml".into(), &source).is_err());
-        }
     }
 
     #[test]
-    fn rejects_missing_payloads_and_bad_toml() {
-        let missing_payload = r#"
+    fn rejects_retired_transport_scope_payloads_and_bad_toml() {
+        let transport_scope = r#"
             [[exclusions]]
             scope = "transport-event"
             code = 0x9200
             firmware = "*"
             reason = "transport event"
         "#;
-        assert!(ExclusionPolicy::parse("test.toml".into(), missing_payload).is_err());
+        assert!(ExclusionPolicy::parse("test.toml".into(), transport_scope).is_err());
+
+        let payload = r#"
+            [[exclusions]]
+            scope = "event"
+            code = 0x9200
+            firmware = "*"
+            reason = "system event"
+            payload = { minimum = 1, maximum = 1 }
+        "#;
+        assert!(ExclusionPolicy::parse("test.toml".into(), payload).is_err());
         assert!(ExclusionPolicy::parse("test.toml".into(), "exclusions = [").is_err());
     }
 }

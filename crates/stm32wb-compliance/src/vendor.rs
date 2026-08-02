@@ -18,12 +18,13 @@ use crate::catalog::{
 use crate::model::{CoverageEntry, CoverageOrigin};
 
 pub const AUTO_SOURCE_DIR: &str = "Middlewares/ST/STM32_WPAN/ble/core/auto";
+const SHCI_SOURCE: &str = "Middlewares/ST/STM32_WPAN/interface/patterns/ble_thread/shci/shci.h";
 const EVENT_SOURCE: &str = "ble_events.c";
 const STANDARD_HCI_SOURCE: &str = "ble_hci_le.c";
 const TYPES_SOURCE: &str = "ble_types.h";
 
-/// Load vendor ACI, standard HCI, and transport-envelope metadata from a
-/// CubeWB tag without changing the checkout.
+/// Load vendor ACI, system SHCI, standard HCI, and transport-envelope metadata
+/// from a CubeWB tag without changing the checkout.
 pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogSchema, String> {
     verify_tag(cube_dir, tag)?;
     let preprocessor = TaggedCPreprocessor::new(cube_dir, tag)?;
@@ -93,6 +94,9 @@ pub(crate) fn load_vendor_catalog(cube_dir: &Path, tag: &str) -> Result<CatalogS
     )?;
     catalog.events.extend(le_events);
 
+    let shci_source = git_show_lossy_utf8(cube_dir, tag, SHCI_SOURCE)?;
+    catalog.events.extend(extract_shci_events(&shci_source)?);
+
     catalog.normalize()?;
     Ok(catalog)
 }
@@ -152,6 +156,19 @@ fn verify_tag(cube_dir: &Path, tag: &str) -> Result<(), String> {
 }
 
 fn git_show(cube_dir: &Path, tag: &str, path: &str) -> Result<String, String> {
+    let output = git_show_bytes(cube_dir, tag, path)?;
+    String::from_utf8(output)
+        .map_err(|error| format!("git show {tag}:{path} did not return UTF-8 source: {error}"))
+}
+
+/// Some older CubeWB SHCI headers contain legacy single-byte characters in
+/// comments. Replacing those bytes is safe for syntax extraction while
+/// keeping the generated BLE-source adapter strict about its input encoding.
+fn git_show_lossy_utf8(cube_dir: &Path, tag: &str, path: &str) -> Result<String, String> {
+    Ok(String::from_utf8_lossy(&git_show_bytes(cube_dir, tag, path)?).into_owned())
+}
+
+fn git_show_bytes(cube_dir: &Path, tag: &str, path: &str) -> Result<Vec<u8>, String> {
     let spec = format!("{tag}:{path}");
     let output = Command::new("git")
         .arg("-C")
@@ -166,8 +183,7 @@ fn git_show(cube_dir: &Path, tag: &str, path: &str) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|error| format!("git show {spec} did not return UTF-8 source: {error}"))
+    Ok(output.stdout)
 }
 
 /// Extract `rq.ocf` assignments from an auto-generated ACI C source file.
@@ -596,6 +612,9 @@ fn extract_event_table_from_tree(
             }
             EventScope::StandardHci => CatalogEventKind::StandardHci,
             EventScope::LeMeta => CatalogEventKind::LeMeta,
+            EventScope::SystemShci => {
+                return Err("shci.h events must be extracted from SHCI_SUB_EVT_CODE_t".to_owned());
+            }
         };
         entries.push(CatalogEvent {
             kind,
@@ -612,6 +631,141 @@ fn extract_event_table_from_tree(
         return Err(format!("ble_events.c: {table_name} contains no entries"));
     }
     Ok(entries)
+}
+
+/// Extract the system-channel event inventory from CubeWB's tagged SHCI
+/// header. Unlike BLE ACI events, SHCI events are declared as a C enum whose
+/// later values rely on implicit incrementing.
+fn extract_shci_events(source: &str) -> Result<Vec<CatalogEvent>, String> {
+    const ENUM_NAME: &str = "SHCI_SUB_EVT_CODE_t";
+    const BASE_NAME: &str = "SHCI_SUB_EVT_CODE_BASE";
+
+    let tree = parse_preprocessed_c_tree(source, "shci.h")?;
+    let base = preprocessor_integer(tree.root_node(), source, BASE_NAME)
+        .ok_or_else(|| format!("shci.h: {BASE_NAME} is missing or is not an integer literal"))?;
+    let enumeration = find_enum_body(tree.root_node(), source, ENUM_NAME)
+        .ok_or_else(|| format!("shci.h: {ENUM_NAME} was not found"))?;
+    if enumeration.has_error() {
+        return Err(format!("shci.h: {ENUM_NAME} contains C syntax errors"));
+    }
+
+    let layouts = parse_packed_struct_envelopes_with_marker(
+        source,
+        source,
+        "shci.h",
+        "PACKED_STRUCT",
+        "struct       ",
+    );
+    let mut events = Vec::new();
+    let mut previous = None;
+    let mut cursor = enumeration.walk();
+    for enumerator in enumeration.named_children(&mut cursor) {
+        if enumerator.kind() != "enumerator" {
+            continue;
+        }
+        let name_node = enumerator
+            .child_by_field_name("name")
+            .ok_or_else(|| format!("shci.h: malformed {ENUM_NAME} enumerator"))?;
+        let name = node_text(name_node, source);
+        let code = match enumerator.child_by_field_name("value") {
+            Some(value) => {
+                let expression = node_text(value, source).trim();
+                if expression == BASE_NAME {
+                    base
+                } else {
+                    parse_complete_c_integer(expression).ok_or_else(|| {
+                        format!(
+                            "shci.h: {ENUM_NAME} value for {name} uses unsupported expression `{expression}`"
+                        )
+                    })?
+                }
+            }
+            None => previous
+                .and_then(|value: u16| value.checked_add(1))
+                .ok_or_else(|| format!("shci.h: {name} has no preceding enum value"))?,
+        };
+        previous = Some(code);
+        events.push(CatalogEvent {
+            kind: CatalogEventKind::SystemShci {
+                payload: shci_event_payload(name, &layouts),
+            },
+            code,
+            name: name.to_owned(),
+            source_name: SHCI_SOURCE.to_owned(),
+            source_offset: u32::try_from(name_node.start_byte())
+                .map_err(|_| format!("shci.h: {name} source offset exceeds schema range"))?,
+        });
+    }
+
+    if events.is_empty() {
+        return Err(format!("shci.h: {ENUM_NAME} contains no entries"));
+    }
+    Ok(events)
+}
+
+fn find_enum_body<'tree>(root: Node<'tree>, source: &str, name: &str) -> Option<Node<'tree>> {
+    let mut definitions = Vec::new();
+    collect_nodes(root, "type_definition", &mut definitions);
+    definitions.into_iter().find_map(|definition| {
+        let mut cursor = definition.walk();
+        let matches = definition
+            .children_by_field_name("declarator", &mut cursor)
+            .filter_map(declarator_identifier)
+            .any(|identifier| node_text(identifier, source) == name);
+        if !matches {
+            return None;
+        }
+        definition
+            .child_by_field_name("type")
+            .filter(|node| node.kind() == "enum_specifier")?
+            .child_by_field_name("body")
+    })
+}
+
+fn preprocessor_integer(root: Node<'_>, source: &str, name: &str) -> Option<u16> {
+    let mut definitions = Vec::new();
+    collect_nodes(root, "preproc_def", &mut definitions);
+    definitions.into_iter().find_map(|definition| {
+        let identifier = definition.child_by_field_name("name")?;
+        (node_text(identifier, source) == name).then_some(())?;
+        let value = node_text(definition.child_by_field_name("value")?, source).trim();
+        parse_parenthesized_c_integer(value)
+    })
+}
+
+fn parse_parenthesized_c_integer(mut expression: &str) -> Option<u16> {
+    expression = expression.trim();
+    while expression.starts_with('(') && expression.ends_with(')') {
+        expression = expression[1..expression.len() - 1].trim();
+    }
+    parse_complete_c_integer(expression)
+}
+
+fn shci_event_payload(name: &str, layouts: &PackedLayouts) -> WireLayoutEvidence {
+    let fixed_struct = |type_name: &str| {
+        fixed_packed_size(layouts, type_name).map_or_else(
+            || {
+                WireLayoutEvidence::Unresolved(format!(
+                    "packed type `{type_name}` was not resolved"
+                ))
+            },
+            |size| WireLayoutEvidence::fixed(size as u32),
+        )
+    };
+    match name {
+        // CubeWB transports these enum-valued SHCI payloads as one byte. The
+        // C enum's host ABI size is not its wire size.
+        "SHCI_SUB_EVT_CODE_READY" | "SHCI_SUB_EVT_ERROR_NOTIF" => WireLayoutEvidence::fixed(1),
+        "SHCI_SUB_EVT_BLE_NVM_RAM_UPDATE" => fixed_struct("SHCI_C2_BleNvmRamUpdate_Evt_t"),
+        "SHCI_SUB_EVT_THREAD_NVM_RAM_UPDATE" => fixed_struct("SHCI_C2_ThreadNvmRamUpdate_Evt_t"),
+        "SHCI_SUB_EVT_NVM_START_WRITE" => fixed_struct("SHCI_C2_NvmStartWrite_Evt_t"),
+        "SHCI_SUB_EVT_NVM_END_WRITE" => WireLayoutEvidence::fixed(0),
+        "SHCI_SUB_EVT_NVM_START_ERASE" => fixed_struct("SHCI_C2_NvmStartErase_Evt_t"),
+        "SHCI_SUB_EVT_NVM_END_ERASE" => WireLayoutEvidence::fixed(0),
+        _ => WireLayoutEvidence::Unresolved(format!(
+            "shci.h does not declare a payload structure for `{name}`"
+        )),
+    }
 }
 
 fn event_process_layouts(
@@ -1412,13 +1566,27 @@ fn parse_packed_struct_envelopes_from_preprocessed(
     source: &str,
     preprocessed: &str,
 ) -> PackedLayouts {
-    const PACKED_MARKER: &str = "__PACKED_STRUCT";
-    const PARSABLE_MARKER: &str = "struct         ";
-    debug_assert_eq!(PACKED_MARKER.len(), PARSABLE_MARKER.len());
+    parse_packed_struct_envelopes_with_marker(
+        source,
+        preprocessed,
+        TYPES_SOURCE,
+        "__PACKED_STRUCT",
+        "struct         ",
+    )
+}
 
-    let normalized = source.replace(PACKED_MARKER, PARSABLE_MARKER);
-    let normalized_preprocessed = preprocessed.replace(PACKED_MARKER, PARSABLE_MARKER);
-    let Ok(tree) = parse_preprocessed_c_tree(&normalized_preprocessed, TYPES_SOURCE) else {
+fn parse_packed_struct_envelopes_with_marker(
+    source: &str,
+    preprocessed: &str,
+    source_name: &str,
+    packed_marker: &str,
+    parsable_marker: &str,
+) -> PackedLayouts {
+    debug_assert_eq!(packed_marker.len(), parsable_marker.len());
+
+    let normalized = source.replace(packed_marker, parsable_marker);
+    let normalized_preprocessed = preprocessed.replace(packed_marker, parsable_marker);
+    let Ok(tree) = parse_preprocessed_c_tree(&normalized_preprocessed, source_name) else {
         return BTreeMap::new();
     };
     let mut type_definitions = Vec::new();
@@ -1427,7 +1595,7 @@ fn parse_packed_struct_envelopes_from_preprocessed(
         .into_iter()
         .filter_map(|definition| {
             node_text(definition, source)
-                .contains(PACKED_MARKER)
+                .contains(packed_marker)
                 .then_some(())?;
             if definition.has_error() {
                 return None;
@@ -2548,6 +2716,63 @@ mod tests {
             CatalogEventKind::VendorAci {
                 payload: WireLayoutEvidence::Unresolved(reason)
             } if reason.contains("vendor_rp0")
+        ));
+    }
+
+    #[test]
+    fn extracts_complete_shci_enum_with_payload_evidence() {
+        let source = r#"
+            #define SHCI_SUB_EVT_CODE_BASE ( 0x9200 )
+            typedef enum {
+                SHCI_SUB_EVT_CODE_READY = SHCI_SUB_EVT_CODE_BASE,
+                SHCI_SUB_EVT_ERROR_NOTIF,
+                SHCI_SUB_EVT_BLE_NVM_RAM_UPDATE,
+                SHCI_SUB_EVT_THREAD_NVM_RAM_UPDATE,
+                SHCI_SUB_EVT_NVM_START_WRITE,
+                SHCI_SUB_EVT_NVM_END_WRITE,
+                SHCI_SUB_EVT_NVM_START_ERASE,
+                SHCI_SUB_EVT_NVM_END_ERASE,
+                SHCI_SUB_EVT_CODE_CONCURRENT_802154_EVT,
+            } SHCI_SUB_EVT_CODE_t;
+
+            typedef PACKED_STRUCT {
+                uint32_t StartAddress;
+                uint32_t Size;
+            } SHCI_C2_BleNvmRamUpdate_Evt_t;
+            typedef PACKED_STRUCT {
+                uint32_t StartAddress;
+                uint32_t Size;
+            } SHCI_C2_ThreadNvmRamUpdate_Evt_t;
+            typedef PACKED_STRUCT {
+                uint32_t NumberOfWords;
+            } SHCI_C2_NvmStartWrite_Evt_t;
+            typedef PACKED_STRUCT {
+                uint32_t NumberOfSectors;
+            } SHCI_C2_NvmStartErase_Evt_t;
+        "#;
+
+        let events = extract_shci_events(source).unwrap();
+        assert_eq!(events.len(), 9);
+        assert_eq!(
+            events.iter().map(|event| event.code).collect::<Vec<_>>(),
+            (0x9200..=0x9208).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            events[2].proprietary_payload().and_then(Evidence::bounds),
+            Some((8, 8))
+        );
+        assert_eq!(
+            events[4].proprietary_payload().and_then(Evidence::bounds),
+            Some((4, 4))
+        );
+        assert_eq!(
+            events[5].proprietary_payload().and_then(Evidence::bounds),
+            Some((0, 0))
+        );
+        assert!(matches!(
+            events[8].proprietary_payload(),
+            Some(WireLayoutEvidence::Unresolved(reason))
+                if reason.contains("does not declare a payload structure")
         ));
     }
 

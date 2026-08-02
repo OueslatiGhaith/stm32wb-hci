@@ -4,16 +4,18 @@
 # reviewable reason. `firmware = "*"` selects every declared firmware; an exact
 # version such as `"1.17.0"` selects only that version.
 #
-# Transport-only events must also declare their payload envelope after the
-# two-byte vendor event code. The checker rejects overlaps, unknown firmware
-# versions, invalid envelopes, and exclusions which no longer suppress a real
-# difference.
-
-# This event is emitted by the coprocessor transport but is not listed in the
-# generated STM32CubeWB `hci_vs_event_table` catalog.
+# System-channel events are inventoried from CubeWB's tagged `shci.h` header.
+# The two 802.15.4-specific notifications below are deliberately outside this
+# Bluetooth HCI crate. The checker rejects overlaps, unknown firmware versions,
+# and exclusions which no longer suppress a real difference.
 [[exclusions]]
-scope = "transport-event"
-code = 0x9200
+scope = "event"
+code = 0x9203
 firmware = "*"
-reason = "transport-only coprocessor-ready event (not in CubeWB auto source)"
-payload = { minimum = 1, maximum = 1 }
+reason = "OpenThread NVM notification is outside this Bluetooth HCI crate"
+
+[[exclusions]]
+scope = "event"
+code = 0x9208
+firmware = "*"
+reason = "concurrent 802.15.4 notification is outside this Bluetooth HCI crate"

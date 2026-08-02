@@ -48,9 +48,6 @@ pub struct CheckOptions {
     pub skip_build: bool,
     pub excluded_commands: BTreeMap<u16, String>,
     pub excluded_events: BTreeMap<u16, String>,
-    /// Payload layouts supplied by the checked-in policy for transport-only
-    /// events which do not exist in CubeWB's generated event table.
-    pub external_event_payloads: BTreeMap<u16, WireLayoutEvidence>,
 }
 
 impl CheckOptions {
@@ -62,7 +59,6 @@ impl CheckOptions {
             skip_build: false,
             excluded_commands: BTreeMap::new(),
             excluded_events: BTreeMap::new(),
-            external_event_payloads: BTreeMap::new(),
         }
     }
 }
@@ -82,12 +78,11 @@ pub fn check(options: &CheckOptions) -> Result<CheckReport, ComplianceError> {
             .map_err(ComplianceError::Source)?;
     let local_standard_hci_commands = standard::coverage_entries(&local_standard_hci_declarations);
 
-    let wire = wire::compare_wire_with_external_events(
+    let wire = wire::compare_wire(
         &catalog.commands,
         &catalog.events,
         &rust_catalog,
         &local_standard_hci_declarations,
-        &options.external_event_payloads,
     );
     let vendor = catalog.vendor_coverage();
     let standard_hci = catalog.standard_hci_coverage();
@@ -193,7 +188,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_options_do_not_hide_transport_events_without_a_policy() {
+    fn check_options_do_not_hide_events_without_a_policy() {
         let options = CheckOptions::new(
             FirmwareVersion::new(1, 17, 1),
             PathBuf::from("crate"),
@@ -201,6 +196,5 @@ mod tests {
         );
         assert!(options.excluded_commands.is_empty());
         assert!(options.excluded_events.is_empty());
-        assert!(options.external_event_payloads.is_empty());
     }
 }

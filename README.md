@@ -55,8 +55,8 @@ The checker reports the requested CubeWB tag, the tag object, and the resolved c
 result reproducible even when inspecting a local CubeWB clone. Its exclusions are governed by the
 checked-in [TOML policy](crates/stm32wb-compliance/exclusions.toml). The policy requires a reason
 for every exception and rejects malformed, overlapping, unsupported-version, or stale entries; an
-exception must actively suppress a real coverage difference. Transport-only events additionally
-declare their minimum and maximum payload lengths, which are checked against the Rust event
+exception must actively suppress a real coverage difference. System-channel events must be present
+in a tagged CubeWB source inventory, and their payload lengths are checked against the Rust event
 schema. Pass `--policy <path>` only when evaluating a deliberate alternative policy.
 
 The checker parses both the Rust crate and CubeWB's generated C sources as syntax trees, and
@@ -64,7 +64,7 @@ evaluates the selected firmware cfgs, so module-, trait-, impl-, method-, and br
 are all included in the active API inventory. It compares:
 
 - vendor ACI command IDs and vendor-event IDs from CubeWB's generated `ble_*_aci.c` and
-  `ble_events.c` files;
+  `ble_events.c` files, plus system-channel event IDs from the tagged `shci.h` header;
 - standard HCI command opcodes declared directly in `src/standard.rs` against the selected
   CubeWB catalog; APIs inherited from `bt-hci` are intentionally outside compliance scope;
 - vendor command and event payload envelopes: exact and bounded request, return, and event sizes,
@@ -75,9 +75,10 @@ CubeWB request-length formulas are normalized from their generated C parameter t
 branches, packed `sizeof` types, and the 255-byte HCI limit. Capacity-shaped command returns are
 normalized from their packed structures and `BLE_EVT_MAX_PARAM_LEN` expressions. Unsupported
 expressions or C layouts are reported as `wire unavailable` rather than guessed and make the
-report non-compliant. All transport-only exceptions—including the coprocessor-ready event
-`0x9200`—come exclusively from the checked-in policy; its one-byte payload envelope is validated
-like generated event metadata, and library defaults do not hide it.
+report non-compliant. SHCI system events—including coprocessor-ready, error notification, and BLE
+NVM updates—are source-backed catalog entries, so an event missing from both `ble_events.c` and the
+Rust API can no longer disappear from the comparison. The checked-in policy explicitly excludes
+only the OpenThread NVM and concurrent 802.15.4 notifications.
 
 CubeWB conditional branches are evaluated by libclang against the complete BLE core header tree
 from the same immutable Git tag. This resolves included and function-like macros with the real C

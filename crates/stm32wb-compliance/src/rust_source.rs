@@ -1475,7 +1475,7 @@ mod tests {
         let channels = coverage.commands.get("L2CocConnectConfirm").unwrap();
         assert_complete_envelope(&channels.completion, Envelope::bounded(1, 6));
 
-        assert_eq!(coverage.events.len(), 55);
+        assert_eq!(coverage.events.len(), 61);
         let gap_procedure = coverage.events.get(&0x0407).unwrap();
         assert_eq!(gap_procedure.name, "GapProcedureComplete");
         assert_eq!(gap_procedure.payload, Envelope::bounded(3, 253));
@@ -1558,7 +1558,7 @@ mod tests {
         assert_eq!(macro_path, ["stm32wb_hci_macros", "vendor_event"]);
 
         let parsed = syn::parse2::<SchemaVendorEvents>(catalog.mac.tokens.clone()).unwrap();
-        assert_eq!(parsed.events.len(), 60);
+        assert_eq!(parsed.events.len(), 66);
     }
 
     #[test]

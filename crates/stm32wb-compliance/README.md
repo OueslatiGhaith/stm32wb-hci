@@ -36,26 +36,27 @@ table for each policy entry:
 
 ```toml
 [[exclusions]]
-scope = "transport-event"
-code = 0x9200
+scope = "event"
+code = 0x9203
 firmware = "*"
-reason = "transport-only event | ordinary TOML strings may contain pipes"
-payload = { minimum = 1, maximum = 1 }
+reason = "OpenThread NVM notification is outside this Bluetooth HCI crate"
 ```
 
-Supported scopes are `command`, `event`, and `transport-event`.
+Supported scopes are `command` and `event`.
 
 - `firmware = "*"` selects every firmware declared by the crate; an exact
   version such as `"1.17.0"` selects one firmware.
-- `command` and `event` exclusions must not contain `payload`.
-- `transport-event` exclusions require a payload envelope measured after the
-  two-byte vendor event code.
 - Every reason must be non-empty.
 
+The STM32WB adapter reads system-channel event IDs from the selected tag's
+`SHCI_SUB_EVT_CODE_t` declaration in `shci.h`. Their payload evidence comes
+from the same header, so exclusions select protocol scope only and never supply
+otherwise invisible event metadata.
+
 The checker continues to reject duplicate or overlapping selectors, unknown
-firmware versions, invalid event envelopes, and stale exclusions that do not
-suppress a real difference. Use `--policy <path>` to test an alternate TOML
-policy without changing the checked-in default.
+firmware versions, and stale exclusions that do not suppress a real
+difference. Use `--policy <path>` to test an alternate TOML policy without
+changing the checked-in default.
 
 ## Commands
 

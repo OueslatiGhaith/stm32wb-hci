@@ -9,6 +9,8 @@ use crate::wire::WireReport;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoverageOrigin {
     VendorAutoSource,
+    /// System-channel event declared by CubeWB's tagged SHCI header.
+    SystemShciSource,
     VendorCommandCatalog,
     VendorEventCatalog,
     /// Generated `ble_hci_le.c` / `ble_events.c` standard-HCI catalog entry.
@@ -21,6 +23,7 @@ impl CoverageOrigin {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::VendorAutoSource => "vendor-auto-source",
+            Self::SystemShciSource => "system-shci-source",
             Self::VendorCommandCatalog => "vendor-command-catalog",
             Self::VendorEventCatalog => "vendor-event-catalog",
             Self::StandardHciAutoSource => "standard-hci-auto-source",
@@ -524,13 +527,39 @@ mod tests {
                 unavailable: vec![crate::wire::WireUnavailable {
                     code: 0x9200,
                     command: "CoprocessorReady".into(),
-                    reason: "missing external payload evidence".into(),
+                    reason: "missing source payload evidence".into(),
                 }],
             },
             BTreeMap::new(),
             BTreeMap::new(),
         );
 
+        assert!(!report.is_compliant());
+    }
+
+    #[test]
+    fn source_only_shci_event_is_reported_missing() {
+        let vendor = ProtocolCoverage {
+            commands: Vec::new(),
+            events: vec![CoverageEntry::new(
+                0x9201,
+                "SHCI_SUB_EVT_ERROR_NOTIF",
+                CoverageOrigin::SystemShciSource,
+            )],
+        };
+        let report = CheckReport::new(
+            FirmwareVersion::new(1, 17, 1),
+            vendor,
+            ProtocolCoverage::default(),
+            StandardHciCoverage::default(),
+            Vec::new(),
+            WireReport::default(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        );
+
+        assert_eq!(report.missing_events().len(), 1);
+        assert_eq!(report.missing_events()[0].code, 0x9201);
         assert!(!report.is_compliant());
     }
 

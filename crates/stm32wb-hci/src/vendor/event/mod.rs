@@ -639,6 +639,35 @@ stm32wb_hci_macros::vendor_event! {
     CoprocessorReady(0x9200) {
         Payload = { kind: FirmwareKind => 1, };
     }
+    /// The radio coprocessor reports an error detected by its stack, driver,
+    /// or system infrastructure.
+    SystemErrorNotification(0x9201) {
+        Payload = { error_code: SystemErrorCode => 1, };
+    }
+    /// The radio coprocessor reports the BLE NVM RAM range that was modified
+    /// and should be persisted by CPU1.
+    BleNvmRamUpdate(0x9202) {
+        Payload = {
+            start_address: u32 => 4,
+            size: u32 => 4,
+        };
+    }
+    /// The radio coprocessor is starting a flash write procedure.
+    NvmStartWrite(0x9204) {
+        Payload = { number_of_words: u32 => 4, };
+    }
+    /// The radio coprocessor completed its flash write procedure.
+    NvmEndWrite(0x9205) {
+        Payload = ();
+    }
+    /// The radio coprocessor is starting a flash erase procedure.
+    NvmStartErase(0x9206) {
+        Payload = { number_of_sectors: u32 => 4, };
+    }
+    /// The radio coprocessor completed its flash erase procedure.
+    NvmEndErase(0x9207) {
+        Payload = ();
+    }
     /// This event is generated when teh device completes a radio activity and provide information when
     /// a new radio activity will be performed.
     ///
@@ -1367,6 +1396,27 @@ stm32wb_hci_macros::wire_type! {
     }
     TryFromError = VendorError => VendorError::UnknownFirmwareKind;
     EventError = Error::Vendor;
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [event];
+    open_enum
+    /// Error reported by the STM32WB system channel.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum SystemErrorCode: u8 => 1 {
+        /// BLE initialization failed. Current CubeWB firmware documents this
+        /// value but does not report it.
+        BleInitialization = 0,
+        /// The 802.15.4 low-level driver detected a fatal error.
+        ThreadLldFatal = 125,
+        /// CPU1 sent an unknown Thread command.
+        ThreadUnknownCommand = 126,
+        /// CPU1 sent an unknown Zigbee command.
+        ZigbeeUnknownCommand = 200,
+        /// A newer firmware reported an error not known to this crate.
+        _ => Unknown,
+    }
 }
 
 stm32wb_hci_macros::wire_type! {
@@ -2384,6 +2434,45 @@ mod tests {
         assert_eq!(event.value.as_slice(), &[0xAA, 0xBB]);
         assert_eq!(event.value.as_slice().as_ptr(), bytes[5..].as_ptr());
         assert!(core::mem::size_of::<VendorEvent<'static>>() <= 64);
+    }
+
+    #[test]
+    fn decodes_shci_system_events() {
+        let error = VendorEvent::new(&[0x01, 0x92, 200]).unwrap();
+        assert!(matches!(
+            error,
+            VendorEvent::SystemErrorNotification(SystemErrorNotification {
+                error_code: SystemErrorCode::ZigbeeUnknownCommand,
+            })
+        ));
+
+        let unknown = VendorEvent::new(&[0x01, 0x92, 0xA5]).unwrap();
+        assert!(matches!(
+            unknown,
+            VendorEvent::SystemErrorNotification(SystemErrorNotification {
+                error_code: SystemErrorCode::Unknown(0xA5),
+            })
+        ));
+
+        let update =
+            VendorEvent::new(&[0x02, 0x92, 0x78, 0x56, 0x34, 0x12, 0x08, 0x00, 0x00, 0x00])
+                .unwrap();
+        assert!(matches!(
+            update,
+            VendorEvent::BleNvmRamUpdate(BleNvmRamUpdate {
+                start_address: 0x1234_5678,
+                size: 8,
+            })
+        ));
+
+        assert!(matches!(
+            VendorEvent::new(&[0x05, 0x92]).unwrap(),
+            VendorEvent::NvmEndWrite
+        ));
+        assert!(matches!(
+            VendorEvent::new(&[0x07, 0x92]).unwrap(),
+            VendorEvent::NvmEndErase
+        ));
     }
 
     #[cfg(since_fw_1_17_0)]
