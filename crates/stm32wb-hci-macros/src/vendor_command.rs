@@ -4,8 +4,25 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use stm32wb_hci_schema::{
     Completion, Constraint, Constraints, Field, FieldEncoding, Fields, Returns, TaggedEncoding,
-    VariableEncodingShape, VendorCommand,
+    VariableEncodingShape, VendorCommand, WireSize,
 };
+
+fn canonical_width(ty: &syn::Type) -> TokenStream2 {
+    if let syn::Type::Reference(reference) = ty {
+        return canonical_width(&reference.elem);
+    }
+    quote!({ <#ty as crate::wire::HciWireType>::WIDTH })
+}
+
+fn expand_wire_size(size: &WireSize) -> TokenStream2 {
+    let constant = size.constant_part();
+    let terms = size.terms().iter().map(|term| {
+        let width = canonical_width(term.ty());
+        let multiplier = term.multiplier();
+        quote!(#width * #multiplier)
+    });
+    quote!(#constant #(+ #terms)*)
+}
 
 /// Generate the complete command type directly from the shared schema.
 pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
@@ -32,7 +49,7 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
     let field_validations = expand_param_field_validations(fields);
     let schema_validations = expand_schema_validations(fields);
     let params_length_assert = command.params.lifetime.is_none().then(|| {
-        let params_len = command.params.max_len();
+        let params_len = expand_wire_size(&command.params.max_size());
         quote! {
             const _: () = crate::vendor::command::assert_hci_payload_length(#params_len);
         }
@@ -623,7 +640,7 @@ fn expand_completion(command: &VendorCommand) -> TokenStream2 {
             }),
         ) => {
             let return_declaration = expand_return(return_name, fields);
-            let return_len = fields.max_len();
+            let return_len = expand_wire_size(&fields.max_size());
 
             quote! {
                 const _: () = crate::vendor::command::assert_hci_payload_length(
@@ -700,8 +717,8 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
     let name = &field.name;
     let ty = &field.ty;
     let decoder = match &field.encoding {
-        FieldEncoding::Fixed(encoding) => {
-            let width = &encoding.width_literal;
+        FieldEncoding::Fixed(_) => {
+            let width = canonical_width(ty);
             quote! {
                 crate::vendor::command::decode_declarative_fixed_field::<#ty, #width>(#cursor)
             }
@@ -713,7 +730,7 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
                 max_len,
             } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
                 quote! {
@@ -738,9 +755,9 @@ fn expand_return_decoder(field: &Field, cursor: &syn::Ident) -> TokenStream2 {
                 max_items,
             } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
+                let item_width = canonical_width(item_ty);
                 let min_items = &min_items.literal;
                 let max_items = &max_items.literal;
                 quote! {
@@ -793,22 +810,19 @@ fn expand_params_size(fields: &[Field]) -> TokenStream2 {
 fn expand_field_size(field: &Field) -> TokenStream2 {
     let name = &field.name;
     match &field.encoding {
-        FieldEncoding::Fixed(encoding) => {
-            let width = &encoding.width_literal;
-            quote!(#width)
-        }
+        FieldEncoding::Fixed(_) => canonical_width(&field.ty),
         FieldEncoding::Variable(encoding) => match &encoding.shape {
             VariableEncodingShape::CountedBytes { count, .. } => {
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(&count.ty);
                 quote!(
                     #count_width
                         + ::core::convert::AsRef::<[u8]>::as_ref(&self.#name).len()
                 )
             }
             VariableEncodingShape::CountedItems { count, item, .. } => {
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(&count.ty);
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
+                let item_width = canonical_width(item_ty);
                 quote!(
                     #count_width
                         + #item_width
@@ -818,8 +832,9 @@ fn expand_field_size(field: &Field) -> TokenStream2 {
             VariableEncodingShape::Tagged(tagged) => {
                 let arms = tagged.variants.iter().map(|variant| {
                     let pattern = &variant.pattern;
-                    let length = tagged.tag.width.value + variant.fields.max_len();
-                    quote!(#pattern => #length,)
+                    let tag_width = canonical_width(&tagged.tag.ty);
+                    let payload_width = expand_wire_size(&variant.fields.max_size());
+                    quote!(#pattern => (#tag_width + #payload_width),)
                 });
                 quote!({
                     #[allow(unused_variables)]
@@ -831,7 +846,7 @@ fn expand_field_size(field: &Field) -> TokenStream2 {
             ),
             VariableEncodingShape::BitmapItems { item, .. } => {
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
+                let item_width = canonical_width(item_ty);
                 quote!(
                     #item_width
                         * ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name).len()
@@ -866,14 +881,15 @@ fn expand_params_write(fields: &[Field], asynchronous: bool) -> TokenStream2 {
 fn expand_field_write(field: &Field, asynchronous: bool) -> TokenStream2 {
     let name = &field.name;
     match &field.encoding {
-        FieldEncoding::Fixed(encoding) => {
-            expand_fixed_write(quote!(&self.#name), &encoding.width_literal, asynchronous)
+        FieldEncoding::Fixed(_) => {
+            let width = canonical_width(&field.ty);
+            expand_fixed_write(quote!(&self.#name), &width, asynchronous)
         }
         FieldEncoding::Variable(encoding) => match &encoding.shape {
             VariableEncodingShape::CountedBytes { count, .. } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
-                let write_count = expand_fixed_write(quote!(&count), count_width, asynchronous);
+                let count_width = canonical_width(count_ty);
+                let write_count = expand_fixed_write(quote!(&count), &count_width, asynchronous);
                 let write_value = if asynchronous {
                     quote!(
                         ::embedded_io_async::Write::write_all(&mut writer, value).await?;
@@ -896,11 +912,11 @@ fn expand_field_write(field: &Field, asynchronous: bool) -> TokenStream2 {
             }
             VariableEncodingShape::CountedItems { count, item, .. } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
-                let write_count = expand_fixed_write(quote!(&count), count_width, asynchronous);
-                let write_item = expand_fixed_write(quote!(item), item_width, asynchronous);
+                let item_width = canonical_width(item_ty);
+                let write_count = expand_fixed_write(quote!(&count), &count_width, asynchronous);
+                let write_item = expand_fixed_write(quote!(item), &item_width, asynchronous);
                 quote! {
                     {
                         let value = ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name);
@@ -938,8 +954,8 @@ fn expand_field_write(field: &Field, asynchronous: bool) -> TokenStream2 {
             }
             VariableEncodingShape::BitmapItems { item, .. } => {
                 let item_ty = &item.ty;
-                let item_width = &item.width.literal;
-                let write_item = expand_fixed_write(quote!(item), item_width, asynchronous);
+                let item_width = canonical_width(item_ty);
+                let write_item = expand_fixed_write(quote!(item), &item_width, asynchronous);
                 quote! {
                     for item in ::core::convert::AsRef::<[#item_ty]>::as_ref(&self.#name) {
                         #write_item
@@ -956,7 +972,7 @@ fn expand_field_write(field: &Field, asynchronous: bool) -> TokenStream2 {
 
 fn expand_fixed_write(
     value: TokenStream2,
-    width: &syn::LitInt,
+    width: &TokenStream2,
     asynchronous: bool,
 ) -> TokenStream2 {
     if asynchronous {
@@ -982,17 +998,18 @@ fn expand_tagged_write(
     asynchronous: bool,
 ) -> TokenStream2 {
     let tag_ty = &tagged.tag.ty;
-    let tag_width = &tagged.tag.width.literal;
+    let tag_width = canonical_width(tag_ty);
     let arms = tagged.variants.iter().map(|variant| {
         let pattern = &variant.pattern;
         let tag = &variant.tag.literal;
-        let write_tag = expand_fixed_write(quote!(&tag), tag_width, asynchronous);
+        let write_tag = expand_fixed_write(quote!(&tag), &tag_width, asynchronous);
         let payload_writes = variant.fields.fields().iter().map(|field| {
             let field_name = &field.name;
-            let FieldEncoding::Fixed(encoding) = &field.encoding else {
+            let FieldEncoding::Fixed(_) = &field.encoding else {
                 unreachable!("tagged payload fields are validated as fixed-width")
             };
-            expand_fixed_write(quote!(#field_name), &encoding.width_literal, asynchronous)
+            let width = canonical_width(&field.ty);
+            expand_fixed_write(quote!(#field_name), &width, asynchronous)
         });
         quote! {
             #pattern => {
@@ -1022,7 +1039,7 @@ fn expand_param_field_validations(fields: &[Field]) -> TokenStream2 {
                 max_len,
             } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let min_len = &min_len.literal;
                 let max_len = &max_len.literal;
                 quote! {
@@ -1053,7 +1070,7 @@ fn expand_param_field_validations(fields: &[Field]) -> TokenStream2 {
                 max_items,
             } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let item_ty = &item.ty;
                 let min_items = &min_items.literal;
                 let max_items = &max_items.literal;
@@ -1145,7 +1162,7 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
         match &encoding.shape {
             VariableEncodingShape::CountedBytes { count, max_len, .. } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let max_len = &max_len.literal;
                 Some(quote! {
                     const _: () = ::core::assert!(
@@ -1157,7 +1174,7 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
                 count, max_items, ..
             } => {
                 let count_ty = &count.ty;
-                let count_width = &count.width.literal;
+                let count_width = canonical_width(count_ty);
                 let max_items = &max_items.literal;
                 Some(quote! {
                     const _: () = ::core::assert!(
@@ -1165,8 +1182,35 @@ fn expand_schema_validations(fields: &[Field]) -> TokenStream2 {
                     );
                 })
             }
-            VariableEncodingShape::Tagged(_)
-            | VariableEncodingShape::TrailingBytes { .. }
+            VariableEncodingShape::Tagged(tagged) => {
+                let tag_width = canonical_width(&tagged.tag.ty);
+                let lengths = tagged.variants.iter().map(|variant| {
+                    let payload = expand_wire_size(&variant.fields.max_size());
+                    quote!((#tag_width + #payload))
+                });
+                let declared_minimum = &tagged.min_len.literal;
+                let declared_maximum = &tagged.max_len.literal;
+                Some(quote! {
+                    const _: () = {
+                        let lengths = [#(#lengths),*];
+                        let mut minimum = usize::MAX;
+                        let mut maximum = 0usize;
+                        let mut index = 0usize;
+                        while index < lengths.len() {
+                            if lengths[index] < minimum {
+                                minimum = lengths[index];
+                            }
+                            if lengths[index] > maximum {
+                                maximum = lengths[index];
+                            }
+                            index += 1;
+                        }
+                        ::core::assert!(minimum == #declared_minimum);
+                        ::core::assert!(maximum == #declared_maximum);
+                    };
+                })
+            }
+            VariableEncodingShape::TrailingBytes { .. }
             | VariableEncodingShape::BitmapItems { .. }
             | VariableEncodingShape::LengthPrefixedRecords { .. }
             | VariableEncodingShape::TaggedItems(_) => None,

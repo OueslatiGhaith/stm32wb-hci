@@ -73,8 +73,8 @@ stm32wb_hci_macros::wire_type! {
     composite
     ScanWindow => 4 {
         Fields = {
-            interval: u16 => 2,
-            window: u16 => 2,
+            interval: u16,
+            window: u16,
         };
         Encode = |value| { value.hci_fields() };
     }

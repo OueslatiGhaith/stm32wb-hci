@@ -14,7 +14,7 @@ pub use crate::wire::{BoundedBytes, BoundedItems};
 pub use crate::wire::{
     HciCount, HciDecodeCountedBytes, HciDecodeCountedItems, HciDecodeTrailingBytes,
 };
-pub use crate::wire::{HciDecodeField, HciEncodeField};
+pub use crate::wire::{HciDecodeField, HciEncodeField, HciWireType};
 
 /// Build the ten-bit vendor OCF from STM32's three-bit command-group ID and
 /// seven-bit command ID.
@@ -280,7 +280,7 @@ pub(crate) const fn assert_hci_payload_length(length: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::HciDecodeField;
+    use super::{HciDecodeField, HciWireType};
 
     stm32wb_hci_macros::wire_type! {
         adapters: [command];
@@ -305,15 +305,15 @@ mod tests {
     stm32wb_hci_macros::vendor_cmd! {
         AggregateLengthFixture(cgid = 0x1, cid = 0x0E) {
             Params<'a> = {
-                prefix: u8 => 1,
+                prefix: u8,
                 first: &'a [u8] => {
                     kind: counted_bytes,
-                    count: u8 => 1,
+                    count: u8,
                     max_len: 254,
                 },
                 second: &'a [u8] => {
                     kind: counted_bytes,
-                    count: u8 => 1,
+                    count: u8,
                     max_len: 254,
                 },
             };
@@ -327,7 +327,7 @@ mod tests {
                 /// Bytes carried by the fixture.
                 data: &'a [u8] => {
                     kind: counted_bytes,
-                    count: u8 => 1,
+                    count: u8,
                     min_len: 3,
                     max_len: 4,
                 },
@@ -340,18 +340,18 @@ mod tests {
     stm32wb_hci_macros::vendor_cmd! {
         DirectVariableEncodingFixture(cgid = 0x1, cid = 0x11) {
             Params<'a> = {
-                bitmap: u8 => 1,
+                bitmap: u8,
                 selected: &'a [u16] => {
                     kind: bitmap_items,
                     bitmap: bitmap,
                     mask: 0x03,
-                    item: u16 => 2,
+                    item: u16,
                     max_items: 2,
                 },
                 counted: &'a [u16] => {
                     kind: counted_items,
-                    count: u8 => 1,
-                    item: u16 => 2,
+                    count: u8,
+                    item: u16,
                     min_items: 1,
                     max_items: 2,
                 },
@@ -368,9 +368,9 @@ mod tests {
     stm32wb_hci_macros::vendor_cmd! {
         FixedConstraintFixture(cgid = 0x1, cid = 0x10) {
             Params = {
-                mode: u8 => 1,
-                minimum: u8 => 1,
-                maximum: u8 => 1,
+                mode: u8,
+                minimum: u8,
+                maximum: u8,
             };
             Constraints = {
                 range(mode, 1, 2);
@@ -383,6 +383,9 @@ mod tests {
 
     #[test]
     fn semantic_wire_declarations_reject_unknown_values_and_bits() {
+        assert_eq!(SemanticEnumFixture::WIDTH, 1);
+        assert_eq!(SemanticFlagsFixture::WIDTH, 1);
+        assert_eq!(<[u16; 8] as HciWireType>::WIDTH, 16);
         assert_eq!(
             SemanticEnumFixture::from_hci_field(&[0x03]),
             Ok(SemanticEnumFixture::Third)

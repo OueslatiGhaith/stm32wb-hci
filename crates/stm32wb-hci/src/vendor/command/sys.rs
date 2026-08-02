@@ -48,8 +48,8 @@ stm32wb_hci_macros::wire_type! {
 stm32wb_hci_macros::vendor_cmd! {
     SysReset(cgid = 0x6, cid = 0x00) {
         Params = {
-            mode: SysResetMode => 1,
-            options: SysResetOptions => 4,
+            mode: SysResetMode,
+            options: SysResetOptions,
         };
         Constraints = {
             implies_eq(
@@ -69,9 +69,9 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = SysGetInformationReturn {
-            version: [u8; 8] => 8,
-            options: SysResetOptions => 4,
-            debug_info: [u8; 12] => 12,
+            version: [u8; 8],
+            options: SysResetOptions,
+            debug_info: [u8; 12],
         };
     }
 }
@@ -79,10 +79,10 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     SysWriteConfigData(cgid = 0x6, cid = 0x02) {
         Params<'a> = {
-            offset: ConfigWriteOffset => 1,
+            offset: ConfigWriteOffset,
             data: &'a [u8] => {
                 kind: counted_bytes,
-                count: u8 => 1,
+                count: u8,
                 max_len: 253,
             },
         };
@@ -97,13 +97,13 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     SysReadConfigData(cgid = 0x6, cid = 0x03) {
         Params = {
-            offset: ConfigReadOffset => 1,
+            offset: ConfigReadOffset,
         };
         Completion = CommandComplete;
         Return = SysReadConfigDataReturn {
             data: BoundedBytes<250> => {
                 kind: counted_bytes,
-                count: u8 => 1,
+                count: u8,
                 max_len: 250,
             },
         };

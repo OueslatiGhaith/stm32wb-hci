@@ -33,6 +33,8 @@
 /// standard-HCI crate makes its command/event surface available to callers.
 /// Firmware compliance covers only APIs implemented directly by this crate.
 pub use bt_hci;
+/// Canonical byte width implemented by every semantic HCI wire type.
+pub use wire::HciWireType;
 
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;

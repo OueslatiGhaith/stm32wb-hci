@@ -8,7 +8,7 @@ use stm32wb_hci_schema::{
 };
 
 pub(crate) fn expand_wire_type(declaration: &SemanticWireType) -> TokenStream2 {
-    match &declaration.declaration {
+    let adapters = match &declaration.declaration {
         WireTypeDeclaration::ClosedEnum(value) => expand_closed_enum(value, &declaration.adapters),
         WireTypeDeclaration::OpenEnum(value) => expand_open_enum(value, &declaration.adapters),
         WireTypeDeclaration::OpenScalar(value) => expand_open_scalar(value, &declaration.adapters),
@@ -17,6 +17,37 @@ pub(crate) fn expand_wire_type(declaration: &SemanticWireType) -> TokenStream2 {
         WireTypeDeclaration::Composite(value) => expand_composite(value, &declaration.adapters),
         WireTypeDeclaration::Primitive(value) => expand_primitive(value, &declaration.adapters),
         WireTypeDeclaration::Transparent(value) => expand_transparent(value, &declaration.adapters),
+    };
+    let canonical_width = expand_canonical_width(&declaration.declaration);
+    quote! {
+        #canonical_width
+        #adapters
+    }
+}
+
+fn expand_canonical_width(declaration: &WireTypeDeclaration) -> TokenStream2 {
+    match declaration {
+        WireTypeDeclaration::ClosedEnum(value) => value
+            .width
+            .as_ref()
+            .map_or_else(TokenStream2::new, |width| {
+                canonical_width_impl(&value.name, width)
+            }),
+        WireTypeDeclaration::OpenEnum(value) => canonical_width_impl(&value.name, &value.width),
+        WireTypeDeclaration::OpenScalar(value) => canonical_width_impl(&value.name, &value.width),
+        WireTypeDeclaration::Ranged(value) => canonical_width_impl(&value.name, &value.width),
+        WireTypeDeclaration::Bitflags(value) => canonical_width_impl(&value.name, &value.width),
+        WireTypeDeclaration::Composite(value) => canonical_width_impl(&value.ty, &value.width),
+        WireTypeDeclaration::Primitive(value) => canonical_width_impl(&value.ty, &value.width),
+        WireTypeDeclaration::Transparent(value) => canonical_width_impl(&value.ty, &value.width),
+    }
+}
+
+fn canonical_width_impl(ty: &impl quote::ToTokens, width: &syn::LitInt) -> TokenStream2 {
+    quote! {
+        impl crate::wire::HciWireType for #ty {
+            const WIDTH: usize = #width;
+        }
     }
 }
 
@@ -585,7 +616,10 @@ fn expand_composite(
 ) -> TokenStream2 {
     let ty = &declaration.ty;
     let width = &declaration.width;
-    let field_widths = declaration.fields.iter().map(|field| &field.width);
+    let field_widths = declaration.fields.iter().map(|field| {
+        let ty = &field.ty;
+        quote!({ <#ty as crate::wire::HciWireType>::WIDTH })
+    });
     let command = declaration.encode.as_ref().map(|(value, encode)| {
         let field_names = declaration
             .fields
@@ -595,7 +629,7 @@ fn expand_composite(
         let sync_fields = declaration.fields.iter().map(|field| {
             let name = &field.name;
             let ty = &field.ty;
-            let width = &field.width;
+            let width = quote!({ <#ty as crate::wire::HciWireType>::WIDTH });
             quote! {
                 <#ty as crate::wire::HciEncodeField<#width>>::write_hci_field(
                     &#name,
@@ -606,7 +640,7 @@ fn expand_composite(
         let async_fields = declaration.fields.iter().map(|field| {
             let name = &field.name;
             let ty = &field.ty;
-            let width = &field.width;
+            let width = quote!({ <#ty as crate::wire::HciWireType>::WIDTH });
             quote! {
                 <#ty as crate::wire::HciEncodeField<#width>>::write_hci_field_async(
                     &#name,
@@ -641,7 +675,7 @@ fn expand_composite(
         let decode_fields = declaration.fields.iter().map(|field| {
             let name = &field.name;
             let ty = &field.ty;
-            let width = &field.width;
+            let width = quote!({ <#ty as crate::wire::HciWireType>::WIDTH });
             quote! {
                 let #name = {
                     let __end = __offset + #width;

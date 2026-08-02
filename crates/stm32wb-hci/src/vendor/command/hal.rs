@@ -136,7 +136,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalFirmwareRevision {
-            revision: u16 => 2,
+            revision: u16,
         };
     }
 }
@@ -144,10 +144,10 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalWriteConfigData(cgid = 0x0, cid = 0x0C) {
         Params<'a> = {
-            offset: ConfigWriteOffset => 1,
+            offset: ConfigWriteOffset,
             value: &'a [u8] => {
                 kind: counted_bytes,
-                count: u8 => 1,
+                count: u8,
                 max_len: 46,
                 storage_max_len: 254,
             },
@@ -163,13 +163,13 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalReadConfigData(cgid = 0x0, cid = 0x0D) {
         Params = {
-            offset: ConfigReadOffset => 1,
+            offset: ConfigReadOffset,
         };
         Completion = CommandComplete;
         Return = HalReadConfigDataReturn {
             value: BoundedBytes<16> => {
                 kind: counted_bytes,
-                count: u8 => 1,
+                count: u8,
                 min_len: 1,
                 max_len: 16,
                 storage_min_len: 1,
@@ -182,8 +182,8 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalSetTxPowerLevel(cgid = 0x0, cid = 0x0F) {
         Params = {
-            high_power_mode: bool => 1,
-            power_level: PowerLevel => 1,
+            high_power_mode: bool,
+            power_level: PowerLevel,
         };
         Completion = CommandComplete;
         Return = ();
@@ -195,7 +195,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalTxTestPacketCount {
-            packet_count: u32 => 4,
+            packet_count: u32,
         };
     }
 }
@@ -203,8 +203,8 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalStartTone(cgid = 0x0, cid = 0x15) {
         Params = {
-            channel: ToneChannel => 1,
-            freq_offset: ToneFrequencyOffset => 1,
+            channel: ToneChannel,
+            freq_offset: ToneFrequencyOffset,
         };
         Completion = CommandComplete;
         Return = ();
@@ -224,8 +224,8 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalLinkStatusRaw {
-            link_status: [u8; 8] => 8,
-            link_connection_handles: [u16; 8] => 16,
+            link_status: [u8; 8],
+            link_connection_handles: [u16; 8],
         };
     }
 }
@@ -233,7 +233,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalSetRadioActivityMask(cgid = 0x0, cid = 0x18) {
         Params = {
-            mask: RadioActivityFlags => 2,
+            mask: RadioActivityFlags,
         };
         Completion = CommandComplete;
         Return = ();
@@ -245,8 +245,8 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalAnchorPeriodRaw {
-            anchor_interval: u32 => 4,
-            max_slot: u32 => 4,
+            anchor_interval: u32,
+            max_slot: u32,
         };
     }
 }
@@ -254,7 +254,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalSetEventMask(cgid = 0x0, cid = 0x1A) {
         Params = {
-            mask: HalEventFlags => 4,
+            mask: HalEventFlags,
         };
         Completion = CommandComplete;
         Return = ();
@@ -267,9 +267,9 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalPmDebugInfo {
-            tx: u8 => 1,
-            rx: u8 => 1,
-            mblocks: u8 => 1,
+            tx: u8,
+            rx: u8,
+            mblocks: u8,
         };
     }
 }
@@ -277,7 +277,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalSetPeripheralLatency(cgid = 0x0, cid = 0x20) {
         Params = {
-            enabled: bool => 1,
+            enabled: bool,
         };
         Completion = CommandComplete;
         Return = ();
@@ -289,7 +289,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalRssi {
-            value: u8 => 1,
+            value: u8,
         };
     }
 }
@@ -297,11 +297,11 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalReadRadioReg(cgid = 0x0, cid = 0x30) {
         Params = {
-            address: RadioRegisterAddress => 1,
+            address: RadioRegisterAddress,
         };
         Completion = CommandComplete;
         Return = HalRadioRegisterValue {
-            value: RadioRegisterValue => 1,
+            value: RadioRegisterValue,
         };
     }
 }
@@ -309,8 +309,8 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalWriteRadioReg(cgid = 0x0, cid = 0x31) {
         Params = {
-            address: RadioRegisterAddress => 1,
-            value: RadioRegisterValue => 1,
+            address: RadioRegisterAddress,
+            value: RadioRegisterValue,
         };
         Completion = CommandComplete;
         Return = ();
@@ -322,7 +322,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Params = ();
         Completion = CommandComplete;
         Return = HalRawRssi {
-            value: [u8; 3] => 3,
+            value: [u8; 3],
         };
     }
 }
@@ -330,7 +330,7 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalRxStart(cgid = 0x0, cid = 0x33) {
         Params = {
-            rf_channel: ToneChannel => 1,
+            rf_channel: ToneChannel,
         };
         Completion = CommandComplete;
         Return = ();
@@ -358,12 +358,12 @@ stm32wb_hci_macros::vendor_cmd! {
 stm32wb_hci_macros::vendor_cmd! {
     HalEadEncryptDecrypt(cgid = 0x0, cid = 0x2F) {
         Params<'a> = {
-            mode: EadMode => 1,
-            key: &'a [u8; 16] => 16,
-            iv: &'a [u8; 8] => 8,
+            mode: EadMode,
+            key: &'a [u8; 16],
+            iv: &'a [u8; 8],
             data: &'a [u8] => {
                 kind: counted_bytes,
-                count: u16 => 2,
+                count: u16,
                 max_len: 228,
             },
         };
@@ -374,7 +374,7 @@ stm32wb_hci_macros::vendor_cmd! {
         Return = HalEadEncryptDecryptReturn {
             data: BoundedBytes<249> => {
                 kind: counted_bytes,
-                count: u16 => 2,
+                count: u16,
                 max_len: 249,
             },
         };

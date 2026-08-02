@@ -98,16 +98,21 @@ fn timeout_duration(ticks: u16) -> Duration {
 }
 
 stm32wb_hci_macros::wire_type! {
-    adapters: [command];
+    adapters: [command, event];
     composite
     ConnectionInterval => 8 {
         Fields = {
-            interval_min: u16 => 2,
-            interval_max: u16 => 2,
-            latency: u16 => 2,
-            timeout: u16 => 2,
+            interval_min: u16,
+            interval_max: u16,
+            latency: u16,
+            timeout: u16,
         };
         Encode = |value| { value.hci_fields() };
+        Decode = {
+            ConnectionInterval::from_hci_fields(interval_min, interval_max, latency, timeout)
+                .map_err(crate::vendor::event::VendorError::BadConnectionInterval)
+                .map_err(crate::vendor::event::Error::Vendor)
+        };
     }
 }
 

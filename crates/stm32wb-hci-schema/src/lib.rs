@@ -95,13 +95,15 @@ impl EventPayload {
     }
 
     /// Minimum encoded payload size, excluding the two-byte event code.
-    pub fn min_len(&self) -> usize {
-        self.fields().map_or(0, Fields::min_len)
+    pub fn min_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::min_size)
     }
 
     /// Maximum encoded payload size, excluding the two-byte event code.
-    pub fn max_len(&self) -> usize {
-        self.fields().map_or(0, Fields::max_len)
+    pub fn max_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::max_size)
     }
 }
 
@@ -138,13 +140,15 @@ impl Params {
     }
 
     /// Minimum encoded request size.
-    pub fn min_len(&self) -> usize {
-        self.fields().map_or(0, Fields::min_len)
+    pub fn min_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::min_size)
     }
 
     /// Maximum encoded request size before the HCI packet limit is applied.
-    pub fn max_len(&self) -> usize {
-        self.fields().map_or(0, Fields::max_len)
+    pub fn max_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::max_size)
     }
 
     /// Declared request field names.
@@ -177,13 +181,15 @@ impl Returns {
     }
 
     /// Minimum encoded return size.
-    pub fn min_len(&self) -> usize {
-        self.fields().map_or(0, Fields::min_len)
+    pub fn min_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::min_size)
     }
 
     /// Maximum encoded return size.
-    pub fn max_len(&self) -> usize {
-        self.fields().map_or(0, Fields::max_len)
+    pub fn max_size(&self) -> WireSize {
+        self.fields()
+            .map_or_else(WireSize::default, Fields::max_size)
     }
 }
 
@@ -191,8 +197,6 @@ impl Returns {
 pub struct Fields {
     fields: Vec<Field>,
     names: BTreeSet<String>,
-    min_len: usize,
-    max_len: usize,
 }
 
 impl Fields {
@@ -206,14 +210,14 @@ impl Fields {
         &self.names
     }
 
-    /// Minimum number of bytes encoded by this field body.
-    pub const fn min_len(&self) -> usize {
-        self.min_len
+    /// Minimum encoded size, expressed in canonical semantic-type widths.
+    pub fn min_size(&self) -> WireSize {
+        self.fields.iter().map(Field::min_size).sum()
     }
 
-    /// Maximum number of bytes encoded by this field body.
-    pub const fn max_len(&self) -> usize {
-        self.max_len
+    /// Maximum encoded size, expressed in canonical semantic-type widths.
+    pub fn max_size(&self) -> WireSize {
+        self.fields.iter().map(Field::max_size).sum()
     }
 }
 
@@ -229,7 +233,25 @@ pub struct Field {
     pub encoding: FieldEncoding,
 }
 
-/// Wire encoding declared after a field's `=>` token.
+impl Field {
+    /// Minimum size of this field in canonical semantic-type widths.
+    pub fn min_size(&self) -> WireSize {
+        match &self.encoding {
+            FieldEncoding::Fixed(_) => WireSize::type_width(&self.ty),
+            FieldEncoding::Variable(encoding) => encoding.min_size(),
+        }
+    }
+
+    /// Maximum size of this field in canonical semantic-type widths.
+    pub fn max_size(&self) -> WireSize {
+        match &self.encoding {
+            FieldEncoding::Fixed(_) => WireSize::type_width(&self.ty),
+            FieldEncoding::Variable(encoding) => encoding.max_size(),
+        }
+    }
+}
+
+/// The fixed or variable wire encoding attached to a semantic field.
 pub enum FieldEncoding {
     /// One canonical fixed-width HCI field.
     Fixed(FixedEncoding),
@@ -237,43 +259,208 @@ pub enum FieldEncoding {
     Variable(Box<VariableEncoding>),
 }
 
-/// Fixed-width field encoding.
-pub struct FixedEncoding {
-    /// Original integer literal, retaining its span and spelling.
-    pub width_literal: LitInt,
-    /// Parsed width used by envelope validation.
-    pub width: usize,
+/// A fixed-width field whose size comes from its semantic Rust type.
+pub struct FixedEncoding;
+
+/// An encoded size composed from constants and canonical semantic-type widths.
+#[derive(Clone, Default)]
+pub struct WireSize {
+    constant: usize,
+    terms: Vec<WireSizeTerm>,
+}
+
+/// One `type width * multiplier` term in an encoded size.
+#[derive(Clone)]
+pub struct WireSizeTerm {
+    ty: Type,
+    multiplier: usize,
+}
+
+impl WireSize {
+    /// A constant encoded size.
+    pub const fn constant(value: usize) -> Self {
+        Self {
+            constant: value,
+            terms: Vec::new(),
+        }
+    }
+
+    /// The constant part of this size.
+    pub const fn constant_part(&self) -> usize {
+        self.constant
+    }
+
+    /// Semantic-width terms in this size.
+    pub fn terms(&self) -> &[WireSizeTerm] {
+        &self.terms
+    }
+
+    fn type_width(ty: &Type) -> Self {
+        Self {
+            constant: 0,
+            terms: vec![WireSizeTerm {
+                ty: ty.clone(),
+                multiplier: 1,
+            }],
+        }
+    }
+
+    fn scaled(mut self, multiplier: usize) -> Self {
+        self.constant = self
+            .constant
+            .checked_mul(multiplier)
+            .expect("validated declarative size must fit usize");
+        for term in &mut self.terms {
+            term.multiplier = term
+                .multiplier
+                .checked_mul(multiplier)
+                .expect("validated declarative size must fit usize");
+        }
+        self
+    }
+}
+
+impl WireSizeTerm {
+    /// Semantic Rust type whose canonical width contributes to the size.
+    pub const fn ty(&self) -> &Type {
+        &self.ty
+    }
+
+    /// Number of values of this type contributing to the size.
+    pub const fn multiplier(&self) -> usize {
+        self.multiplier
+    }
+}
+
+impl core::ops::Add for WireSize {
+    type Output = Self;
+
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.constant = self
+            .constant
+            .checked_add(rhs.constant)
+            .expect("validated declarative size must fit usize");
+        self.terms.extend(rhs.terms);
+        self
+    }
+}
+
+impl core::iter::Sum for WireSize {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), core::ops::Add::add)
+    }
 }
 
 /// Validated variable field encoding.
 pub struct VariableEncoding {
     /// Complete typed encoding schema used by code generation.
     pub shape: VariableEncodingShape,
-    /// Minimum encoded field size.
-    pub min_len: usize,
-    /// Maximum encoded field size.
-    pub max_len: usize,
     /// Generated C storage minimum for this field.
     ///
     /// This defaults to `min_len`. A smaller value is an explicit declaration
     /// that the Rust API intentionally enforces a narrower semantic domain
     /// than the generated transport buffer can represent.
-    pub storage_min_len: usize,
+    pub storage_min_len: Option<IntegerValue>,
     /// Generated C storage capacity for this field.
     ///
     /// This defaults to `max_len`. A larger value is an explicit declaration
     /// that the Rust API intentionally enforces a narrower semantic domain
     /// than the generated transport buffer can store.
-    pub storage_max_len: usize,
+    pub storage_max_len: Option<IntegerValue>,
     /// Whether this field consumes every remaining payload byte.
     pub consumes_remainder: bool,
+}
+
+impl VariableEncoding {
+    /// Minimum semantic encoded size.
+    pub fn min_size(&self) -> WireSize {
+        match &self.shape {
+            VariableEncodingShape::CountedBytes { count, min_len, .. } => {
+                WireSize::type_width(&count.ty) + WireSize::constant(min_len.value)
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                min_items,
+                ..
+            } => {
+                WireSize::type_width(&count.ty)
+                    + WireSize::type_width(&item.ty).scaled(min_items.value)
+            }
+            VariableEncodingShape::Tagged(tagged) => WireSize::constant(tagged.min_len.value),
+            VariableEncodingShape::LengthPrefixedRecords {
+                record_len, length, ..
+            } => WireSize::type_width(&record_len.ty) + WireSize::type_width(&length.ty),
+            VariableEncodingShape::TaggedItems(tagged) => {
+                WireSize::type_width(&tagged.tag.ty) + WireSize::type_width(&tagged.length.ty)
+            }
+            VariableEncodingShape::TrailingBytes { min_len, .. } => {
+                WireSize::constant(min_len.value)
+            }
+            VariableEncodingShape::BitmapItems { .. } => WireSize::default(),
+        }
+    }
+
+    /// Maximum semantic encoded size.
+    pub fn max_size(&self) -> WireSize {
+        match &self.shape {
+            VariableEncodingShape::CountedBytes { count, max_len, .. } => {
+                WireSize::type_width(&count.ty) + WireSize::constant(max_len.value)
+            }
+            VariableEncodingShape::CountedItems {
+                count,
+                item,
+                max_items,
+                ..
+            } => {
+                WireSize::type_width(&count.ty)
+                    + WireSize::type_width(&item.ty).scaled(max_items.value)
+            }
+            VariableEncodingShape::Tagged(tagged) => WireSize::constant(tagged.max_len.value),
+            VariableEncodingShape::LengthPrefixedRecords {
+                record_len,
+                length,
+                max_len,
+                ..
+            } => {
+                WireSize::type_width(&record_len.ty)
+                    + WireSize::type_width(&length.ty)
+                    + WireSize::constant(max_len.value)
+            }
+            VariableEncodingShape::TaggedItems(tagged) => {
+                WireSize::type_width(&tagged.tag.ty)
+                    + WireSize::type_width(&tagged.length.ty)
+                    + WireSize::constant(tagged.max_len.value)
+            }
+            VariableEncodingShape::TrailingBytes { max_len, .. } => {
+                WireSize::constant(max_len.value)
+            }
+            VariableEncodingShape::BitmapItems {
+                item, max_items, ..
+            } => WireSize::type_width(&item.ty).scaled(max_items.value),
+        }
+    }
+
+    /// Generated C storage minimum, or the semantic minimum when not overridden.
+    pub fn storage_min_size(&self) -> WireSize {
+        self.storage_min_len
+            .as_ref()
+            .map_or_else(|| self.min_size(), |value| WireSize::constant(value.value))
+    }
+
+    /// Generated C storage maximum, or the semantic maximum when not overridden.
+    pub fn storage_max_size(&self) -> WireSize {
+        self.storage_max_len
+            .as_ref()
+            .map_or_else(|| self.max_size(), |value| WireSize::constant(value.value))
+    }
 }
 
 /// Complete schema for one variable-width field.
 pub enum VariableEncodingShape {
     /// A fixed-width count followed by that many bytes.
     CountedBytes {
-        /// Count type and its wire width.
+        /// Count type; its wire width is canonical.
         count: WireType,
         /// Minimum accepted byte count.
         min_len: IntegerValue,
@@ -282,9 +469,9 @@ pub enum VariableEncodingShape {
     },
     /// A fixed-width count followed by that many fixed-width items.
     CountedItems {
-        /// Count type and its wire width.
+        /// Count type; its wire width is canonical.
         count: WireType,
-        /// Item type and its wire width.
+        /// Item type; its wire width is canonical.
         item: WireType,
         /// Minimum accepted item count.
         min_items: IntegerValue,
@@ -295,9 +482,9 @@ pub enum VariableEncodingShape {
     Tagged(TaggedEncoding),
     /// A record width and byte length followed by homogeneous raw records.
     LengthPrefixedRecords {
-        /// Record-width type and its wire width.
+        /// Record-width type; its wire width is canonical.
         record_len: WireType,
-        /// Byte-length type and its wire width.
+        /// Byte-length type; its wire width is canonical.
         length: WireType,
         /// Smallest valid record width.
         min_record_len: IntegerValue,
@@ -319,19 +506,17 @@ pub enum VariableEncodingShape {
         bitmap: syn::Ident,
         /// Bits that participate in item selection.
         mask: IntegerValue,
-        /// Item type and its wire width.
+        /// Item type; its wire width is canonical.
         item: WireType,
         /// Number of selectable items; validated against the mask population.
         max_items: IntegerValue,
     },
 }
 
-/// A semantic Rust type paired with its fixed wire width.
+/// A semantic Rust type with one canonical fixed wire width.
 pub struct WireType {
     /// Semantic Rust type from the declaration.
     pub ty: Type,
-    /// Fixed encoded width.
-    pub width: IntegerValue,
 }
 
 /// An integer literal together with its validated `usize` value.
@@ -344,13 +529,13 @@ pub struct IntegerValue {
 
 /// Tagged-union encoding details.
 pub struct TaggedEncoding {
-    /// Discriminator type and wire width.
+    /// Discriminator type; its wire width is canonical.
     pub tag: WireType,
     /// Variants in declaration order.
     pub variants: Vec<TaggedVariant>,
-    /// Declared and validated minimum encoded length.
+    /// Declared minimum encoded length, verified against canonical widths.
     pub min_len: IntegerValue,
-    /// Declared and validated maximum encoded length.
+    /// Declared maximum encoded length, verified against canonical widths.
     pub max_len: IntegerValue,
 }
 
@@ -366,9 +551,9 @@ pub struct TaggedVariant {
 
 /// Tag-selected fixed-width item encoding details.
 pub struct TaggedItemsEncoding {
-    /// Discriminator type and wire width.
+    /// Discriminator type; its wire width is canonical.
     pub tag: WireType,
-    /// Combined item-byte length type and wire width.
+    /// Combined item-byte length type; its wire width is canonical.
     pub length: WireType,
     /// Variants in declaration order.
     pub variants: Vec<TaggedItemsVariant>,
@@ -380,7 +565,7 @@ pub struct TaggedItemsEncoding {
 pub struct TaggedItemsVariant {
     /// Discriminator value selecting this item representation.
     pub tag: IntegerValue,
-    /// Item type and its exact wire width.
+    /// Item type with one canonical exact wire width.
     pub item: WireType,
     /// Maximum item count for this representation.
     pub max_items: IntegerValue,
@@ -665,15 +850,6 @@ impl Parse for VendorCommand {
                 "vendor command is missing a `Params = ...` declaration",
             )
         })?;
-        if params.min_len() > usize::from(u8::MAX) {
-            return Err(syn::Error::new(
-                invocation.name.span(),
-                format!(
-                    "minimum Params envelope is {} bytes, exceeding the HCI 255-byte parameter limit",
-                    params.min_len()
-                ),
-            ));
-        }
         if params.fields().is_some_and(|fields| {
             fields.fields().iter().any(|field| {
                 let FieldEncoding::Variable(encoding) = &field.encoding else {
@@ -880,15 +1056,6 @@ impl Parse for VendorEvents {
                 return Err(body.error("unexpected tokens after event Payload"));
             }
 
-            if payload.max_len() > 253 {
-                return Err(syn::Error::new_spanned(
-                    &name,
-                    format!(
-                        "vendor event payload is at most 253 bytes, but this schema allows {}",
-                        payload.max_len(),
-                    ),
-                ));
-            }
             if payload.fields().is_some_and(|fields| {
                 fields.fields().iter().any(|field| {
                     let FieldEncoding::Variable(encoding) = &field.encoding else {
@@ -1509,8 +1676,6 @@ impl Parse for Fields {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut fields = Vec::new();
         let mut names = BTreeSet::new();
-        let mut min_len = 0usize;
-        let mut max_len = 0usize;
         let mut consumes_remainder = false;
 
         while !input.is_empty() {
@@ -1535,46 +1700,28 @@ impl Parse for Fields {
             }
             input.parse::<syn::Token![:]>()?;
             let ty = input.parse::<Type>()?;
-            input.parse::<syn::Token![=>]>()?;
 
-            let (encoding, field_min_len, field_max_len, field_consumes_remainder) =
-                if input.peek(LitInt) {
-                    let width_literal = input.parse::<LitInt>()?;
-                    let width =
-                        parse_usize_literal(&width_literal).map_err(|error| input.error(error))?;
-                    (
-                        FieldEncoding::Fixed(FixedEncoding {
-                            width_literal,
-                            width,
-                        }),
-                        width,
-                        width,
-                        false,
-                    )
-                } else if input.peek(syn::token::Brace) {
+            let (encoding, field_consumes_remainder) = if input.peek(syn::Token![=>]) {
+                input.parse::<syn::Token![=>]>()?;
+                if input.peek(syn::token::Brace) {
                     let shape;
                     syn::braced!(shape in input);
                     let encoding = shape.parse::<VariableEncoding>()?;
-                    let field_min_len = encoding.min_len;
-                    let field_max_len = encoding.max_len;
                     let field_consumes_remainder = encoding.consumes_remainder;
                     (
                         FieldEncoding::Variable(Box::new(encoding)),
-                        field_min_len,
-                        field_max_len,
                         field_consumes_remainder,
                     )
                 } else {
-                    return Err(input.error("expected a fixed width or variable field shape"));
-                };
+                    return Err(input.error(
+                        "fixed fields use `field: Type`; `=>` is reserved for variable shapes",
+                    ));
+                }
+            } else {
+                (FieldEncoding::Fixed(FixedEncoding), false)
+            };
 
             consumes_remainder = field_consumes_remainder;
-            min_len = min_len
-                .checked_add(field_min_len)
-                .ok_or_else(|| input.error("declarative field minimum length overflows usize"))?;
-            max_len = max_len
-                .checked_add(field_max_len)
-                .ok_or_else(|| input.error("declarative field length overflows usize"))?;
             fields.push(Field {
                 attrs,
                 name,
@@ -1584,12 +1731,7 @@ impl Parse for Fields {
             input.parse::<syn::Token![,]>()?;
         }
 
-        Ok(Self {
-            fields,
-            names,
-            min_len,
-            max_len,
-        })
+        Ok(Self { fields, names })
     }
 }
 
@@ -1649,7 +1791,6 @@ impl Parse for VariableEncoding {
                         input.error("length_prefixed_records minimum record length is zero")
                     );
                 }
-                validate_integer_capacity(input, "record byte length", &length, max_len.value)?;
                 VariableEncodingShape::LengthPrefixedRecords {
                     record_len,
                     length,
@@ -1692,161 +1833,27 @@ impl Parse for VariableEncoding {
             }
         };
 
-        let (min_len, max_len, consumes_remainder) = variable_bounds(input, &shape)?;
         let storage_min_len = if next_label_is(input, "storage_min_len")? {
-            parse_integer_value(input, "storage_min_len")?.value
+            Some(parse_integer_value(input, "storage_min_len")?)
         } else {
-            min_len
+            None
         };
-        if storage_min_len > min_len {
-            return Err(input.error(format!(
-                "variable field storage minimum {storage_min_len} is larger than semantic minimum {min_len}"
-            )));
-        }
         let storage_max_len = if next_label_is(input, "storage_max_len")? {
-            parse_integer_value(input, "storage_max_len")?.value
+            Some(parse_integer_value(input, "storage_max_len")?)
         } else {
-            max_len
+            None
         };
-        if storage_max_len < max_len {
-            return Err(input.error(format!(
-                "variable field storage maximum {storage_max_len} is smaller than semantic maximum {max_len}"
-            )));
-        }
-        validate_storage_bound(input, &shape, storage_min_len, "minimum")?;
-        validate_storage_bound(input, &shape, storage_max_len, "maximum")?;
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after declarative variable field"));
         }
+        let consumes_remainder = matches!(shape, VariableEncodingShape::TrailingBytes { .. });
         Ok(Self {
             shape,
-            min_len,
-            max_len,
             storage_min_len,
             storage_max_len,
             consumes_remainder,
         })
     }
-}
-
-fn validate_storage_bound(
-    input: ParseStream<'_>,
-    shape: &VariableEncodingShape,
-    storage_len: usize,
-    bound: &str,
-) -> syn::Result<()> {
-    let (prefix, element_width) = match shape {
-        VariableEncodingShape::CountedBytes { count, .. } => (count.width.value, 1),
-        VariableEncodingShape::CountedItems { count, item, .. } => {
-            (count.width.value, item.width.value)
-        }
-        VariableEncodingShape::Tagged(tagged) => (tagged.tag.width.value, 1),
-        VariableEncodingShape::LengthPrefixedRecords {
-            record_len, length, ..
-        } => (record_len.width.value + length.width.value, 1),
-        VariableEncodingShape::TaggedItems(tagged) => {
-            (tagged.tag.width.value + tagged.length.width.value, 1)
-        }
-        VariableEncodingShape::TrailingBytes { .. } => (0, 1),
-        VariableEncodingShape::BitmapItems { item, .. } => (0, item.width.value),
-    };
-    let payload = storage_len.checked_sub(prefix).ok_or_else(|| {
-        input.error(format!(
-            "variable field storage {bound} is smaller than its prefix"
-        ))
-    })?;
-    if payload % element_width != 0 {
-        return Err(input.error(format!(
-            "variable field storage {bound} leaves {payload} bytes, which is not divisible by its {element_width}-byte item width"
-        )));
-    }
-    Ok(())
-}
-
-fn variable_bounds(
-    input: ParseStream<'_>,
-    shape: &VariableEncodingShape,
-) -> syn::Result<(usize, usize, bool)> {
-    let bounds = match shape {
-        VariableEncodingShape::CountedBytes {
-            count,
-            min_len,
-            max_len,
-        } => (
-            count
-                .width
-                .value
-                .checked_add(min_len.value)
-                .ok_or_else(|| input.error("counted_bytes minimum field length overflows usize"))?,
-            count.width.value.checked_add(max_len.value),
-            false,
-        ),
-        VariableEncodingShape::CountedItems {
-            count,
-            item,
-            min_items,
-            max_items,
-        } => (
-            item.width
-                .value
-                .checked_mul(min_items.value)
-                .and_then(|items| count.width.value.checked_add(items))
-                .ok_or_else(|| input.error("counted_items minimum field length overflows usize"))?,
-            item.width
-                .value
-                .checked_mul(max_items.value)
-                .and_then(|items| count.width.value.checked_add(items)),
-            false,
-        ),
-        VariableEncodingShape::Tagged(tagged) => {
-            (tagged.min_len.value, Some(tagged.max_len.value), false)
-        }
-        VariableEncodingShape::LengthPrefixedRecords {
-            record_len,
-            length,
-            max_len,
-            ..
-        } => (
-            record_len
-                .width
-                .value
-                .checked_add(length.width.value)
-                .ok_or_else(|| {
-                    input.error("length_prefixed_records prefix length overflows usize")
-                })?,
-            record_len
-                .width
-                .value
-                .checked_add(length.width.value)
-                .and_then(|prefix| prefix.checked_add(max_len.value)),
-            false,
-        ),
-        VariableEncodingShape::TaggedItems(tagged) => (
-            tagged
-                .tag
-                .width
-                .value
-                .checked_add(tagged.length.width.value)
-                .ok_or_else(|| input.error("tagged_items prefix length overflows usize"))?,
-            tagged
-                .tag
-                .width
-                .value
-                .checked_add(tagged.length.width.value)
-                .and_then(|prefix| prefix.checked_add(tagged.max_len.value)),
-            false,
-        ),
-        VariableEncodingShape::TrailingBytes { min_len, max_len } => {
-            (min_len.value, Some(max_len.value), true)
-        }
-        VariableEncodingShape::BitmapItems {
-            item, max_items, ..
-        } => (0, item.width.value.checked_mul(max_items.value), false),
-    };
-    let max_len = bounds
-        .1
-        .ok_or_else(|| input.error("declarative variable field length overflows usize"))?;
-    Ok((bounds.0, max_len, bounds.2))
 }
 
 fn validate_range(
@@ -1872,27 +1879,6 @@ fn next_label_is(input: ParseStream<'_>, expected: &str) -> syn::Result<bool> {
     Ok(fork.parse::<syn::Ident>()? == expected)
 }
 
-fn validate_integer_capacity(
-    input: ParseStream<'_>,
-    label: &str,
-    wire_type: &WireType,
-    maximum: usize,
-) -> syn::Result<()> {
-    let width = wire_type.width.value;
-    if width == 0 {
-        return Err(input.error(format!("{label} wire width must be nonzero")));
-    }
-    if width < core::mem::size_of::<usize>() {
-        let capacity = (1usize << (width * u8::BITS as usize)) - 1;
-        if maximum > capacity {
-            return Err(input.error(format!(
-                "{label} maximum {maximum} does not fit in {width} bytes"
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> {
     let tag = parse_wire_type(input, "tag")?;
     parse_colon_label(input, "variants")?;
@@ -1902,8 +1888,6 @@ fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> 
 
     let mut tags = BTreeSet::new();
     let mut parsed_variants = Vec::new();
-    let mut variant_min = None::<usize>;
-    let mut variant_max = None::<usize>;
     while !variants.is_empty() {
         let pattern = variants.call(syn::Pat::parse_single)?;
         let mut bindings = PatternBindings::default();
@@ -1919,15 +1903,6 @@ fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> 
                 variant_tag.value,
             )));
         }
-        if tag.width.value < core::mem::size_of::<usize>()
-            && variant_tag.value >= (1usize << (tag.width.value * u8::BITS as usize))
-        {
-            return Err(variants.error(format!(
-                "tag value {:#x} does not fit in {} bytes",
-                variant_tag.value, tag.width.value,
-            )));
-        }
-
         parse_colon_label(&body, "fields")?;
         let fields;
         syn::braced!(fields in body);
@@ -1950,13 +1925,6 @@ fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> 
                 )));
             }
         }
-        let wire_len = tag
-            .width
-            .value
-            .checked_add(payload.max_len())
-            .ok_or_else(|| variants.error("tagged variant length overflows usize"))?;
-        variant_min = Some(variant_min.map_or(wire_len, |value| value.min(wire_len)));
-        variant_max = Some(variant_max.map_or(wire_len, |value| value.max(wire_len)));
         parsed_variants.push(TaggedVariant {
             pattern,
             tag: variant_tag,
@@ -1965,18 +1933,17 @@ fn parse_tagged_encoding(input: ParseStream<'_>) -> syn::Result<TaggedEncoding> 
         variants.parse::<syn::Token![,]>()?;
     }
 
-    let Some(computed_min) = variant_min else {
+    if parsed_variants.is_empty() {
         return Err(input.error("tagged field must declare at least one variant"));
-    };
-    let computed_max = variant_max.expect("minimum and maximum are populated together");
+    }
     let declared_min = parse_integer_value(input, "min_len")?;
     let declared_max = parse_integer_value(input, "max_len")?;
-    if (declared_min.value, declared_max.value) != (computed_min, computed_max) {
-        return Err(input.error(format!(
-            "tagged field declares lengths {}..={}, but its variants require {computed_min}..={computed_max}",
-            declared_min.value, declared_max.value,
-        )));
-    }
+    validate_range(
+        input,
+        "tagged field",
+        declared_min.value,
+        declared_max.value,
+    )?;
     Ok(TaggedEncoding {
         tag,
         variants: parsed_variants,
@@ -2003,15 +1970,11 @@ fn parse_tagged_items_encoding(input: ParseStream<'_>) -> syn::Result<TaggedItem
                 variant_tag.value,
             )));
         }
-        validate_integer_capacity(&variants, "tagged_items tag", &tag, variant_tag.value)?;
         variants.parse::<syn::Token![=>]>()?;
 
         let body;
         syn::braced!(body in variants);
         let item = parse_wire_type(&body, "item")?;
-        if item.width.value == 0 {
-            return Err(body.error("tagged_items item wire width must be nonzero"));
-        }
         let max_items = parse_integer_value(&body, "max_items")?;
         if !body.is_empty() {
             return Err(body.error("unexpected tokens after tagged_items variant"));
@@ -2028,19 +1991,6 @@ fn parse_tagged_items_encoding(input: ParseStream<'_>) -> syn::Result<TaggedItem
     }
 
     let max_len = parse_integer_value(input, "max_len")?;
-    validate_integer_capacity(input, "tagged_items byte length", &length, max_len.value)?;
-    for variant in &parsed_variants {
-        let expected = max_len.value / variant.item.width.value;
-        if variant.max_items.value != expected {
-            return Err(input.error(format!(
-                "tagged_items variant {:#x} declares {} items, but max_len {} and item width {} allow {expected}",
-                variant.tag.value,
-                variant.max_items.value,
-                max_len.value,
-                variant.item.width.value,
-            )));
-        }
-    }
 
     Ok(TaggedItemsEncoding {
         tag,
@@ -2087,10 +2037,8 @@ fn parse_colon_label(input: ParseStream<'_>, expected: &str) -> syn::Result<()> 
 fn parse_wire_type(input: ParseStream<'_>, label: &str) -> syn::Result<WireType> {
     parse_colon_label(input, label)?;
     let ty = input.parse::<Type>()?;
-    input.parse::<syn::Token![=>]>()?;
-    let width = parse_integer_literal_value(input)?;
     input.parse::<syn::Token![,]>()?;
-    Ok(WireType { ty, width })
+    Ok(WireType { ty })
 }
 
 fn parse_integer_value(input: ParseStream<'_>, label: &str) -> syn::Result<IntegerValue> {
@@ -2140,12 +2088,34 @@ fn parse_integer_literal(literal: &LitInt) -> Result<u128, String> {
 mod tests {
     use super::*;
 
+    fn resolve_test_size(size: &WireSize) -> usize {
+        size.terms()
+            .iter()
+            .fold(size.constant_part(), |total, term| {
+                let name = simple_test_type_name(term.ty());
+                let width = match name.as_str() {
+                    "u8" | "IoCapability" => 1,
+                    "u16" | "Item" => 2,
+                    _ => panic!("test fixture has no width for {name}"),
+                };
+                total + width * term.multiplier()
+            })
+    }
+
+    fn simple_test_type_name(ty: &Type) -> String {
+        match ty {
+            Type::Path(path) => path.path.segments.last().unwrap().ident.to_string(),
+            Type::Reference(reference) => simple_test_type_name(&reference.elem),
+            _ => panic!("test fixture uses an unsupported semantic type"),
+        }
+    }
+
     #[test]
     fn parses_fixed_command_and_derives_ocf() {
         let command = syn::parse_str::<VendorCommand>(
             r#"
                 GapSetIoCapability(cgid = 0x1, cid = 0x05) {
-                    Params = { io_capability: IoCapability => 1, };
+                    Params = { io_capability: IoCapability, };
                     Completion = CommandComplete;
                     Return = ();
                 }
@@ -2154,20 +2124,39 @@ mod tests {
         .unwrap();
         assert_eq!(command.name, "GapSetIoCapability");
         assert_eq!(command.ocf(), 0x085);
-        assert_eq!(command.params.min_len(), 1);
-        assert_eq!(command.params.max_len(), 1);
+        assert_eq!(resolve_test_size(&command.params.min_size()), 1);
+        assert_eq!(resolve_test_size(&command.params.max_size()), 1);
         assert!(command.params.lifetime.is_none());
         let [field] = command.params.fields().unwrap().fields() else {
             panic!("expected one typed Params field");
         };
         assert_eq!(field.name, "io_capability");
-        let FieldEncoding::Fixed(encoding) = &field.encoding else {
+        let FieldEncoding::Fixed(_) = &field.encoding else {
             panic!("expected a fixed encoding");
         };
-        assert_eq!(encoding.width, 1);
-        assert_eq!(encoding.width_literal.base10_digits(), "1");
         assert_eq!(command.completion, Completion::CommandComplete);
-        assert_eq!(command.returns.unwrap().max_len(), 0);
+        assert_eq!(resolve_test_size(&command.returns.unwrap().max_size()), 0);
+    }
+
+    #[test]
+    fn rejects_field_local_width_metadata() {
+        let fixed = syn::parse_str::<VendorCommand>(
+            "Bad(cgid = 0, cid = 1) { Params = { value: u16 => 1, }; Completion = CommandStatus; }",
+        )
+        .err()
+        .expect("field-local width must be rejected")
+        .to_string();
+        assert!(
+            fixed.contains("`=>` is reserved for variable shapes"),
+            "{fixed}"
+        );
+
+        assert!(
+            syn::parse_str::<VendorCommand>(
+                "Bad(cgid = 0, cid = 1) { Params<'a> = { values: &'a [u16] => { kind: counted_items, count: u8 => 1, item: u16, max_items: 2, }, }; Completion = CommandStatus; }",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2176,10 +2165,10 @@ mod tests {
             r#"
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        limit: u8 => 1,
+                        limit: u8,
                         data: &'a [u8] => {
                             kind: counted_bytes,
-                            count: u8 => 1,
+                            count: u8,
                             min_len: 1,
                             max_len: 16,
                             storage_min_len: 1,
@@ -2196,17 +2185,18 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(command.params.min_len(), 3);
-        assert_eq!(command.params.max_len(), 18);
+        assert_eq!(resolve_test_size(&command.params.min_size()), 3);
+        assert_eq!(resolve_test_size(&command.params.max_size()), 18);
         assert_eq!(command.params.lifetime.as_ref().unwrap().ident, "a");
         let fields = command.params.fields().unwrap().fields();
         assert_eq!(fields.len(), 2);
         let FieldEncoding::Variable(encoding) = &fields[1].encoding else {
             panic!("expected a variable encoding");
         };
-        assert_eq!((encoding.min_len, encoding.max_len), (2, 17));
-        assert_eq!(encoding.storage_min_len, 1);
-        assert_eq!(encoding.storage_max_len, 33);
+        assert_eq!(resolve_test_size(&encoding.min_size()), 2);
+        assert_eq!(resolve_test_size(&encoding.max_size()), 17);
+        assert_eq!(encoding.storage_min_len.as_ref().unwrap().value, 1);
+        assert_eq!(encoding.storage_max_len.as_ref().unwrap().value, 33);
         let VariableEncodingShape::CountedBytes {
             count,
             min_len,
@@ -2215,7 +2205,7 @@ mod tests {
         else {
             panic!("expected typed counted-bytes metadata");
         };
-        assert_eq!(count.width.value, 1);
+        assert_eq!(simple_test_type_name(&count.ty), "u8");
         assert_eq!(min_len.value, 1);
         assert_eq!(max_len.value, 16);
         let constraints = command.constraints.as_ref().unwrap();
@@ -2240,11 +2230,11 @@ mod tests {
             r#"
                 Chunk(cgid = 0x0, cid = 0x04) {
                     Params<'a> = {
-                        total: u16 => 2,
-                        offset: u16 => 2,
+                        total: u16,
+                        offset: u16,
                         data: &'a [u8] => {
                             kind: counted_bytes,
-                            count: u8 => 1,
+                            count: u8,
                             max_len: 16,
                         },
                     };
@@ -2275,12 +2265,12 @@ mod tests {
             r#"
                 Conditional(cgid = 0x0, cid = 0x04) {
                     Params<'a> = {
-                        mode: u8 => 1,
-                        error: u8 => 1,
-                        limit: u8 => 1,
+                        mode: u8,
+                        error: u8,
+                        limit: u8,
                         data: &'a [u8] => {
                             kind: counted_bytes,
-                            count: u8 => 1,
+                            count: u8,
                             max_len: 16,
                         },
                     };
@@ -2331,10 +2321,10 @@ mod tests {
                 #[cfg(since_fw_1_17_0)]
                 Counted(0x0002) {
                     Payload<'packet> = {
-                        handle: u16 => 2,
+                        handle: u16,
                         bytes: BoundedBytes<'packet, 8> => {
                             kind: counted_bytes,
-                            count: u8 => 1,
+                            count: u8,
                             max_len: 8,
                         },
                     };
@@ -2343,8 +2333,8 @@ mod tests {
                     Payload = {
                         values: BoundedItems<Item, 3> => {
                             kind: counted_items,
-                            count: u8 => 1,
-                            item: Item => 2,
+                            count: u8,
+                            item: Item,
                             min_items: 1,
                             max_items: 3,
                         },
@@ -2354,8 +2344,8 @@ mod tests {
                     Payload = {
                         value: Records => {
                             kind: length_prefixed_records,
-                            record_len: u8 => 1,
-                            length: u8 => 1,
+                            record_len: u8,
+                            length: u8,
                             min_record_len: 2,
                             max_len: 8,
                         },
@@ -2365,11 +2355,11 @@ mod tests {
                     Payload = {
                         value: TaggedItems => {
                             kind: tagged_items,
-                            tag: u8 => 1,
-                            length: u8 => 1,
+                            tag: u8,
+                            length: u8,
                             variants: {
-                                1 => { item: Short => 2, max_items: 4, },
-                                2 => { item: Long => 4, max_items: 2, },
+                                1 => { item: Short, max_items: 4, },
+                                2 => { item: Long, max_items: 2, },
                             },
                             max_len: 8,
                         },
@@ -2403,15 +2393,15 @@ mod tests {
         assert!(!catalog.events[2].payload.borrows());
         assert_eq!(
             (
-                catalog.events[1].payload.min_len(),
-                catalog.events[1].payload.max_len()
+                resolve_test_size(&catalog.events[1].payload.min_size()),
+                resolve_test_size(&catalog.events[1].payload.max_size())
             ),
             (3, 11),
         );
         assert_eq!(
             (
-                catalog.events[2].payload.min_len(),
-                catalog.events[2].payload.max_len()
+                resolve_test_size(&catalog.events[2].payload.min_size()),
+                resolve_test_size(&catalog.events[2].payload.max_size())
             ),
             (3, 7),
         );
@@ -2437,15 +2427,15 @@ mod tests {
     fn validates_declared_event_payload_lifetimes() {
         for (source, expected) in [
             (
-                "Borrowed(1) { Payload = { value: View<'packet> => 1, }; }",
+                "Borrowed(1) { Payload = { value: View<'packet>, }; }",
                 "undeclared field lifetime `'packet'`; declare `Payload<'packet>`",
             ),
             (
-                "Borrowed(1) { Payload<'packet> = { value: View<'other> => 1, }; }",
+                "Borrowed(1) { Payload<'packet> = { value: View<'other>, }; }",
                 "field lifetime `'other'` does not match declared Payload lifetime `'packet'`",
             ),
             (
-                "Owned(1) { Payload<'packet> = { value: Owned => 1, }; }",
+                "Owned(1) { Payload<'packet> = { value: Owned, }; }",
                 "declared Payload lifetime `'packet'` is not used by any field",
             ),
             (
@@ -2453,11 +2443,11 @@ mod tests {
                 "unit Payload must not declare a lifetime",
             ),
             (
-                "Borrowed(1) { Payload = { value: &u8 => 1, }; }",
+                "Borrowed(1) { Payload = { value: &u8, }; }",
                 "field references must name the Payload lifetime explicitly",
             ),
             (
-                "Borrowed(1) { Payload<'static> = { value: View<'static> => 1, }; }",
+                "Borrowed(1) { Payload<'static> = { value: View<'static>, }; }",
                 "Payload must declare a named, non-`'static` lifetime",
             ),
         ] {
@@ -2473,11 +2463,11 @@ mod tests {
     fn validates_declared_command_parameter_lifetimes() {
         for (params, expected) in [
             (
-                "Params<'packet> = { value: &'other [u8] => 1, };",
+                "Params<'packet> = { value: &'other [u8], };",
                 "field lifetime `'other'` does not match declared Params lifetime `'packet'`",
             ),
             (
-                "Params<'packet> = { value: u8 => 1, };",
+                "Params<'packet> = { value: u8, };",
                 "declared Params lifetime `'packet'` is not used by any field",
             ),
         ] {
@@ -2498,7 +2488,7 @@ mod tests {
                 #[cfg(before_fw_1_22_0)]
                 Changed(0x0405) { Payload = (); }
                 #[cfg(since_fw_1_22_0)]
-                Changed(0x0405) { Payload = { handle: u16 => 2, }; }
+                Changed(0x0405) { Payload = { handle: u16, }; }
             "#,
         )
         .unwrap();
@@ -2532,19 +2522,15 @@ mod tests {
                 "duplicate vendor event code",
             ),
             (
-                "TooLarge(1) { Payload = { data: [u8; 254] => 254, }; }",
-                "at most 253 bytes",
-            ),
-            (
                 "#[allow(dead_code)] BadAttr(1) { Payload = (); }",
                 "only documentation and cfg attributes",
             ),
             (
-                "BadRange(1) { Payload = { values: BoundedItems<Item, 2> => { kind: counted_items, count: u8 => 1, item: Item => 1, min_items: 3, max_items: 2, }, }; }",
+                "BadRange(1) { Payload = { values: BoundedItems<Item, 2> => { kind: counted_items, count: u8, item: Item, min_items: 3, max_items: 2, }, }; }",
                 "counted_items minimum 3 exceeds maximum 2",
             ),
             (
-                "NoDecoder(1) { Payload = { bitmap: u8 => 1, values: BoundedItems<Item, 1> => { kind: bitmap_items, bitmap: bitmap, mask: 0x01, item: Item => 1, max_items: 1, }, }; }",
+                "NoDecoder(1) { Payload = { bitmap: u8, values: BoundedItems<Item, 1> => { kind: bitmap_items, bitmap: bitmap, mask: 0x01, item: Item, max_items: 1, }, }; }",
                 "no owned decoder",
             ),
             (
@@ -2572,11 +2558,11 @@ mod tests {
                 "declares CommandStatus and must not declare Return",
             ),
             (
-                "Bad(cgid = 0, cid = 1) { Params = { value: u8 => 1, }; Constraints = { range(missing, 0, 1); }; Completion = CommandStatus; }",
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = { range(missing, 0, 1); }; Completion = CommandStatus; }",
                 "unknown parameter(s): missing",
             ),
             (
-                "Bad(cgid = 0, cid = 1) { Params = { value: u8 => 1, }; Constraints = {}; Completion = CommandStatus; }",
+                "Bad(cgid = 0, cid = 1) { Params = { value: u8, }; Constraints = {}; Completion = CommandStatus; }",
                 "Constraints must declare at least one check",
             ),
         ] {

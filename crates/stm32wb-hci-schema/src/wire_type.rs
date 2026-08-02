@@ -202,7 +202,6 @@ pub struct BitflagsWireType {
 pub struct WireCompositeField {
     pub name: Ident,
     pub ty: Type,
-    pub width: LitInt,
 }
 
 /// Composite declaration. Command adapters consume `encode`; event adapters
@@ -593,10 +592,8 @@ fn parse_composite(
                     let name = field_content.parse::<Ident>()?;
                     field_content.parse::<Token![:]>()?;
                     let ty = field_content.parse::<Type>()?;
-                    field_content.parse::<Token![=>]>()?;
-                    let width = field_content.parse::<LitInt>()?;
                     field_content.parse::<Token![,]>()?;
-                    values.push(WireCompositeField { name, ty, width });
+                    values.push(WireCompositeField { name, ty });
                 }
                 if values.is_empty() {
                     return Err(field_content.error("composite requires at least one field"));
@@ -730,8 +727,20 @@ mod tests {
                 r#"
                     adapters: [command];
                     composite Value => 2 {
-                        Fields = { value: u16 => 2, };
+                        Fields = { value: u16, };
                         Decode = { Ok(Self(value)) };
+                    }
+                "#,
+            )
+            .is_err()
+        );
+        assert!(
+            syn::parse_str::<SemanticWireType>(
+                r#"
+                    adapters: [command];
+                    composite Value => 2 {
+                        Fields = { value: u16 => 1, };
+                        Encode = |value| { (value.0,) };
                     }
                 "#,
             )

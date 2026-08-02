@@ -57,8 +57,8 @@ stm32wb_hci_macros::wire_type! {
     composite
     BdAddrType => 7 {
         Fields = {
-            kind: u8 => 1,
-            address: BdAddr => 6,
+            kind: u8,
+            address: BdAddr,
         };
         Encode = |value| { value.hci_fields() };
     }
@@ -185,14 +185,20 @@ impl PeerAddrType {
 }
 
 stm32wb_hci_macros::wire_type! {
-    adapters: [command];
+    adapters: [command, event];
     composite
     PeerAddrType => 7 {
         Fields = {
-            kind: u8 => 1,
-            address: BdAddr => 6,
+            kind: u8,
+            address: BdAddr,
         };
         Encode = |value| { value.hci_fields() };
+        Decode = {
+            to_peer_addr_type(kind, address)
+                .map_err(|error| crate::vendor::event::Error::Vendor(
+                    crate::vendor::event::VendorError::BadBdAddrType(error.0),
+                ))
+        };
     }
 }
 

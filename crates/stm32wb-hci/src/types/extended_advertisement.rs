@@ -120,8 +120,8 @@ stm32wb_hci_macros::wire_type! {
     composite
     ExtendedAdvertisingInterval => 8 {
         Fields = {
-            minimum: u32 => 4,
-            maximum: u32 => 4,
+            minimum: u32,
+            maximum: u32,
         };
         Encode = |value| { value.hci_fields() };
     }
@@ -189,9 +189,9 @@ stm32wb_hci_macros::wire_type! {
     composite
     AdvSet => 4 {
         Fields = {
-            handle: AdvertisingHandle => 1,
-            duration: u16 => 2,
-            max_extended_adv_events: u8 => 1,
+            handle: AdvertisingHandle,
+            duration: u16,
+            max_extended_adv_events: u8,
         };
         Encode = |value| { value.hci_fields() };
     }

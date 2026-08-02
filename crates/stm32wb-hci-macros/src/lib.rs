@@ -21,7 +21,7 @@ use wire_type::expand_wire_type;
 /// ```text
 /// vendor_cmd! {
 ///     GapSetIoCapability(cgid = 0x1, cid = 0x05) {
-///         Params = { io_capability: IoCapability => 1, };
+///         Params = { io_capability: IoCapability, };
 ///         Completion = CommandComplete;
 ///         Return = ();
 ///     }
@@ -33,7 +33,8 @@ use wire_type::expand_wire_type;
 /// values.
 ///
 /// `Params` is either `()` or an inline field body. Fixed fields use
-/// `field: Type => width`. Borrowing or variable fields use `Params<'a>` and
+/// `field: Type`; their width comes from `Type: HciWireType`. Borrowing or
+/// variable fields use `Params<'a>` and
 /// one of these typed schemas:
 ///
 /// - `counted_bytes`: a count field followed by `min_len` through `max_len`
@@ -80,8 +81,8 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
 /// Each declaration owns its 16-bit vendor event code and complete payload
 /// schema. Unit payloads generate unit `VendorEvent` variants; inline payloads
 /// generate a public payload structure and a tuple variant carrying it.
-/// Fixed fields use `field: Type => width`. Borrowed variable payload fields may
-/// use `counted_bytes`, `counted_items`, `length_prefixed_records`,
+/// Fixed fields use `field: Type`; their width comes from `HciWireType`.
+/// Borrowed variable payload fields may use `counted_bytes`, `counted_items`, `length_prefixed_records`,
 /// `tagged_items`, or `trailing_bytes`.
 ///
 /// The generated `VendorEvent::new` requires the two-byte event code, decodes
@@ -101,6 +102,10 @@ pub fn vendor_event(input: TokenStream) -> TokenStream {
 
 /// Declare a semantic value and the protocol adapters for its canonical HCI
 /// wire representation.
+///
+/// Every fixed-width declaration implements `HciWireType`; command fields,
+/// event fields, composite components, and variable prefix/item types all use
+/// that associated width rather than accepting field-local width metadata.
 ///
 /// The shared parser validates adapter-specific requirements before expansion.
 /// `command` generates `HciEncodeField` and, where meaningful,

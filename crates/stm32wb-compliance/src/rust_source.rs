@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use stm32wb_hci_schema::{
     Completion as SchemaCompletion, FieldEncoding, Fields, SemanticWireType, VariableEncodingShape,
-    VendorCommand, VendorEvents as SchemaVendorEvents, WireTypeDeclaration,
+    VendorCommand, VendorEvents as SchemaVendorEvents, WireSize, WireTypeDeclaration,
 };
 use syn::{Expr, File, Item, ItemMacro, ItemMod, Lit, Meta, Path as SynPath, Type};
 
@@ -105,13 +105,19 @@ struct SourceUnit {
     file: File,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 struct WireTypeComponent {
     type_name: Option<String>,
-    width: u32,
+    ty: Type,
 }
 
-type WireTypeShapes = BTreeMap<String, Vec<WireTypeComponent>>;
+#[derive(Clone)]
+struct WireTypeShape {
+    width: u32,
+    components: Vec<WireTypeComponent>,
+}
+
+type WireTypeShapes = BTreeMap<String, WireTypeShape>;
 
 /// Load the declarative vendor command and event catalogs for one selected
 /// firmware feature.
@@ -155,6 +161,26 @@ fn load_wire_type_shapes(
         let file = read_rust_file(&path)?;
         collect_wire_type_shapes_from_items(&file.items, firmware, &path, &mut shapes)?;
     }
+    for (name, shape) in &shapes {
+        if shape.width == 0 {
+            return Err(format!(
+                "wire type `{name}` declares a zero canonical width"
+            ));
+        }
+        if !shape.components.is_empty() {
+            let component_width = shape.components.iter().try_fold(0u32, |total, component| {
+                total
+                    .checked_add(resolve_type_width(&component.ty, &shapes)?)
+                    .ok_or_else(|| format!("wire type `{name}` component widths overflow u32"))
+            })?;
+            if component_width != shape.width {
+                return Err(format!(
+                    "wire type `{name}` declares canonical width {}, but its semantic components require {component_width}",
+                    shape.width,
+                ));
+            }
+        }
+    }
     Ok(shapes)
 }
 
@@ -197,55 +223,144 @@ fn collect_wire_type_shapes_from_items(
                             path.display()
                         )
                     })?;
-                let WireTypeDeclaration::Composite(composite) = declaration.declaration else {
-                    continue;
+                let (name, width, components) = match declaration.declaration {
+                    WireTypeDeclaration::ClosedEnum(value) => {
+                        let Some(width) = value.width else { continue };
+                        let repr = value.repr;
+                        (
+                            value.name.to_string(),
+                            width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&repr),
+                                ty: repr,
+                            }],
+                        )
+                    }
+                    WireTypeDeclaration::OpenEnum(value) => {
+                        let repr = value.repr;
+                        (
+                            value.name.to_string(),
+                            value.width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&repr),
+                                ty: repr,
+                            }],
+                        )
+                    }
+                    WireTypeDeclaration::OpenScalar(value) => {
+                        let repr = value.repr;
+                        (
+                            value.name.to_string(),
+                            value.width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&repr),
+                                ty: repr,
+                            }],
+                        )
+                    }
+                    WireTypeDeclaration::Ranged(value) => {
+                        let repr = value.repr;
+                        (
+                            value.name.to_string(),
+                            value.width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&repr),
+                                ty: repr,
+                            }],
+                        )
+                    }
+                    WireTypeDeclaration::Bitflags(value) => {
+                        let repr = value.repr;
+                        (
+                            value.name.to_string(),
+                            value.width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&repr),
+                                ty: repr,
+                            }],
+                        )
+                    }
+                    WireTypeDeclaration::Composite(value) => {
+                        let name = simple_type_name(&value.ty).ok_or_else(|| {
+                            format!(
+                                "{}: composite wire type must use a path type",
+                                path.display()
+                            )
+                        })?;
+                        let components = value
+                            .fields
+                            .into_iter()
+                            .map(|field| WireTypeComponent {
+                                type_name: simple_type_name(&field.ty),
+                                ty: field.ty,
+                            })
+                            .collect();
+                        (name, value.width, components)
+                    }
+                    WireTypeDeclaration::Primitive(value) => {
+                        let name = simple_type_name(&value.ty).ok_or_else(|| {
+                            format!(
+                                "{}: primitive wire type must use a path type",
+                                path.display()
+                            )
+                        })?;
+                        (name, value.width, Vec::new())
+                    }
+                    WireTypeDeclaration::Transparent(value) => {
+                        let name = simple_type_name(&value.ty).ok_or_else(|| {
+                            format!(
+                                "{}: transparent wire type must use a path type",
+                                path.display()
+                            )
+                        })?;
+                        let inner = value.inner;
+                        (
+                            name,
+                            value.width,
+                            vec![WireTypeComponent {
+                                type_name: simple_type_name(&inner),
+                                ty: inner,
+                            }],
+                        )
+                    }
                 };
-                let name = simple_type_name(&composite.ty).ok_or_else(|| {
+                let width = width.base10_parse::<u32>().map_err(|error| {
                     format!(
-                        "{}: composite wire type must use a path type",
+                        "{}: wire type `{name}` has an invalid width: {error}",
                         path.display()
                     )
                 })?;
-                let components = composite
-                    .fields
-                    .iter()
-                    .map(|field| -> syn::Result<WireTypeComponent> {
-                        Ok(WireTypeComponent {
-                            type_name: simple_type_name(&field.ty),
-                            width: field.width.base10_parse::<u32>()?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| {
-                        format!(
-                            "{}: composite wire type `{name}` has an invalid field width: {error}",
-                            path.display()
-                        )
-                    })?;
+                let builtin_width = match name.as_str() {
+                    "u8" | "i8" => Some(1),
+                    "u16" | "i16" => Some(2),
+                    "u32" | "i32" => Some(4),
+                    "u64" | "i64" => Some(8),
+                    _ => None,
+                };
+                if builtin_width.is_some_and(|builtin| builtin != width) {
+                    return Err(format!(
+                        "{}: primitive wire type `{name}` declares width {width}, but its canonical Rust width is {}",
+                        path.display(),
+                        builtin_width.unwrap(),
+                    ));
+                }
+                let shape = WireTypeShape { width, components };
                 if let Some(previous) = shapes.get(&name) {
-                    if previous
-                        .iter()
-                        .map(|component| component.width)
-                        .ne(components.iter().map(|component| component.width))
+                    if previous.width != shape.width
+                        || previous.components.len() != shape.components.len()
+                        || previous
+                            .components
+                            .iter()
+                            .zip(&shape.components)
+                            .any(|(left, right)| left.type_name != right.type_name)
                     {
                         return Err(format!(
-                            "{}: composite wire type `{name}` has conflicting active shapes",
+                            "{}: wire type `{name}` has conflicting active declarations",
                             path.display()
                         ));
                     }
-                    let merged = previous
-                        .iter()
-                        .zip(components)
-                        .map(|(previous, current)| WireTypeComponent {
-                            type_name: (previous.type_name == current.type_name)
-                                .then(|| previous.type_name.clone())
-                                .flatten(),
-                            width: previous.width,
-                        })
-                        .collect();
-                    shapes.insert(name, merged);
                 } else {
-                    shapes.insert(name, components);
+                    shapes.insert(name, shape);
                 }
             }
             Item::Mod(module) if module.content.is_some() => {
@@ -281,29 +396,75 @@ fn expanded_wire_type_shape(
     shapes: &WireTypeShapes,
     resolving: &mut BTreeSet<String>,
 ) -> Option<Vec<u32>> {
-    let components = shapes.get(name)?;
-    if components
-        .iter()
-        .map(|component| component.width)
-        .sum::<u32>()
-        != width
-        || !resolving.insert(name.to_owned())
-    {
+    let shape = shapes.get(name)?;
+    if shape.width != width || shape.components.is_empty() || !resolving.insert(name.to_owned()) {
         return None;
     }
     let mut widths = Vec::new();
-    for component in components {
+    for component in &shape.components {
+        let component_width = resolve_type_width(&component.ty, shapes).ok()?;
         let nested = component.type_name.as_deref().and_then(|type_name| {
-            expanded_wire_type_shape(type_name, component.width, shapes, resolving)
+            expanded_wire_type_shape(type_name, component_width, shapes, resolving)
         });
         if let Some(nested) = nested {
             widths.extend(nested);
         } else {
-            widths.push(component.width);
+            widths.push(component_width);
         }
     }
     resolving.remove(name);
-    Some(widths)
+    (widths.iter().sum::<u32>() == width).then_some(widths)
+}
+
+fn resolve_type_width(ty: &Type, shapes: &WireTypeShapes) -> Result<u32, String> {
+    match ty {
+        Type::Reference(reference) => resolve_type_width(&reference.elem, shapes),
+        Type::Array(array) => {
+            let element = resolve_type_width(&array.elem, shapes)?;
+            let Expr::Lit(length) = &array.len else {
+                return Err("wire array length must be an integer literal".to_owned());
+            };
+            let Lit::Int(length) = &length.lit else {
+                return Err("wire array length must be an integer literal".to_owned());
+            };
+            let length = length
+                .base10_parse::<u32>()
+                .map_err(|error| format!("invalid wire array length: {error}"))?;
+            element
+                .checked_mul(length)
+                .ok_or_else(|| "wire array width overflows u32".to_owned())
+        }
+        Type::Path(_) => {
+            let name =
+                simple_type_name(ty).ok_or_else(|| "wire type must be a simple path".to_owned())?;
+            if let Some(shape) = shapes.get(&name) {
+                return Ok(shape.width);
+            }
+            match name.as_str() {
+                "u8" | "i8" | "bool" => Ok(1),
+                "u16" | "i16" => Ok(2),
+                "u32" | "i32" => Ok(4),
+                "u64" | "i64" => Ok(8),
+                _ => Err(format!(
+                    "semantic wire type `{name}` has no canonical wire_type! declaration"
+                )),
+            }
+        }
+        _ => Err("canonical wire widths require a path, reference, or array type".to_owned()),
+    }
+}
+
+fn resolve_wire_size(size: &WireSize, shapes: &WireTypeShapes) -> Result<usize, String> {
+    size.terms()
+        .iter()
+        .try_fold(size.constant_part(), |total, term| {
+            let width = usize::try_from(resolve_type_width(term.ty(), shapes)?)
+                .expect("u32 wire widths fit usize");
+            width
+                .checked_mul(term.multiplier())
+                .and_then(|value| total.checked_add(value))
+                .ok_or_else(|| "declarative wire size overflows usize".to_owned())
+        })
 }
 
 fn read_rust_file(path: &Path) -> Result<File, String> {
@@ -500,17 +661,31 @@ fn parse_vendor_command(
 
     let request = wire_layout(
         command.params.fields(),
-        command.params.max_len().min(usize::from(u8::MAX)),
+        &command.params.min_size(),
+        &command.params.max_size(),
+        Some(usize::from(u8::MAX)),
         wire_type_shapes,
-    );
+    )?;
     let completion = match command.completion {
         SchemaCompletion::CommandComplete => {
             let returns = command
                 .returns
                 .as_ref()
                 .expect("the shared parser requires Return for CommandComplete");
+            let return_maximum = resolve_wire_size(&returns.max_size(), wire_type_shapes)?;
+            if return_maximum > usize::from(u8::MAX) {
+                return Err(format!(
+                    "command return envelope is {return_maximum} bytes, exceeding the HCI 255-byte limit"
+                ));
+            }
             CommandCompletion::CommandComplete {
-                returns: wire_layout(returns.fields(), returns.max_len(), wire_type_shapes),
+                returns: wire_layout(
+                    returns.fields(),
+                    &returns.min_size(),
+                    &returns.max_size(),
+                    None,
+                    wire_type_shapes,
+                )?,
             }
         }
         SchemaCompletion::CommandStatus => CommandCompletion::CommandStatus,
@@ -527,41 +702,47 @@ fn parse_vendor_command(
 
 fn wire_layout(
     fields: Option<&Fields>,
-    maximum: usize,
+    minimum: &WireSize,
+    maximum: &WireSize,
+    maximum_cap: Option<usize>,
     wire_type_shapes: &WireTypeShapes,
-) -> WireLayout {
-    let segments = fields.map_or_else(Vec::new, |fields| {
-        fields
-            .fields()
-            .iter()
-            .flat_map(|field| field_segments(field, wire_type_shapes))
-            .collect::<Vec<_>>()
-    });
-    let minimum = fields.map_or(0, Fields::min_len);
+) -> Result<WireLayout, String> {
+    let segments = fields.map_or_else(
+        || Ok(Vec::new()),
+        |fields| {
+            fields
+                .fields()
+                .iter()
+                .map(|field| field_segments(field, wire_type_shapes))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|segments| segments.into_iter().flatten().collect::<Vec<_>>())
+        },
+    )?;
+    let minimum = resolve_wire_size(minimum, wire_type_shapes)?;
+    let maximum = resolve_wire_size(maximum, wire_type_shapes)?;
+    let maximum = maximum_cap.map_or(maximum, |cap| maximum.min(cap));
     let minimum = u32::try_from(minimum).expect("HCI envelopes fit in u32");
     let maximum = u32::try_from(maximum).expect("HCI envelopes fit in u32");
     WireLayout::with_envelope(Envelope::bounded(minimum, maximum), segments)
-        .expect("the shared schema's field layout must cover its envelope")
+        .ok_or_else(|| "declarative wire layout is inconsistent with its envelope".to_owned())
 }
 
 fn field_segments(
     field: &stm32wb_hci_schema::Field,
     wire_type_shapes: &WireTypeShapes,
-) -> Vec<WireSegment> {
+) -> Result<Vec<WireSegment>, String> {
     match &field.encoding {
-        FieldEncoding::Fixed(encoding) => simple_type_name(&field.ty)
-            .and_then(|name| {
-                expanded_wire_type_shape(
-                    &name,
-                    wire_width(encoding.width),
-                    wire_type_shapes,
-                    &mut BTreeSet::new(),
-                )
-            })
-            .map_or_else(
-                || vec![WireSegment::fixed(wire_width(encoding.width))],
-                |widths| widths.into_iter().map(WireSegment::fixed).collect(),
-            ),
+        FieldEncoding::Fixed(_) => {
+            let width = resolve_type_width(&field.ty, wire_type_shapes)?;
+            Ok(simple_type_name(&field.ty)
+                .and_then(|name| {
+                    expanded_wire_type_shape(&name, width, wire_type_shapes, &mut BTreeSet::new())
+                })
+                .map_or_else(
+                    || vec![WireSegment::fixed(width)],
+                    |widths| widths.into_iter().map(WireSegment::fixed).collect(),
+                ))
+        }
         FieldEncoding::Variable(encoding) => variable_segments(encoding, wire_type_shapes),
     }
 }
@@ -569,78 +750,137 @@ fn field_segments(
 fn variable_segments(
     encoding: &stm32wb_hci_schema::VariableEncoding,
     wire_type_shapes: &WireTypeShapes,
-) -> Vec<WireSegment> {
-    let storage_min_len = encoding.storage_min_len;
-    let storage_max_len = encoding.storage_max_len;
-    match &encoding.shape {
+) -> Result<Vec<WireSegment>, String> {
+    let storage_min_len = resolve_wire_size(&encoding.storage_min_size(), wire_type_shapes)?;
+    let storage_max_len = resolve_wire_size(&encoding.storage_max_size(), wire_type_shapes)?;
+    let semantic_min_len = resolve_wire_size(&encoding.min_size(), wire_type_shapes)?;
+    let semantic_max_len = resolve_wire_size(&encoding.max_size(), wire_type_shapes)?;
+    if storage_min_len > semantic_min_len {
+        return Err(format!(
+            "variable field storage minimum {storage_min_len} is larger than semantic minimum {semantic_min_len}"
+        ));
+    }
+    if storage_max_len < semantic_max_len {
+        return Err(format!(
+            "variable field storage maximum {storage_max_len} is smaller than semantic maximum {semantic_max_len}"
+        ));
+    }
+    let segments = match &encoding.shape {
         VariableEncodingShape::CountedBytes {
             count,
             min_len: _,
-            max_len: _,
-        } => vec![
-            WireSegment::fixed(wire_width(count.width.value)),
-            WireSegment::variable_with_semantic(
-                1,
-                wire_width(storage_min_len - count.width.value),
-                wire_width(storage_max_len - count.width.value),
-                VariableSemantic::Counted {
-                    prefix_width: wire_width(count.width.value),
-                },
-            ),
-        ],
+            max_len,
+        } => {
+            let count_width = usize::try_from(resolve_type_width(&count.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            validate_integer_capacity("counted byte count", count_width, max_len.value)?;
+            let storage_minimum = storage_elements(storage_min_len, count_width, 1, "minimum")?;
+            let storage_maximum = storage_elements(storage_max_len, count_width, 1, "maximum")?;
+            vec![
+                WireSegment::fixed(wire_width(count_width)),
+                WireSegment::variable_with_semantic(
+                    1,
+                    wire_width(storage_minimum),
+                    wire_width(storage_maximum),
+                    VariableSemantic::Counted {
+                        prefix_width: wire_width(count_width),
+                    },
+                ),
+            ]
+        }
         VariableEncodingShape::CountedItems {
             count,
             item,
             min_items: _,
-            max_items: _,
-        } => vec![
-            WireSegment::fixed(wire_width(count.width.value)),
-            WireSegment::variable_with_semantic(
-                wire_width(item.width.value),
-                wire_width(
-                    (storage_min_len - count.width.value)
-                        .checked_div(item.width.value)
-                        .expect("item wire width is nonzero"),
+            max_items,
+        } => {
+            let count_width = usize::try_from(resolve_type_width(&count.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            let item_width = usize::try_from(resolve_type_width(&item.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            validate_integer_capacity("counted item count", count_width, max_items.value)?;
+            let storage_minimum =
+                storage_elements(storage_min_len, count_width, item_width, "minimum")?;
+            let storage_maximum =
+                storage_elements(storage_max_len, count_width, item_width, "maximum")?;
+            vec![
+                WireSegment::fixed(wire_width(count_width)),
+                WireSegment::variable_with_semantic(
+                    wire_width(item_width),
+                    wire_width(storage_minimum),
+                    wire_width(storage_maximum),
+                    VariableSemantic::Counted {
+                        prefix_width: wire_width(count_width),
+                    },
                 ),
-                wire_width(
-                    (storage_max_len - count.width.value)
-                        .checked_div(item.width.value)
-                        .expect("item wire width is nonzero"),
-                ),
-                VariableSemantic::Counted {
-                    prefix_width: wire_width(count.width.value),
-                },
-            ),
-        ],
+            ]
+        }
         VariableEncodingShape::Tagged(tagged) => {
-            let tag_width = tagged.tag.width.value;
+            let tag_width = usize::try_from(resolve_type_width(&tagged.tag.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            for variant in &tagged.variants {
+                validate_integer_capacity("tagged value", tag_width, variant.tag.value)?;
+            }
+            let variants = tagged
+                .variants
+                .iter()
+                .map(|variant| {
+                    let payload_widths = variant
+                        .fields
+                        .fields()
+                        .iter()
+                        .map(|field| field_segments(field, wire_type_shapes))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .map(|segment| match segment {
+                            WireSegment::Fixed { length, .. } => length,
+                            WireSegment::Variable { .. } => {
+                                unreachable!("tagged variants contain only fixed fields")
+                            }
+                        })
+                        .collect();
+                    Ok(TaggedVariantLayout {
+                        tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
+                        payload_widths,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let required_min = variants
+                .iter()
+                .map(|variant| {
+                    usize::try_from(variant.payload_widths.iter().sum::<u32>())
+                        .expect("u32 wire widths fit usize")
+                        + tag_width
+                })
+                .min()
+                .expect("tagged declarations require a variant");
+            let required_max = variants
+                .iter()
+                .map(|variant| {
+                    usize::try_from(variant.payload_widths.iter().sum::<u32>())
+                        .expect("u32 wire widths fit usize")
+                        + tag_width
+                })
+                .max()
+                .expect("tagged declarations require a variant");
+            if (tagged.min_len.value, tagged.max_len.value) != (required_min, required_max) {
+                return Err(format!(
+                    "tagged field declares lengths {}..={}, but its variants require {required_min}..={required_max}",
+                    tagged.min_len.value, tagged.max_len.value,
+                ));
+            }
+            let storage_minimum = storage_elements(storage_min_len, tag_width, 1, "minimum")?;
+            let storage_maximum = storage_elements(storage_max_len, tag_width, 1, "maximum")?;
             vec![
                 WireSegment::fixed(wire_width(tag_width)),
                 WireSegment::variable_with_semantic(
                     1,
-                    wire_width(storage_min_len - tag_width),
-                    wire_width(storage_max_len - tag_width),
+                    wire_width(storage_minimum),
+                    wire_width(storage_maximum),
                     VariableSemantic::Tagged {
                         tag_width: wire_width(tag_width),
-                        variants: tagged
-                            .variants
-                            .iter()
-                            .map(|variant| TaggedVariantLayout {
-                                tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
-                                payload_widths: variant
-                                    .fields
-                                    .fields()
-                                    .iter()
-                                    .flat_map(|field| field_segments(field, wire_type_shapes))
-                                    .map(|segment| match segment {
-                                        WireSegment::Fixed { length, .. } => length,
-                                        WireSegment::Variable { .. } => unreachable!(
-                                            "tagged variants contain only fixed fields"
-                                        ),
-                                    })
-                                    .collect(),
-                            })
-                            .collect(),
+                        variants,
                     },
                 ),
             ]
@@ -649,43 +889,85 @@ fn variable_segments(
             record_len,
             length,
             min_record_len,
-            max_len: _,
-        } => vec![
-            WireSegment::fixed(wire_width(record_len.width.value)),
-            WireSegment::fixed(wire_width(length.width.value)),
-            WireSegment::variable_with_semantic(
-                1,
-                wire_width(storage_min_len - record_len.width.value - length.width.value),
-                wire_width(storage_max_len - record_len.width.value - length.width.value),
-                VariableSemantic::LengthPrefixedRecords {
-                    record_len_width: wire_width(record_len.width.value),
-                    length_width: wire_width(length.width.value),
-                    minimum_record_len: Some(wire_width(min_record_len.value)),
-                },
-            ),
-        ],
-        VariableEncodingShape::TaggedItems(tagged) => vec![
-            WireSegment::fixed(wire_width(tagged.tag.width.value)),
-            WireSegment::fixed(wire_width(tagged.length.width.value)),
-            WireSegment::variable_with_semantic(
-                1,
-                wire_width(storage_min_len - tagged.tag.width.value - tagged.length.width.value),
-                wire_width(storage_max_len - tagged.tag.width.value - tagged.length.width.value),
-                VariableSemantic::TaggedItems {
-                    tag_width: wire_width(tagged.tag.width.value),
-                    length_width: wire_width(tagged.length.width.value),
-                    variants: tagged
-                        .variants
-                        .iter()
-                        .map(|variant| TaggedItemsVariantLayout {
-                            tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
-                            item_width: wire_width(variant.item.width.value),
-                            maximum_items: wire_width(variant.max_items.value),
-                        })
-                        .collect(),
-                },
-            ),
-        ],
+            max_len,
+        } => {
+            let record_len_width =
+                usize::try_from(resolve_type_width(&record_len.ty, wire_type_shapes)?)
+                    .expect("u32 wire widths fit usize");
+            let length_width = usize::try_from(resolve_type_width(&length.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            validate_integer_capacity("record byte length", length_width, max_len.value)?;
+            let prefix_width = record_len_width + length_width;
+            let storage_minimum = storage_elements(storage_min_len, prefix_width, 1, "minimum")?;
+            let storage_maximum = storage_elements(storage_max_len, prefix_width, 1, "maximum")?;
+            vec![
+                WireSegment::fixed(wire_width(record_len_width)),
+                WireSegment::fixed(wire_width(length_width)),
+                WireSegment::variable_with_semantic(
+                    1,
+                    wire_width(storage_minimum),
+                    wire_width(storage_maximum),
+                    VariableSemantic::LengthPrefixedRecords {
+                        record_len_width: wire_width(record_len_width),
+                        length_width: wire_width(length_width),
+                        minimum_record_len: Some(wire_width(min_record_len.value)),
+                    },
+                ),
+            ]
+        }
+        VariableEncodingShape::TaggedItems(tagged) => {
+            let tag_width = usize::try_from(resolve_type_width(&tagged.tag.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            let length_width =
+                usize::try_from(resolve_type_width(&tagged.length.ty, wire_type_shapes)?)
+                    .expect("u32 wire widths fit usize");
+            validate_integer_capacity(
+                "tagged item byte length",
+                length_width,
+                tagged.max_len.value,
+            )?;
+            let variants = tagged
+                .variants
+                .iter()
+                .map(|variant| {
+                    validate_integer_capacity("tagged item value", tag_width, variant.tag.value)?;
+                    let item_width = resolve_type_width(&variant.item.ty, wire_type_shapes)?;
+                    let expected = u32::try_from(tagged.max_len.value)
+                        .expect("HCI lengths fit u32")
+                        / item_width;
+                    if u32::try_from(variant.max_items.value).expect("HCI counts fit u32")
+                        != expected
+                    {
+                        return Err(format!(
+                            "tagged_items variant {:#x} declares {} items, but max_len {} and canonical item width {item_width} allow {expected}",
+                            variant.tag.value, variant.max_items.value, tagged.max_len.value,
+                        ));
+                    }
+                    Ok(TaggedItemsVariantLayout {
+                        tag: u64::try_from(variant.tag.value).expect("HCI tags fit in u64"),
+                        item_width,
+                        maximum_items: wire_width(variant.max_items.value),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let prefix_width = tag_width + length_width;
+            let storage_minimum = storage_elements(storage_min_len, prefix_width, 1, "minimum")?;
+            let storage_maximum = storage_elements(storage_max_len, prefix_width, 1, "maximum")?;
+            vec![
+                WireSegment::fixed(wire_width(tag_width)),
+                WireSegment::fixed(wire_width(length_width)),
+                WireSegment::variable_with_semantic(
+                    1,
+                    wire_width(storage_minimum),
+                    wire_width(storage_maximum),
+                    VariableSemantic::TaggedItems {
+                        tag_width: wire_width(tag_width),
+                        length_width: wire_width(length_width),
+                        variants,
+                    },
+                ),
+            ]
+        }
         VariableEncodingShape::TrailingBytes {
             min_len: _,
             max_len: _,
@@ -697,28 +979,62 @@ fn variable_segments(
         )],
         VariableEncodingShape::BitmapItems {
             bitmap, mask, item, ..
-        } => vec![WireSegment::variable_with_semantic(
-            wire_width(item.width.value),
-            wire_width(
-                storage_min_len
-                    .checked_div(item.width.value)
-                    .expect("item wire width is nonzero"),
-            ),
-            wire_width(
-                storage_max_len
-                    .checked_div(item.width.value)
-                    .expect("item wire width is nonzero"),
-            ),
-            VariableSemantic::BitmapItems {
-                bitmap_field: bitmap.to_string(),
-                mask: u64::try_from(mask.value).expect("HCI bitmaps fit in u64"),
-            },
-        )],
-    }
+        } => {
+            let item_width = usize::try_from(resolve_type_width(&item.ty, wire_type_shapes)?)
+                .expect("u32 wire widths fit usize");
+            let storage_minimum = storage_elements(storage_min_len, 0, item_width, "minimum")?;
+            let storage_maximum = storage_elements(storage_max_len, 0, item_width, "maximum")?;
+            vec![WireSegment::variable_with_semantic(
+                wire_width(item_width),
+                wire_width(storage_minimum),
+                wire_width(storage_maximum),
+                VariableSemantic::BitmapItems {
+                    bitmap_field: bitmap.to_string(),
+                    mask: u64::try_from(mask.value).expect("HCI bitmaps fit in u64"),
+                },
+            )]
+        }
+    };
+    Ok(segments)
 }
 
 fn wire_width(value: usize) -> u32 {
     u32::try_from(value).expect("HCI field widths fit in u32")
+}
+
+fn validate_integer_capacity(label: &str, width: usize, maximum: usize) -> Result<(), String> {
+    if width == 0 {
+        return Err(format!("{label} canonical wire width must be nonzero"));
+    }
+    if width < core::mem::size_of::<usize>() {
+        let capacity = (1usize << (width * u8::BITS as usize)) - 1;
+        if maximum > capacity {
+            return Err(format!(
+                "{label} maximum {maximum} does not fit in canonical {width}-byte width"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn storage_elements(
+    storage_len: usize,
+    prefix_width: usize,
+    element_width: usize,
+    bound: &str,
+) -> Result<usize, String> {
+    if element_width == 0 {
+        return Err("variable item canonical wire width must be nonzero".to_owned());
+    }
+    let payload = storage_len.checked_sub(prefix_width).ok_or_else(|| {
+        format!("variable field storage {bound} is smaller than its canonical prefix")
+    })?;
+    if payload % element_width != 0 {
+        return Err(format!(
+            "variable field storage {bound} leaves {payload} bytes, which is not divisible by its canonical {element_width}-byte item width"
+        ));
+    }
+    Ok(payload / element_width)
 }
 
 fn parse_vendor_event_declarations(
@@ -756,14 +1072,23 @@ fn parse_vendor_event_declarations(
         if !attrs_active(&definition.attrs, firmware, path)? {
             continue;
         }
+        let payload_maximum = resolve_wire_size(&definition.payload.max_size(), wire_type_shapes)?;
+        if payload_maximum > 253 {
+            return Err(format!(
+                "vendor event `{}` payload is at most 253 bytes, but its canonical types allow {payload_maximum}",
+                definition.name,
+            ));
+        }
         let event = EventDeclaration {
             name: definition.name.to_string(),
             code: definition.code,
             payload: wire_layout(
                 definition.payload.fields(),
-                definition.payload.max_len(),
+                &definition.payload.min_size(),
+                &definition.payload.max_size(),
+                None,
                 wire_type_shapes,
-            ),
+            )?,
             location: path.to_path_buf(),
         };
         if let Some(previous) = events.insert(event.code, event.clone()) {
@@ -856,12 +1181,28 @@ mod tests {
             path: path.clone(),
             file: syn::parse_file(source).unwrap(),
         };
-        collect_commands(
-            std::slice::from_ref(&unit),
-            firmware,
-            &WireTypeShapes::new(),
-        )
-        .unwrap()
+        collect_commands(std::slice::from_ref(&unit), firmware, &fixture_wire_types()).unwrap()
+    }
+
+    fn fixture_wire_types() -> WireTypeShapes {
+        [
+            ("Role", 1),
+            ("ConnHandle", 2),
+            ("AttributeHandle", 2),
+            ("IoCapability", 1),
+            ("Phy", 5),
+        ]
+        .into_iter()
+        .map(|(name, width)| {
+            (
+                name.to_owned(),
+                WireTypeShape {
+                    width,
+                    components: Vec::new(),
+                },
+            )
+        })
+        .collect()
     }
 
     fn assert_complete_envelope(completion: &CommandCompletion, expected: Envelope) {
@@ -879,7 +1220,7 @@ mod tests {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params = ();
                     Completion = CommandComplete;
-                    Return = Result { value: [u8; 8] => 8, };
+                    Return = Result { value: [u8; 8], };
                 }
             }
             impl<T> Commands for T {
@@ -900,15 +1241,15 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params = {
-                        role: Role => 1,
-                        enabled: bool => 1,
-                        name_len: u8 => 1,
+                        role: Role,
+                        enabled: bool,
+                        name_len: u8,
                     };
                     Completion = CommandComplete;
                     Return = Result {
-                        first_handle: AttributeHandle => 2,
-                        second_handle: AttributeHandle => 2,
-                        third_handle: AttributeHandle => 2,
+                        first_handle: AttributeHandle,
+                        second_handle: AttributeHandle,
+                        third_handle: AttributeHandle,
                     };
                 }
             }
@@ -927,7 +1268,7 @@ mod tests {
         let source = r#"
             stm32wb_hci_macros::vendor_cmd! {
                 GapSetIoCapability(cgid = 0x1, cid = 0x05) {
-                    Params = { io_capability: IoCapability => 1, };
+                    Params = { io_capability: IoCapability, };
                     Completion = CommandComplete;
                     Return = ();
                 }
@@ -946,7 +1287,7 @@ mod tests {
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
-                    Params = { procedure: u8 => 1, };
+                    Params = { procedure: u8, };
                     Completion = CommandStatus;
                 }
             }
@@ -967,20 +1308,20 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        conn_handle: ConnHandle => 2,
+                        conn_handle: ConnHandle,
                         handles: &'a [AttributeHandle] => {
                             kind: counted_items,
-                            count: u8 => 1,
-                            item: AttributeHandle => 2,
+                            count: u8,
+                            item: AttributeHandle,
                             max_items: 126,
                         },
                     };
                     Completion = CommandComplete;
                     Return = Result {
-                        total_length: u16 => 2,
+                        total_length: u16,
                         value: BoundedBytes<249> => {
                             kind: counted_bytes,
-                            count: u16 => 2,
+                            count: u16,
                             max_len: 249,
                         },
                     };
@@ -1027,7 +1368,7 @@ mod tests {
             pub trait Commands { async fn command(&self); }
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
-                    Params = { offset: u8 => 1, };
+                    Params = { offset: u8, };
                     Completion = CommandComplete;
                     Return = Result {
                         value: BoundedBytes<16> => {
@@ -1069,7 +1410,7 @@ mod tests {
                             min_len: 0,
                             max_len: 16,
                         },
-                        suffix: u8 => 1,
+                        suffix: u8,
                     };
                     Completion = CommandStatus;
                 }
@@ -1132,25 +1473,25 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        scanning_phys: u8 => 1,
+                        scanning_phys: u8,
                         phy_params: &'a [Phy] => {
                             kind: bitmap_items,
                             bitmap: scanning_phys,
                             mask: 0x05,
-                            item: Phy => 5,
+                            item: Phy,
                             max_items: 2,
                         },
                         uuid: &'a Uuid => {
                             kind: tagged,
-                            tag: u8 => 1,
+                            tag: u8,
                             variants: {
                                 Uuid::Uuid16(value) => {
                                     tag: 0x01,
-                                    fields: { value: u16 => 2, },
+                                    fields: { value: u16, },
                                 },
                                 Uuid::Uuid128(value) => {
                                     tag: 0x02,
-                                    fields: { value: [u8; 16] => 16, },
+                                    fields: { value: [u8; 16], },
                                 },
                             },
                             min_len: 3,
@@ -1194,12 +1535,12 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        minimum: u16 => 2,
-                        maximum: u16 => 2,
-                        mode: u8 => 1,
+                        minimum: u16,
+                        maximum: u16,
+                        mode: u8,
                         data: &'a [u8] => {
                             kind: counted_bytes,
-                            count: u8 => 1,
+                            count: u8,
                             max_len: 16,
                         },
                     };
@@ -1227,7 +1568,7 @@ mod tests {
         let source = r#"
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
-                    Params = { value: u8 => 1, };
+                    Params = { value: u8, };
                     Constraints = { ordered(value, missing); };
                     Completion = CommandStatus;
                 }
@@ -1296,15 +1637,15 @@ mod tests {
                     Params<'a> = {
                         uuid: &'a Uuid => {
                             kind: tagged,
-                            tag: u8 => 1,
+                            tag: u8,
                             variants: {
                                 Uuid::Uuid16(value) => {
                                     tag: 0x01,
-                                    fields: { value: u16 => 2, },
+                                    fields: { value: u16, },
                                 },
                                 Uuid::Uuid128(value) => {
                                     tag: 0x02,
-                                    fields: { value: [u8; 16] => 16, },
+                                    fields: { value: [u8; 16], },
                                 },
                             },
                             min_len: 2,
@@ -1327,12 +1668,12 @@ mod tests {
             vendor_cmd! {
                 Current(cgid = 0x0, cid = 0x03) {
                     Params<'a> = {
-                        scanning_phys: u8 => 1,
+                        scanning_phys: u8,
                         phy_params: &'a [Phy] => {
                             kind: bitmap_items,
                             bitmap: scanning_phys,
                             mask: 0x05,
-                            item: Phy => 5,
+                            item: Phy,
                             max_items: 3,
                         },
                     };
@@ -1357,11 +1698,11 @@ mod tests {
                     Params<'a> = {
                         uuid: &'a Uuid => {
                             kind: tagged,
-                            tag: u8 => 1,
+                            tag: u8,
                             variants: {
                                 Uuid::Uuid16(actual) => {
                                     tag: 0x01,
-                                    fields: { typo: u16 => 2, },
+                                    fields: { typo: u16, },
                                 },
                             },
                             min_len: 3,
@@ -1657,6 +1998,43 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(names.contains("current.rs"));
         assert!(!names.contains("future.rs"));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_canonical_wire_declarations_that_drift_from_their_semantic_type() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "stm32wb-compliance-wire-types-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("types.rs"),
+            r#"
+                wire_type! {
+                    adapters: [command];
+                    ranged pub struct Drifted: u16 => 1 {
+                        minimum: 0,
+                        maximum: 1,
+                    }
+                }
+            "#,
+        )
+        .unwrap();
+
+        let error = load_wire_type_shapes(&directory, version(1, 24, 0))
+            .err()
+            .expect("drifted canonical declaration must be rejected");
+        assert!(
+            error.contains("declares canonical width 1")
+                && error.contains("semantic components require 2"),
+            "{error}"
+        );
 
         fs::remove_dir_all(directory).unwrap();
     }

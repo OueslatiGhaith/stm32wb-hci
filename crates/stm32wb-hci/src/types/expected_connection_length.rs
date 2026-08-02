@@ -66,8 +66,8 @@ stm32wb_hci_macros::wire_type! {
     composite
     ExpectedConnectionLength => 4 {
         Fields = {
-            minimum: u16 => 2,
-            maximum: u16 => 2,
+            minimum: u16,
+            maximum: u16,
         };
         Encode = |value| { value.hci_fields() };
     }

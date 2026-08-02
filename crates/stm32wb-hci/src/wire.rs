@@ -11,13 +11,22 @@ pub(crate) use decode::{
     decode_prefixed_bytes, decode_trailing_bytes,
 };
 
+/// A semantic value with one exact, canonical HCI wire width.
+///
+/// Command fields, event fields, and variable count/item declarations derive
+/// their widths from this trait, so a semantic type cannot be paired with a
+/// contradictory field-local width.
+pub trait HciWireType {
+    /// Number of bytes in the canonical HCI wire representation.
+    const WIDTH: usize;
+}
+
 /// A value with an exact, canonical representation in an HCI request.
 ///
-/// `N` is part of the trait so a declarative field whose schema says
-/// `field: Type => N` only compiles when `Type` explicitly supports that wire
-/// width. Implementations must not rely on Rust structure layout or native
-/// endianness.
-pub trait HciEncodeField<const N: usize> {
+/// `N` is retained on the low-level adapter trait for fixed-size array APIs;
+/// declarative schemas always instantiate it with [`HciWireType::WIDTH`].
+/// Implementations must not rely on Rust structure layout or native endianness.
+pub trait HciEncodeField<const N: usize>: HciWireType {
     /// Write exactly `N` bytes to a synchronous HCI writer.
     fn write_hci_field<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error>;
 
@@ -32,7 +41,7 @@ pub trait HciEncodeField<const N: usize> {
 ///
 /// Implementations receive exactly `N` bytes and must apply the protocol's
 /// validity rules rather than interpreting arbitrary Rust memory.
-pub trait HciDecodeField<const N: usize>: Sized {
+pub trait HciDecodeField<const N: usize>: HciWireType + Sized {
     /// Decode one exact-width field.
     fn from_hci_field(bytes: &[u8; N]) -> Result<Self, bt_hci::FromHciBytesError>;
 }
@@ -51,7 +60,7 @@ pub trait HciDecodeField<const N: usize>: Sized {
 /// fn requires_two_bytes<T: HciEventField<2>>() {}
 /// requires_two_bytes::<bool>();
 /// ```
-pub trait HciEventField<const N: usize>: Sized {
+pub trait HciEventField<const N: usize>: HciWireType + Sized {
     /// Decode one exact-width vendor-event field.
     fn from_hci_event_field(bytes: &[u8; N]) -> Result<Self, crate::vendor::event::Error>;
 }
@@ -174,6 +183,17 @@ impl HciEventField<1> for bool {
     }
 }
 
+impl HciWireType for bool {
+    const WIDTH: usize = 1;
+}
+
+impl<T, const N: usize> HciWireType for [T; N]
+where
+    T: HciWireType,
+{
+    const WIDTH: usize = T::WIDTH * N;
+}
+
 impl<const N: usize> HciEncodeField<N> for [u8; N] {
     fn write_hci_field<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
         writer.write_all(self)
@@ -215,13 +235,20 @@ where
     }
 }
 
+impl<T> HciWireType for &T
+where
+    T: HciWireType,
+{
+    const WIDTH: usize = T::WIDTH;
+}
+
 stm32wb_hci_macros::wire_type! {
     adapters: [command, event];
     transparent bt_hci::param::ConnHandle: u16 => 2;
 }
 
 stm32wb_hci_macros::wire_type! {
-    adapters: [command];
+    adapters: [command, event];
     transparent bt_hci::param::BdAddr: [u8; 6] => 6;
 }
 
