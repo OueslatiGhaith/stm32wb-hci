@@ -10,7 +10,6 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 
 use crate::types::{AttributeHandle, PeerAddrType};
 pub use crate::types::{BdAddrType, ConnectionInterval, ConnectionIntervalError};
-use crate::vendor::command::gap::EventFlags;
 pub use crate::vendor::command::l2cap::{
     L2CocChannelIndex, L2CocConnectionResult, L2CocCreditIncrement, L2CocInitialCredits, L2CocMps,
     L2CocMtu, L2CocReconfigurationResult, L2CocRequestedChannelCount, L2CocSpsm,

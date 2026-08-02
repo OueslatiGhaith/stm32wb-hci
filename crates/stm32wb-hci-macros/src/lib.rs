@@ -86,7 +86,8 @@ pub fn vendor_cmd(input: TokenStream) -> TokenStream {
 /// Declare the complete STM32WB vendor-event catalog.
 ///
 /// Each declaration owns its 16-bit vendor event code and complete payload
-/// schema. Unit payloads generate unit `VendorEvent` variants; inline payloads
+/// schema. The generated enum contains exactly the declared events: unit
+/// payloads generate unit `VendorEvent` variants, while inline payloads
 /// generate a public payload structure and a tuple variant carrying it.
 /// Fixed fields use `field: Type`; their width comes from `HciWireType`.
 /// Borrowed variable payload fields may use `counted_bytes`, `counted_items`, `length_prefixed_records`,

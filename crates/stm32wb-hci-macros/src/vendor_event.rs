@@ -163,11 +163,6 @@ pub(crate) fn expand_vendor_events(catalog: &VendorEvents) -> TokenStream2 {
         #[derive(Clone, Copy, Debug)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub enum VendorEvent #event_generics {
-            /// If the host fails to read events from the controller quickly enough, the
-            /// controller will generate this event. This event is never lost; it is inserted as
-            /// soon as space is available in the Tx queue.
-            EventsLost(EventFlags),
-
             #(#variants)*
         }
 
@@ -410,5 +405,34 @@ impl Fold for DecoderLifetime<'_> {
         } else {
             lifetime
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_event_enum_contains_only_catalog_variants() {
+        let catalog = syn::parse_str::<VendorEvents>(
+            "First(0x0001) { Payload = (); } Second(0x0002) { Payload = { value: u8, }; }",
+        )
+        .unwrap();
+        let output = syn::parse2::<syn::File>(expand_vendor_events(&catalog)).unwrap();
+        let generated = output
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == "VendorEvent" => Some(item),
+                _ => None,
+            })
+            .expect("generated VendorEvent enum");
+        let variants = generated
+            .variants
+            .iter()
+            .map(|variant| variant.ident.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(variants, ["First", "Second"]);
     }
 }
