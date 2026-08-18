@@ -20,7 +20,8 @@ exclude = ["tests"]
 
 [dependencies]
 bitflags = "2"
-bt-hci = "0.9.0"
+bt-hci = "0.10.0"
+bt-hci-transport = "0.1.0"
 byteorder = { version = "1", default-features = false }
 defmt = { version = "1", optional = true }
 embedded-io = "0.7.1"
@@ -36,7 +37,7 @@ critical-section = { version = "1.2", features = ["std"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [features]
-defmt = ["dep:defmt", "bt-hci/defmt"]
+defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
 
 [profile.dev]
 debug = 2

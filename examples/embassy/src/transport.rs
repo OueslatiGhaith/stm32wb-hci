@@ -1,5 +1,6 @@
 use aligned::{A4, Aligned};
-use bt_hci::{WriteHci, transport::WithIndicator};
+use bt_hci::transport::WithIndicator;
+use bt_hci_transport::PacketToController;
 use core::{
     cell::RefCell,
     future::poll_fn,
@@ -350,7 +351,7 @@ impl<'d> ControllerAdapter<'d> {
         ))
     }
 
-    async fn exec_cmd<C: bt_hci::WriteHci + bt_hci::cmd::Cmd>(
+    async fn exec_cmd<C: PacketToController + bt_hci::cmd::Cmd>(
         &self,
         cmd: &C,
     ) -> Result<
@@ -394,6 +395,12 @@ impl<'d> ControllerAdapter<'d> {
 }
 
 impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
+    type Buffer<'a> = ();
+
+    fn alloc_buf(&self) -> Result<Self::Buffer<'_>, Self::Error> {
+        Ok(())
+    }
+
     async fn write_acl_data(
         &self,
         _packet: &bt_hci::data::AclPacket<'_>,
@@ -417,7 +424,7 @@ impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
 
     async fn read<'a>(
         &self,
-        _buf: &'a mut [u8],
+        _buf: &'a mut Self::Buffer<'_>,
     ) -> Result<bt_hci::ControllerToHostPacket<'a>, Self::Error> {
         use bt_hci::event::{CommandComplete, CommandStatus, EventKind};
         use bt_hci::{ControllerToHostPacket, FromHciBytes};

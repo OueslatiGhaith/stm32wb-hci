@@ -84,9 +84,7 @@ where
     T: Controller,
 {
     async fn read_packet(&self) -> Result<Packet, Error> {
-        const MAX_EVENT_LENGTH: usize = 256;
-
-        let mut packet = [0u8; MAX_EVENT_LENGTH];
+        let mut packet = self.alloc_buf().map_err(|_| Error::IoError)?;
         let pkt = <Self as Controller>::read(self, &mut packet)
             .await
             .map_err(|_| Error::IoError)?;
