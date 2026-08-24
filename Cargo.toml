@@ -5,7 +5,7 @@ members = ["examples/*"]
 [package]
 name = "stm32wb-hci"
 edition = "2024"
-version = "0.18.0"
+version = "0.19.0"
 authors = [
     "Daniel Gallagher <pdanielgallagher@gmail.com>",
     "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
