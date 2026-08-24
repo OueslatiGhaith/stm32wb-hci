@@ -21,7 +21,8 @@ embassy-stm32 = { version = "0.6.0", features = [
 ] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-stm32wb-hci = { path = "../../crates/stm32wb-hci", features = ["defmt"] }
 bt-hci.workspace = true
+bt-hci-transport.workspace = true
 embedded-io.workspace = true
 embassy-futures = "0.1.2"
+stm32wb-hci = { path = "../../crates/stm32wb-hci", features = ["defmt"] }

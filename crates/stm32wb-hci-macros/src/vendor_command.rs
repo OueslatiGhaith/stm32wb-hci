@@ -167,6 +167,30 @@ pub(crate) fn expand_vendor_command(command: &VendorCommand) -> TokenStream2 {
             }
         }
 
+        impl #impl_generics ::bt_hci_transport::PacketToController for #name #type_generics {
+            const KIND: ::bt_hci_transport::PacketKind =
+                ::bt_hci_transport::PacketKind::Cmd;
+
+            #[inline]
+            fn size(&self) -> usize {
+                <Self as ::bt_hci::WriteHci>::size(self)
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <Self as ::bt_hci::WriteHci>::write_hci(self, writer)
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                writer: W,
+            ) -> Result<(), W::Error> {
+                <Self as ::bt_hci::WriteHci>::write_hci_async(self, writer).await
+            }
+        }
+
         impl #impl_generics ::bt_hci::WriteHci for #name #type_generics {
             #[inline]
             fn size(&self) -> usize {

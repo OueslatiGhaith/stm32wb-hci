@@ -92,7 +92,13 @@ async fn main(spawner: Spawner) {
 
     join(
         async {
-            let mut packet_buffer = [0; 260];
+            let mut packet_buffer = match ble.alloc_buf() {
+                Ok(buffer) => buffer,
+                Err(_) => {
+                    error!("failed to allocate HCI packet buffer");
+                    return;
+                }
+            };
             loop {
                 match ble.read(&mut packet_buffer).await {
                     Ok(ControllerToHostPacket::Event(event)) if event.kind == EventKind::Vendor => {

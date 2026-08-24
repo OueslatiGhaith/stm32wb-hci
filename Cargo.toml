@@ -6,7 +6,8 @@ members = ["crates/*", "examples/*"]
 default-members = ["crates/stm32wb-hci"]
 
 [workspace.dependencies]
-bt-hci = "0.9.0"
+bt-hci = "0.10.0"
+bt-hci-transport = "0.1.0"
 defmt = "1"
 embedded-io = "0.7.1"
 proc-macro2 = "1"

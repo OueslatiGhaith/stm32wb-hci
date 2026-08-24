@@ -2,7 +2,7 @@
 name = "stm32wb-hci"
 build = "build.rs"
 edition = "2024"
-version = "0.18.0"
+version = "0.19.0"
 authors = [
     "Daniel Gallagher <pdanielgallagher@gmail.com>",
     "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
@@ -18,6 +18,7 @@ exclude = ["tests"]
 [dependencies]
 bitflags = "2"
 bt-hci.workspace = true
+bt-hci-transport.workspace = true
 defmt = { workspace = true, optional = true }
 embedded-io.workspace = true
 embedded-io-async = "0.7.0"
@@ -31,7 +32,7 @@ pollster = "0.4"
 
 [features]
 default = ["fw_1_24_0", "stack-full-extended"]
-defmt = ["dep:defmt", "bt-hci/defmt"]
+defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
 stack-full-extended = []
 stack-full = []
 stack-light = []
