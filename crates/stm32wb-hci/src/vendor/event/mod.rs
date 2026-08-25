@@ -2680,7 +2680,22 @@ stm32wb_hci_macros::wire_type! {
 }
 
 #[cfg(test)]
-mod tests {
+mod common_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_coprocessor_ready_for_every_stack_profile() {
+        assert!(matches!(
+            VendorEvent::new(&[0x00, 0x92, 0x00]).unwrap(),
+            VendorEvent::CoprocessorReady(CoprocessorReady {
+                kind: FirmwareKind::Wireless,
+            })
+        ));
+    }
+}
+
+#[cfg(all(test, feature = "stack-full-extended"))]
+mod full_extended_tests {
     use super::*;
 
     #[test]

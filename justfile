@@ -23,14 +23,21 @@ check: fmt-check lint
 test:
     cargo test --locked --workspace --exclude stm32wb55-embassy
 
-# Test stm32wb-hci against every declared firmware feature.
+# Test stm32wb-hci against every declared firmware and stack profile.
 test-firmwares:
     #!/usr/bin/env bash
     set -euo pipefail
     firmwares="$(cargo run --locked -q -p stm32wb-compliance -- list-supported)"
+    profiles="$(cargo run --locked -q -p stm32wb-compliance -- list-profiles)"
     test -n "$firmwares"
+    test -n "$profiles"
     for firmware in $firmwares; do
-        cargo test --locked -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended"
+        for profile in $profiles; do
+            if ! cargo test --locked -p stm32wb-hci --lib --tests --no-default-features --features="$firmware,$profile"; then
+                printf 'test failed: %s,%s\n' "$firmware" "$profile" >&2
+                exit 1
+            fi
+        done
     done
 
 # Check the Embassy example for its embedded target.

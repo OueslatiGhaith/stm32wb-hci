@@ -1,3 +1,5 @@
+#![cfg(feature = "stack-full-extended")]
+
 use stm32wb_hci as hci;
 
 mod vendor;

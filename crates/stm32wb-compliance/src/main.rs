@@ -49,6 +49,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         CliCommand::ListSupported(args) => {
             list_supported(&crate_dir(&args.crate_dir, &current_dir)?)
         }
+        CliCommand::ListProfiles => Ok(list_profiles()),
         CliCommand::Check(args) => run_check(args, crate_dir(&args.crate_dir, &current_dir)?),
         CliCommand::Diff(args) => run_diff(args, &current_dir),
     }
@@ -68,6 +69,13 @@ fn list_supported(crate_dir: &Path) -> Result<ExitCode, String> {
         println!("{}", firmware.feature_name());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn list_profiles() -> ExitCode {
+    for profile in StackProfile::ALL {
+        println!("{}", profile.feature_name());
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_check(args: &CheckArgs, crate_dir: PathBuf) -> Result<ExitCode, String> {
@@ -365,6 +373,9 @@ enum CliCommand {
     /// Print the crate's canonical `fw_<major>_<minor>_<patch>` release features.
     #[command(name = "list-supported")]
     ListSupported(ListSupportedArgs),
+    /// Print the crate's canonical `stack-*` profile features.
+    #[command(name = "list-profiles")]
+    ListProfiles,
 }
 
 #[derive(Debug, Args)]
@@ -628,6 +639,15 @@ mod tests {
 
         let error = parse_cli(&["list-supported", "--json"]).unwrap_err();
         assert!(error.contains("unexpected argument '--json'"));
+    }
+
+    #[test]
+    fn list_profiles_accepts_no_arguments() {
+        let cli = parse_cli(&["list-profiles"]).unwrap();
+        assert!(matches!(cli.command, CliCommand::ListProfiles));
+
+        let error = parse_cli(&["list-profiles", "--crate", "/tmp/crate"]).unwrap_err();
+        assert!(error.contains("unexpected argument '--crate'"));
     }
 
     #[test]

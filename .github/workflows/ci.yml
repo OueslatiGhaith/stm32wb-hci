@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
+          firmwares="$(cargo run --locked -q -p stm32wb-compliance -- list-supported)"
           test -n "$firmwares"
           for firmware in $firmwares; do
             cargo build -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended" --release --target=thumbv7em-none-eabihf
@@ -45,14 +45,21 @@ jobs:
         with:
           toolchain: "1.92"
           target: thumbv7em-none-eabihf
-      - name: Test every declared firmware feature
+      - name: Test every declared firmware and stack profile
         shell: bash
         run: |
           set -euo pipefail
-          firmwares="$(cargo run -q -p stm32wb-compliance -- list-supported)"
+          firmwares="$(cargo run --locked -q -p stm32wb-compliance -- list-supported)"
+          profiles="$(cargo run --locked -q -p stm32wb-compliance -- list-profiles)"
           test -n "$firmwares"
+          test -n "$profiles"
           for firmware in $firmwares; do
-            cargo test --verbose -p stm32wb-hci --no-default-features --features="$firmware,stack-full-extended"
+            for profile in $profiles; do
+              if ! cargo test --locked --verbose -p stm32wb-hci --lib --tests --no-default-features --features="$firmware,$profile"; then
+                printf 'test failed: %s,%s\n' "$firmware" "$profile" >&2
+                exit 1
+              fi
+            done
           done
 
   example:
