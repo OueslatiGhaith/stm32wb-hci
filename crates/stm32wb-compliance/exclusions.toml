@@ -1,0 +1,22 @@
+# stm32wb-compliance exclusion policy.
+#
+# Every exclusion declares a scope, numeric wire code, Cube release selector,
+# and reviewable reason. `firmware = "*"` retains the legacy field spelling and
+# selects every declared Cube release; an exact version selects one release.
+# Optional `family` and `profile` selectors default to `"*"`.
+#
+# System-channel events are inventoried from CubeWB's tagged `shci.h` header.
+# The two 802.15.4-specific notifications below are deliberately outside this
+# Bluetooth HCI crate. The checker rejects overlaps, unknown Cube releases,
+# and exclusions which no longer suppress a real difference.
+[[exclusions]]
+scope = "event"
+code = 0x9203
+firmware = "*"
+reason = "OpenThread NVM notification is outside this Bluetooth HCI crate"
+
+[[exclusions]]
+scope = "event"
+code = 0x9208
+firmware = "*"
+reason = "concurrent 802.15.4 notification is outside this Bluetooth HCI crate"

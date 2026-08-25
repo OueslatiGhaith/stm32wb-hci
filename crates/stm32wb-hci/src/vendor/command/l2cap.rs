@@ -1,0 +1,323 @@
+//! L2Cap-specific commands and types needed for those commands.
+
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
+use bt_hci::param::ConnHandle;
+
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
+use crate::types::ConnectionInterval;
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
+use crate::types::ExpectedConnectionLength;
+#[cfg(feature = "stack-full-extended")]
+use crate::vendor::command::BoundedItems;
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
+    /// Controller-assigned index identifying one LE credit-based channel.
+    ///
+    /// CubeWB does not publish a narrower numeric range; validity depends on
+    /// the channels currently owned by the controller.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocChannelIndex: u8 => 1;
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
+    /// L2CAP signaling identifier copied from the controller request event.
+    ///
+    /// The response command echoes an opaque controller-selected byte.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2SignalIdentifier: u8 => 1;
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Maximum transmission unit accepted by credit-based channel procedures.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMtu: u16 => 2 {
+        minimum: 23,
+        maximum: u16::MAX,
+    }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocMtu(error).into();
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Maximum payload size accepted by credit-based channel procedures.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMps: u16 => 2 {
+        minimum: 23,
+        maximum: 248,
+    }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocMps(error).into();
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Credit-based connection response result defined by the Bluetooth Core.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocConnectionResult: u16 => 2 {
+        minimum: 0,
+        maximum: 0x000F,
+    }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocConnectionResult(error).into();
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    open_scalar
+    /// Initial receive-credit allocation for one or more credit-based channels.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocInitialCredits: u16 => 2;
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command];
+    ranged
+    /// Maximum number of credit-based channels accepted in one response.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocMaximumChannelCount: u8 => 1 {
+        minimum: 1,
+        maximum: 5,
+    }
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Simplified Protocol/Service Multiplexer for a credit-based connection.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocSpsm: u16 => 2 {
+        minimum: 1,
+        maximum: 0x00FF,
+    }
+    EventError = |error| crate::vendor::event::VendorError::BadL2CocSpsm(error).into();
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Number of channels requested by a credit-based connection procedure.
+    ///
+    /// Zero requests one LE credit-based channel; one through five request
+    /// that many enhanced credit-based channels.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocRequestedChannelCount: u8 => 1 {
+        minimum: 0,
+        maximum: 5,
+    }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocRequestedChannelCount(error).into()
+    };
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Credit-based reconfiguration response result defined by the Bluetooth Core.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocReconfigurationResult: u16 => 2 {
+        minimum: 0,
+        maximum: 0x0004,
+    }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocReconfigurationResult(error).into()
+    };
+}
+
+stm32wb_hci_macros::wire_type! {
+    adapters: [command, event];
+    ranged
+    /// Nonzero credit increment sent by a flow-control procedure.
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct L2CocCreditIncrement: u16 => 2 {
+        minimum: 1,
+        maximum: u16::MAX,
+    }
+    EventError = |error| {
+        crate::vendor::event::VendorError::BadL2CocCreditIncrement(error).into()
+    };
+}
+
+#[cfg(any(
+    feature = "stack-full-extended",
+    feature = "stack-full",
+    feature = "stack-light",
+))]
+stm32wb_hci_macros::vendor_cmd! {
+    L2ConnectionParameterUpdateRequest(cgid = 0x3, cid = 0x01) {
+        Params = {
+            conn_handle: ConnHandle,
+            conn_interval: ConnectionInterval,
+        };
+        Completion = CommandStatus;
+    }
+}
+
+#[cfg(any(feature = "stack-full-extended", feature = "stack-full",))]
+stm32wb_hci_macros::vendor_cmd! {
+    L2ConnectionParameterUpdateResponse(cgid = 0x3, cid = 0x02) {
+        Params = {
+            conn_handle: ConnHandle,
+            conn_interval: ConnectionInterval,
+            expected_connection_length_range: ExpectedConnectionLength,
+            identifier: L2SignalIdentifier,
+            accepted: bool,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocConnect(cgid = 0x3, cid = 0x08) {
+        Params = {
+            conn_handle: ConnHandle,
+            spsm: L2CocSpsm,
+            mtu: L2CocMtu,
+            mps: L2CocMps,
+            // CubeWB documents the complete `u16` credit domain.
+            initial_credits: L2CocInitialCredits,
+            channel_number: L2CocRequestedChannelCount,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(before_fw_1_23_0)]
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
+        Params = {
+            conn_handle: ConnHandle,
+            mtu: L2CocMtu,
+            mps: L2CocMps,
+            // CubeWB documents the complete `u16` credit domain.
+            initial_credits: L2CocInitialCredits,
+            result: L2CocConnectionResult,
+        };
+        Completion = CommandComplete;
+        Return = L2CapCocConnectConfirmWire {
+            channel_indices: BoundedItems<L2CocChannelIndex, 5> => {
+                kind: counted_items,
+                count: u8,
+                item: L2CocChannelIndex,
+                max_items: 5,
+                storage_max_len: 251,
+            },
+        };
+    }
+}
+
+#[cfg(since_fw_1_23_0)]
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocConnectConfirm(cgid = 0x3, cid = 0x09) {
+        Params = {
+            conn_handle: ConnHandle,
+            mtu: L2CocMtu,
+            mps: L2CocMps,
+            // CubeWB documents the complete `u16` credit domain.
+            initial_credits: L2CocInitialCredits,
+            result: L2CocConnectionResult,
+            max_channel_number: L2CocMaximumChannelCount,
+        };
+        Completion = CommandComplete;
+        Return = L2CapCocConnectConfirmWire {
+            channel_indices: BoundedItems<L2CocChannelIndex, 5> => {
+                kind: counted_items,
+                count: u8,
+                item: L2CocChannelIndex,
+                max_items: 5,
+                storage_max_len: 251,
+            },
+        };
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocReconfig(cgid = 0x3, cid = 0x0A) {
+        Params<'a> = {
+            conn_handle: ConnHandle,
+            mtu: L2CocMtu,
+            mps: L2CocMps,
+            channel_indices: &'a [L2CocChannelIndex] => {
+                kind: counted_items,
+                count: u8,
+                item: L2CocChannelIndex,
+                min_items: 1,
+                max_items: 5,
+                storage_min_len: 1,
+                storage_max_len: 249,
+            },
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocReconfigConfirm(cgid = 0x3, cid = 0x0B) {
+        Params = {
+            conn_handle: ConnHandle,
+            result: L2CocReconfigurationResult,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocDisconnect(cgid = 0x3, cid = 0x0C) {
+        Params = {
+            channel_index: L2CocChannelIndex,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocFlowControl(cgid = 0x3, cid = 0x0D) {
+        Params = {
+            channel_index: L2CocChannelIndex,
+            credits: L2CocCreditIncrement,
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}
+
+#[cfg(feature = "stack-full-extended")]
+stm32wb_hci_macros::vendor_cmd! {
+    L2CocTxData(cgid = 0x3, cid = 0x0E) {
+        Params<'a> = {
+            channel_index: L2CocChannelIndex,
+            data: &'a [u8] => {
+                kind: counted_bytes,
+                count: u16,
+                max_len: 252,
+            },
+        };
+        Completion = CommandComplete;
+        Return = ();
+    }
+}

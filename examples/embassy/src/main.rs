@@ -4,6 +4,13 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
+use bt_hci::{
+    ControllerToHostPacket,
+    cmd::{SyncCmd, controller_baseband::Reset},
+    controller::Controller as _,
+    event::EventKind,
+    param::BdAddr,
+};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -12,10 +19,13 @@ use embassy_stm32::{
     ipcc::{Config as IpccConfig, ReceiveInterruptHandler, TransmitInterruptHandler},
     rcc::WPAN_DEFAULT,
 };
-use stm32wb_hci::{
-    BdAddr,
-    host::{HostHci, uart::UartHci},
-    vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
+use stm32wb_hci::vendor::{
+    command::{
+        gap::{CmdGapInit, PrivacyMode, Role},
+        gatt::GattInit,
+        hal::{ConfigWriteOffset, HalWriteConfigData},
+    },
+    event::VendorEvent,
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -82,41 +92,60 @@ async fn main(spawner: Spawner) {
 
     join(
         async {
+            let mut packet_buffer = match ble.alloc_buf() {
+                Ok(buffer) => buffer,
+                Err(_) => {
+                    error!("failed to allocate HCI packet buffer");
+                    return;
+                }
+            };
             loop {
-                let pkt = ble.read_packet().await;
-
-                defmt::info!("pkt: {}", pkt);
+                match ble.read(&mut packet_buffer).await {
+                    Ok(ControllerToHostPacket::Event(event)) if event.kind == EventKind::Vendor => {
+                        match VendorEvent::new(event.data) {
+                            Ok(event) => defmt::info!("vendor event: {}", event),
+                            Err(error) => defmt::error!("invalid vendor event: {}", error),
+                        }
+                    }
+                    Ok(packet) => defmt::info!("packet: {}", packet),
+                    Err(_) => defmt::error!("failed to read HCI packet"),
+                }
             }
         },
         async {
             defmt::info!("hci: reset");
-            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
-            let response = ble.reset().await;
+            // Standard commands come from bt-hci; STM32WB commands come from stm32wb-hci.
+            let response = Reset::new().exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: write config data");
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let response = ble
-                .write_config_data(
-                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
-                        .build(),
-                )
-                .await;
+            let command = match HalWriteConfigData::try_new(
+                ConfigWriteOffset::PublicAddress,
+                &public_address.0,
+            ) {
+                Ok(command) => command,
+                Err(error) => {
+                    defmt::error!("invalid config command: {}", error);
+                    return;
+                }
+            };
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gatt");
-            let response = ble.init_gatt().await;
+            let response = GattInit::new().exec(&ble).await;
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gap");
-            let response = ble
-                .init_gap(
-                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-                    false,
-                    8,
-                )
-                .await;
+            let command = match CmdGapInit::try_new(Role::PERIPHERAL, PrivacyMode::Disabled, 8) {
+                Ok(command) => command,
+                Err(error) => {
+                    defmt::error!("invalid GAP init command: {}", error);
+                    return;
+                }
+            };
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             info!("BLE HCI ready");

@@ -1,0 +1,56 @@
+[package]
+name = "stm32wb-hci"
+build = "build.rs"
+edition = "2024"
+version = "0.19.0"
+authors = [
+    "Daniel Gallagher <pdanielgallagher@gmail.com>",
+    "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
+]
+categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
+description = "Implementation of the Bluetooth HCI for the STM32WB family"
+keywords = ["ble", "bluetooth", "stm32"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+readme = "../../README.md"
+exclude = ["tests"]
+
+[dependencies]
+bitflags = "2"
+bt-hci.workspace = true
+bt-hci-transport.workspace = true
+defmt = { workspace = true, optional = true }
+embedded-io.workspace = true
+embedded-io-async = "0.7.0"
+stm32wb-hci-macros = { version = "0.1.0", path = "../stm32wb-hci-macros" }
+
+[build-dependencies]
+stm32wb-hci-schema.workspace = true
+
+[dev-dependencies]
+pollster = "0.4"
+
+[features]
+default = ["fw_1_24_0", "stack-full-extended"]
+defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
+stack-full-extended = []
+stack-full = []
+stack-light = []
+stack-hci-layer-extended = []
+stack-hci-layer = []
+stack-hci-adv-scan = []
+fw_1_15_0 = []
+fw_1_16_0 = []
+fw_1_17_0 = []
+fw_1_17_1 = []
+fw_1_17_2 = []
+fw_1_17_3 = []
+fw_1_18_0 = []
+fw_1_19_0 = []
+fw_1_19_1 = []
+fw_1_20_0 = []
+fw_1_21_0 = []
+fw_1_22_0 = []
+fw_1_22_1 = []
+fw_1_23_0 = []
+fw_1_24_0 = []

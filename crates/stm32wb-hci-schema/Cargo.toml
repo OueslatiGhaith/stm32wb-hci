@@ -1,0 +1,13 @@
+[package]
+name = "stm32wb-hci-schema"
+version = "0.1.0"
+edition = "2024"
+description = "Shared parser for stm32wb-hci declarative protocol schemas"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+
+[dependencies]
+proc-macro2.workspace = true
+quote = "1"
+syn = { workspace = true, features = ["full", "parsing", "visit"] }
+toml.workspace = true
