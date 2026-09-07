@@ -114,9 +114,9 @@ method may be used so that packet reads remain active while commands execute.
     };
     use stm32wb_hci::vendor::{
         command::{
-            gap::{CmdGapInit, Role},
+            gap::{CmdGapInit, PrivacyMode, Role},
             gatt::GattInit,
-            hal::HalWriteConfigData,
+            hal::{ConfigWriteOffset, HalWriteConfigData},
         },
         event::VendorEvent,
     };
@@ -145,17 +145,20 @@ method may be used so that packet reads remain active while commands execute.
             defmt::info!("{}", response);
 
             let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let command = HalWriteConfigData::try_new(0, &public_address.0)
-                .expect("a public address fits the command payload");
+            let command = HalWriteConfigData::try_new(
+                ConfigWriteOffset::PublicAddress,
+                &public_address.0,
+            )
+            .expect("a public address fits the command payload");
             let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             let response = GattInit::new().exec(&ble).await;
             defmt::info!("{}", response);
 
-            let response = CmdGapInit::new(Role::PERIPHERAL, false, 8)
-                .exec(&ble)
-                .await;
+            let command = CmdGapInit::try_new(Role::PERIPHERAL, PrivacyMode::Disabled, 8)
+                .expect("valid GAP initialization parameters");
+            let response = command.exec(&ble).await;
             defmt::info!("{}", response);
 
             info!("BLE HCI ready");
