@@ -100,6 +100,8 @@ opcodes! {
         pub const LE_RECEIVER_TEST = 0x001D;
         pub const LE_TRANSMITTER_TEST = 0x001E;
         pub const LE_TEST_END = 0x001F;
+        pub const LE_REMOTE_CONN_PARAM_REQ_REPLY = 0x0020;
+        pub const LE_REMOTE_CONN_PARAM_REQ_NEGATIVE_REPLY = 0x0021;
         pub const LE_ADD_DEVICE_TO_RESOLVING_LIST = 0x0027;
         pub const LE_REMOVE_DEVICE_FROM_RESOLVING_LIST = 0x0028;
         pub const LE_CLEAR_RESOLVING_LIST = 0x0029;

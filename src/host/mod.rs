@@ -33,6 +33,7 @@ use bt_hci::cmd::le::{
     LeClearResolvingList, LeConnUpdate, LeCreateConn, LeCreateConnCancel, LeEnableEncryption,
     LeEncrypt, LeLongTermKeyRequestNegativeReply,
     LeLongTermKeyRequestReply as CmdLeLongTermKeyRequestReply, LeRand,
+    LeRemoteConnectionParameterRequestNegativeReply, LeRemoteConnectionParameterRequestReply,
     LeReadAdvPhysicalChannelTxPower, LeReadBufferSize as CmdLeReadBufferSize, LeReadChannelMap,
     LeReadFilterAcceptListSize, LeReadLocalSupportedFeatures as CmdLeReadLocalSupportedFeatures,
     LeReadRemoteFeatures, LeReadResolvingListSize,
@@ -49,7 +50,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvFilterPolicy, ConnHandleCompletedPackets,
     ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind, PrivacyMode,
-    ScanningFilterPolicy,
+    RemoteConnectionParamsRejectReason, ScanningFilterPolicy,
 };
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
@@ -909,6 +910,36 @@ pub trait HostHci {
     /// command has been completed.
     async fn le_connection_update(&self, params: &ConnectionUpdateParameters) -> Result<(), Error>;
 
+    /// Replies to an [LE Remote Connection Parameter Request](crate::event::Event::LeRemoteConnectionParameterRequest)
+    /// event, accepting the remote device's request.
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.31.
+    ///
+    /// # Generated events
+    ///
+    /// A [Command Complete](crate::event::command::ReturnParameters::LeRemoteConnectionParameterRequestReply)
+    /// event is generated. The [LE Connection Update Complete](crate::event::Event::LeConnectionUpdateComplete)
+    /// event is generated once the new parameters have been applied.
+    async fn le_remote_connection_parameter_request_reply(
+        &self,
+        params: &ConnectionUpdateParameters,
+    ) -> Result<(), Error>;
+
+    /// Replies to an [LE Remote Connection Parameter Request](crate::event::Event::LeRemoteConnectionParameterRequest)
+    /// event, rejecting the remote device's request.
+    ///
+    /// See the Bluetooth spec, Vol 2, Part E, Section 7.8.32.
+    ///
+    /// # Generated events
+    ///
+    /// A [Command Complete](crate::event::command::ReturnParameters::LeRemoteConnectionParameterRequestNegativeReply)
+    /// event is generated.
+    async fn le_remote_connection_parameter_request_negative_reply(
+        &self,
+        conn_handle: ConnectionHandle,
+        reason: Status,
+    ) -> Result<(), Error>;
+
     /// This command allows the Host to specify a channel classification for data channels based on
     /// its "local information". This classification persists until overwritten with a subsequent
     /// `le_set_host_channel_classification` command or until the Controller is reset using the
@@ -1365,6 +1396,8 @@ where
         + ControllerCmdSync<LeSetRandomAddr>
         + ControllerCmdSync<CmdHostBufferSize>
         + ControllerCmdAsync<LeConnUpdate>
+        + ControllerCmdAsync<LeRemoteConnectionParameterRequestReply>
+        + ControllerCmdAsync<LeRemoteConnectionParameterRequestNegativeReply>
         + ControllerCmdSync<LeReadFilterAcceptListSize>
         + ControllerCmdSync<SetControllerToHostFlowControl>
         + ControllerCmdSync<Reset>
@@ -1753,6 +1786,39 @@ where
             params.conn_interval.supervision_timeout().into(),
             params.expected_connection_length.range.0.into(),
             params.expected_connection_length.range.1.into(),
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
+    }
+
+    async fn le_remote_connection_parameter_request_reply(
+        &self,
+        params: &ConnectionUpdateParameters,
+    ) -> Result<(), Error> {
+        LeRemoteConnectionParameterRequestReply::new(
+            params.conn_handle.into(),
+            params.conn_interval.interval().0.into(),
+            params.conn_interval.interval().1.into(),
+            params.conn_interval.conn_latency(),
+            params.conn_interval.supervision_timeout().into(),
+            params.expected_connection_length.range.0.into(),
+            params.expected_connection_length.range.1.into(),
+        )
+        .exec(self)
+        .await
+        .map_err(|e| e.into())
+    }
+
+    async fn le_remote_connection_parameter_request_negative_reply(
+        &self,
+        conn_handle: ConnectionHandle,
+        reason: Status,
+    ) -> Result<(), Error> {
+        let _ = reason;
+        LeRemoteConnectionParameterRequestNegativeReply::new(
+            conn_handle.into(),
+            RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
         )
         .exec(self)
         .await

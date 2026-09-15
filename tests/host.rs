@@ -526,6 +526,49 @@ async fn le_connection_update() {
 }
 
 #[tokio::test]
+async fn le_remote_connection_parameter_request_reply() {
+    let sink = RecordingSink::new();
+    let _ = sink
+        .le_remote_connection_parameter_request_reply(&ConnectionUpdateParameters {
+            conn_handle: hci::ConnectionHandle(0x0201),
+            conn_interval: ConnectionIntervalBuilder::new()
+                .with_range(Duration::from_millis(50), Duration::from_millis(500))
+                .with_latency(10)
+                .with_supervision_timeout(Duration::from_secs(15))
+                .build()
+                .unwrap(),
+            expected_connection_length: ExpectedConnectionLength::new(
+                Duration::from_millis(200),
+                Duration::from_millis(500),
+            )
+            .unwrap(),
+        })
+        .await;
+    assert_eq!(
+        sink.written_data(),
+        vec![
+            1, 0x20, 0x20, 14, 0x01, 0x02, 0x28, 0x00, 0x90, 0x01, 0x0A, 0x00, 0xDC, 0x05, 0x40,
+            0x01, 0x20, 0x03,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn le_remote_connection_parameter_request_negative_reply() {
+    let sink = RecordingSink::new();
+    let _ = sink
+        .le_remote_connection_parameter_request_negative_reply(
+            hci::ConnectionHandle(0x0201),
+            hci::Status::UnacceptableConnectionParameters,
+        )
+        .await;
+    assert_eq!(
+        sink.written_data(),
+        vec![1, 0x21, 0x20, 3, 0x01, 0x02, 0x3B]
+    );
+}
+
+#[tokio::test]
 async fn le_set_host_channel_classification() {
     let sink = RecordingSink::new();
     sink.le_set_host_channel_classification(

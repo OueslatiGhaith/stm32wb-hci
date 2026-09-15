@@ -95,6 +95,9 @@ pub enum Event {
     /// Vol 2, Part E, Section 7.7.65.5
     LeLongTermKeyRequest(LeLongTermKeyRequest),
 
+    /// Vol 2, Part E, Section 7.7.65.6
+    LeRemoteConnectionParameterRequest(LeRemoteConnectionParameterRequest),
+
     /// Vol 2, Part E, Section 7.7.65.7
     LeDataLengthChangeEvent(LeDataLengthChangeEvent),
 
@@ -328,6 +331,9 @@ fn to_le_meta_event(payload: &[u8]) -> Result<Event, Error> {
             to_le_read_remote_used_features_complete(payload)?,
         )),
         0x05 => Ok(Event::LeLongTermKeyRequest(to_le_ltk_request(payload)?)),
+        0x06 => Ok(Event::LeRemoteConnectionParameterRequest(
+            to_le_remote_connection_parameter_request(payload)?,
+        )),
         0x07 => Ok(Event::LeDataLengthChangeEvent(
             to_le_data_length_change_event(payload)?,
         )),
@@ -1226,6 +1232,36 @@ fn to_le_ltk_request(payload: &[u8]) -> Result<LeLongTermKeyRequest, Error> {
         conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[1..])),
         random_value: LittleEndian::read_u64(&payload[3..]),
         encrypted_diversifier: LittleEndian::read_u16(&payload[11..]),
+    })
+}
+
+/// The [LE Remote Connection Parameter Request](Event::LeRemoteConnectionParameterRequest) event
+/// indicates that the remote device is requesting a change to the connection parameters.
+///
+/// When this event is unmasked, the Host must reply with
+/// [`le_remote_connection_parameter_request_reply`](crate::host::HostHci::le_remote_connection_parameter_request_reply)
+/// or
+/// [`le_remote_connection_parameter_request_negative_reply`](crate::host::HostHci::le_remote_connection_parameter_request_negative_reply).
+///
+/// Defined in Vol 2, Part E, Section 7.7.65.6 of the spec.
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LeRemoteConnectionParameterRequest {
+    /// Connection handle to be used to identify a connection between two Bluetooth devices.
+    pub conn_handle: ConnectionHandle,
+    /// Connection interval, latency, and supervision timeout requested by the remote device.
+    pub conn_interval: crate::types::ConnectionInterval,
+}
+
+fn to_le_remote_connection_parameter_request(
+    payload: &[u8],
+) -> Result<LeRemoteConnectionParameterRequest, Error> {
+    require_len!(payload, 11);
+
+    Ok(LeRemoteConnectionParameterRequest {
+        conn_handle: ConnectionHandle(LittleEndian::read_u16(&payload[1..])),
+        conn_interval: crate::types::ConnectionInterval::from_bytes(&payload[3..11])
+            .map_err(Error::BadConnectionInterval)?,
     })
 }
 

@@ -500,6 +500,30 @@ fn le_read_remote_used_features_complete_failed_bad_flag() {
 }
 
 #[test]
+fn le_remote_connection_parameter_request() {
+    // LE Meta (0x3E), length 11, subevent 0x06. Handle 0x0000, interval 7.5 ms,
+    // latency 0, supervision timeout 5 s — the packet Android sent after connect.
+    let buffer = [
+        0x3E, 11, 0x06, 0x00, 0x00, 0x06, 0x00, 0x06, 0x00, 0x00, 0x00, 0xF4, 0x01,
+    ];
+    match TestEvent::new(Packet(&buffer)) {
+        Ok(Event::LeRemoteConnectionParameterRequest(event)) => {
+            assert_eq!(event.conn_handle, hci::ConnectionHandle(0x0000));
+            assert_eq!(
+                event.conn_interval.interval(),
+                (Duration::from_micros(6 * 1_250), Duration::from_micros(6 * 1_250))
+            );
+            assert_eq!(event.conn_interval.conn_latency(), 0);
+            assert_eq!(
+                event.conn_interval.supervision_timeout(),
+                Duration::from_millis(10 * 0x01F4)
+            );
+        }
+        other => panic!("Did not get LE Remote Connection Parameter Request: {:?}", other),
+    }
+}
+
+#[test]
 fn le_long_term_key_request() {
     let buffer = [
         0x3E, 13, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
