@@ -23,6 +23,7 @@ pub mod layout;
 mod merge;
 mod release;
 mod target;
+mod view;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -34,6 +35,7 @@ pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, U
 pub use merge::{Snapshot, SnapshotBinary, SnapshotCommand, SnapshotEvent, merge_snapshots};
 pub use release::{ReleaseRange, Version};
 pub use target::{Family, Profile};
+pub use view::{ActiveCommand, ActiveEvent, Provenance, ResolvedLayout, Target, TargetView};
 
 /// The platform a catalog describes.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

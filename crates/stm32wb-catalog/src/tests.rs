@@ -425,3 +425,96 @@ fn annotations_are_audited() {
     )
     .unwrap();
 }
+
+fn target(release: &str, profile: Profile) -> Target {
+    Target {
+        release: release.parse().unwrap(),
+        profile,
+    }
+}
+
+#[test]
+fn target_view_filters_by_profile_and_release() {
+    let catalog = sample();
+    let annotations = Annotations::default();
+    let view = |release: &str, profile| {
+        TargetView::new(&catalog, &annotations, target(release, profile))
+            .unwrap()
+            .commands()
+            .count()
+    };
+    assert_eq!(view("1.16.0", Profile::Full), 1);
+    assert_eq!(view("1.17.0", Profile::Full), 0);
+    assert_eq!(view("1.17.0", Profile::FullExtended), 1);
+    assert!(TargetView::new(&catalog, &annotations, target("1.30.0", Profile::Full)).is_err());
+
+    let view = TargetView::new(
+        &catalog,
+        &annotations,
+        target("1.18.0", Profile::FullExtended),
+    )
+    .unwrap();
+    assert_eq!(view.families(), [Family::Wb5x]);
+    let command = view.commands().next().unwrap();
+    assert_eq!(command.name, "aci_gap_set_discoverable");
+    assert!(matches!(command.params.provenance, Provenance::Extracted));
+    assert_eq!(command.params.fields.unwrap().len(), 1);
+    assert!(command.excluded.is_none());
+    let event = view.events().next().unwrap();
+    assert_eq!(
+        event.payload.fields,
+        Err("field sysevt_ready_rsp is an enum")
+    );
+    let view = TargetView::new(&catalog, &annotations, target("1.18.0", Profile::Full)).unwrap();
+    assert!(view.families().is_empty());
+}
+
+#[test]
+fn target_view_applies_annotations() {
+    let catalog = sample();
+    let annotations = Annotations::from_toml(
+        r#"
+        [[annotations]]
+        event = "SHCI_SUB_EVT_CODE_READY"
+        source = "AN5289 section 4.8.1"
+        reason = "the enum is transmitted as one byte"
+        payload = ["sysevt_ready_rsp: u8"]
+
+        [[annotations]]
+        command = "aci_gap_set_discoverable"
+        releases = "1.18.0"
+        source = "x"
+        reason = "y"
+        exclude = true
+    "#,
+    )
+    .unwrap();
+    let view = |release| {
+        TargetView::new(
+            &catalog,
+            &annotations,
+            target(release, Profile::FullExtended),
+        )
+        .unwrap()
+    };
+
+    let event = view("1.15.0").events().next().unwrap();
+    assert!(matches!(event.payload.provenance, Provenance::Annotated(_)));
+    assert_eq!(event.payload.fields.unwrap().len(), 1);
+
+    // Excluded entries stay visible so completeness checks can report why.
+    assert!(view("1.17.0").commands().next().unwrap().excluded.is_none());
+    assert!(view("1.18.0").commands().next().unwrap().excluded.is_some());
+
+    let unaudited = Annotations::from_toml(
+        r#"
+        [[annotations]]
+        command = "aci_missing"
+        source = "x"
+        reason = "y"
+        exclude = true
+    "#,
+    )
+    .unwrap();
+    assert!(TargetView::new(&catalog, &unaudited, target("1.15.0", Profile::Full)).is_err());
+}
