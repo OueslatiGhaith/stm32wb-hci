@@ -32,3 +32,32 @@ jobs:
         with:
           target: thumbv7em-none-eabi
       - run: cargo check -p stm32wb55-embassy --target thumbv7em-none-eabi
+
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev
+      - run: cargo test -p stm32wb-catalog -p stm32wb-catalog-extract
+      - name: Audit the catalog annotations
+        run: cargo run -p stm32wb-catalog-extract -- audit
+
+  catalog-reproducible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install --yes libclang-dev
+      - name: Fetch STM32CubeWB tags without a worktree
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/STMicroelectronics/STM32CubeWB.git STM32CubeWB
+          git -C STM32CubeWB fetch --tags --filter=blob:none
+      - name: Re-extract the catalog from the tagged sources
+        run: cargo run -p stm32wb-catalog-extract -- check
