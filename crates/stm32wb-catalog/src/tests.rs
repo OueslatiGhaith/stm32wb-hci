@@ -534,3 +534,141 @@ fn bundled_catalog_is_valid_and_audited() {
     assert!(!annotations.annotations.is_empty());
     assert!(std::ptr::eq(catalog, &bundled().unwrap().catalog));
 }
+
+fn ranges<T>(segments: &[Segment<'_, T>]) -> Vec<String> {
+    segments
+        .iter()
+        .map(|segment| segment.releases.to_string())
+        .collect()
+}
+
+#[test]
+fn segments_split_where_any_fact_changes() {
+    let bundled = Bundled::new(sample(), Annotations::default()).unwrap();
+    let segments = bundled
+        .command_segments("aci_gap_set_discoverable")
+        .unwrap();
+    // Availability changes in 1.17.0, the definition in 1.18.0.
+    assert_eq!(ranges(&segments), ["1.15.0..=1.16.0", "1.17.0", "1.18.0"]);
+    assert_eq!(segments[0].profiles, [Profile::FullExtended, Profile::Full]);
+    assert_eq!(segments[1].profiles, [Profile::FullExtended]);
+    assert!(
+        segments
+            .iter()
+            .all(|segment| segment.entry.excluded.is_none())
+    );
+
+    let annotations = Annotations::from_toml(
+        r#"
+        [[annotations]]
+        command = "aci_gap_set_discoverable"
+        releases = "1.16.0"
+        source = "x"
+        reason = "y"
+        exclude = true
+
+        [[annotations]]
+        event = "SHCI_SUB_EVT_CODE_READY"
+        source = "x"
+        reason = "y"
+        payload = ["sysevt_ready_rsp: u8"]
+    "#,
+    )
+    .unwrap();
+    let bundled = Bundled::new(sample(), annotations).unwrap();
+    let segments = bundled
+        .command_segments("aci_gap_set_discoverable")
+        .unwrap();
+    assert_eq!(ranges(&segments), ["1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
+    assert!(segments[1].entry.excluded.is_some());
+
+    let segments = bundled.event_segments("SHCI_SUB_EVT_CODE_READY").unwrap();
+    assert_eq!(ranges(&segments), ["1.15.0..=1.18.0"]);
+    assert!(matches!(
+        segments[0].entry.payload.provenance,
+        Provenance::Annotated(_)
+    ));
+
+    assert!(bundled.command_segments("aci_missing").is_err());
+    assert!(bundled.event_segments("aci_gap_set_discoverable").is_err());
+}
+
+fn with_opcode(opcode: u16, name: &str) -> SnapshotCommand {
+    SnapshotCommand {
+        opcode,
+        name: name.into(),
+        ..set_discoverable(&[Profile::FullExtended], fields(&["Mode: u8"]))
+    }
+}
+
+fn history(snapshots: Vec<Snapshot>) -> Bundled {
+    let catalog = merge_snapshots(Platform::Stm32wb, snapshots).unwrap();
+    Bundled::new(catalog, Annotations::default()).unwrap()
+}
+
+#[test]
+fn segments_follow_names_across_gaps_renames_and_moves() {
+    let bundled = history(vec![
+        snapshot("1.15.0", vec![with_opcode(0xFC83, "aci_old")]),
+        snapshot("1.16.0", vec![]),
+        snapshot("1.17.0", vec![with_opcode(0xFC83, "aci_new")]),
+        snapshot("1.18.0", vec![with_opcode(0xFC84, "aci_new")]),
+    ]);
+    let segments = bundled.command_segments("aci_new").unwrap();
+    assert_eq!(ranges(&segments), ["1.15.0", "1.17.0", "1.18.0"]);
+    let identity = segments
+        .iter()
+        .map(|segment| (segment.entry.command.opcode, segment.entry.name))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        identity,
+        [
+            (0xFC83, "aci_old"),
+            (0xFC83, "aci_new"),
+            (0xFC84, "aci_new")
+        ]
+    );
+    // The renamed command's history is the same whichever name finds it.
+    assert_eq!(
+        ranges(&bundled.command_segments("aci_old").unwrap()),
+        ["1.15.0", "1.17.0"]
+    );
+
+    let unchanged = history(vec![
+        snapshot("1.15.0", vec![with_opcode(0xFC83, "aci_same")]),
+        snapshot("1.16.0", vec![]),
+        snapshot("1.17.0", vec![with_opcode(0xFC83, "aci_same")]),
+    ]);
+    assert_eq!(
+        ranges(&unchanged.command_segments("aci_same").unwrap()),
+        ["1.15.0", "1.17.0"]
+    );
+
+    let ambiguous = history(vec![snapshot(
+        "1.15.0",
+        vec![
+            with_opcode(0xFC83, "aci_twice"),
+            with_opcode(0xFC84, "aci_twice"),
+        ],
+    )]);
+    let error = ambiguous.command_segments("aci_twice").unwrap_err();
+    assert!(error.message().contains("2 entries in 1.15.0"), "{error}");
+}
+
+#[test]
+fn bundled_segments_cover_moved_codes() {
+    let bundled = bundled().unwrap();
+    let segments = bundled
+        .event_segments("aci_hal_end_of_radio_activity_event")
+        .unwrap();
+    let first = segments.first().unwrap();
+    let last = segments.last().unwrap();
+    assert_eq!(first.releases.first, Version::new(1, 15, 0));
+    assert_eq!(last.releases.last, Version::new(1, 24, 0));
+    assert_ne!(first.entry.event.code, last.entry.event.code);
+
+    let segments = bundled
+        .command_segments("aci_gap_peripheral_security_req")
+        .unwrap();
+    assert_eq!(segments[0].entry.name, "aci_gap_slave_security_req");
+}

@@ -19,6 +19,17 @@ pub struct Bundled {
     pub annotations: Annotations,
 }
 
+impl Bundled {
+    /// Pair a catalog with annotations after auditing them against it.
+    pub fn new(catalog: Catalog, annotations: Annotations) -> Result<Self, Error> {
+        annotations.audit(&catalog)?;
+        Ok(Self {
+            catalog,
+            annotations,
+        })
+    }
+}
+
 /// Parse, validate, and audit the bundled files once per process.
 pub fn bundled() -> Result<&'static Bundled, Error> {
     static BUNDLED: OnceLock<Result<Bundled, Error>> = OnceLock::new();
@@ -28,11 +39,7 @@ pub fn bundled() -> Result<&'static Bundled, Error> {
                 .map_err(|error| error.context("bundled stm32wb.toml"))?;
             let annotations = Annotations::from_toml(ANNOTATIONS)
                 .map_err(|error| error.context("bundled annotations.toml"))?;
-            annotations.audit(&catalog)?;
-            Ok(Bundled {
-                catalog,
-                annotations,
-            })
+            Bundled::new(catalog, annotations)
         })
         .as_ref()
         .map_err(Clone::clone)

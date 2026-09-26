@@ -35,6 +35,7 @@ pub struct ResolvedLayout<'a> {
     pub provenance: Provenance<'a>,
 }
 
+#[derive(Debug)]
 pub struct ActiveCommand<'a> {
     pub command: &'a Command,
     pub name: &'a str,
@@ -45,6 +46,7 @@ pub struct ActiveCommand<'a> {
     pub excluded: Option<&'a Annotation>,
 }
 
+#[derive(Debug)]
 pub struct ActiveEvent<'a> {
     pub event: &'a Event,
     pub name: &'a str,
@@ -98,33 +100,9 @@ impl<'a> TargetView<'a> {
     pub fn commands(&self) -> impl Iterator<Item = ActiveCommand<'a>> + '_ {
         let release = self.target.release;
         self.catalog.commands.iter().filter_map(move |command| {
-            let definition = command.definition_at(release)?;
             profiles_at(&command.availability, release)?
                 .contains(&self.target.profile)
-                .then_some(())?;
-            let name = name_at(&command.names, release);
-            Some(ActiveCommand {
-                command,
-                name,
-                definition,
-                params: self.resolve(
-                    name,
-                    true,
-                    LayoutSlot::Params,
-                    &definition.params,
-                    &definition.structs,
-                ),
-                returns: definition.returns.as_ref().map(|returns| {
-                    self.resolve(
-                        name,
-                        true,
-                        LayoutSlot::Returns,
-                        returns,
-                        &definition.structs,
-                    )
-                }),
-                excluded: self.annotations.exclusion(name, true, release),
-            })
+                .then(|| active_command(self.annotations, command, release))?
         })
     }
 
@@ -132,53 +110,93 @@ impl<'a> TargetView<'a> {
     pub fn events(&self) -> impl Iterator<Item = ActiveEvent<'a>> + '_ {
         let release = self.target.release;
         self.catalog.events.iter().filter_map(move |event| {
-            let definition = event.definition_at(release)?;
             profiles_at(&event.availability, release)?
                 .contains(&self.target.profile)
-                .then_some(())?;
-            let name = name_at(&event.names, release);
-            Some(ActiveEvent {
-                event,
-                name,
-                definition,
-                payload: self.resolve(
-                    name,
-                    false,
-                    LayoutSlot::Payload,
-                    &definition.payload,
-                    &definition.structs,
-                ),
-                excluded: self.annotations.exclusion(name, false, release),
-            })
+                .then(|| active_event(self.annotations, event, release))?
         })
     }
+}
 
-    fn resolve(
-        &self,
-        name: &str,
-        is_command: bool,
-        slot: LayoutSlot,
-        extracted: &'a Layout,
-        structs: &'a Structs,
-    ) -> ResolvedLayout<'a> {
-        if let Some((annotation, fields)) =
-            self.annotations
-                .layout(name, is_command, slot, self.target.release)
-        {
-            return ResolvedLayout {
-                fields: Ok(fields),
-                structs: &annotation.structs,
-                provenance: Provenance::Annotated(annotation),
-            };
-        }
-        ResolvedLayout {
-            fields: match extracted {
-                Layout::Fields(fields) => Ok(fields),
-                Layout::Unresolved(reason) => Err(reason),
-            },
-            structs,
-            provenance: Provenance::Extracted,
-        }
+/// A command as defined in one release, with every layer resolved.
+pub(crate) fn active_command<'a>(
+    annotations: &'a Annotations,
+    command: &'a Command,
+    release: Version,
+) -> Option<ActiveCommand<'a>> {
+    let definition = command.definition_at(release)?;
+    let name = name_at(&command.names, release);
+    let resolve = |slot, extracted| {
+        resolve(
+            annotations,
+            name,
+            true,
+            slot,
+            release,
+            extracted,
+            &definition.structs,
+        )
+    };
+    Some(ActiveCommand {
+        command,
+        name,
+        definition,
+        params: resolve(LayoutSlot::Params, &definition.params),
+        returns: definition
+            .returns
+            .as_ref()
+            .map(|returns| resolve(LayoutSlot::Returns, returns)),
+        excluded: annotations.exclusion(name, true, release),
+    })
+}
+
+/// An event as defined in one release, with every layer resolved.
+pub(crate) fn active_event<'a>(
+    annotations: &'a Annotations,
+    event: &'a Event,
+    release: Version,
+) -> Option<ActiveEvent<'a>> {
+    let definition = event.definition_at(release)?;
+    let name = name_at(&event.names, release);
+    Some(ActiveEvent {
+        event,
+        name,
+        definition,
+        payload: resolve(
+            annotations,
+            name,
+            false,
+            LayoutSlot::Payload,
+            release,
+            &definition.payload,
+            &definition.structs,
+        ),
+        excluded: annotations.exclusion(name, false, release),
+    })
+}
+
+fn resolve<'a>(
+    annotations: &'a Annotations,
+    name: &str,
+    is_command: bool,
+    slot: LayoutSlot,
+    release: Version,
+    extracted: &'a Layout,
+    structs: &'a Structs,
+) -> ResolvedLayout<'a> {
+    if let Some((annotation, fields)) = annotations.layout(name, is_command, slot, release) {
+        return ResolvedLayout {
+            fields: Ok(fields),
+            structs: &annotation.structs,
+            provenance: Provenance::Annotated(annotation),
+        };
+    }
+    ResolvedLayout {
+        fields: match extracted {
+            Layout::Fields(fields) => Ok(fields),
+            Layout::Unresolved(reason) => Err(reason),
+        },
+        structs,
+        provenance: Provenance::Extracted,
     }
 }
 

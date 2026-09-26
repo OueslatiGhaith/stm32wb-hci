@@ -21,6 +21,7 @@ pub mod annotations;
 mod bundled;
 mod error;
 mod hex;
+mod history;
 pub mod layout;
 mod merge;
 mod release;
@@ -34,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 pub use bundled::{Bundled, bundled};
 pub use error::{Error, ErrorKind};
+pub use history::{CommandSegment, EventSegment, Segment};
 pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
 pub use merge::{Snapshot, SnapshotBinary, SnapshotCommand, SnapshotEvent, merge_snapshots};
 pub use release::{ReleaseRange, Version};
