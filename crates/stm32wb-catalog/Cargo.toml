@@ -8,3 +8,4 @@ repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+toml = "1"
