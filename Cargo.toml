@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["examples/*"]
+members = ["crates/*", "examples/*"]
+# Host-only catalog tooling must not join ordinary builds of the no_std library.
+default-members = ["."]
 
 [package]
 name = "stm32wb-hci"

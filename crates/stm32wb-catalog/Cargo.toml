@@ -1,0 +1,10 @@
+[package]
+name = "stm32wb-catalog"
+version = "0.1.0"
+edition = "2024"
+description = "Normalized STM32WB wireless-interface catalog shared by stm32wb-hci tooling"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
