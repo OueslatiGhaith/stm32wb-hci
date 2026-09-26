@@ -518,3 +518,19 @@ fn target_view_applies_annotations() {
     .unwrap();
     assert!(TargetView::new(&catalog, &unaudited, target("1.15.0", Profile::Full)).is_err());
 }
+
+#[test]
+fn bundled_catalog_is_valid_and_audited() {
+    let Bundled {
+        catalog,
+        annotations,
+    } = bundled().unwrap();
+    assert_eq!(catalog.platform, Platform::Stm32wb);
+    assert_eq!(
+        catalog.releases.first().unwrap().version,
+        Version::new(1, 15, 0)
+    );
+    assert!(catalog.command_named("aci_gap_set_discoverable").is_some());
+    assert!(!annotations.annotations.is_empty());
+    assert!(std::ptr::eq(catalog, &bundled().unwrap().catalog));
+}

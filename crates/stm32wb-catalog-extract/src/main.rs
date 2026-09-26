@@ -77,16 +77,21 @@ impl Paths {
             .unwrap_or_else(|| Self::workspace().join("STM32CubeWB"))
     }
 
+    /// Where `stm32wb-catalog` bundles the files this tool maintains.
+    fn bundled() -> PathBuf {
+        Self::workspace().join("crates/stm32wb-catalog/catalog")
+    }
+
     fn catalog(&self) -> PathBuf {
         self.catalog
             .clone()
-            .unwrap_or_else(|| Self::workspace().join("catalog/stm32wb.toml"))
+            .unwrap_or_else(|| Self::bundled().join("stm32wb.toml"))
     }
 
     fn annotations(&self) -> PathBuf {
         self.annotations
             .clone()
-            .unwrap_or_else(|| Self::workspace().join("catalog/annotations.toml"))
+            .unwrap_or_else(|| Self::bundled().join("annotations.toml"))
     }
 }
 

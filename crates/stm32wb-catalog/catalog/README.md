@@ -2,7 +2,8 @@
 
 `stm32wb.toml` describes, for every supported STM32CubeWB release, what the
 CPU2 wireless binaries accept and emit. It is the single source of protocol
-facts for this repository.
+facts for this repository. Both files are embedded in the `stm32wb-catalog`
+crate, so its dependents are rebuilt whenever the extractor rewrites them.
 
 ## Layers
 
@@ -44,7 +45,7 @@ cargo run -p stm32wb-catalog-extract -- audit
 
 # Add a release: extract it with every existing one, then review the diff.
 cargo run -p stm32wb-catalog-extract -- extract --add 1.25.0
-git diff catalog/stm32wb.toml
+git diff crates/stm32wb-catalog/catalog/stm32wb.toml
 
 # Verify the checked-in catalog is what the tagged sources produce.
 cargo run -p stm32wb-catalog-extract -- check

@@ -14,9 +14,11 @@
 //!
 //! Layers 1 and 2 are written by `stm32wb-catalog-extract` into a checked-in
 //! file that can be reproduced from the tagged Cube sources. Layer 3 is a
-//! separate hand-maintained file audited against the extracted layers.
+//! separate hand-maintained file audited against the extracted layers. Both
+//! files ship inside this crate; see [`bundled`].
 
 pub mod annotations;
+mod bundled;
 mod error;
 mod hex;
 pub mod layout;
@@ -30,6 +32,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub use bundled::{Bundled, bundled};
 pub use error::{Error, ErrorKind};
 pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
 pub use merge::{Snapshot, SnapshotBinary, SnapshotCommand, SnapshotEvent, merge_snapshots};
