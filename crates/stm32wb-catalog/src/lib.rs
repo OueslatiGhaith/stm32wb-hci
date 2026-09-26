@@ -19,6 +19,7 @@
 mod error;
 mod hex;
 pub mod layout;
+mod merge;
 mod release;
 mod target;
 
@@ -29,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 pub use error::{Error, ErrorKind};
 pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
+pub use merge::{Snapshot, SnapshotBinary, SnapshotCommand, SnapshotEvent, merge_snapshots};
 pub use release::{ReleaseRange, Version};
 pub use target::{Family, Profile};
 

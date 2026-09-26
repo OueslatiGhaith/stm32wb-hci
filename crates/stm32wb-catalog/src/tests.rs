@@ -188,3 +188,86 @@ fn parsing_rejects_unknown_keys_and_malformed_codes() {
         ErrorKind::Parse
     );
 }
+
+fn source(version: &str) -> ReleaseSource {
+    let version: Version = version.parse().unwrap();
+    ReleaseSource {
+        version,
+        tag: version.cube_tag(),
+        commit: "0".repeat(40),
+    }
+}
+
+fn set_discoverable(profiles: &[Profile], params: Layout) -> SnapshotCommand {
+    SnapshotCommand {
+        scope: CommandScope::Vendor,
+        opcode: 0xFC83,
+        name: "aci_gap_set_discoverable".into(),
+        profiles: profiles.to_vec(),
+        completion: Completion::CommandComplete,
+        params,
+        returns: Some(fields(&["Status: u8"])),
+        structs: Structs::new(),
+    }
+}
+
+fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
+    Snapshot {
+        source: source(version),
+        binaries: vec![SnapshotBinary {
+            family: Family::Wb5x,
+            profile: Profile::FullExtended,
+        }],
+        commands,
+        events: vec![SnapshotEvent {
+            scope: EventScope::System,
+            code: 0x9200,
+            name: "SHCI_SUB_EVT_CODE_READY".into(),
+            // Unsorted and duplicated on purpose: merging normalizes profiles.
+            profiles: [Profile::ALL.as_slice(), &[Profile::Full]].concat(),
+            payload: Layout::Unresolved("field sysevt_ready_rsp is an enum".into()),
+            structs: Structs::new(),
+        }],
+    }
+}
+
+#[test]
+fn merge_produces_independent_histories() {
+    let v1 = fields(&[
+        "Advertising_Type: u8",
+        "Local_Name_Length: u8",
+        "Local_Name: [u8; Local_Name_Length] (capacity 242)",
+    ]);
+    let v2 = fields(&["Advertising_Type: u8"]);
+    let full = [Profile::Full, Profile::FullExtended];
+    let merged = merge_snapshots(
+        Platform::Stm32wb,
+        vec![
+            snapshot("1.16.0", vec![set_discoverable(&full, v1.clone())]),
+            snapshot("1.15.0", vec![set_discoverable(&full, v1.clone())]),
+            snapshot(
+                "1.17.0",
+                vec![set_discoverable(&[Profile::FullExtended], v1)],
+            ),
+            snapshot(
+                "1.18.0",
+                vec![set_discoverable(&[Profile::FullExtended], v2)],
+            ),
+        ],
+    )
+    .unwrap();
+    // Availability and definitions change in different releases, so each
+    // history splits on its own boundary.
+    assert_eq!(merged, sample());
+}
+
+#[test]
+fn merge_rejects_duplicates_within_a_release() {
+    let command = set_discoverable(&[Profile::FullExtended], fields(&[]));
+    let error = merge_snapshots(
+        Platform::Stm32wb,
+        vec![snapshot("1.15.0", vec![command.clone(), command])],
+    )
+    .unwrap_err();
+    assert!(error.message().contains("duplicate"), "{error}");
+}
