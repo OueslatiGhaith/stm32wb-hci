@@ -1,6 +1,14 @@
 //! Extract the STM32WB wireless-interface catalog from tagged STM32CubeWB
 //! releases, or verify that the checked-in catalog is reproducible.
 
+// Wired into `extract` once snapshots are assembled from them.
+#[allow(dead_code)]
+mod c;
+#[allow(dead_code)]
+mod commands;
+#[cfg(test)]
+mod tests;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
