@@ -1,4 +1,5 @@
 use super::*;
+use crate::annotations::{Annotations, LayoutSlot};
 
 const SAMPLE: &str = r#"
 platform = "stm32wb"
@@ -270,4 +271,157 @@ fn merge_rejects_duplicates_within_a_release() {
     )
     .unwrap_err();
     assert!(error.message().contains("duplicate"), "{error}");
+}
+
+fn audit(source: &str) -> Result<(), Error> {
+    Annotations::from_toml(source)?.audit(&sample())
+}
+
+#[test]
+fn annotations_fill_unresolved_layouts() {
+    let source = r#"
+        [[annotations]]
+        event = "SHCI_SUB_EVT_CODE_READY"
+        source = "AN5289 section 4.8.1"
+        reason = "the enum is transmitted as one byte"
+        payload = ["sysevt_ready_rsp: u8"]
+
+        [[annotations]]
+        command = "aci_gap_set_discoverable"
+        releases = "1.18.0"
+        source = "x"
+        reason = "y"
+        exclude = true
+    "#;
+    audit(source).unwrap();
+
+    let annotations = Annotations::from_toml(source).unwrap();
+    let (annotation, fields) = annotations
+        .layout(
+            "SHCI_SUB_EVT_CODE_READY",
+            false,
+            LayoutSlot::Payload,
+            Version::new(1, 15, 0),
+        )
+        .unwrap();
+    assert_eq!(annotation.source, "AN5289 section 4.8.1");
+    assert_eq!(fields.len(), 1);
+    assert!(
+        annotations
+            .layout(
+                "SHCI_SUB_EVT_CODE_READY",
+                true,
+                LayoutSlot::Payload,
+                Version::new(1, 15, 0),
+            )
+            .is_none()
+    );
+
+    let name = "aci_gap_set_discoverable";
+    assert!(
+        annotations
+            .exclusion(name, true, Version::new(1, 18, 0))
+            .is_some()
+    );
+    assert!(
+        annotations
+            .exclusion(name, true, Version::new(1, 17, 0))
+            .is_none()
+    );
+}
+
+#[test]
+fn annotations_are_audited() {
+    let cases = [
+        (
+            "dangling target",
+            r#"[[annotations]]
+            command = "aci_missing"
+            source = "x"
+            reason = "y"
+            exclude = true"#,
+        ),
+        (
+            "missing source",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            source = " "
+            reason = "y"
+            exclude = true"#,
+        ),
+        (
+            "no fact",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            source = "x"
+            reason = "y""#,
+        ),
+        (
+            "contradiction",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            source = "x"
+            reason = "y"
+            params = ["Advertising_Type: u16"]"#,
+        ),
+        (
+            "stale",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            releases = "1.18.0"
+            source = "x"
+            reason = "y"
+            params = ["Advertising_Type: u8"]"#,
+        ),
+        (
+            "override of unresolved",
+            r#"[[annotations]]
+            event = "SHCI_SUB_EVT_CODE_READY"
+            source = "x"
+            reason = "y"
+            override = true
+            payload = ["sysevt_ready_rsp: u8"]"#,
+        ),
+        (
+            "range outside definitions",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            releases = "1.15.0..=1.19.0"
+            source = "x"
+            reason = "y"
+            exclude = true"#,
+        ),
+        (
+            "overlap",
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            source = "x"
+            reason = "y"
+            exclude = true
+            [[annotations]]
+            command = "aci_gap_set_discoverable"
+            releases = "1.16.0"
+            source = "x"
+            reason = "y"
+            exclude = true"#,
+        ),
+    ];
+    for (case, source) in cases {
+        let error = audit(source).expect_err(case);
+        assert!(
+            matches!(error.kind(), ErrorKind::Audit | ErrorKind::Parse),
+            "{case}: {error}"
+        );
+    }
+
+    audit(
+        r#"[[annotations]]
+        command = "aci_gap_set_discoverable"
+        releases = "1.18.0"
+        source = "x"
+        reason = "y"
+        override = true
+        params = ["Advertising_Type: u16"]"#,
+    )
+    .unwrap();
 }

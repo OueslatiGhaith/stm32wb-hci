@@ -7,6 +7,8 @@ pub enum ErrorKind {
     Parse,
     /// Well-formed data that violates a catalog invariant.
     Invalid,
+    /// An annotation that is stale, dangling, or contradicts extracted data.
+    Audit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,6 +28,13 @@ impl Error {
     pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Invalid,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn audit(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Audit,
             message: message.into(),
         }
     }

@@ -9,13 +9,14 @@
 //! 2. **ST documents** (`STM32WB_BLE_Wireless_Interface.html` and each
 //!    family's `Release_Notes.html`): which stack profile supports each
 //!    command and event, and which binaries exist per MCU family.
-//! 3. **Curated annotations**: facts no ST artifact states in a
-//!    machine-readable form, each with a cited source.
+//! 3. **Curated annotations** (see [`annotations`]): facts no ST artifact
+//!    states in a machine-readable form, each with a cited source.
 //!
 //! Layers 1 and 2 are written by `stm32wb-catalog-extract` into a checked-in
 //! file that can be reproduced from the tagged Cube sources. Layer 3 is a
 //! separate hand-maintained file audited against the extracted layers.
 
+pub mod annotations;
 mod error;
 mod hex;
 pub mod layout;
