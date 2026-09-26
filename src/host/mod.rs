@@ -33,7 +33,6 @@ use bt_hci::cmd::le::{
     LeClearResolvingList, LeConnUpdate, LeCreateConn, LeCreateConnCancel, LeEnableEncryption,
     LeEncrypt, LeLongTermKeyRequestNegativeReply,
     LeLongTermKeyRequestReply as CmdLeLongTermKeyRequestReply, LeRand,
-    LeRemoteConnectionParameterRequestNegativeReply, LeRemoteConnectionParameterRequestReply,
     LeReadAdvPhysicalChannelTxPower, LeReadBufferSize as CmdLeReadBufferSize, LeReadChannelMap,
     LeReadFilterAcceptListSize, LeReadLocalSupportedFeatures as CmdLeReadLocalSupportedFeatures,
     LeReadRemoteFeatures, LeReadResolvingListSize,
@@ -48,9 +47,9 @@ use bt_hci::cmd::status::ReadRssi as CmdReadRssi;
 use bt_hci::cmd::{AsyncCmd, SyncCmd};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
-    AddrKind, AdvChannelMap, AdvFilterPolicy, ConnHandleCompletedPackets,
+    AddrKind, AdvChannelMap, AdvFilterPolicy, ConnHandle, ConnHandleCompletedPackets,
     ControllerToHostFlowControl, EventMask, LeEventMask, LeScanKind, PowerLevelKind, PrivacyMode,
-    RemoteConnectionParamsRejectReason, ScanningFilterPolicy,
+    ScanningFilterPolicy,
 };
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{Debug, Formatter, Result as FmtResult};
@@ -918,12 +917,13 @@ pub trait HostHci {
     /// # Generated events
     ///
     /// A [Command Complete](crate::event::command::ReturnParameters::LeRemoteConnectionParameterRequestReply)
-    /// event is generated. The [LE Connection Update Complete](crate::event::Event::LeConnectionUpdateComplete)
+    /// event is generated and returns the connection handle. The
+    /// [LE Connection Update Complete](crate::event::Event::LeConnectionUpdateComplete)
     /// event is generated once the new parameters have been applied.
     async fn le_remote_connection_parameter_request_reply(
         &self,
         params: &ConnectionUpdateParameters,
-    ) -> Result<(), Error>;
+    ) -> Result<LeLongTermRequestReply, Error>;
 
     /// Replies to an [LE Remote Connection Parameter Request](crate::event::Event::LeRemoteConnectionParameterRequest)
     /// event, rejecting the remote device's request.
@@ -933,12 +933,13 @@ pub trait HostHci {
     /// # Generated events
     ///
     /// A [Command Complete](crate::event::command::ReturnParameters::LeRemoteConnectionParameterRequestNegativeReply)
-    /// event is generated.
+    /// event is generated and returns the connection handle. `reason` is the status code sent to
+    /// the Controller (Vol 1, Part F).
     async fn le_remote_connection_parameter_request_negative_reply(
         &self,
         conn_handle: ConnectionHandle,
         reason: Status,
-    ) -> Result<(), Error>;
+    ) -> Result<LeLongTermRequestReply, Error>;
 
     /// This command allows the Host to specify a channel classification for data channels based on
     /// its "local information". This classification persists until overwritten with a subsequent
@@ -1387,6 +1388,34 @@ cmd! {
     }
 }
 
+// bt-hci 0.10.1 declares these with no return parameters, so `cmd!` makes them
+// AsyncCmd (Command Status). Core spec 7.8.31 and 7.8.32 finish with Command
+// Complete and return the connection handle, same shape as the LTK replies.
+cmd! {
+    LeRemoteConnectionParameterRequestReply(LE, 0x0020) {
+        LeRemoteConnectionParameterRequestReplyParams {
+            interval_min: bt_hci::param::Duration<1_250>,
+            interval_max: bt_hci::param::Duration<1_250>,
+            max_latency: u16,
+            supervision_timeout: bt_hci::param::Duration<10_000>,
+            min_ce_length: bt_hci::param::Duration<625>,
+            max_ce_length: bt_hci::param::Duration<625>,
+        }
+        Return = ConnHandle;
+        Handle = handle: ConnHandle;
+    }
+}
+
+cmd! {
+    LeRemoteConnectionParameterRequestNegativeReply(LE, 0x0021) {
+        LeRemoteConnectionParameterRequestNegativeReplyParams {
+            reason: u8,
+        }
+        Return = ConnHandle;
+        Handle = handle: ConnHandle;
+    }
+}
+
 impl<T> HostHci for T
 where
     T: ControllerCmdSync<CmdLeReadBufferSize>
@@ -1396,8 +1425,8 @@ where
         + ControllerCmdSync<LeSetRandomAddr>
         + ControllerCmdSync<CmdHostBufferSize>
         + ControllerCmdAsync<LeConnUpdate>
-        + ControllerCmdAsync<LeRemoteConnectionParameterRequestReply>
-        + ControllerCmdAsync<LeRemoteConnectionParameterRequestNegativeReply>
+        + ControllerCmdSync<LeRemoteConnectionParameterRequestReply>
+        + ControllerCmdSync<LeRemoteConnectionParameterRequestNegativeReply>
         + ControllerCmdSync<LeReadFilterAcceptListSize>
         + ControllerCmdSync<SetControllerToHostFlowControl>
         + ControllerCmdSync<Reset>
@@ -1795,7 +1824,7 @@ where
     async fn le_remote_connection_parameter_request_reply(
         &self,
         params: &ConnectionUpdateParameters,
-    ) -> Result<(), Error> {
+    ) -> Result<LeLongTermRequestReply, Error> {
         LeRemoteConnectionParameterRequestReply::new(
             params.conn_handle.into(),
             params.conn_interval.interval().0.into(),
@@ -1808,21 +1837,23 @@ where
         .exec(self)
         .await
         .map_err(|e| e.into())
+        .map(|ret| LeLongTermRequestReply {
+            conn_handle: ret.into(),
+        })
     }
 
     async fn le_remote_connection_parameter_request_negative_reply(
         &self,
         conn_handle: ConnectionHandle,
         reason: Status,
-    ) -> Result<(), Error> {
-        let _ = reason;
-        LeRemoteConnectionParameterRequestNegativeReply::new(
-            conn_handle.into(),
-            RemoteConnectionParamsRejectReason::UnacceptableConnParameters,
-        )
-        .exec(self)
-        .await
-        .map_err(|e| e.into())
+    ) -> Result<LeLongTermRequestReply, Error> {
+        LeRemoteConnectionParameterRequestNegativeReply::new(conn_handle.into(), reason.into())
+            .exec(self)
+            .await
+            .map_err(|e| e.into())
+            .map(|ret| LeLongTermRequestReply {
+                conn_handle: ret.into(),
+            })
     }
 
     async fn le_set_host_channel_classification(

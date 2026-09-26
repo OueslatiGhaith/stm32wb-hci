@@ -521,6 +521,8 @@ fn le_long_term_key_request_negative_reply() {
 
 #[test]
 fn le_remote_connection_parameter_request_reply() {
+    // Spec 7.8.31 Command Complete return: status and connection handle.
+    // Constructed fixture, not a controller capture.
     let buffer = [0x0E, 6, 1, 0x20, 0x20, 0x00, 0x01, 0x02];
     match Event::new(Packet(&buffer)) {
         Ok(Event::CommandComplete(event)) => {
@@ -541,6 +543,8 @@ fn le_remote_connection_parameter_request_reply() {
 
 #[test]
 fn le_remote_connection_parameter_request_negative_reply() {
+    // Spec 7.8.32 Command Complete return: status and connection handle.
+    // Constructed fixture, not a controller capture.
     let buffer = [0x0E, 6, 1, 0x21, 0x20, 0x00, 0x01, 0x02];
     match Event::new(Packet(&buffer)) {
         Ok(Event::CommandComplete(event)) => {

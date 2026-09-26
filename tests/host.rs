@@ -559,12 +559,12 @@ async fn le_remote_connection_parameter_request_negative_reply() {
     let _ = sink
         .le_remote_connection_parameter_request_negative_reply(
             hci::ConnectionHandle(0x0201),
-            hci::Status::UnacceptableConnectionParameters,
+            hci::Status::InvalidParameters,
         )
         .await;
     assert_eq!(
         sink.written_data(),
-        vec![1, 0x21, 0x20, 3, 0x01, 0x02, 0x3B]
+        vec![1, 0x21, 0x20, 3, 0x01, 0x02, 0x12]
     );
 }
 

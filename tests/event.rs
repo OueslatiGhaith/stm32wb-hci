@@ -501,8 +501,9 @@ fn le_read_remote_used_features_complete_failed_bad_flag() {
 
 #[test]
 fn le_remote_connection_parameter_request() {
+    // Captured from an STM32WBA controller after an Android central connected.
     // LE Meta (0x3E), length 11, subevent 0x06. Handle 0x0000, interval 7.5 ms,
-    // latency 0, supervision timeout 5 s — the packet Android sent after connect.
+    // latency 0, supervision timeout 5 s.
     let buffer = [
         0x3E, 11, 0x06, 0x00, 0x00, 0x06, 0x00, 0x06, 0x00, 0x00, 0x00, 0xF4, 0x01,
     ];
