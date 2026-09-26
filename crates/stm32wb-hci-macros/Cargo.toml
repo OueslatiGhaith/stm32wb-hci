@@ -1,0 +1,15 @@
+[package]
+name = "stm32wb-hci-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Procedural macros deriving stm32wb-hci declarations from the STM32WB catalog"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+stm32wb-catalog = { path = "../stm32wb-catalog", version = "0.1.0" }

@@ -1281,7 +1281,19 @@ dependencies = [
  "defmt 1.1.0",
  "embedded-io",
  "embedded-io-async",
+ "stm32wb-catalog",
+ "stm32wb-hci-macros",
  "tokio",
+ "toml",
+]
+
+[[package]]
+name = "stm32wb-hci-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "stm32wb-catalog",
 ]
 
 [[package]]

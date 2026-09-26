@@ -28,6 +28,7 @@ byteorder = { version = "1", default-features = false }
 defmt = { version = "1", optional = true }
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
+stm32wb-hci-macros = { path = "crates/stm32wb-hci-macros", version = "0.1.0" }
 
 [target.'cfg(windows)'.dependencies]
 critical-section = { version = "1.2", features = ["std"] }
@@ -36,10 +37,38 @@ critical-section = { version = "1.2", features = ["std"] }
 critical-section = { version = "1.2", features = ["std"] }
 
 [dev-dependencies]
+stm32wb-catalog = { path = "crates/stm32wb-catalog" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+toml = "1"
 
 [features]
+default = ["fw_1_24_0", "stack-full-extended"]
 defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
+
+# The STM32CubeWB release of the CPU2 wireless binary; enable exactly one.
+fw_1_15_0 = []
+fw_1_16_0 = []
+fw_1_17_0 = []
+fw_1_17_1 = []
+fw_1_17_2 = []
+fw_1_17_3 = []
+fw_1_18_0 = []
+fw_1_19_0 = []
+fw_1_19_1 = []
+fw_1_20_0 = []
+fw_1_21_0 = []
+fw_1_22_0 = []
+fw_1_22_1 = []
+fw_1_23_0 = []
+fw_1_24_0 = []
+
+# The BLE stack profile of the CPU2 wireless binary; enable exactly one.
+stack-full-extended = []
+stack-full = []
+stack-light = []
+stack-hci-layer-extended = []
+stack-hci-layer = []
+stack-hci-adv-scan = []
 
 [profile.dev]
 debug = 2

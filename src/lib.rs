@@ -35,6 +35,8 @@
 
 extern crate byteorder;
 
+stm32wb_hci_macros::check_target!();
+
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 
