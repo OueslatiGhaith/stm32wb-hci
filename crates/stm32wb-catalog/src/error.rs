@@ -5,6 +5,8 @@ use std::fmt;
 pub enum ErrorKind {
     /// Malformed catalog or annotation syntax.
     Parse,
+    /// Well-formed data that violates a catalog invariant.
+    Invalid,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +19,13 @@ impl Error {
     pub(crate) fn parse(message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Parse,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Invalid,
             message: message.into(),
         }
     }

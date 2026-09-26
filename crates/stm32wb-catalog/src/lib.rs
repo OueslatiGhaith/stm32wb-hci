@@ -17,9 +17,11 @@
 //! separate hand-maintained file audited against the extracted layers.
 
 mod error;
+pub mod layout;
 mod release;
 mod target;
 
 pub use error::{Error, ErrorKind};
+pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
 pub use release::{ReleaseRange, Version};
 pub use target::{Family, Profile};
