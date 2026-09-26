@@ -6,6 +6,10 @@
 mod c;
 #[allow(dead_code)]
 mod commands;
+#[allow(dead_code)]
+mod events;
+#[allow(dead_code)]
+mod shci;
 #[cfg(test)]
 mod tests;
 

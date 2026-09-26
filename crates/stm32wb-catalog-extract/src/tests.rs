@@ -1,13 +1,14 @@
 //! C analysis tests over small fixtures written in the generated-code idiom.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Mutex;
 
 use clang::{Clang, Index};
-use stm32wb_catalog::{CommandScope, Completion, Layout};
+use stm32wb_catalog::{CommandScope, Completion, EventScope, Layout};
 
 use crate::c::{self, Shim};
-use crate::commands;
+use crate::{commands, events, shci};
 
 /// libclang allows one `Clang` instance per process at a time.
 static CLANG: Mutex<()> = Mutex::new(());
@@ -295,4 +296,113 @@ tBleStatus aci_sets(uint8_t Count, const Entry_t *Entry)
         ["Count: u8", "Entry: [Entry_t; Count] (capacity 84)"]
     );
     assert_eq!(commands[1].structs.keys().collect::<Vec<_>>(), ["Entry_t"]);
+}
+
+#[test]
+fn events_are_read_through_trivial_process_functions() {
+    let source = r#"
+typedef struct { uint16_t evt_code; void (*process)(const uint8_t *in); } hci_event_table_t;
+typedef __PACKED_STRUCT { uint16_t Connection_Handle; uint16_t Data_Length; uint8_t Data[(BLE_EVT_MAX_PARAM_LEN - 2) - 4]; } aci_modified_event_rp0;
+typedef __PACKED_STRUCT { uint8_t Kind; const uint8_t *Data; } Report_t;
+typedef __PACKED_STRUCT { uint8_t Num; Report_t Report[1]; } hci_report_event_rp0;
+void aci_modified_event(uint16_t Connection_Handle, uint16_t Data_Length, const uint8_t *Data);
+void aci_ready_event(void);
+void hci_report_event(uint8_t Num, const Report_t *Report);
+static void aci_modified_event_process(const uint8_t *in);
+static void aci_ready_event_process(const uint8_t *in);
+static void hci_report_event_process(const uint8_t *in);
+const hci_event_table_t hci_event_table[1] = { { 0x0005U, hci_report_event_process } };
+const hci_event_table_t hci_le_event_table[0] = { };
+const hci_event_table_t hci_vs_event_table[2] =
+{
+  { 0x0C01U, aci_modified_event_process },
+  { 0x0400U, aci_ready_event_process },
+};
+static void aci_modified_event_process(const uint8_t *in)
+{
+  aci_modified_event_rp0 *rp0 = (void*)in;
+  aci_modified_event(rp0->Connection_Handle, rp0->Data_Length, rp0->Data);
+}
+static void aci_ready_event_process(const uint8_t *in)
+{
+  aci_ready_event();
+}
+static void hci_report_event_process(const uint8_t *in)
+{
+  hci_report_event_rp0 *rp0 = (void*)in;
+  Report_t Report[1];
+  int i;
+  for (i = 0; i < rp0->Num; i++) { hci_report_event(1, Report); }
+}
+"#;
+    let events = with_fixture(source, |unit| events::extract(unit, &c::records(unit))).unwrap();
+    let by_code = events
+        .iter()
+        .map(|event| ((event.scope, event.code), event))
+        .collect::<BTreeMap<_, _>>();
+    let modified = by_code[&(EventScope::Vendor, 0x0C01)];
+    assert_eq!(modified.name, "aci_modified_event");
+    assert_eq!(
+        fields(&modified.payload),
+        [
+            "Connection_Handle: u16",
+            "Data_Length: u16",
+            "Data: [u8; Data_Length] (capacity 249)",
+        ]
+    );
+    assert!(fields(&by_code[&(EventScope::Vendor, 0x0400)].payload).is_empty());
+    assert!(matches!(
+        &by_code[&(EventScope::Standard, 0x0005)].payload,
+        Layout::Unresolved(reason) if reason.contains("procedurally")
+    ));
+}
+
+#[test]
+fn shci_payloads_require_adjacent_documentation() {
+    let source = r#"
+typedef enum { READY = 0x9200, END_WRITE, END_ERASE, UPDATE } SHCI_SUB_EVT_CODE_t;
+typedef enum { RUNNING = 0 } Kind_t;
+/**
+ * READY
+ * The coprocessor is ready.
+ */
+typedef __PACKED_STRUCT { Kind_t kind; } Ready_t;
+/**
+ * UPDATE
+ * A section was updated.
+ */
+typedef __PACKED_STRUCT { uint32_t StartAddress; uint32_t Size; } Update_t;
+/**
+ * END_WRITE
+ * Writing finished.
+ */
+/**
+ * END_ERASE
+ * Erasing finished.
+ */
+
+/* SYSTEM COMMAND */
+typedef __PACKED_STRUCT { uint32_t MetaData[3]; } Header_t;
+"#;
+    let events = with_fixture(source, |unit| shci::extract(unit, &c::records(unit))).unwrap();
+    let payloads = events
+        .iter()
+        .map(|event| (event.name.as_str(), &event.payload))
+        .collect::<BTreeMap<_, _>>();
+    assert!(matches!(payloads["READY"], Layout::Unresolved(reason) if reason.contains("enum")));
+    assert_eq!(
+        fields(payloads["UPDATE"]),
+        ["StartAddress: u32", "Size: u32"]
+    );
+    assert!(matches!(payloads["END_WRITE"], Layout::Unresolved(_)));
+    // END_ERASE's comment is separated from Header_t and must not document it.
+    assert!(matches!(payloads["END_ERASE"], Layout::Unresolved(_)));
+    assert_eq!(
+        events
+            .iter()
+            .find(|event| event.name == "UPDATE")
+            .unwrap()
+            .code,
+        0x9203
+    );
 }
