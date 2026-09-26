@@ -148,6 +148,16 @@ impl CommandComplete {
                     &bytes[3..],
                 )?)
             }
+            crate::opcode::LE_REMOTE_CONN_PARAM_REQ_REPLY => {
+                ReturnParameters::LeRemoteConnectionParameterRequestReply(to_le_ltk_request_reply(
+                    &bytes[3..],
+                )?)
+            }
+            crate::opcode::LE_REMOTE_CONN_PARAM_REQ_NEGATIVE_REPLY => {
+                ReturnParameters::LeRemoteConnectionParameterRequestNegativeReply(
+                    to_le_ltk_request_reply(&bytes[3..])?,
+                )
+            }
             crate::opcode::LE_READ_STATES => {
                 ReturnParameters::LeReadSupportedStates(to_le_read_states(&bytes[3..])?)
             }
@@ -294,6 +304,16 @@ pub enum ReturnParameters {
     /// Parameters returned by the
     /// [LE Long Term Key Request Negative Reply](crate::host::HostHci::le_long_term_key_request_negative_reply) command.
     LeLongTermKeyRequestNegativeReply(LeLongTermRequestReply),
+
+    /// Parameters returned by the
+    /// [LE Remote Connection Parameter Request Reply](crate::host::HostHci::le_remote_connection_parameter_request_reply)
+    /// command.
+    LeRemoteConnectionParameterRequestReply(LeLongTermRequestReply),
+
+    /// Parameters returned by the
+    /// [LE Remote Connection Parameter Request Negative Reply](crate::host::HostHci::le_remote_connection_parameter_request_negative_reply)
+    /// command.
+    LeRemoteConnectionParameterRequestNegativeReply(LeLongTermRequestReply),
 
     /// Parameters returned by the [LE Read States](crate::host::HostHci::le_read_supported_states))
     /// command.

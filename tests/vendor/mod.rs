@@ -82,8 +82,7 @@ where
 {
     async fn exec(&self, cmd: &C) -> Result<C::Return, bt_hci::cmd::Error<Self::Error>> {
         use bt_hci::FromHciBytes;
-        use bt_hci::transport::WithIndicator;
-        use bt_hci_transport::PacketToController;
+        use bt_hci::transport::{PacketToController, WithIndicator};
 
         let mut data = self.data.lock().unwrap();
 
@@ -103,8 +102,7 @@ where
     C: bt_hci::cmd::AsyncCmd,
 {
     async fn exec(&self, cmd: &C) -> Result<(), bt_hci::cmd::Error<Self::Error>> {
-        use bt_hci::transport::WithIndicator;
-        use bt_hci_transport::PacketToController;
+        use bt_hci::transport::{PacketToController, WithIndicator};
 
         let mut data = self.data.lock().unwrap();
 

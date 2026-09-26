@@ -79,9 +79,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9670c1c3285fdaa99ade6edf5a3ed47bc14227f49b5e48cc587ef190485eaeb"
+checksum = "f63b3d6f0ef006d9b87a075705d6c142b03681ad34090659647f0e227c1c667f"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -998,7 +998,6 @@ version = "0.1.0"
 dependencies = [
  "aligned",
  "bt-hci",
- "bt-hci-transport",
  "cortex-m",
  "cortex-m-rt",
  "critical-section",

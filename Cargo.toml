@@ -20,7 +20,8 @@ exclude = ["tests"]
 
 [dependencies]
 bitflags = "2"
-bt-hci = "0.10.0"
+bt-hci = "0.10.1"
+# needed because bt-hci's cmd! macro (via vendor_cmd!) expands to ::bt_hci_transport:: paths
 bt-hci-transport = "0.1.0"
 byteorder = { version = "1", default-features = false }
 defmt = { version = "1", optional = true }

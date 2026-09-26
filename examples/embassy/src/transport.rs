@@ -1,6 +1,5 @@
 use aligned::{A4, Aligned};
-use bt_hci::transport::WithIndicator;
-use bt_hci_transport::PacketToController;
+use bt_hci::transport::{PacketToController, WithIndicator};
 use core::{
     cell::RefCell,
     future::poll_fn,
