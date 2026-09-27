@@ -311,7 +311,17 @@ pub trait CatalogStruct: HciWireType {
 /// Whether `T` stands for the catalog's C structure `c_name`.
 #[doc(hidden)]
 pub const fn stands_for<T: CatalogStruct>(c_name: &str) -> bool {
-    let (left, right) = (T::C_NAME.as_bytes(), c_name.as_bytes());
+    same_name(T::C_NAME, c_name)
+}
+
+/// Whether `T` is the type declared for the catalog's vendor event `c_name`.
+#[doc(hidden)]
+pub const fn declares_event<T: VendorEvent<'static>>(c_name: &str) -> bool {
+    same_name(T::C_NAME, c_name)
+}
+
+const fn same_name(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
     if left.len() != right.len() {
         return false;
     }
@@ -430,6 +440,9 @@ impl<'a, T: HciWireType + FromHciBytes<'a> + defmt::Format> defmt::Format for El
 pub trait VendorEvent<'a>: FromHciBytes<'a> {
     /// The vendor event code.
     const CODE: u16;
+
+    /// The latest C name of the event in the catalog.
+    const C_NAME: &'static str;
 
     /// Decode the parameters of a vendor event, code included, if the code is
     /// this event's. The parameters must be exactly those the catalog lists.

@@ -97,6 +97,8 @@ struct Event<'a> {
     names: Vec<Vec<&'a str>>,
     releases: ReleaseRange,
     cfg: Option<TokenStream>,
+    /// The latest C name of the catalog entry, which the event's type names.
+    latest: &'a str,
 }
 
 impl<'a> Event<'a> {
@@ -156,6 +158,7 @@ impl<'a> Event<'a> {
                     names: Vec::new(),
                     releases,
                     cfg: None,
+                    latest: active.event.name(),
                 };
                 record_names(&mut variant.names, payload);
                 variants.push((key, variant, vec![(releases, segment.profiles)]));
@@ -275,6 +278,7 @@ fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> 
     let field_names = names.clone();
     let widths = width_assertions(&cfg, name, &slots);
     let code = event.facts.code;
+    let latest = event.latest;
     let doc = format!("`{c_name}` in the catalog, vendor event code {code:#06X}.");
     let attrs = &input.attrs;
     Ok(quote! {
@@ -303,6 +307,7 @@ fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> 
         #cfg
         impl #impl_generics ::stm32wb_hci::wire::VendorEvent<#de> for #name #generics {
             const CODE: u16 = #code;
+            const C_NAME: &'static str = #latest;
         }
 
         #(#widths)*

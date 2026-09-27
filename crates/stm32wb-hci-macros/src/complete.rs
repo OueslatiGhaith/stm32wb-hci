@@ -26,7 +26,7 @@ pub(crate) enum Kind {
 /// Targets of each catalog entry carrying `name`, keyed by the entry's
 /// latest name, which its marker is named after. Excluded releases need no
 /// declaration.
-fn entries<'a>(
+pub(crate) fn entries<'a>(
     bundled: &'a Bundled,
     kind: Kind,
     name: &str,

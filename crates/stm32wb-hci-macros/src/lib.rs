@@ -5,6 +5,7 @@
 mod cfg;
 mod command;
 mod complete;
+mod dispatch;
 mod event;
 mod structs;
 
@@ -195,6 +196,32 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
         Ok(tokens) => tokens.into(),
         Err(message) => error(&format!("the bundled catalog is invalid: {message}")),
     }
+}
+
+/// Declare an enum of every ST vendor event the selected target emits.
+///
+/// Each variant names a catalog event, the variant, and the type
+/// [`vendor_event!`] declares for the event. A variant exists on the targets
+/// the event does, the enum must list every vendor event of the catalog
+/// exactly once, and each type must be the one declared for its event.
+/// `from_vendor` decodes a bt-hci vendor event into the variant its code
+/// selects.
+///
+/// ```ignore
+/// vendor_events! {
+///     /// Every ST vendor event of the selected target.
+///     pub enum AciEvent<'a> {
+///         aci_warning_event => HalWarning(hal::HalWarningEvent<'a>),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 fn error(message: &str) -> TokenStream {
