@@ -48,6 +48,7 @@ pub mod host;
 mod opcode;
 pub mod types;
 pub mod vendor;
+pub mod wire;
 
 use bt_hci::param::{AddrKind, ChannelMap, ConnHandle, DisconnectReason};
 pub use event::Event;
