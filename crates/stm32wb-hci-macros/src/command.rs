@@ -265,29 +265,19 @@ fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
         .iter()
         .map(|(returns, slots)| return_struct(name, returns, slots, &cfg));
     let attrs = &input.attrs;
-    let derived = params
-        .iter()
-        .any(|slot| matches!(slot, Slot::Count { .. } | Slot::Selector { .. }));
-    let declaration = if derived {
-        encoded_command(input, &params, &cfg, ocf, &returns_tokens)?
-    } else {
-        let params_tokens = if input.params.fields.is_empty() {
-            quote!(Params = ();)
-        } else {
-            let params_name = format_ident!("{name}Params");
-            let (names, types) = names_and_types(&input.params);
-            quote!(#params_name { #(#names: #types,)* })
-        };
+    let declaration = if input.params.fields.is_empty() {
         quote! {
             #cfg
             ::bt_hci::cmd::cmd! {
                 #(#attrs)*
                 #name(VENDOR_SPECIFIC, #ocf) {
-                    #params_tokens
+                    Params = ();
                     #returns_tokens
                 }
             }
         }
+    } else {
+        encoded_command(input, &params, &cfg, ocf, &returns_tokens)?
     };
     Ok(quote! {
         #declaration
@@ -427,12 +417,13 @@ fn return_struct(
     }
 }
 
-/// A command whose parameters bt-hci cannot encode field by field: some
-/// member is derived from a declared field, the count of a variable-length
-/// field or the selector of a union. bt-hci's cmd! still provides the command
-/// itself; the parameters get their own encoding, writing each derived
-/// member from the field it serves, and a constructor that enforces the
-/// catalog's capacities.
+/// A command with parameters. bt-hci's cmd! provides the command itself; the
+/// parameters get their own encoding instead of bt-hci's packed structs,
+/// which require every field to have a fixed memory layout. The encoding
+/// follows the catalog order, writes array fields one element at a time,
+/// writes each derived member (the count of a variable-length field or the
+/// selector of a union) from the field it serves, and comes with a
+/// constructor enforcing the catalog's capacities.
 fn encoded_command(
     input: &Input,
     slots: &[Slot<'_>],
@@ -468,7 +459,12 @@ fn encoded_command(
     let sizes = slots.iter().map(|slot| match slot {
         Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
             let (field, ty) = (&field.name, &field.ty);
-            quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field))
+            match array_element(ty) {
+                Some(element) => quote! {
+                    self.#field.iter().map(<#element as ::bt_hci::WriteHci>::size).sum::<usize>()
+                },
+                None => quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field)),
+            }
         }
         Slot::Count { scalar, .. } | Slot::Selector { scalar, .. } => {
             let width = usize::from(scalar.width());
@@ -490,7 +486,16 @@ fn encoded_command(
             .map(move |slot| match slot {
                 Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
                     let (field, ty) = (&field.name, &field.ty);
-                    quote!(<#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;)
+                    match array_element(ty) {
+                        Some(element) => quote! {
+                            for element in &self.#field {
+                                <#element as ::bt_hci::WriteHci>::#write_hci(element, &mut writer)#wait?;
+                            }
+                        },
+                        None => quote! {
+                            <#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;
+                        },
+                    }
                 }
                 Slot::Count { counted, scalar } => {
                     let (counted, scalar) = (&counted.name, format_ident!("{}", scalar.name()));
@@ -556,6 +561,12 @@ fn encoded_command(
             }
         }
     };
+    // Fields are public unless the constructor enforces a capacity on them.
+    let visibility = if checks.is_empty() {
+        quote!(pub)
+    } else {
+        quote!()
+    };
     let params_doc = if checks.is_empty() {
         format!("Parameters of [`{name}`], built by [`{name}::new`].")
     } else {
@@ -571,7 +582,7 @@ fn encoded_command(
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub struct #params_name #generics {
-            #(#names: #types,)*
+            #(#visibility #names: #types,)*
         }
 
         #cfg
@@ -612,6 +623,14 @@ fn encoded_command(
             #constructor
         }
     })
+}
+
+/// The element type of an array type `[T; N]`.
+fn array_element(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Array(array) => Some(&array.elem),
+        _ => None,
+    }
 }
 
 /// The capacity of a `BoundedBytes<N>` type with a literal `N`.
@@ -1303,7 +1322,15 @@ mod tests {
         assert!(tokens.contains("HalSetRadioActivityMaskParams"), "{tokens}");
         assert!(tokens.contains("Return = ()"), "{tokens}");
         assert!(tokens.contains("WIDTH == 2usize"), "{tokens}");
-        assert!(!tokens.contains("cfg"), "available everywhere: {tokens}");
+        assert!(
+            !tokens.contains("# [cfg ("),
+            "available everywhere: {tokens}"
+        );
+        assert!(tokens.contains("pub radio_activity_mask : u16"), "{tokens}");
+        assert!(
+            tokens.contains("pub fn new (radio_activity_mask : u16)"),
+            "{tokens}"
+        );
 
         let tokens = expand_str("aci_hal_tone_stop => HalToneStop {}").unwrap();
         assert!(tokens.contains("Params = ()"), "{tokens}");
@@ -1507,13 +1534,13 @@ mod tests {
             "{tokens}"
         );
         assert_eq!(
-            tokens.matches("max_channel_number : u8").count(),
+            tokens.matches("pub max_channel_number : u8").count(),
             1,
             "only the later variant has the field: {tokens}"
         );
         let later = tokens.find("feature = \"fw_1_23_0\"").unwrap();
         let earlier = tokens.find("feature = \"fw_1_22_1\"").unwrap();
-        let field = tokens.find("max_channel_number : u8").unwrap();
+        let field = tokens.find("pub max_channel_number : u8").unwrap();
         assert!(earlier < later && later < field, "{tokens}");
 
         let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "1.22.1"));
@@ -1567,6 +1594,29 @@ mod tests {
         .unwrap();
         assert!(tokens.contains("Return = () ;"), "{tokens}");
         assert!(tokens.contains("Return = GapBondedDevice ;"), "{tokens}");
+    }
+
+    #[test]
+    fn arrays_encode_element_by_element() {
+        let tokens = expand_str(
+            "aci_hal_ead_encrypt_decrypt => HalEadEncryptDecrypt {
+                 mode: u8,
+                 key: [u8; 16],
+                 iv: [u8; 8],
+                 in_data: &'a [u8],
+             } -> HalEadData { out_data: BoundedBytes<249> }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "for element in & self . key { < u8 as :: bt_hci :: WriteHci > :: write_hci (element , & mut writer) ? ; }"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("self . iv . iter () . map (< u8 as :: bt_hci :: WriteHci > :: size) . sum :: < usize > ()"),
+            "{tokens}"
+        );
     }
 
     #[test]
