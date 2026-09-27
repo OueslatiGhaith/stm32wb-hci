@@ -15,7 +15,7 @@ use crate::command::{
 
 /// ```text
 /// /// Documentation for the event.
-/// aci_hal_end_of_radio_activity_event => HalEndOfRadioActivity {
+/// aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
 ///     last_state: u8,
 ///     ...
 /// }
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn events_follow_their_code_across_releases() {
         let tokens = expand_str(
-            "aci_hal_end_of_radio_activity_event => HalEndOfRadioActivity {
+            "aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
                  last_state: u8,
                  next_state: u8,
                  next_state_sys_time: u32,
@@ -323,17 +323,20 @@ mod tests {
     #[test]
     fn counted_bytes_borrow_the_event() {
         let tokens = expand_str(
-            "aci_warning_event => HalWarning {
+            "aci_warning_event => HalWarningEvent {
                  warning_type: u8,
                  data: &'a [u8],
              }",
         )
         .unwrap();
-        assert!(tokens.contains("pub struct HalWarning < 'a >"), "{tokens}");
+        assert!(
+            tokens.contains("pub struct HalWarningEvent < 'a >"),
+            "{tokens}"
+        );
         assert!(tokens.contains("split_at_checked"), "{tokens}");
 
         let error = expand_str(
-            "aci_warning_event => HalWarning {
+            "aci_warning_event => HalWarningEvent {
                  warning_type: u8,
                  data: BoundedBytes<251>,
              }",

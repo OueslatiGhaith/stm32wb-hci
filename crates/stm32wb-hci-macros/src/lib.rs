@@ -158,7 +158,7 @@ pub fn vendor_struct(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// vendor_event! {
 ///     /// A warning from the wireless stack, with data depending on its type.
-///     aci_warning_event => HalWarning {
+///     aci_warning_event => HalWarningEvent {
 ///         warning_type: u8,
 ///         data: &'a [u8],
 ///     }

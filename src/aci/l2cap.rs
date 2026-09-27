@@ -1,11 +1,12 @@
-//! L2CAP commands: connection parameter updates and credit-based channels.
+//! L2CAP commands and events: connection parameter updates and credit-based
+//! channels.
 
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
 use bt_hci::param::ConnHandle;
-use stm32wb_hci_macros::vendor_command;
+use stm32wb_hci_macros::{vendor_command, vendor_event};
 
 #[allow(
     unused_imports,
@@ -112,12 +113,127 @@ vendor_command! {
     }
 }
 
+vendor_event! {
+    /// The peer answered a connection parameter update request.
+    aci_l2cap_connection_update_resp_event => L2capConnectionUpdateRespEvent {
+        connection_handle: ConnHandle,
+        result: u16,
+    }
+}
+
+vendor_event! {
+    /// An L2CAP procedure timed out, with data depending on the procedure.
+    aci_l2cap_proc_timeout_event => L2capProcTimeoutEvent {
+        connection_handle: ConnHandle,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The peer asked to update the connection parameters; answer with
+    /// [`L2capConnectionParameterUpdateResp`].
+    aci_l2cap_connection_update_req_event => L2capConnectionUpdateReqEvent {
+        connection_handle: ConnHandle,
+        identifier: u8,
+        #[wire(name = "L2CAP_Length")]
+        l2cap_length: u16,
+        interval_min: u16,
+        interval_max: u16,
+        latency: u16,
+        timeout_multiplier: u16,
+    }
+}
+
+vendor_event! {
+    /// The peer rejected an L2CAP command.
+    aci_l2cap_command_reject_event => L2capCommandRejectEvent {
+        connection_handle: ConnHandle,
+        identifier: u8,
+        reason: u16,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The peer asked to open `channel_number` credit-based channels; answer
+    /// with [`L2capCocConnectConfirm`].
+    aci_l2cap_coc_connect_event => L2capCocConnectEvent {
+        connection_handle: ConnHandle,
+        spsm: u16,
+        mtu: u16,
+        mps: u16,
+        initial_credits: u16,
+        channel_number: u8,
+    }
+}
+
+vendor_event! {
+    /// The peer answered a request to open credit-based channels.
+    aci_l2cap_coc_connect_confirm_event => L2capCocConnectConfirmEvent {
+        connection_handle: ConnHandle,
+        mtu: u16,
+        mps: u16,
+        initial_credits: u16,
+        result: u16,
+        channel_index_list: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The peer asked to reconfigure credit-based channels; answer with
+    /// [`L2capCocReconfConfirm`].
+    aci_l2cap_coc_reconf_event => L2capCocReconfEvent {
+        connection_handle: ConnHandle,
+        mtu: u16,
+        mps: u16,
+        channel_index_list: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The peer answered a request to reconfigure credit-based channels.
+    aci_l2cap_coc_reconf_confirm_event => L2capCocReconfConfirmEvent {
+        connection_handle: ConnHandle,
+        result: u16,
+    }
+}
+
+vendor_event! {
+    /// A credit-based channel closed.
+    aci_l2cap_coc_disconnect_event => L2capCocDisconnectEvent {
+        channel_index: u8,
+    }
+}
+
+vendor_event! {
+    /// The peer granted credits on a credit-based channel.
+    aci_l2cap_coc_flow_control_event => L2capCocFlowControlEvent {
+        channel_index: u8,
+        credits: u16,
+    }
+}
+
+vendor_event! {
+    /// Data arrived on a credit-based channel.
+    aci_l2cap_coc_rx_data_event => L2capCocRxDataEvent {
+        channel_index: u8,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// Buffers freed up after a send on a credit-based channel failed for
+    /// lack of them.
+    aci_l2cap_coc_tx_pool_available_event => L2capCocTxPoolAvailableEvent {}
+}
+
 #[cfg(all(test, feature = "stack-full-extended"))]
 mod tests {
     use bt_hci::cmd::{Cmd, SyncCmd};
     use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
+    use crate::wire::VendorEvent;
 
     fn encode(command: &impl WriteHci) -> ([u8; 300], usize) {
         let mut buffer = [0; 300];
@@ -200,5 +316,46 @@ mod tests {
         assert_eq!(L2capCocConnect::OPCODE.to_raw(), 0xFD88);
         assert_eq!(L2capCocReconfConfirm::OPCODE.to_raw(), 0xFD8B);
         assert_eq!(L2capCocDisconnect::OPCODE.to_raw(), 0xFD8C);
+    }
+
+    #[test]
+    fn received_data_follows_a_16_bit_length() {
+        let params = [0x16, 0x08, 3, 2, 0, 0xAA, 0xBB];
+        let data = L2capCocRxDataEvent::from_vendor_params(&params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(L2capCocRxDataEvent::CODE, 0x0816);
+        assert_eq!((data.channel_index, data.data), (3, &[0xAA, 0xBB][..]));
+        assert!(
+            L2capCocRxDataEvent::from_vendor_params(&params[..6])
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn channel_lists_follow_their_count() {
+        let confirm = L2capCocConnectConfirmEvent::from_hci_bytes_complete(&[
+            0x01, 0x00, 0x40, 0x00, 0x20, 0x00, 0x05, 0x00, 0x00, 0x00, 2, 7, 8,
+        ])
+        .unwrap();
+        assert_eq!(confirm.connection_handle, ConnHandle::new(1));
+        assert_eq!(
+            (confirm.mtu, confirm.mps, confirm.initial_credits),
+            (64, 32, 5)
+        );
+        assert_eq!(confirm.channel_index_list, [7, 8]);
+    }
+
+    #[test]
+    fn update_requests_keep_the_renamed_latency() {
+        let request = L2capConnectionUpdateReqEvent::from_hci_bytes_complete(&[
+            0x01, 0x00, 9, 8, 0, 6, 0, 12, 0, 1, 0, 0xC8, 0,
+        ])
+        .unwrap();
+        assert_eq!(request.identifier, 9);
+        assert_eq!(request.l2cap_length, 8);
+        assert_eq!((request.interval_min, request.interval_max), (6, 12));
+        assert_eq!((request.latency, request.timeout_multiplier), (1, 200));
     }
 }

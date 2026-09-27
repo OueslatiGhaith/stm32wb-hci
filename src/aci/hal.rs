@@ -174,7 +174,7 @@ vendor_event! {
     /// The radio finished one activity and scheduled the next, as selected by
     /// [`HalSetRadioActivityMask`]. `next_state_sys_time` is in units of
     /// 625/256 µs. The code is 0x1804 from 1.24.0.
-    aci_hal_end_of_radio_activity_event => HalEndOfRadioActivity {
+    aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
         last_state: u8,
         next_state: u8,
         next_state_sys_time: u32,
@@ -186,7 +186,7 @@ vendor_event! {
 vendor_event! {
     /// A peer sent a scan request, reported with its RSSI in dBm. The code is
     /// 0x1805 from 1.24.0.
-    aci_hal_scan_req_report_event => HalScanReqReport {
+    aci_hal_scan_req_report_event => HalScanReqReportEvent {
         rssi: i8,
         peer_address_type: u8,
         peer_address: BdAddr,
@@ -196,7 +196,7 @@ vendor_event! {
 vendor_event! {
     /// A warning from the wireless stack, with data depending on its type.
     /// Named `aci_hal_fw_error_event` before 1.22.0.
-    aci_warning_event => HalWarning {
+    aci_warning_event => HalWarningEvent {
         warning_type: u8,
         data: &'a [u8],
     }
@@ -429,15 +429,15 @@ mod tests {
         } else {
             0x0004
         };
-        assert_eq!(HalEndOfRadioActivity::CODE, code);
+        assert_eq!(HalEndOfRadioActivityEvent::CODE, code);
         let [low, high] = code.to_le_bytes();
         let params = [low, high, 1, 2, 0x10, 0x20, 0x30, 0x40, 3, 4];
-        let event = HalEndOfRadioActivity::from_vendor_params(&params)
+        let event = HalEndOfRadioActivityEvent::from_vendor_params(&params)
             .unwrap()
             .unwrap();
         assert_eq!(
             event,
-            HalEndOfRadioActivity {
+            HalEndOfRadioActivityEvent {
                 last_state: 1,
                 next_state: 2,
                 next_state_sys_time: 0x4030_2010,
@@ -445,7 +445,7 @@ mod tests {
                 next_state_slot: 4,
             }
         );
-        assert!(HalEndOfRadioActivity::from_vendor_params(&[low ^ 1, high, 0]).is_none());
+        assert!(HalEndOfRadioActivityEvent::from_vendor_params(&[low ^ 1, high, 0]).is_none());
 
         let mut packet = [0xFF, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         packet[2..].copy_from_slice(&params);
@@ -455,20 +455,20 @@ mod tests {
             panic!("0xFF is the vendor event code");
         };
         assert_eq!(
-            HalEndOfRadioActivity::from_vendor(&vendor)
+            HalEndOfRadioActivityEvent::from_vendor(&vendor)
                 .unwrap()
                 .unwrap(),
             event
         );
         assert!(
-            HalEndOfRadioActivity::from_vendor_params(&params[..9])
+            HalEndOfRadioActivityEvent::from_vendor_params(&params[..9])
                 .unwrap()
                 .is_err()
         );
         let mut longer = [0; 11];
         longer[..10].copy_from_slice(&params);
         assert!(
-            HalEndOfRadioActivity::from_vendor_params(&longer)
+            HalEndOfRadioActivityEvent::from_vendor_params(&longer)
                 .unwrap()
                 .is_err()
         );
@@ -482,11 +482,13 @@ mod tests {
     #[test]
     fn counted_event_data_borrows_the_event() {
         let params = [0x06, 0x00, 7, 3, 0xAA, 0xBB, 0xCC];
-        let warning = HalWarning::from_vendor_params(&params).unwrap().unwrap();
+        let warning = HalWarningEvent::from_vendor_params(&params)
+            .unwrap()
+            .unwrap();
         assert_eq!(warning.warning_type, 7);
         assert_eq!(warning.data, [0xAA, 0xBB, 0xCC]);
         assert!(
-            HalWarning::from_vendor_params(&params[..6])
+            HalWarningEvent::from_vendor_params(&params[..6])
                 .unwrap()
                 .is_err()
         );
@@ -496,7 +498,7 @@ mod tests {
     #[test]
     fn scan_requests_report_the_peer() {
         let report =
-            HalScanReqReport::from_hci_bytes_complete(&[0xC4, 1, 1, 2, 3, 4, 5, 6]).unwrap();
+            HalScanReqReportEvent::from_hci_bytes_complete(&[0xC4, 1, 1, 2, 3, 4, 5, 6]).unwrap();
         assert_eq!(report.rssi, -60);
         assert_eq!(report.peer_address, BdAddr::new([1, 2, 3, 4, 5, 6]));
     }

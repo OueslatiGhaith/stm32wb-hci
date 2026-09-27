@@ -1,8 +1,8 @@
-//! GAP commands, in opcode order.
+//! GAP commands, in opcode order, and events, in code order.
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use bt_hci::param::{BdAddr, ConnHandle};
-use stm32wb_hci_macros::{vendor_command, vendor_struct};
+use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::BoundedArray;
@@ -660,12 +660,99 @@ vendor_command! {
     }
 }
 
+vendor_event! {
+    /// Limited discoverable mode ended after its 180 seconds.
+    aci_gap_limited_discoverable_event => GapLimitedDiscoverableEvent {}
+}
+
+vendor_event! {
+    /// Pairing completed, failed (`status`, with `reason` the SMP error), or
+    /// timed out.
+    aci_gap_pairing_complete_event => GapPairingCompleteEvent {
+        connection_handle: ConnHandle,
+        status: u8,
+        reason: u8,
+    }
+}
+
+vendor_event! {
+    /// Pairing needs a passkey; answer with [`GapPassKeyResp`].
+    aci_gap_pass_key_req_event => GapPassKeyReqEvent {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// A peer needs authorization; answer with [`GapAuthorizationResp`].
+    aci_gap_authorization_req_event => GapAuthorizationReqEvent {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// The security request sent with [`GapPeripheralSecurityReq`] went out.
+    /// Named `aci_gap_slave_security_initiated_event` in earlier releases.
+    aci_gap_peripheral_security_initiated_event => GapPeripheralSecurityInitiatedEvent {}
+}
+
+vendor_event! {
+    /// A bonded peer asked to pair again, having lost its keys; allow it with
+    /// [`GapAllowRebond`]. From 1.22.0 the event names the connection.
+    aci_gap_bond_lost_event => GapBondLostEvent {
+        #[wire(since = "1.22.0")]
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// A GAP procedure completed, with data depending on the procedure.
+    aci_gap_proc_complete_event => GapProcCompleteEvent {
+        procedure_code: u8,
+        status: u8,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The resolving list has no key for the peer of a connection.
+    aci_gap_addr_not_resolved_event => GapAddrNotResolvedEvent {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// Pairing needs the user to confirm `numeric_value`; answer with
+    /// [`GapNumericComparisonValueConfirmYesno`].
+    aci_gap_numeric_comparison_value_event => GapNumericComparisonValueEvent {
+        connection_handle: ConnHandle,
+        numeric_value: u32,
+    }
+}
+
+vendor_event! {
+    /// The peer reported a keypress while its user enters the passkey.
+    aci_gap_keypress_notification_event => GapKeypressNotificationEvent {
+        connection_handle: ConnHandle,
+        notification_type: u8,
+    }
+}
+
+vendor_event! {
+    /// A peer asked to pair; answer with [`GapPairingRequestReply`].
+    aci_gap_pairing_request_event => GapPairingRequestEvent {
+        connection_handle: ConnHandle,
+        bonded: bool,
+        auth_req: u8,
+    }
+}
+
 #[cfg(all(test, feature = "stack-full-extended"))]
 mod tests {
     use bt_hci::cmd::{Cmd, CmdReturnBuf, SyncCmd};
     use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
+    use crate::wire::VendorEvent;
 
     fn encode(command: &impl WriteHci) -> ([u8; 300], usize) {
         let mut buffer = [0; 300];
@@ -937,5 +1024,70 @@ mod tests {
                 .is_err()
         );
         assert_eq!(<GapGetBondedDevices as SyncCmd>::ReturnBuf::LEN, 1 + 35 * 7);
+    }
+
+    #[test]
+    fn gap_events_decode_after_their_code() {
+        let params = [0x07, 0x04, 0x02, 0x00, 0x02, 0xAA, 0xBB];
+        let complete = GapProcCompleteEvent::from_vendor_params(&params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(GapProcCompleteEvent::CODE, 0x0407);
+        assert_eq!(
+            (complete.procedure_code, complete.status, complete.data),
+            (0x02, 0x00, &[0xAA, 0xBB][..])
+        );
+        assert!(
+            GapProcCompleteEvent::from_vendor_params(&params[..6])
+                .unwrap()
+                .is_err()
+        );
+        let limited = GapLimitedDiscoverableEvent::from_vendor_params(&[0x00, 0x04]).unwrap();
+        assert_eq!(limited, Ok(GapLimitedDiscoverableEvent {}));
+    }
+
+    #[cfg(not(any(
+        feature = "fw_1_15_0",
+        feature = "fw_1_16_0",
+        feature = "fw_1_17_0",
+        feature = "fw_1_17_1",
+        feature = "fw_1_17_2",
+        feature = "fw_1_17_3",
+        feature = "fw_1_18_0",
+        feature = "fw_1_19_0",
+        feature = "fw_1_19_1",
+        feature = "fw_1_20_0",
+        feature = "fw_1_21_0"
+    )))]
+    #[test]
+    fn lost_bonds_name_the_connection_from_1_22_0() {
+        let lost = GapBondLostEvent::from_hci_bytes_complete(&[0x01, 0x08]).unwrap();
+        assert_eq!(lost.connection_handle, ConnHandle::new(0x0801));
+        let pairing =
+            GapPairingRequestEvent::from_hci_bytes_complete(&[0x01, 0x00, 1, 0x2D]).unwrap();
+        assert!(pairing.bonded);
+        assert_eq!(pairing.auth_req, 0x2D);
+    }
+
+    #[cfg(any(
+        feature = "fw_1_15_0",
+        feature = "fw_1_16_0",
+        feature = "fw_1_17_0",
+        feature = "fw_1_17_1",
+        feature = "fw_1_17_2",
+        feature = "fw_1_17_3",
+        feature = "fw_1_18_0",
+        feature = "fw_1_19_0",
+        feature = "fw_1_19_1",
+        feature = "fw_1_20_0",
+        feature = "fw_1_21_0"
+    ))]
+    #[test]
+    fn lost_bonds_carry_nothing_before_1_22_0() {
+        assert_eq!(
+            GapBondLostEvent::from_hci_bytes_complete(&[]),
+            Ok(GapBondLostEvent {})
+        );
+        assert!(GapBondLostEvent::from_hci_bytes_complete(&[0x01, 0x08]).is_err());
     }
 }
