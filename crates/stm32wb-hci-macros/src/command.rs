@@ -184,6 +184,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
                         c_name,
                         returns,
                         members,
+                        &command.return_names[1..],
                         facts.return_structs,
                         Side::Returns,
                     )?,
@@ -195,6 +196,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         c_name,
         &input.params,
         facts.params,
+        &command.param_names,
         facts.structs,
         Side::Params,
     )?;
@@ -691,9 +693,9 @@ fn width_assertions<'a>(
     })
 }
 
-/// The facts a declaration is generated from, identical in every release and
-/// profile the command exists on.
-#[derive(PartialEq)]
+/// The facts a declaration is generated from, identical on the wire in every
+/// release and profile the command exists on. Member names are the latest
+/// release's.
 struct Facts<'a> {
     opcode: u16,
     completion: Completion,
@@ -704,9 +706,71 @@ struct Facts<'a> {
     return_structs: &'a Structs,
 }
 
+impl Facts<'_> {
+    /// Whether both encode the same bytes, whatever their members are named.
+    fn same_wire(&self, other: &Facts<'_>) -> bool {
+        self.opcode == other.opcode
+            && self.completion == other.completion
+            && self.structs == other.structs
+            && self.return_structs == other.return_structs
+            && same_layout(self.params, other.params)
+            && same_layout(self.returns, other.returns)
+    }
+}
+
+/// Whether two member lists have the same types in the same order, with
+/// counts and selectors referring to the same positions.
+fn same_layout(left: &[Field], right: &[Field]) -> bool {
+    /// A member's type with the members it refers to replaced by their positions.
+    fn shape(members: &[Field], member: &Field) -> FieldType {
+        let position = |name: &str| {
+            members
+                .iter()
+                .position(|other| other.name == name)
+                .expect("the catalog validates that referenced members exist")
+                .to_string()
+        };
+        match &member.ty {
+            FieldType::Counted {
+                element,
+                count,
+                capacity,
+            } => FieldType::Counted {
+                element: element.clone(),
+                count: position(count),
+                capacity: *capacity,
+            },
+            FieldType::Union { selector, variants } => FieldType::Union {
+                selector: position(selector),
+                variants: variants.clone(),
+            },
+            ty => ty.clone(),
+        }
+    }
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(l, r)| shape(left, l) == shape(right, r))
+}
+
 struct Command<'a> {
     facts: Facts<'a>,
+    /// Every name each parameter had, by position, latest first.
+    param_names: Vec<Vec<&'a str>>,
+    /// Every name each return parameter had, by position, latest first.
+    return_names: Vec<Vec<&'a str>>,
     cfg: Option<TokenStream>,
+}
+
+/// Add the names of `members` to the names each position had so far.
+fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
+    names.resize_with(members.len(), Vec::new);
+    for (names, member) in names.iter_mut().zip(members) {
+        if !names.contains(&member.name.as_str()) {
+            names.insert(0, &member.name);
+        }
+    }
 }
 
 impl<'a> Command<'a> {
@@ -718,6 +782,7 @@ impl<'a> Command<'a> {
             .map_err(|failure| error(failure.to_string()))?;
 
         let mut facts: Option<Facts<'a>> = None;
+        let (mut param_names, mut return_names) = (Vec::new(), Vec::new());
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
@@ -754,20 +819,24 @@ impl<'a> Command<'a> {
                 returns,
                 return_structs,
             };
-            match &facts {
-                None => facts = Some(current),
-                Some(first) if *first == current => {}
-                Some(_) => {
-                    return Err(error(format!(
-                        "{c_name} changes its opcode, completion, or layout in {releases}; \
-                         release-specific declarations are not supported yet"
-                    )));
-                }
+            if facts
+                .as_ref()
+                .is_some_and(|previous| !previous.same_wire(&current))
+            {
+                return Err(error(format!(
+                    "{c_name} changes its opcode, completion, or layout in {releases}; \
+                     release-specific declarations are not supported yet"
+                )));
             }
+            record_names(&mut param_names, current.params);
+            record_names(&mut return_names, current.returns);
+            facts = Some(current);
         }
 
         Ok(Self {
             facts: facts.expect("command_segments never returns an empty history"),
+            param_names,
+            return_names,
             cfg: cfg::targets(
                 &bundled.catalog,
                 segments
@@ -845,10 +914,19 @@ fn plan<'a>(
     c_name: &Ident,
     declared: &'a Fields,
     members: &'a [Field],
+    names: &[Vec<&str>],
     structs: &Structs,
     side: Side,
 ) -> syn::Result<Vec<Slot<'a>>> {
     let what = side.what();
+    // Whether `field` declares `member` under any name it had.
+    let declares = |field: &InputField, member: &Field| {
+        let position = members
+            .iter()
+            .position(|other| ptr::eq(other, member))
+            .expect("the member is one of the members");
+        names[position].iter().any(|name| field.matches(name))
+    };
     let visible = members
         .iter()
         .filter(|member| dependent(members, &member.name).is_none())
@@ -857,7 +935,7 @@ fn plan<'a>(
     for field in &declared.fields {
         let Some((derived, dependent)) = members.iter().find_map(|member| {
             dependent(members, &member.name)
-                .filter(|_| field.matches(&member.name))
+                .filter(|_| declares(field, member))
                 .map(|dependent| (member, dependent))
         }) else {
             continue;
@@ -889,7 +967,7 @@ fn plan<'a>(
                 ),
             ));
         };
-        if !field.matches(&member.name) {
+        if !declares(field, member) {
             let expected = snake_case(&member.name);
             return Err(syn::Error::new(
                 field.name.span(),
@@ -1212,6 +1290,60 @@ mod tests {
              } -> Nothing {}",
         );
         assert!(error.contains("Command Status"), "{error}");
+    }
+
+    #[test]
+    fn renamed_members_keep_every_name() {
+        let tokens = expand_str(
+            "aci_l2cap_connection_parameter_update_req => L2capConnectionParameterUpdateReq {
+                 connection_handle: u16,
+                 conn_interval_min: u16,
+                 conn_interval_max: u16,
+                 latency: u16,
+                 timeout_multiplier: u16,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("feature = \"fw_1_15_0\""),
+            "declared on releases using the older name too: {tokens}"
+        );
+
+        expand_str(
+            "aci_l2cap_connection_parameter_update_req => L2capConnectionParameterUpdateReq {
+                 connection_handle: u16,
+                 conn_interval_min: u16,
+                 conn_interval_max: u16,
+                 slave_latency: u16,
+                 timeout_multiplier: u16,
+             }",
+        )
+        .unwrap();
+
+        let error = expand_err(
+            "aci_l2cap_connection_parameter_update_req => L2capConnectionParameterUpdateReq {
+                 connection_handle: u16,
+                 conn_interval_min: u16,
+                 conn_interval_max: u16,
+                 peripheral_latency: u16,
+                 timeout_multiplier: u16,
+             }",
+        );
+        assert!(error.contains("name this field `latency`"), "{error}");
+
+        let error = expand_err(
+            "aci_l2cap_coc_connect_confirm => L2capCocConnectConfirm {
+                 connection_handle: u16,
+                 mtu: u16,
+                 mps: u16,
+                 initial_credits: u16,
+                 result: u16,
+             } -> L2capCocChannels { channel_index_list: BoundedBytes<250> }",
+        );
+        assert!(
+            error.contains("changes its opcode, completion, or layout in 1.23.0"),
+            "{error}"
+        );
     }
 
     #[test]

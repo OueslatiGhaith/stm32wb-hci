@@ -7,3 +7,4 @@
 
 pub mod gatt;
 pub mod hal;
+pub mod l2cap;
