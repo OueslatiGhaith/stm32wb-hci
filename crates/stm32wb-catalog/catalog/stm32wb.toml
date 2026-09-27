@@ -6334,6 +6334,1022 @@ returns = [
     "Data: [u8; Data_Length] (capacity 250)",
 ]
 
+[[commands]]
+scope = "system"
+opcode = "0xFC52"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_GetState"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = [
+    "Status: u8",
+    "error_code: u8",
+]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC54"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_FwUpgrade"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+returns = ["Status: u8"]
+
+[commands.definitions.params]
+unresolved = "the parameter length is computed at run time"
+
+[[commands]]
+scope = "system"
+opcode = "0xFC55"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_FwDelete"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC56"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_UpdateAuthKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "KeySize: u8",
+    "KeyData: [u8; 64]",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC57"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_LockAuthKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC58"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_StoreUsrKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+returns = [
+    "Status: u8",
+    "key_index: u8",
+]
+
+[commands.definitions.params]
+unresolved = "the parameter length is computed at run time"
+
+[[commands]]
+scope = "system"
+opcode = "0xFC59"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_LoadUsrKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["key_index: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC5A"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_StartWs"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC5B"
+
+[[commands.names]]
+releases = "1.24.0"
+name = "SHCI_C2_FUS_FwPurge"
+
+[[commands.availability]]
+releases = "1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC5D"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_LockUsrKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["key_index: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC5E"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_UnloadUsrKey"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["key_index: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC5F"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FUS_ActivateAntiRollback"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC66"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_BLE_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0"
+completion = "command-complete"
+params = [
+    "pBleBufferAddress: u32",
+    "BleBufferSize: u32",
+    "NumAttrRecord: u16",
+    "NumAttrServ: u16",
+    "AttrValueArrSize: u16",
+    "NumOfLinks: u8",
+    "ExtendedPacketLengthEnable: u8",
+    "PrWriteListSize: u8",
+    "MblockCount: u8",
+    "AttMtu: u16",
+    "SlaveSca: u16",
+    "MasterSca: u8",
+    "LsSource: u8",
+    "MaxConnEventLength: u32",
+    "HsStartupTime: u16",
+    "ViterbiEnable: u8",
+    "Options: u8",
+    "HwVersion: u8",
+    "max_coc_initiator_nbr: u8",
+    "min_tx_power: i8",
+    "max_tx_power: i8",
+    "rx_model_config: u8",
+    "max_adv_set_nbr: u8",
+    "max_adv_data_len: u16",
+    "tx_path_compens: i16",
+    "rx_path_compens: i16",
+    "ble_core_version: u8",
+]
+returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.16.0..=1.17.3"
+completion = "command-complete"
+params = [
+    "pBleBufferAddress: u32",
+    "BleBufferSize: u32",
+    "NumAttrRecord: u16",
+    "NumAttrServ: u16",
+    "AttrValueArrSize: u16",
+    "NumOfLinks: u8",
+    "ExtendedPacketLengthEnable: u8",
+    "PrWriteListSize: u8",
+    "MblockCount: u8",
+    "AttMtu: u16",
+    "SlaveSca: u16",
+    "MasterSca: u8",
+    "LsSource: u8",
+    "MaxConnEventLength: u32",
+    "HsStartupTime: u16",
+    "ViterbiEnable: u8",
+    "Options: u8",
+    "HwVersion: u8",
+    "max_coc_initiator_nbr: u8",
+    "min_tx_power: i8",
+    "max_tx_power: i8",
+    "rx_model_config: u8",
+    "max_adv_set_nbr: u8",
+    "max_adv_data_len: u16",
+    "tx_path_compens: i16",
+    "rx_path_compens: i16",
+    "ble_core_version: u8",
+    "Options_extension: u8",
+]
+returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.18.0..=1.22.1"
+completion = "command-complete"
+params = [
+    "pBleBufferAddress: u32",
+    "BleBufferSize: u32",
+    "NumAttrRecord: u16",
+    "NumAttrServ: u16",
+    "AttrValueArrSize: u16",
+    "NumOfLinks: u8",
+    "ExtendedPacketLengthEnable: u8",
+    "PrWriteListSize: u8",
+    "MblockCount: u8",
+    "AttMtu: u16",
+    "PeripheralSca: u16",
+    "CentralSca: u8",
+    "LsSource: u8",
+    "MaxConnEventLength: u32",
+    "HsStartupTime: u16",
+    "ViterbiEnable: u8",
+    "Options: u8",
+    "HwVersion: u8",
+    "max_coc_initiator_nbr: u8",
+    "min_tx_power: i8",
+    "max_tx_power: i8",
+    "rx_model_config: u8",
+    "max_adv_set_nbr: u8",
+    "max_adv_data_len: u16",
+    "tx_path_compens: i16",
+    "rx_path_compens: i16",
+    "ble_core_version: u8",
+    "Options_extension: u8",
+]
+returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.23.0"
+completion = "command-complete"
+params = [
+    "pBleBufferAddress: u32",
+    "BleBufferSize: u32",
+    "NumAttrRecord: u16",
+    "NumAttrServ: u16",
+    "AttrValueArrSize: u16",
+    "NumOfLinks: u8",
+    "ExtendedPacketLengthEnable: u8",
+    "PrWriteListSize: u8",
+    "MblockCount: u8",
+    "AttMtu: u16",
+    "PeripheralSca: u16",
+    "CentralSca: u8",
+    "LsSource: u8",
+    "MaxConnEventLength: u32",
+    "HsStartupTime: u16",
+    "ViterbiEnable: u8",
+    "Options: u8",
+    "HwVersion: u8",
+    "max_coc_initiator_nbr: u8",
+    "min_tx_power: i8",
+    "max_tx_power: i8",
+    "rx_model_config: u8",
+    "max_adv_set_nbr: u8",
+    "max_adv_data_len: u16",
+    "tx_path_compens: i16",
+    "rx_path_compens: i16",
+    "ble_core_version: u8",
+    "Options_extension: u8",
+    "MaxAddEattBearers: u8",
+]
+returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.24.0"
+completion = "command-complete"
+params = [
+    "pBleBufferAddress: u32",
+    "BleBufferSize: u32",
+    "NumAttrRecord: u16",
+    "NumAttrServ: u16",
+    "AttrValueArrSize: u16",
+    "NumOfLinks: u8",
+    "ExtendedPacketLengthEnable: u8",
+    "PrWriteListSize: u8",
+    "MblockCount: u8",
+    "AttMtu: u16",
+    "PeripheralSca: u16",
+    "CentralSca: u8",
+    "LsSource: u8",
+    "MaxConnEventLength: u32",
+    "HsStartupTime: u16",
+    "ViterbiEnable: u8",
+    "Options: u8",
+    "HwVersion: u8",
+    "max_coc_initiator_nbr: u8",
+    "min_tx_power: i8",
+    "max_tx_power: i8",
+    "rx_model_config: u8",
+    "max_adv_set_nbr: u8",
+    "max_adv_data_len: u16",
+    "tx_path_compens: i16",
+    "rx_path_compens: i16",
+    "ble_core_version: u8",
+    "Options_extension: u8",
+    "MaxAddEattBearers: u8",
+    "extra_data_buffer: u32",
+    "extra_data_buffer_size: u32",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC67"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_THREAD_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC68"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_DEBUG_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "pGpioConfig: u32",
+    "pTracesConfig: u32",
+    "pGeneralConfig: u32",
+    "GpioConfigSize: u8",
+    "TracesConfigSize: u8",
+    "GeneralConfigSize: u8",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC69"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FLASH_EraseActivity"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["erase_activity: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6A"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_CONCURRENT_SetMode"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["Mode: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6B"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FLASH_StoreData"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["Ip: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6C"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_FLASH_EraseData"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["Ip: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6D"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_RADIO_AllowLowPower"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "Ip: u8",
+    "FlagRadioLowPowerOn: u8",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6E"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_MAC_802_15_4_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC6F"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_Reinit"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC70"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_ZIGBEE_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC71"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_LLDTESTS_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+returns = ["Status: u8"]
+
+[commands.definitions.params]
+unresolved = "the parameter length is computed at run time"
+
+[[commands]]
+scope = "system"
+opcode = "0xFC72"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_ExtpaConfig"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "gpio_port: u32",
+    "gpio_pin_number: u16",
+    "gpio_polarity: u8",
+    "gpio_status: u8",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC73"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_SetFlashActivityControl"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = ["Source: u8"]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC74"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_BLE_LLD_Init"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+returns = ["Status: u8"]
+
+[commands.definitions.params]
+unresolved = "the parameter length is computed at run time"
+
+[[commands]]
+scope = "system"
+opcode = "0xFC75"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_Config"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "PayloadCmdSize: u8",
+    "Config1: u8",
+    "EvtMask1: u8",
+    "Spare1: u8",
+    "BleNvmRamAddress: u32",
+    "ThreadNvmRamAddress: u32",
+    "RevisionID: u16",
+    "DeviceID: u16",
+]
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC76"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_CONCURRENT_GetNextBleEvtTime"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = [
+    "Status: u8",
+    "relative_time: u32",
+]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC77"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_CONCURRENT_EnableNext_802154_EvtNotification"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC78"
+
+[[commands.names]]
+releases = "1.15.0..=1.24.0"
+name = "SHCI_C2_802_15_4_DeInit"
+
+[[commands.availability]]
+releases = "1.15.0..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.24.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+
+[[commands]]
+scope = "system"
+opcode = "0xFC79"
+
+[[commands.names]]
+releases = "1.17.3..=1.24.0"
+name = "SHCI_C2_SetSystemClock"
+
+[[commands.availability]]
+releases = "1.17.3..=1.24.0"
+profiles = [
+    "full-extended",
+    "full",
+    "light",
+    "hci-layer-extended",
+    "hci-layer",
+    "hci-adv-scan",
+]
+
+[[commands.definitions]]
+releases = "1.17.3..=1.24.0"
+completion = "command-complete"
+params = ["clockSel: u8"]
+returns = ["Status: u8"]
+
 [[events]]
 scope = "standard"
 code = "0x0005"

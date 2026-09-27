@@ -84,6 +84,17 @@ pub fn extract(
         shci::extract(&unit, &records).map_err(|error| format!("{} shci.h: {error}", tag.tag))?,
     );
 
+    let unit = c::parse(
+        index,
+        &shci_dir.join("shci/shci.c"),
+        shim,
+        &[shci_dir.join("shci"), shci_dir.join("tl")],
+    )?;
+    let records = c::records(&unit);
+    extracted_commands.extend(
+        shci::commands(&unit, &records).map_err(|error| format!("{} shci.c: {error}", tag.tag))?,
+    );
+
     // ST's generator counts every variable buffer with the member right
     // before it. Events rely on that rule; commands prove it wherever their
     // code relates a count to a buffer, so any counterexample is fatal.
@@ -126,7 +137,13 @@ pub fn extract(
     };
     let mut commands = Vec::new();
     for command in extracted_commands {
-        let profiles = availability(Key::Command(command.scope, command.opcode), &command.name)?;
+        let profiles = if command.scope == CommandScope::System {
+            // Like the system events, the BLE interface document does not
+            // list the system channel's commands.
+            Profile::ALL.to_vec()
+        } else {
+            availability(Key::Command(command.scope, command.opcode), &command.name)?
+        };
         note_unresolved(&mut report, &command.name, "params", &command.params);
         if let Some(returns) = &command.returns {
             note_unresolved(&mut report, &command.name, "returns", returns);

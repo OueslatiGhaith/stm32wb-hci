@@ -406,3 +406,104 @@ typedef __PACKED_STRUCT { uint32_t MetaData[3]; } Header_t;
         0x9203
     );
 }
+
+#[test]
+fn shci_commands_follow_their_wrappers() {
+    let source = r#"
+typedef __PACKED_STRUCT { uint8_t evtcode; uint8_t plen; uint8_t numcmd; uint16_t cmdcode; uint8_t payload[8]; } TL_CcEvt_t;
+typedef struct { struct { struct { uint8_t payload[16]; } evt; } evtserial; } TL_EvtPacket_t;
+void shci_send(uint16_t opcode, uint8_t length, uint8_t *parameters, TL_EvtPacket_t *response);
+void *memcpy(void *destination, const void *source, unsigned int length);
+#define OPCODE(ocf) ((0x3F << 10) + (ocf))
+#define RESULT(index) (((TL_CcEvt_t *)(response->evtserial.evt.payload))->payload[index])
+typedef __PACKED_STRUCT { uint8_t *Buffer; uint16_t Size; } Init_Param_t;
+typedef __PACKED_STRUCT { uint32_t port; uint8_t pin; } Pa_Param_t;
+typedef __PACKED_STRUCT { uint32_t relative_time; } Time_Param_t;
+
+uint8_t GetState(uint8_t *p_error_code) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    shci_send(OPCODE(0x52), 0, 0, response);
+    if (p_error_code != 0) { *p_error_code = (uint8_t)RESULT(1); }
+    return RESULT(0);
+}
+uint8_t Init(Init_Param_t *pParam) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    shci_send(OPCODE(0x66), sizeof(Init_Param_t), (uint8_t *)pParam, response);
+    return RESULT(0);
+}
+uint8_t Load(uint8_t key_index, uint8_t flag) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    buffer[0] = key_index;
+    buffer[1] = (uint8_t)flag;
+    shci_send(OPCODE(0x59), 2, buffer, response);
+    return RESULT(0);
+}
+uint8_t Pa(uint32_t port, uint8_t pin) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    ((Pa_Param_t *)buffer)->port = port;
+    ((Pa_Param_t *)buffer)->pin = pin;
+    shci_send(OPCODE(0x72), 5, buffer, response);
+    return RESULT(0);
+}
+uint8_t Time(Time_Param_t *pParam) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    shci_send(OPCODE(0x76), 0, 0, response);
+    memcpy(&pParam->relative_time, &RESULT(1), sizeof(pParam->relative_time));
+    return RESULT(0);
+}
+uint8_t Upgrade(uint32_t address) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    uint8_t length = 0;
+    if (address != 0) { *(uint32_t *)buffer = address; length = 4; }
+    shci_send(OPCODE(0x54), length, buffer, response);
+    return RESULT(0);
+}
+uint8_t Gap(uint8_t value) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    buffer[1] = value;
+    shci_send(OPCODE(0x60), 2, buffer, response);
+    return RESULT(0);
+}
+uint32_t LocalInformation(void) { return 0; }
+"#;
+    let commands = with_fixture(source, |unit| shci::commands(unit, &c::records(unit))).unwrap();
+    let by_name = commands
+        .iter()
+        .map(|command| (command.name.as_str(), command))
+        .collect::<BTreeMap<_, _>>();
+    assert!(!by_name.contains_key("LocalInformation"));
+    assert!(
+        commands
+            .iter()
+            .all(|command| command.scope == CommandScope::System
+                && command.completion == Completion::CommandComplete)
+    );
+    assert_eq!(by_name["GetState"].opcode, 0xFC52);
+    assert!(fields(&by_name["GetState"].params).is_empty());
+    assert_eq!(
+        fields(by_name["GetState"].returns.as_ref().unwrap()),
+        ["Status: u8", "error_code: u8"]
+    );
+    // Pointers in parameter structures are 32-bit addresses.
+    assert_eq!(
+        fields(&by_name["Init"].params),
+        ["Buffer: u32", "Size: u16"]
+    );
+    assert_eq!(
+        fields(&by_name["Load"].params),
+        ["key_index: u8", "flag: u8"]
+    );
+    assert_eq!(fields(&by_name["Pa"].params), ["port: u32", "pin: u8"]);
+    assert_eq!(
+        fields(by_name["Time"].returns.as_ref().unwrap()),
+        ["Status: u8", "relative_time: u32"]
+    );
+    assert!(matches!(
+        &by_name["Upgrade"].params,
+        Layout::Unresolved(reason) if reason.contains("run time")
+    ));
+    assert!(matches!(
+        &by_name["Gap"].params,
+        Layout::Unresolved(reason) if reason.contains("written at [1]")
+    ));
+}

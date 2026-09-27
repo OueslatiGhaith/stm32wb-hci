@@ -47,3 +47,60 @@ event = "SHCI_SUB_EVT_CODE_CONCURRENT_802154_EVT"
 source = "shci.h: concurrent 802.15.4 mode notification"
 reason = "802.15.4 is outside this Bluetooth HCI crate"
 exclude = true
+
+# System commands for the other wireless stacks and test binaries sharing the
+# system channel.
+
+[[annotations]]
+command = "SHCI_C2_THREAD_Init"
+source = "shci.h, SHCI_C2_THREAD_Init: \"Starts the THREAD Stack\""
+reason = "OpenThread is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_ZIGBEE_Init"
+source = "shci.h, SHCI_C2_ZIGBEE_Init: \"Starts the Zigbee Stack\""
+reason = "Zigbee is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_MAC_802_15_4_Init"
+source = "shci.h, SHCI_C2_MAC_802_15_4_Init: \"Starts the MAC 802.15.4 on M0\""
+reason = "802.15.4 is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_802_15_4_DeInit"
+source = "shci.h, SHCI_C2_802_15_4_DeInit: \"Deinit 802.15.4 layer (to be used before entering StandBy mode)\""
+reason = "802.15.4 is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_SetMode"
+source = "shci.h, SHCI_C2_CONCURRENT_SetMode: \"Enable/Disable Thread on CPU2 (M0+)\""
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_GetNextBleEvtTime"
+source = "shci.h, SHCI_C2_CONCURRENT_GetNextBleEvtTime: \"Get the next BLE event date (relative time)\", for scheduling the concurrent Thread stack around BLE"
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_EnableNext_802154_EvtNotification"
+source = "shci.h, SHCI_C2_CONCURRENT_EnableNext_802154_EvtNotification: \"Activate the next 802.15.4 event notification (one shot)\""
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_LLDTESTS_Init"
+source = "shci.h, SHCI_C2_LLDTESTS_Init: \"Starts the LLD tests CLI\""
+reason = "the LLD test binaries are outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_BLE_LLD_Init"
+source = "shci.h, SHCI_C2_BLE_LLD_Init: \"Starts the LLD tests BLE\""
+reason = "the LLD test binaries are outside this Bluetooth HCI crate"
+exclude = true

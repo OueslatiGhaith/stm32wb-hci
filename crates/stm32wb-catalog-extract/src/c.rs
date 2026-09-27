@@ -5,7 +5,8 @@
 //! (`thumbv7em-none-eabi`, freestanding). The few hosted headers the BLE
 //! templates include (`string.h`, …) contribute nothing to the protocol, so a
 //! shim directory supplies empty stand-ins; `stm32_wpan_common.h` is replaced
-//! by its GCC packing macros so `shci.h` can be parsed without CMSIS.
+//! by its GCC packing macros and `stm32wbxx.h` by the few CMSIS symbols
+//! `shci.c` uses, so the SHCI sources can be parsed without CMSIS.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,7 +17,7 @@ use clang::{Entity, EntityKind, EvaluationResult, Index, TranslationUnit, Type, 
 use stm32wb_catalog::{Element, Field, FieldType, Scalar, Structs};
 use tempfile::TempDir;
 
-const SHIM_HEADERS: [(&str, &str); 4] = [
+const SHIM_HEADERS: [(&str, &str); 5] = [
     ("string.h", "/* freestanding shim: no protocol content */\n"),
     ("stdio.h", "/* freestanding shim: no protocol content */\n"),
     ("stdlib.h", "/* freestanding shim: no protocol content */\n"),
@@ -27,6 +28,18 @@ const SHIM_HEADERS: [(&str, &str); 4] = [
          #define PACKED__ __attribute__((packed))\n\
          #define PACKED_STRUCT struct PACKED__\n\
          #define ALIGN(n) __attribute__((aligned(n)))\n",
+    ),
+    (
+        "stm32wbxx.h",
+        "/* shim: the CMSIS symbols shci.c uses, and the C library it reaches through them */\n\
+         #include <stddef.h>\n\
+         #include <stdint.h>\n\
+         void *memcpy(void *destination, const void *source, size_t length);\n\
+         typedef struct { volatile uint32_t IPCCBR; } FLASH_TypeDef;\n\
+         #define FLASH ((FLASH_TypeDef *)0x58004000UL)\n\
+         #define FLASH_IPCCBR_IPCCDBA 0x3FFFUL\n\
+         #define SRAM2A_BASE 0x20030000UL\n\
+         #define READ_BIT(REG, BIT) ((REG) & (BIT))\n",
     ),
 ];
 
@@ -206,7 +219,7 @@ pub fn address_of_member(entity: Entity<'_>) -> Option<(String, String)> {
 }
 
 /// A C integer type as a wire scalar.
-fn scalar(ty: Type<'_>) -> Option<Scalar> {
+pub fn scalar(ty: Type<'_>) -> Option<Scalar> {
     let canonical = ty.get_canonical_type();
     let signed = match canonical.get_kind() {
         TypeKind::CharS

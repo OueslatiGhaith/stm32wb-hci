@@ -535,6 +535,38 @@ fn bundled_catalog_is_valid_and_audited() {
     assert!(std::ptr::eq(catalog, &bundled().unwrap().catalog));
 }
 
+#[test]
+fn bundled_system_commands_keep_their_history() {
+    let bundled = bundled().unwrap();
+    let init = bundled
+        .catalog
+        .command(CommandScope::System, 0xFC66)
+        .unwrap();
+    assert_eq!(init.name(), "SHCI_C2_BLE_Init");
+    assert_eq!(
+        init.definitions
+            .iter()
+            .map(|definition| definition.releases.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "1.15.0",
+            "1.16.0..=1.17.3",
+            "1.18.0..=1.22.1",
+            "1.23.0",
+            "1.24.0"
+        ]
+    );
+    let segments = bundled.command_segments("SHCI_C2_THREAD_Init").unwrap();
+    assert!(
+        segments
+            .iter()
+            .all(|segment| segment.entry.excluded.is_some())
+    );
+    let segments = bundled.command_segments("SHCI_C2_FUS_GetState").unwrap();
+    let returns = segments[0].entry.returns.unwrap().fields.unwrap();
+    assert_eq!(returns.len(), 2);
+}
+
 fn ranges<T>(segments: &[Segment<'_, T>]) -> Vec<String> {
     segments
         .iter()

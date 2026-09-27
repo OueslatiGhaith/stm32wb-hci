@@ -5,7 +5,7 @@
 //! distinct source:
 //!
 //! 1. **Generated C** (`ble_*_aci.c`, `ble_hci_le.c`, `ble_events.c`,
-//!    `ble_types.h`, `shci.h`): opcodes, completion kinds, and wire layouts.
+//!    `ble_types.h`, `shci.h`, `shci.c`): opcodes, completion kinds, and wire layouts.
 //! 2. **ST documents** (`STM32WB_BLE_Wireless_Interface.html` and each
 //!    family's `Release_Notes.html`): which stack profile supports each
 //!    command and event, and which binaries exist per MCU family.
@@ -90,6 +90,9 @@ pub enum CommandScope {
     Standard,
     /// An ST vendor ACI command (OGF 0x3F), identified by its full opcode.
     Vendor,
+    /// An ST system (SHCI) command, sent on the CPU2 system channel (OGF
+    /// 0x3F), identified by its full opcode.
+    System,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -318,7 +321,9 @@ impl Catalog {
             if !identities.insert((command.scope, command.opcode)) {
                 return Err(Error::invalid(format!("duplicate {}", label())));
             }
-            if command.scope == CommandScope::Vendor && command.opcode >> 10 != 0x3F {
+            if matches!(command.scope, CommandScope::Vendor | CommandScope::System)
+                && command.opcode >> 10 != 0x3F
+            {
                 return Err(Error::invalid(format!("{} is not in OGF 0x3F", label())));
             }
             let definitions = command
