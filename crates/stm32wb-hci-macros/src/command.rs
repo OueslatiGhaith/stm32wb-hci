@@ -1,6 +1,8 @@
 //! `vendor_command!`: an ST vendor command whose identity, availability, and
 //! wire layout come from the catalog.
 
+use std::ptr;
+
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
@@ -16,9 +18,8 @@ use crate::cfg;
 
 /// ```text
 /// /// Documentation for the command.
-/// aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
-///     anchor_period: u32,
-///     max_free_slot: u32,
+/// aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+///     data: BoundedBytes<250>,
 /// }
 /// ```
 pub struct Input {
@@ -183,8 +184,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
                         returns,
                         members,
                         facts.return_structs,
-                        "return parameter",
-                        false,
+                        Side::Returns,
                     )?,
                 )),
             }
@@ -195,8 +195,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         &input.params,
         facts.params,
         facts.structs,
-        "parameter",
-        true,
+        Side::Params,
     )?;
 
     let ocf = facts.opcode & 0x03FF;
@@ -207,8 +206,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     let returns_tokens = match (&returned, facts.completion) {
         (Some((returns, _)), _) => {
             let returns_name = &returns.name;
-            let (names, types) = names_and_types(returns);
-            quote!(#returns_name { #(#names: #types,)* })
+            quote!(Return = #returns_name;)
         }
         (None, Completion::CommandComplete) => quote!(Return = ();),
         (None, Completion::CommandStatus) => quote!(),
@@ -218,6 +216,9 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
             .iter()
             .flat_map(|(returns, slots)| width_assertions(&cfg, &returns.name, slots)),
     );
+    let return_struct = returned
+        .iter()
+        .map(|(returns, slots)| return_struct(name, returns, slots, &cfg));
     let attrs = &input.attrs;
     let declaration = if params.iter().any(|slot| matches!(slot, Slot::Bytes { .. })) {
         variable_command(&input, &params, &cfg, ocf, &returns_tokens)?
@@ -242,8 +243,135 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     };
     Ok(quote! {
         #declaration
+        #(#return_struct)*
         #(#widths)*
     })
+}
+
+/// The return parameters after the status, as a plain struct whose fields
+/// can be borrowed. Decoding follows the catalog order, reads each count
+/// before the field it counts, and leaves the count out of the struct.
+fn return_struct(
+    command: &Ident,
+    returns: &Fields,
+    slots: &[Slot<'_>],
+    cfg: &Option<TokenStream>,
+) -> TokenStream {
+    let name = &returns.name;
+    let (names, types) = names_and_types(returns);
+    let count_of = |counted: &InputField| format_ident!("__{}_count", counted.name);
+
+    let decodes = slots.iter().map(|slot| match slot {
+        Slot::Fixed { field, .. } => {
+            let (field, ty) = (&field.name, &field.ty);
+            quote!(let (#field, rest) = <#ty as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;)
+        }
+        Slot::Count { counted, scalar } => {
+            let (count, scalar) = (count_of(counted), format_ident!("{}", scalar.name()));
+            quote!(let (#count, rest) = <#scalar as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;)
+        }
+        Slot::Bytes { field, .. } => {
+            let count = count_of(field);
+            let field = &field.name;
+            quote! {
+                let len = usize::from(#count);
+                let bytes = rest.get(..len).ok_or(::bt_hci::FromHciBytesError::InvalidSize)?;
+                let rest = &rest[len..];
+                let #field = ::stm32wb_hci::wire::BoundedBytes::new(bytes)?;
+            }
+        }
+    });
+    let max_lens = slots.iter().map(|slot| {
+        let len = match slot {
+            Slot::Fixed { width, .. } => usize::from(*width),
+            Slot::Count { scalar, .. } => usize::from(scalar.width()),
+            Slot::Bytes { capacity, .. } => usize::from(*capacity),
+        };
+        quote!(#len)
+    });
+    let reads = |asynchronous: bool| {
+        let wait = asynchronous.then(|| quote!(.await));
+        slots
+            .iter()
+            .map(|slot| {
+                let (len, count) = match slot {
+                    Slot::Fixed { width, .. } => {
+                        let width = usize::from(*width);
+                        (quote!(#width), None)
+                    }
+                    Slot::Count { counted, scalar } => {
+                        let width = usize::from(scalar.width());
+                        let scalar = format_ident!("{}", scalar.name());
+                        (quote!(#width), Some((count_of(counted), scalar)))
+                    }
+                    Slot::Bytes { field, .. } => {
+                        let count = count_of(field);
+                        (quote!(usize::from(#count)), None)
+                    }
+                };
+                let count = count.map(|(count, scalar)| {
+                    quote! {
+                        let (#count, _) =
+                            <#scalar as ::bt_hci::FromHciBytes<'_>>::from_hci_bytes(&buf[start..filled])?;
+                    }
+                });
+                quote! {
+                    let start = filled;
+                    filled += #len;
+                    reader
+                        .read_exact(buf.get_mut(start..filled).ok_or(::bt_hci::ReadHciError::BufferTooSmall)?)
+                        #wait?;
+                    #count
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let (sync_reads, async_reads) = (reads(false), reads(true));
+    let doc = format!("Return parameters of [`{command}`] after the status.");
+    quote! {
+        #cfg
+        #[doc = #doc]
+        #[allow(missing_docs)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub struct #name {
+            #(pub #names: #types,)*
+        }
+
+        #cfg
+        impl<'de> ::bt_hci::FromHciBytes<'de> for #name {
+            fn from_hci_bytes(
+                data: &'de [u8],
+            ) -> Result<(Self, &'de [u8]), ::bt_hci::FromHciBytesError> {
+                let rest = data;
+                #(#decodes)*
+                Ok((Self { #(#names),* }, rest))
+            }
+        }
+
+        #cfg
+        impl<'de> ::bt_hci::ReadHci<'de> for #name {
+            const MAX_LEN: usize = 0 #(+ #max_lens)*;
+
+            fn read_hci<R: ::embedded_io::Read>(
+                mut reader: R,
+                buf: &'de mut [u8],
+            ) -> Result<Self, ::bt_hci::ReadHciError<R::Error>> {
+                let mut filled = 0;
+                #(#sync_reads)*
+                Ok(<Self as ::bt_hci::FromHciBytes<'_>>::from_hci_bytes_complete(&buf[..filled])?)
+            }
+
+            async fn read_hci_async<R: ::embedded_io_async::Read>(
+                mut reader: R,
+                buf: &'de mut [u8],
+            ) -> Result<Self, ::bt_hci::ReadHciError<R::Error>> {
+                let mut filled = 0;
+                #(#async_reads)*
+                Ok(<Self as ::bt_hci::FromHciBytes<'_>>::from_hci_bytes_complete(&buf[..filled])?)
+            }
+        }
+    }
 }
 
 /// A command with variable-length parameters. bt-hci's cmd! still provides
@@ -394,6 +522,30 @@ fn variable_command(
     })
 }
 
+/// The capacity of a `BoundedBytes<N>` type with a literal `N`.
+fn bounded_bytes_capacity(ty: &Type) -> Option<u64> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    let arguments = arguments.args.iter().collect::<Vec<_>>();
+    let [
+        syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(capacity),
+            ..
+        })),
+    ] = arguments[..]
+    else {
+        return None;
+    };
+    (path.qself.is_none() && segment.ident == "BoundedBytes")
+        .then(|| capacity.base10_parse().ok())
+        .flatten()
+}
+
 /// The lifetime of a `&'a [u8]` type.
 fn byte_slice_lifetime(ty: &Type) -> Option<&syn::Lifetime> {
     let Type::Reference(reference) = ty else {
@@ -535,6 +687,22 @@ impl<'a> Command<'a> {
     }
 }
 
+/// Which side of the command a layout describes.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Params,
+    Returns,
+}
+
+impl Side {
+    fn what(self) -> &'static str {
+        match self {
+            Side::Params => "parameter",
+            Side::Returns => "return parameter",
+        }
+    }
+}
+
 /// How one catalog member is encoded, in catalog order.
 enum Slot<'a> {
     /// A declared fixed-width field.
@@ -564,9 +732,9 @@ fn plan<'a>(
     declared: &'a Fields,
     members: &'a [Field],
     structs: &Structs,
-    what: &str,
-    variable: bool,
+    side: Side,
 ) -> syn::Result<Vec<Slot<'a>>> {
+    let what = side.what();
     let counts = members
         .iter()
         .filter_map(|member| match &member.ty {
@@ -669,12 +837,13 @@ fn plan<'a>(
                     element: Element::Scalar(Scalar::U8),
                     count,
                     capacity,
-                } if variable => {
-                    let count_width = members
+                } => {
+                    let (count_index, count_width) = members
                         .iter()
-                        .find(|other| other.name == *count)
-                        .map(|other| match other.ty {
-                            FieldType::Scalar(scalar) => scalar.width(),
+                        .enumerate()
+                        .find(|(_, other)| other.name == *count)
+                        .map(|(index, other)| match other.ty {
+                            FieldType::Scalar(scalar) => (index, scalar.width()),
                             _ => unreachable!("the catalog validates that counts are integers"),
                         })
                         .expect("the catalog validates that counts exist");
@@ -684,12 +853,30 @@ fn plan<'a>(
                             format!("`{member}` has a capacity its {count} cannot express"),
                         ));
                     }
+                    if side == Side::Returns {
+                        let member_index = members
+                            .iter()
+                            .position(|other| ptr::eq(other, member))
+                            .expect("the member is one of the members");
+                        if count_index > member_index {
+                            return unsupported("counted by a later member");
+                        }
+                        if bounded_bytes_capacity(&field.ty) != Some(u64::from(*capacity)) {
+                            return Err(syn::Error::new(
+                                field.ty.span(),
+                                format!(
+                                    "`{member}` holds up to {capacity} bytes; declare it as \
+                                     `BoundedBytes<{capacity}>`"
+                                ),
+                            ));
+                        }
+                    }
                     return Ok(Slot::Bytes {
                         field,
                         capacity: *capacity,
                     });
                 }
-                FieldType::Counted { .. } => return unsupported("variable-length"),
+                FieldType::Counted { .. } => return unsupported("a variable-length array"),
                 FieldType::Union { .. } => return unsupported("a union"),
             };
             width
@@ -847,11 +1034,14 @@ mod tests {
         )
         .unwrap();
         assert!(tokens.contains("Params = ()"), "{tokens}");
+        assert!(tokens.contains("Return = HalAnchorPeriod ;"), "{tokens}");
         assert!(
-            tokens.contains("HalAnchorPeriod { anchor_period : u32 , max_free_slot : u32 , }"),
+            tokens.contains(
+                "pub struct HalAnchorPeriod { pub anchor_period : u32 , pub max_free_slot : u32 , }"
+            ),
             "{tokens}"
         );
-        assert!(!tokens.contains("Return ="), "{tokens}");
+        assert!(!tokens.contains("packed"), "{tokens}");
         assert!(tokens.contains("WIDTH == 4usize"), "{tokens}");
 
         let tokens = expand_str(
@@ -935,14 +1125,45 @@ mod tests {
                 "{ty}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn counted_return_bytes_are_bounded() {
+        let tokens = expand_str(
+            "aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+                 data: BoundedBytes<250>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("pub struct HalConfigData { pub data : BoundedBytes < 250 > , }"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("MAX_LEN : usize = 0 + 1usize + 250usize"),
+            "{tokens}"
+        );
+
+        for ty in ["BoundedBytes<251>", "&'a [u8]", "[u8; 250]"] {
+            let error = expand_err(&format!(
+                "aci_hal_read_config_data => HalReadConfigData {{ offset: u8 }} -> HalConfigData {{
+                     data: {ty},
+                 }}"
+            ));
+            assert!(
+                error.contains("holds up to 250 bytes; declare it as `BoundedBytes<250>`"),
+                "{ty}: {error}"
+            );
+        }
 
         let error = expand_err(
             "aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
-                 data: &'a [u8],
+                 data_length: u8,
+                 data: BoundedBytes<250>,
              }",
         );
         assert!(
-            error.contains("variable-length; such return parameters"),
+            error.contains("Data_Length counts a variable-length field"),
             "{error}"
         );
     }

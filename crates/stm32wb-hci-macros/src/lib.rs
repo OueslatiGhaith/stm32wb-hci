@@ -59,13 +59,27 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// must equal the member's encoded width.
 ///
 /// A Command Complete command that returns more than its status declares the
-/// rest after `->`; bt-hci checks the status itself.
+/// rest after `->`; bt-hci checks the status itself. The return parameters
+/// become a plain struct decoded in catalog order.
+///
+/// A byte field counted by another member leaves the count undeclared: as a
+/// parameter it is declared `&'a [u8]`, its count is written from its length,
+/// and the command is built with `try_new`, which rejects fields over the
+/// catalog's capacity; as a return parameter it is declared
+/// `BoundedBytes<CAPACITY>` and decoded after its count.
 ///
 /// ```ignore
 /// vendor_command! {
 ///     /// Set the radio activity events to report.
 ///     aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
 ///         radio_activity_mask: u16,
+///     }
+/// }
+///
+/// vendor_command! {
+///     /// Read the low-level configuration data at `offset`.
+///     aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+///         data: BoundedBytes<250>,
 ///     }
 /// }
 ///

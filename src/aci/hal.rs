@@ -2,11 +2,20 @@
 
 use stm32wb_hci_macros::vendor_command;
 
+use crate::wire::BoundedBytes;
+
 vendor_command! {
     /// Write a value to the low-level configuration data at `offset`.
     aci_hal_write_config_data => HalWriteConfigData {
         offset: u8,
         value: &'a [u8],
+    }
+}
+
+vendor_command! {
+    /// Read the low-level configuration data at `offset`.
+    aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+        data: BoundedBytes<250>,
     }
 }
 
@@ -67,8 +76,8 @@ vendor_command! {
 
 #[cfg(test)]
 mod tests {
-    use bt_hci::cmd::{Cmd, SyncCmd};
-    use bt_hci::{FromHciBytes, WriteHci};
+    use bt_hci::cmd::{Cmd, CmdReturnBuf, SyncCmd};
+    use bt_hci::{FromHciBytes, ReadHci, WriteHci};
 
     use super::*;
 
@@ -113,8 +122,8 @@ mod tests {
     fn return_parameters_decode_after_the_status() {
         assert_eq!(HalGetAnchorPeriod::OPCODE.to_raw(), 0xFC19);
         let period = decode::<HalGetAnchorPeriod>(&[0x10, 0x27, 0, 0, 0xE8, 0x03, 0, 0]);
-        assert_eq!({ period.anchor_period }, 10_000);
-        assert_eq!({ period.max_free_slot }, 1_000);
+        assert_eq!(period.anchor_period, 10_000);
+        assert_eq!(period.max_free_slot, 1_000);
 
         assert_eq!(decode::<HalReadRssi>(&[0xC4]).rssi, -60);
 
@@ -128,8 +137,58 @@ mod tests {
         bytes[..8].copy_from_slice(&[1, 2, 0, 0, 0, 0, 0, 0]);
         bytes[8..12].copy_from_slice(&[0x01, 0x08, 0x02, 0x08]);
         let links = decode::<HalGetLinkStatus>(&bytes);
-        assert_eq!({ links.link_status }[..2], [1, 2]);
-        assert_eq!({ links.link_connection_handle }[..2], [0x0801, 0x0802]);
+        assert_eq!(links.link_status[..2], [1, 2]);
+        assert_eq!(links.link_connection_handle[..2], [0x0801, 0x0802]);
+    }
+
+    #[test]
+    fn counted_return_parameters_read_their_count_first() {
+        assert_eq!(HalReadConfigData::OPCODE.to_raw(), 0xFC0D);
+        let config = decode::<HalReadConfigData>(&[3, 0xAA, 0xBB, 0xCC]);
+        assert_eq!(config.data.as_slice(), [0xAA, 0xBB, 0xCC]);
+        assert!(decode::<HalReadConfigData>(&[0]).data.is_empty());
+
+        let mut too_long = [0; 252];
+        too_long[0] = 251;
+        let parse = <HalReadConfigData as SyncCmd>::Return::from_hci_bytes_complete;
+        assert!(parse(&too_long).is_err(), "longer than the capacity");
+        assert!(parse(&[3, 0xAA, 0xBB]).is_err(), "shorter than the count");
+        assert!(parse(&[1, 0xAA, 0xBB]).is_err(), "longer than the count");
+        assert_eq!(<HalReadConfigData as SyncCmd>::ReturnBuf::LEN, 251);
+    }
+
+    #[test]
+    fn return_parameters_read_one_member_at_a_time() {
+        let mut buffer = [0; 251];
+        let config = <HalReadConfigData as SyncCmd>::Return::read_hci(
+            &[2, 0xAA, 0xBB, 0xFF][..],
+            &mut buffer,
+        )
+        .unwrap();
+        assert_eq!(config.data.as_slice(), [0xAA, 0xBB]);
+
+        let mut buffer = [0; 8];
+        let period = <HalGetAnchorPeriod as SyncCmd>::Return::read_hci(
+            &[1, 0, 0, 0, 2, 0, 0, 0][..],
+            &mut buffer,
+        )
+        .unwrap();
+        assert_eq!((period.anchor_period, period.max_free_slot), (1, 2));
+        assert!(
+            <HalGetAnchorPeriod as SyncCmd>::Return::read_hci(&[0; 8][..], &mut [0; 7]).is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn asynchronous_reads_match_synchronous() {
+        let mut buffer = [0; 251];
+        let config = <HalReadConfigData as SyncCmd>::Return::read_hci_async(
+            &[2, 0xAA, 0xBB, 0xFF][..],
+            &mut buffer,
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.data.as_slice(), [0xAA, 0xBB]);
     }
 
     #[test]
