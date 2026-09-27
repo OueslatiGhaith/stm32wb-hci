@@ -2,8 +2,8 @@
 
 use crate::annotations::{Annotation, Annotations, LayoutSlot};
 use crate::{
-    Catalog, Command, CommandDefinition, Error, Event, EventDefinition, Family, Field, Layout,
-    Profile, Structs, Version, profiles_at,
+    Bundled, Catalog, Command, CommandDefinition, Error, Event, EventDefinition, Family, Field,
+    Layout, Profile, Structs, Version, profiles_at,
 };
 
 /// One Cube release running one stack profile.
@@ -11,6 +11,17 @@ use crate::{
 pub struct Target {
     pub release: Version,
     pub profile: Profile,
+}
+
+impl Target {
+    /// The Cargo features selecting this target, e.g. `fw_1_24_0,stack-light`.
+    pub fn features(self) -> String {
+        format!(
+            "{},{}",
+            self.release.feature_name(),
+            self.profile.feature_name()
+        )
+    }
 }
 
 /// Every fact that applies to one target, with all three layers resolved.
@@ -115,6 +126,72 @@ impl<'a> TargetView<'a> {
                 .then(|| active_event(self.annotations, event, release))?
         })
     }
+}
+
+impl Bundled {
+    /// The view of one target over annotations audited when `self` was built.
+    pub fn view(&self, target: Target) -> Result<TargetView<'_>, Error> {
+        if !self
+            .catalog
+            .versions()
+            .any(|release| release == target.release)
+        {
+            return Err(Error::invalid(format!(
+                "the catalog does not describe Cube release {}",
+                target.release
+            )));
+        }
+        Ok(TargetView {
+            catalog: &self.catalog,
+            annotations: &self.annotations,
+            target,
+        })
+    }
+
+    /// One target for each distinct interface, i.e. set of resolved commands
+    /// and events: the first in release, then profile, order. Every other
+    /// target compiles exactly the same declarations as its representative.
+    pub fn distinct_targets(&self) -> Vec<Target> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut representatives = Vec::new();
+        for release in self.catalog.versions() {
+            for profile in Profile::ALL {
+                let target = Target { release, profile };
+                let view = self.view(target).expect("release comes from the catalog");
+                let annotation = |provenance: Provenance<'_>| match provenance {
+                    Provenance::Extracted => 0,
+                    Provenance::Annotated(annotation) => ptr(annotation),
+                };
+                let commands = view.commands().map(|command| {
+                    [
+                        ptr(command.definition),
+                        annotation(command.params.provenance),
+                        command
+                            .returns
+                            .map_or(0, |returns| annotation(returns.provenance)),
+                        command.excluded.map_or(0, ptr),
+                    ]
+                });
+                let events = view.events().map(|event| {
+                    [
+                        ptr(event.definition),
+                        annotation(event.payload.provenance),
+                        0,
+                        event.excluded.map_or(0, ptr),
+                    ]
+                });
+                if seen.insert(commands.chain(events).collect::<Vec<_>>()) {
+                    representatives.push(target);
+                }
+            }
+        }
+        representatives
+    }
+}
+
+/// Identity of a catalog or annotation item, stable for one process.
+fn ptr<T>(item: &T) -> usize {
+    std::ptr::from_ref(item) as usize
 }
 
 /// A command as defined in one release, with every layer resolved.

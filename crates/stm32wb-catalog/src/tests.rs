@@ -672,3 +672,36 @@ fn bundled_segments_cover_moved_codes() {
         .unwrap();
     assert_eq!(segments[0].entry.name, "aci_gap_slave_security_req");
 }
+
+#[test]
+fn distinct_targets_cover_every_interface_once() {
+    let sample = Bundled::new(sample(), Annotations::default()).unwrap();
+    let targets = sample
+        .distinct_targets()
+        .into_iter()
+        .map(Target::features)
+        .collect::<Vec<_>>();
+    // Profiles with the command see it under the first definition until
+    // 1.18.0, whether or not `full` still supports it; profiles without it
+    // only ever see the READY event.
+    assert_eq!(
+        targets,
+        [
+            "fw_1_15_0,stack-full-extended",
+            "fw_1_15_0,stack-light",
+            "fw_1_18_0,stack-full-extended",
+        ]
+    );
+
+    let bundled = bundled().unwrap();
+    let targets = bundled.distinct_targets();
+    let oldest = bundled.catalog.versions().next().unwrap();
+    assert_eq!(
+        targets[0],
+        Target {
+            release: oldest,
+            profile: Profile::FullExtended
+        }
+    );
+    assert!(targets.len() < bundled.catalog.releases.len() * Profile::ALL.len());
+}

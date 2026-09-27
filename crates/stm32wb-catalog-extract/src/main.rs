@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use clang::{Clang, Index};
 use clap::{Args, Parser, Subcommand};
 use stm32wb_catalog::annotations::Annotations;
-use stm32wb_catalog::{Catalog, Platform, Version, merge_snapshots};
+use stm32wb_catalog::{Bundled, Catalog, Platform, Version, merge_snapshots};
 
 #[derive(Parser)]
 #[command(about = "Extract the STM32WB wireless-interface catalog from STM32CubeWB tags")]
@@ -47,6 +47,12 @@ enum Command {
     },
     /// Validate the catalog and audit its annotations without a Cube clone.
     Audit {
+        #[command(flatten)]
+        paths: Paths,
+    },
+    /// Print the Cargo features of one target per distinct interface, one per
+    /// line, so CI can build every distinct configuration of stm32wb-hci.
+    Targets {
         #[command(flatten)]
         paths: Paths,
     },
@@ -152,6 +158,16 @@ fn run(cli: Cli) -> Result<(), String> {
             let catalog = Catalog::load(&paths.catalog()).map_err(|error| error.to_string())?;
             audit(&catalog, &paths.annotations())?;
             eprintln!("catalog and annotations are consistent");
+            Ok(())
+        }
+        Command::Targets { paths } => {
+            let catalog = Catalog::load(&paths.catalog()).map_err(|error| error.to_string())?;
+            let annotations =
+                Annotations::load(&paths.annotations()).map_err(|error| error.to_string())?;
+            let bundled = Bundled::new(catalog, annotations).map_err(|error| error.to_string())?;
+            for target in bundled.distinct_targets() {
+                println!("{}", target.features());
+            }
             Ok(())
         }
     }

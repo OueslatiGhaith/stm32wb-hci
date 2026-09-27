@@ -24,6 +24,22 @@ jobs:
           target: thumbv7em-none-eabihf
       - run: cargo test --verbose -p stm32wb-hci -p stm32wb-hci-macros
 
+  targets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Test every distinct release and stack profile
+        run: |
+          targets=$(cargo run -q -p stm32wb-catalog-extract -- targets)
+          for features in $targets; do
+            echo "::group::$features"
+            cargo test --lib --no-default-features --features "$features"
+            echo "::endgroup::"
+          done
+
   example:
     runs-on: ubuntu-latest
     steps:

@@ -49,6 +49,9 @@ git diff crates/stm32wb-catalog/catalog/stm32wb.toml
 
 # Verify the checked-in catalog is what the tagged sources produce.
 cargo run -p stm32wb-catalog-extract -- check
+
+# List one feature set per distinct interface; CI tests stm32wb-hci with each.
+cargo run -p stm32wb-catalog-extract -- targets
 ```
 
 The extractor reads a local STM32CubeWB clone (default `./STM32CubeWB`) from
