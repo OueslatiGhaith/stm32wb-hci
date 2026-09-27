@@ -768,6 +768,28 @@ fn slice_element(ty: &Type) -> Option<Option<&Type>> {
 }
 
 /// The lifetime and element type of a `&'a [T]` type.
+/// The lifetime and element type of `Elements<'a, T>`.
+pub(crate) fn elements_lifetime_and_element(ty: &Type) -> Option<(&syn::Lifetime, &Type)> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    let arguments = arguments.args.iter().collect::<Vec<_>>();
+    match (segment.ident.to_string().as_str(), &arguments[..]) {
+        (
+            "Elements",
+            [
+                syn::GenericArgument::Lifetime(lifetime),
+                syn::GenericArgument::Type(element),
+            ],
+        ) if path.qself.is_none() => Some((lifetime, element)),
+        _ => None,
+    }
+}
+
 pub(crate) fn slice_lifetime_and_element(ty: &Type) -> Option<(&syn::Lifetime, &Type)> {
     let Type::Reference(reference) = ty else {
         return None;
@@ -1470,9 +1492,11 @@ pub(crate) fn plan<'a>(
                             },
                         ),
                         Side::Event => match element {
-                            Element::Struct(_) => {
-                                return unsupported("a variable-length array of structures");
-                            }
+                            Element::Struct(c_name) => (
+                                elements_lifetime_and_element(&field.ty)
+                                    .map(|(_, element)| Some(element)),
+                                format!("Elements<'a, T>` with T the type standing for {c_name}"),
+                            ),
                             Element::Scalar(_) => {
                                 (slice_element(&field.ty), "&'a [u8]`".to_owned())
                             }

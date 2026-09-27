@@ -60,48 +60,67 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         ));
     }
 
-    // Every definition of the structure, with the targets of the commands
-    // using it and the structures it may refer to.
+    // Every definition of the structure, with the targets of the commands and
+    // events using it and the structures it may refer to.
     let mut definition: Option<(&[Field], &Structs)> = None;
     let mut targets: Vec<(ReleaseRange, &[Profile])> = Vec::new();
+    let mut consider = |user: &str,
+                        structs: &'static Structs,
+                        releases: ReleaseRange,
+                        profiles: &'static [Profile]|
+     -> syn::Result<()> {
+        let Some(fields) = structs.get(&c_name_string) else {
+            return Ok(());
+        };
+        match definition {
+            Some((first, _)) if first != fields.as_slice() => {
+                return Err(syn::Error::new(
+                    c_name.span(),
+                    format!(
+                        "{c_name} is defined differently in {user} ({releases}); structures \
+                         whose layout changes are not supported yet"
+                    ),
+                ));
+            }
+            Some(_) => {}
+            None => definition = Some((fields, structs)),
+        }
+        if !targets.contains(&(releases, profiles)) {
+            targets.push((releases, profiles));
+        }
+        Ok(())
+    };
     for command in &bundled.catalog.commands {
         let Ok(segments) = bundled.command_segments(command.name()) else {
             continue;
         };
         for segment in segments {
             let active = &segment.entry;
-            let structs = active.params.structs;
-            let Some(fields) = structs.get(&c_name_string).or_else(|| {
-                active
-                    .returns
-                    .and_then(|returns| returns.structs.get(&c_name_string))
-            }) else {
-                continue;
-            };
-            match definition {
-                Some((first, _)) if first != fields.as_slice() => {
-                    return Err(syn::Error::new(
-                        c_name.span(),
-                        format!(
-                            "{c_name} is defined differently in {} ({}); structures whose \
-                             layout changes are not supported yet",
-                            active.name, segment.releases
-                        ),
-                    ));
-                }
-                Some(_) => {}
-                None => definition = Some((fields, structs)),
+            for structs in std::iter::once(active.params.structs)
+                .chain(active.returns.map(|returns| returns.structs))
+            {
+                consider(active.name, structs, segment.releases, segment.profiles)?;
             }
-            let target = (segment.releases, segment.profiles);
-            if !targets.contains(&target) {
-                targets.push(target);
-            }
+        }
+    }
+    for event in &bundled.catalog.events {
+        let Ok(segments) = bundled.event_segments(event.name()) else {
+            continue;
+        };
+        for segment in segments {
+            let active = &segment.entry;
+            consider(
+                active.name,
+                active.payload.structs,
+                segment.releases,
+                segment.profiles,
+            )?;
         }
     }
     let Some((members, structs)) = definition else {
         return Err(syn::Error::new(
             c_name.span(),
-            format!("no command of the catalog uses a structure named {c_name}"),
+            format!("no command or event of the catalog uses a structure named {c_name}"),
         ));
     };
 
@@ -224,6 +243,9 @@ mod tests {
         assert!(tokens.contains("feature = \"fw_1_16_0\""), "{tokens}");
         assert!(!tokens.contains("feature = \"fw_1_17_0\""), "{tokens}");
 
+        let tokens = expand_str("Handle_Item_t => HandleItem { handle: u16 }").unwrap();
+        assert!(tokens.contains("const WIDTH : usize = 2usize"), "{tokens}");
+
         let error = expand_str("Peer_Entry_t => PeerEntry { peer_address_type: u8 }").unwrap_err();
         assert!(
             error.contains("missing fields of Peer_Entry_t: peer_address"),
@@ -231,7 +253,10 @@ mod tests {
         );
 
         let error = expand_str("Missing_t => Missing { value: u8 }").unwrap_err();
-        assert!(error.contains("no command of the catalog uses"), "{error}");
+        assert!(
+            error.contains("no command or event of the catalog uses"),
+            "{error}"
+        );
 
         let error = expand_str(
             "Peer_Entry_t => PeerEntry {

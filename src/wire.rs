@@ -8,10 +8,12 @@
 //! checked against the catalog with at compile time, the alternatives of a
 //! value whose width a selector member decides, the identity of the Rust
 //! types standing for the catalog's C structures, an owned buffer for
-//! variable-length data in return parameters that must be `Copy`, and the
-//! vendor event code identifying each ST event.
+//! variable-length data in return parameters that must be `Copy`, a borrowed
+//! list of structures in events, and the vendor event code identifying each
+//! ST event.
 
 use core::fmt;
+use core::marker::PhantomData;
 use core::ops::Deref;
 
 use bt_hci::param::{BdAddr, ConnHandle};
@@ -323,6 +325,106 @@ pub const fn stands_for<T: CatalogStruct>(c_name: &str) -> bool {
     true
 }
 
+/// A variable-length list of structures borrowed from an event, decoding
+/// each element as it is read. Every element is checked when the event is
+/// decoded, so reading one cannot fail.
+pub struct Elements<'a, T> {
+    bytes: &'a [u8],
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'a, T: HciWireType + FromHciBytes<'a>> Elements<'a, T> {
+    /// Split `count` elements off the front of `data`, checking that each
+    /// decodes.
+    #[doc(hidden)]
+    pub fn decode(data: &'a [u8], count: usize) -> Result<(Self, &'a [u8]), FromHciBytesError> {
+        let (bytes, rest) = count
+            .checked_mul(T::WIDTH)
+            .and_then(|len| data.split_at_checked(len))
+            .ok_or(FromHciBytesError::InvalidSize)?;
+        for element in bytes.chunks_exact(T::WIDTH) {
+            T::from_hci_bytes_complete(element)?;
+        }
+        Ok((
+            Self {
+                bytes,
+                element: PhantomData,
+            },
+            rest,
+        ))
+    }
+
+    /// The number of elements.
+    pub fn len(&self) -> usize {
+        self.bytes.len() / T::WIDTH
+    }
+
+    /// Whether the list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// The element at `index`, if the list is that long.
+    pub fn get(&self, index: usize) -> Option<T> {
+        let start = index.checked_mul(T::WIDTH)?;
+        let element = self.bytes.get(start..start.checked_add(T::WIDTH)?)?;
+        Some(Self::element(element))
+    }
+
+    /// The elements in order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = T> + use<'a, T> {
+        self.bytes.chunks_exact(T::WIDTH).map(Self::element)
+    }
+
+    /// The encoded elements, as the event carries them.
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    fn element(bytes: &'a [u8]) -> T {
+        match T::from_hci_bytes_complete(bytes) {
+            Ok(element) => element,
+            Err(_) => unreachable!("every element was decoded with the event"),
+        }
+    }
+}
+
+impl<T> Clone for Elements<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Elements<'_, T> {}
+
+impl<T> PartialEq for Elements<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl<T> Eq for Elements<'_, T> {}
+
+impl<'a, T: HciWireType + FromHciBytes<'a> + fmt::Debug> fmt::Debug for Elements<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a, T: HciWireType + FromHciBytes<'a> + defmt::Format> defmt::Format for Elements<'a, T> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "[");
+        for (index, element) in self.iter().enumerate() {
+            if index > 0 {
+                defmt::write!(f, ", ");
+            }
+            defmt::write!(f, "{}", element);
+        }
+        defmt::write!(f, "]");
+    }
+}
+
 /// An ST vendor event, which bt-hci delivers as [`bt_hci::event::Vendor`]:
 /// a 16-bit vendor event code followed by the event's parameters.
 pub trait VendorEvent<'a>: FromHciBytes<'a> {
@@ -473,5 +575,18 @@ mod tests {
             BoundedBytes::<2>::new(&[1, 2, 3]),
             Err(FromHciBytesError::InvalidSize)
         );
+    }
+
+    #[test]
+    fn borrowed_elements_are_checked_when_decoded() {
+        let (flags, rest) = Elements::<bool>::decode(&[1, 0, 1, 9], 3).unwrap();
+        assert_eq!(rest, [9]);
+        assert_eq!(flags.len(), 3);
+        assert_eq!(flags.get(2), Some(true));
+        assert_eq!(flags.get(3), None);
+        assert!(flags.iter().eq([true, false, true]));
+        assert!(Elements::<bool>::decode(&[1, 2], 2).is_err());
+        assert!(Elements::<bool>::decode(&[1], 2).is_err());
+        assert!(Elements::<u16>::decode(&[], usize::MAX).is_err());
     }
 }

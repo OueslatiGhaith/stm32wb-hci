@@ -1,17 +1,17 @@
-//! GATT commands, in opcode order.
+//! GATT commands, in opcode order, and events, in code order.
 
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
 use bt_hci::param::ConnHandle;
-use stm32wb_hci_macros::{vendor_command, vendor_struct};
+use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
-use crate::wire::{BoundedBytes, Uuid};
+use crate::wire::{BoundedBytes, Elements, Uuid};
 
 vendor_command! {
     /// Initialize the GATT server, adding the GATT service and its service
@@ -456,6 +456,192 @@ vendor_command! {
     }
 }
 
+vendor_event! {
+    /// A client modified a local attribute from `offset`.
+    aci_gatt_attribute_modified_event => GattAttributeModifiedEvent {
+        connection_handle: ConnHandle,
+        attr_handle: u16,
+        offset: u16,
+        attr_data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// A GATT procedure timed out.
+    aci_gatt_proc_timeout_event => GattProcTimeoutEvent {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// The server indicated a characteristic value; confirm it with
+    /// [`GattConfirmIndication`].
+    aci_gatt_indication_event => GattIndicationEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// The server notified a characteristic value.
+    aci_gatt_notification_event => GattNotificationEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// A GATT client procedure completed, with `error_code` 0 on success.
+    aci_gatt_proc_complete_event => GattProcCompleteEvent {
+        connection_handle: ConnHandle,
+        error_code: u8,
+    }
+}
+
+vendor_event! {
+    /// The server rejected the request with opcode `req_opcode` on an
+    /// attribute.
+    aci_gatt_error_resp_event => GattErrorRespEvent {
+        connection_handle: ConnHandle,
+        req_opcode: u8,
+        attribute_handle: u16,
+        error_code: u8,
+    }
+}
+
+vendor_event! {
+    /// A characteristic found by UUID, with its value.
+    aci_gatt_disc_read_char_by_uuid_resp_event => GattDiscReadCharByUuidRespEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// A client wants to write an attribute that needs the host's approval;
+    /// answer with [`GattPermitWrite`].
+    aci_gatt_write_permit_req_event => GattWritePermitReqEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// A client wants to read an attribute that needs the host's approval;
+    /// answer with [`GattPermitRead`].
+    aci_gatt_read_permit_req_event => GattReadPermitReqEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        offset: u16,
+    }
+}
+
+vendor_struct! {
+    /// An attribute handle in a read multiple request.
+    Handle_Item_t => HandleItem {
+        handle: u16,
+    }
+}
+
+vendor_event! {
+    /// A client wants to read several attributes that need the host's
+    /// approval; answer with [`GattPermitRead`].
+    aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
+        connection_handle: ConnHandle,
+        handle_item: Elements<'a, HandleItem>,
+    }
+}
+
+vendor_event! {
+    /// Buffers freed up after a send failed for lack of them.
+    aci_gatt_tx_pool_available_event => GattTxPoolAvailableEvent {
+        connection_handle: ConnHandle,
+        available_buffers: u16,
+    }
+}
+
+vendor_event! {
+    /// The client confirmed an indication.
+    aci_gatt_server_confirmation_event => GattServerConfirmationEvent {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_event! {
+    /// A client wants to queue a write that needs the host's approval;
+    /// answer with [`GattPermitWrite`].
+    aci_gatt_prepare_write_permit_req_event => GattPrepareWritePermitReqEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        offset: u16,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// An enhanced ATT bearer changed state. From 1.23.0 the event names the
+    /// connection and the bearer's MTU instead of a status.
+    aci_gatt_eatt_bearer_event => GattEattBearerEvent {
+        #[wire(since = "1.23.0")]
+        connection_handle: ConnHandle,
+        channel_index: u8,
+        eab_state: u8,
+        #[wire(before = "1.23.0")]
+        status: u8,
+        #[wire(since = "1.23.0")]
+        mtu: u16,
+    }
+}
+
+vendor_event! {
+    /// The server notified several characteristic values at once.
+    aci_gatt_mult_notification_event => GattMultNotificationEvent {
+        connection_handle: ConnHandle,
+        offset: u16,
+        data: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// A notification of the attribute went out.
+    aci_gatt_notification_complete_event => GattNotificationCompleteEvent {
+        attr_handle: u16,
+    }
+}
+
+vendor_event! {
+    /// Part of a long read response, from `offset`.
+    aci_gatt_read_ext_event => GattReadExtEvent {
+        connection_handle: ConnHandle,
+        offset: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// Part of a long indicated value, from `offset`.
+    aci_gatt_indication_ext_event => GattIndicationExtEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        offset: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
+vendor_event! {
+    /// Part of a long notified value, from `offset`.
+    aci_gatt_notification_ext_event => GattNotificationExtEvent {
+        connection_handle: ConnHandle,
+        attribute_handle: u16,
+        offset: u16,
+        attribute_value: &'a [u8],
+    }
+}
+
 #[cfg(all(
     test,
     any(
@@ -469,6 +655,7 @@ mod tests {
     use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
+    use crate::wire::VendorEvent;
 
     fn encode(command: &impl WriteHci) -> ([u8; 32], usize) {
         let mut buffer = [0; 32];
@@ -588,5 +775,52 @@ mod tests {
         let len = 32 - writer.len();
         let (expected, expected_len) = encode(&command);
         assert_eq!(buffer[..len], expected[..expected_len]);
+    }
+
+    #[test]
+    fn modified_attributes_follow_a_16_bit_length() {
+        let params = [0x01, 0x0C, 0x01, 0x00, 0x12, 0x00, 0x00, 0x00, 2, 0, 1, 0];
+        let modified = GattAttributeModifiedEvent::from_vendor_params(&params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(modified.attr_handle, 0x0012);
+        assert_eq!(modified.attr_data, [1, 0]);
+    }
+
+    #[test]
+    fn read_permit_requests_list_their_handles() {
+        let request = GattReadMultiPermitReqEvent::from_hci_bytes_complete(&[
+            0x01, 0x00, 3, 0x10, 0, 0x11, 0, 0x12, 0,
+        ])
+        .unwrap();
+        assert!(
+            request
+                .handle_item
+                .iter()
+                .map(|item| item.handle)
+                .eq([0x10, 0x11, 0x12])
+        );
+    }
+
+    #[cfg(all(feature = "stack-full-extended", feature = "fw_1_24_0"))]
+    #[test]
+    fn enhanced_bearers_report_their_mtu_from_1_23_0() {
+        let bearer =
+            GattEattBearerEvent::from_hci_bytes_complete(&[0x00, 0xEA, 1, 0, 0x40, 0]).unwrap();
+        assert_eq!(bearer.connection_handle.raw(), 0xEA00);
+        assert_eq!(
+            (bearer.channel_index, bearer.eab_state, bearer.mtu),
+            (1, 0, 64)
+        );
+    }
+
+    #[cfg(all(feature = "stack-full-extended", feature = "fw_1_22_1"))]
+    #[test]
+    fn enhanced_bearers_report_a_status_before_1_23_0() {
+        let bearer = GattEattBearerEvent::from_hci_bytes_complete(&[1, 0, 0x12]).unwrap();
+        assert_eq!(
+            (bearer.channel_index, bearer.eab_state, bearer.status),
+            (1, 0, 0x12)
+        );
     }
 }

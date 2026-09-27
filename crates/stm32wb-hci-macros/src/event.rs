@@ -9,8 +9,9 @@ use syn::{Attribute, Ident, Lifetime, Token};
 
 use crate::cfg;
 use crate::command::{
-    ElementType, Fields, InputField, Side, Slot, Targets, check_bounds, fields_in, plan,
-    record_names, same_layout, slice_lifetime_and_element, width_assertions,
+    ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
+    elements_lifetime_and_element, fields_in, plan, record_names, same_layout,
+    slice_lifetime_and_element, width_assertions,
 };
 
 /// ```text
@@ -184,7 +185,9 @@ impl<'a> Event<'a> {
 fn borrowed_lifetime(fields: &[InputField]) -> syn::Result<Option<&Lifetime>> {
     let mut lifetime: Option<&Lifetime> = None;
     for field in fields {
-        let Some((current, _)) = slice_lifetime_and_element(&field.ty) else {
+        let Some((current, _)) = slice_lifetime_and_element(&field.ty)
+            .or_else(|| elements_lifetime_and_element(&field.ty))
+        else {
             continue;
         };
         match lifetime {
@@ -248,10 +251,18 @@ fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> 
             }
         }
         Slot::Elements {
+            field,
             element: ElementType::Struct { .. },
             ..
+        } => {
+            let count = count_of(field);
+            let field = &field.name;
+            quote! {
+                let (#field, rest) =
+                    ::stm32wb_hci::wire::Elements::decode(rest, usize::from(#count))?;
+            }
         }
-        | Slot::Selector { .. }
+        Slot::Selector { .. }
         | Slot::Union { .. } => unreachable!("plan rejects these in events"),
     });
     let names = event.fields.fields.iter().map(|field| &field.name);
@@ -368,5 +379,36 @@ mod tests {
         )
         .unwrap();
         assert!(tokens.contains("feature = \"fw_1_21_0\""), "{tokens}");
+    }
+
+    #[test]
+    fn structure_lists_are_borrowed_elements() {
+        let tokens = expand_str(
+            "aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
+                 connection_handle: u16,
+                 handle_item: Elements<'a, HandleItem>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("pub struct GattReadMultiPermitReqEvent < 'a >"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("Elements :: decode"), "{tokens}");
+        assert!(tokens.contains("stands_for :: < HandleItem >"), "{tokens}");
+
+        let error = expand_str(
+            "aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
+                 connection_handle: u16,
+                 handle_item: &'a [HandleItem],
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains(
+                "declare it as `Elements<'a, T>` with T the type standing for Handle_Item_t"
+            ),
+            "{error}"
+        );
     }
 }

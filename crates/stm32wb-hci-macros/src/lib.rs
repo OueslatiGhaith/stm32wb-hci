@@ -121,7 +121,7 @@ pub fn vendor_command(input: TokenStream) -> TokenStream {
 ///
 /// Fields must match the structure's members in order, as for
 /// [`vendor_command!`], in every definition of the structure. The type exists
-/// on the targets where a command uses the structure, and implements
+/// on the targets where a command or event uses the structure, and implements
 /// `WriteHci`, `FromHciBytes`, `HciWireType`, and `CatalogStruct`, which
 /// commands check their structure members against.
 ///
@@ -152,7 +152,9 @@ pub fn vendor_struct(input: TokenStream) -> TokenStream {
 /// bt-hci vendor event carrying the code.
 ///
 /// A byte parameter counted by another member leaves the count undeclared and
-/// is declared `&'a [u8]`, borrowing the event; the struct then takes that
+/// is declared `&'a [u8]`, borrowing the event; a list of structures is
+/// declared `Elements<'a, T>`, with `T` the type [`vendor_struct!`] declares,
+/// and decodes each element as it is read. The struct then takes that
 /// lifetime.
 ///
 /// ```ignore
