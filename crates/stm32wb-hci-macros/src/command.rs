@@ -7,8 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bundled, CommandScope, Completion, Element, Field, FieldType, Scalar, Structs, UnionVariant,
-    bundled,
+    Bundled, CommandScope, Completion, Element, Field, FieldType, Profile, ReleaseRange, Scalar,
+    Structs, UnionVariant, Version, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -23,6 +23,7 @@ use crate::cfg;
 ///     data: BoundedBytes<250>,
 /// }
 /// ```
+#[derive(Clone)]
 pub struct Input {
     attrs: Vec<Attribute>,
     c_name: Ident,
@@ -32,14 +33,18 @@ pub struct Input {
 }
 
 /// A named list of fields matched against a catalog layout.
+#[derive(Clone)]
 struct Fields {
     name: Ident,
     fields: Vec<InputField>,
 }
 
+#[derive(Clone)]
 struct InputField {
     /// The catalog member this field encodes, when it is not the Rust name.
     wire_name: Option<LitStr>,
+    /// The first release with the field; it is declared in no earlier one.
+    since: Option<(Version, Span)>,
     name: Ident,
     ty: Type,
 }
@@ -89,27 +94,43 @@ impl InputField {
             ));
         }
         let mut wire_name = None;
+        let mut since = None;
         for attr in &field.attrs {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
                     attr.span(),
-                    "only #[wire(name = \"...\")] is supported on fields",
+                    "only #[wire(name = \"...\", since = \"...\")] is supported on fields",
                 ));
             }
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
                     wire_name = Some(meta.value()?.parse()?);
                     Ok(())
+                } else if meta.path.is_ident("since") {
+                    let release: LitStr = meta.value()?.parse()?;
+                    let version = release
+                        .value()
+                        .parse::<Version>()
+                        .map_err(|error| syn::Error::new(release.span(), error.to_string()))?;
+                    since = Some((version, release.span()));
+                    Ok(())
                 } else {
-                    Err(meta.error("expected `name = \"<catalog member>\"`"))
+                    Err(meta
+                        .error("expected `name = \"<catalog member>\"` or `since = \"<release>\"`"))
                 }
             })?;
         }
         Ok(Self {
             wire_name,
+            since,
             name: field.ident.expect("parse_named yields named fields"),
             ty: field.ty,
         })
+    }
+
+    /// Whether the field exists in releases starting at `first`.
+    fn exists_from(&self, first: Version) -> bool {
+        self.since.is_none_or(|(since, _)| since <= first)
     }
 
     fn matches(&self, member: &str) -> bool {
@@ -127,7 +148,28 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
             format!("the bundled catalog is invalid: {error}"),
         )
     })?;
-    let command = Command::resolve(bundled, &input)?;
+    let variants = Command::resolve(bundled, &input)?;
+    let several = variants.len() > 1;
+    let mut tokens = TokenStream::new();
+    for variant in &variants {
+        let expanded = expand_variant(variant).map_err(|error| {
+            if several {
+                syn::Error::new(
+                    error.span(),
+                    format!("in releases {}: {error}", variant.releases),
+                )
+            } else {
+                error
+            }
+        })?;
+        tokens.extend(expanded);
+    }
+    Ok(tokens)
+}
+
+/// The declaration for the releases sharing one set of declared fields.
+fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
+    let input = &command.input;
     let facts = &command.facts;
     let c_name = &input.c_name;
     let name = &input.params.name;
@@ -227,7 +269,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         .iter()
         .any(|slot| matches!(slot, Slot::Count { .. } | Slot::Selector { .. }));
     let declaration = if derived {
-        encoded_command(&input, &params, &cfg, ocf, &returns_tokens)?
+        encoded_command(input, &params, &cfg, ocf, &returns_tokens)?
     } else {
         let params_tokens = if input.params.fields.is_empty() {
             quote!(Params = ();)
@@ -754,14 +796,22 @@ fn same_layout(left: &[Field], right: &[Field]) -> bool {
             .all(|(l, r)| shape(left, l) == shape(right, r))
 }
 
+/// The declaration for the releases in which the same fields exist.
 struct Command<'a> {
+    /// The declaration without the fields its releases lack.
+    input: Input,
     facts: Facts<'a>,
     /// Every name each parameter had, by position, latest first.
     param_names: Vec<Vec<&'a str>>,
     /// Every name each return parameter had, by position, latest first.
     return_names: Vec<Vec<&'a str>>,
+    /// The span of the releases, for messages.
+    releases: ReleaseRange,
     cfg: Option<TokenStream>,
 }
+
+/// Releases and the profiles supporting a command in them.
+type Targets<'a> = Vec<(ReleaseRange, &'a [Profile])>;
 
 /// Add the names of `members` to the names each position had so far.
 fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
@@ -773,16 +823,74 @@ fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
     }
 }
 
+/// The declared fields existing in releases starting at `first`.
+fn fields_from(fields: &Fields, first: Version) -> Fields {
+    Fields {
+        name: fields.name.clone(),
+        fields: fields
+            .fields
+            .iter()
+            .filter(|field| field.exists_from(first))
+            .cloned()
+            .collect(),
+    }
+}
+
 impl<'a> Command<'a> {
-    fn resolve(bundled: &'a Bundled, input: &Input) -> syn::Result<Self> {
+    /// One declaration per set of fields that exist together, each for the
+    /// releases and profiles having exactly those fields.
+    fn resolve(bundled: &'a Bundled, input: &Input) -> syn::Result<Vec<Self>> {
         let c_name = input.c_name.to_string();
         let error = |message: String| syn::Error::new(input.c_name.span(), message);
         let segments = bundled
             .command_segments(&c_name)
             .map_err(|failure| error(failure.to_string()))?;
 
-        let mut facts: Option<Facts<'a>> = None;
-        let (mut param_names, mut return_names) = (Vec::new(), Vec::new());
+        let fields = || {
+            input
+                .params
+                .fields
+                .iter()
+                .chain(input.returns.iter().flat_map(|returns| &returns.fields))
+        };
+        for field in fields() {
+            let Some((since, span)) = field.since else {
+                continue;
+            };
+            if !bundled.catalog.versions().any(|release| release == since) {
+                return Err(syn::Error::new(
+                    span,
+                    format!("{since} is not a release the catalog describes"),
+                ));
+            }
+            if let Some(segment) = segments
+                .iter()
+                .find(|segment| segment.releases.first < since && since <= segment.releases.last)
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "{c_name} has one layout throughout {}; `{}` cannot start in {since}",
+                        segment.releases, field.name
+                    ),
+                ));
+            }
+            if segments
+                .iter()
+                .all(|segment| field.exists_from(segment.releases.first))
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{}` exists in every release of {c_name}; remove `since`",
+                        field.name
+                    ),
+                ));
+            }
+        }
+
+        // Each variant with the fields it declares and the targets it covers.
+        let mut variants: Vec<(Vec<bool>, Self, Targets<'a>)> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
@@ -819,31 +927,65 @@ impl<'a> Command<'a> {
                 returns,
                 return_structs,
             };
-            if facts
-                .as_ref()
-                .is_some_and(|previous| !previous.same_wire(&current))
-            {
+
+            let key = fields()
+                .map(|field| field.exists_from(releases.first))
+                .collect::<Vec<_>>();
+            let Some((_, variant, targets)) = variants.iter_mut().find(|(other, ..)| *other == key)
+            else {
+                // A release without any of the declared return fields, which
+                // are all added later, returns only a status.
+                let declared_returns = input
+                    .returns
+                    .as_ref()
+                    .map(|returns| fields_from(returns, releases.first))
+                    .filter(|returns| {
+                        !returns.fields.is_empty()
+                            || input
+                                .returns
+                                .as_ref()
+                                .is_some_and(|declared| declared.fields.is_empty())
+                    });
+                let mut variant = Self {
+                    input: Input {
+                        attrs: input.attrs.clone(),
+                        c_name: input.c_name.clone(),
+                        params: fields_from(&input.params, releases.first),
+                        returns: declared_returns,
+                    },
+                    facts: current,
+                    param_names: Vec::new(),
+                    return_names: Vec::new(),
+                    releases,
+                    cfg: None,
+                };
+                record_names(&mut variant.param_names, params);
+                record_names(&mut variant.return_names, returns);
+                variants.push((key, variant, vec![(releases, segment.profiles)]));
+                continue;
+            };
+            if !variant.facts.same_wire(&current) {
                 return Err(error(format!(
-                    "{c_name} changes its opcode, completion, or layout in {releases}; \
-                     release-specific declarations are not supported yet"
+                    "{c_name} changes its opcode, completion, or layout in {releases}; if it \
+                     adds members there, declare them with #[wire(since = \"{}\")]",
+                    releases.first
                 )));
             }
-            record_names(&mut param_names, current.params);
-            record_names(&mut return_names, current.returns);
-            facts = Some(current);
+            record_names(&mut variant.param_names, current.params);
+            record_names(&mut variant.return_names, current.returns);
+            variant.facts = current;
+            variant.releases.first = variant.releases.first.min(releases.first);
+            variant.releases.last = variant.releases.last.max(releases.last);
+            targets.push((releases, segment.profiles));
         }
 
-        Ok(Self {
-            facts: facts.expect("command_segments never returns an empty history"),
-            param_names,
-            return_names,
-            cfg: cfg::targets(
-                &bundled.catalog,
-                segments
-                    .iter()
-                    .map(|segment| (segment.releases, segment.profiles)),
-            ),
-        })
+        Ok(variants
+            .into_iter()
+            .map(|(_, mut variant, targets)| {
+                variant.cfg = cfg::targets(&bundled.catalog, targets);
+                variant
+            })
+            .collect())
     }
 }
 
@@ -1344,6 +1486,87 @@ mod tests {
             error.contains("changes its opcode, completion, or layout in 1.23.0"),
             "{error}"
         );
+    }
+
+    const CONNECT_CONFIRM: &str = "aci_l2cap_coc_connect_confirm => L2capCocConnectConfirm {
+        connection_handle: u16,
+        mtu: u16,
+        mps: u16,
+        initial_credits: u16,
+        result: u16,
+        #[wire(since = \"SINCE\")]
+        max_channel_number: u8,
+    } -> L2capCocChannels { channel_index_list: BoundedBytes<250> }";
+
+    #[test]
+    fn added_members_start_in_their_release() {
+        let tokens = expand_str(&CONNECT_CONFIRM.replace("SINCE", "1.23.0")).unwrap();
+        assert_eq!(
+            tokens.matches(":: bt_hci :: cmd :: cmd !").count(),
+            2,
+            "{tokens}"
+        );
+        assert_eq!(
+            tokens.matches("max_channel_number : u8").count(),
+            1,
+            "only the later variant has the field: {tokens}"
+        );
+        let later = tokens.find("feature = \"fw_1_23_0\"").unwrap();
+        let earlier = tokens.find("feature = \"fw_1_22_1\"").unwrap();
+        let field = tokens.find("max_channel_number : u8").unwrap();
+        assert!(earlier < later && later < field, "{tokens}");
+
+        let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "1.22.1"));
+        assert!(
+            error.contains(
+                "one layout throughout 1.15.0..=1.22.1; `max_channel_number` cannot start in 1.22.1"
+            ),
+            "{error}"
+        );
+        let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "1.24.0"));
+        assert!(error.contains("cannot start in 1.24.0"), "{error}");
+        let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "1.30.0"));
+        assert!(error.contains("1.30.0 is not a release"), "{error}");
+        let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "one"));
+        assert!(error.contains("invalid Cube release"), "{error}");
+        let error = expand_err(&CONNECT_CONFIRM.replace("SINCE", "1.15.0"));
+        assert!(
+            error.contains("`max_channel_number` exists in every release"),
+            "{error}"
+        );
+
+        let error = expand_err(
+            "aci_l2cap_coc_connect_confirm => L2capCocConnectConfirm {
+                 connection_handle: u16,
+                 mtu: u16,
+                 mps: u16,
+                 #[wire(since = \"1.23.0\")]
+                 initial_credits: u16,
+                 result: u16,
+             } -> L2capCocChannels { channel_index_list: BoundedBytes<250> }",
+        );
+        assert!(
+            error.starts_with("in releases 1.15.0..=1.22.1: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn added_return_members_start_in_their_release() {
+        let tokens = expand_str(
+            "aci_gap_check_bonded_device => GapCheckBondedDevice {
+                 peer_address_type: u8,
+                 peer_address: [u8; 6],
+             } -> GapBondedDevice {
+                 #[wire(since = \"1.22.0\")]
+                 id_address_type: u8,
+                 #[wire(since = \"1.22.0\")]
+                 id_address: [u8; 6],
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("Return = () ;"), "{tokens}");
+        assert!(tokens.contains("Return = GapBondedDevice ;"), "{tokens}");
     }
 
     #[test]

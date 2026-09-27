@@ -73,6 +73,11 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// catalog's, such as `Uuid`, and the selector is written from the value's
 /// alternative.
 ///
+/// A field the catalog adds in a later release is marked with
+/// `#[wire(since = "<release>")]`, the first release that has it. Each set of
+/// fields that exist together becomes its own declaration, compiled only for
+/// the releases that have exactly those fields.
+///
 /// ```ignore
 /// vendor_command! {
 ///     /// Set the radio activity events to report.

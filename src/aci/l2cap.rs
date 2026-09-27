@@ -1,7 +1,4 @@
 //! L2CAP commands: connection parameter updates and credit-based channels.
-//!
-//! `aci_l2cap_coc_connect_confirm` is not declared yet: it gains a
-//! `Max_Channel_Number` parameter in 1.23.0.
 
 #[allow(
     unused_imports,
@@ -9,6 +6,12 @@
 )]
 use bt_hci::param::ConnHandle;
 use stm32wb_hci_macros::vendor_command;
+
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no L2CAP commands"
+)]
+use crate::wire::BoundedBytes;
 
 vendor_command! {
     /// Ask the central to update the connection parameters, with intervals
@@ -48,6 +51,23 @@ vendor_command! {
         mps: u16,
         initial_credits: u16,
         channel_number: u8,
+    }
+}
+
+vendor_command! {
+    /// Answer a peer's request to open credit-based channels, returning the
+    /// indexes of the channels opened. From 1.23.0, `max_channel_number`
+    /// limits how many channels are accepted.
+    aci_l2cap_coc_connect_confirm => L2capCocConnectConfirm {
+        connection_handle: ConnHandle,
+        mtu: u16,
+        mps: u16,
+        initial_credits: u16,
+        result: u16,
+        #[wire(since = "1.23.0")]
+        max_channel_number: u8,
+    } -> L2capCocChannels {
+        channel_index_list: BoundedBytes<250>,
     }
 }
 
@@ -94,8 +114,8 @@ vendor_command! {
 
 #[cfg(all(test, feature = "stack-full-extended"))]
 mod tests {
-    use bt_hci::WriteHci;
-    use bt_hci::cmd::Cmd;
+    use bt_hci::cmd::{Cmd, SyncCmd};
+    use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
 
@@ -131,6 +151,36 @@ mod tests {
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..3], [0x82, 0xFD, 16]);
         assert_eq!(bytes[13..len], [2, 0, 4, 0, 7, 1]);
+    }
+
+    /// The command and its encoding in releases with `max_channel_number`.
+    #[cfg(any(feature = "fw_1_23_0", feature = "fw_1_24_0"))]
+    fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
+        (
+            L2capCocConnectConfirm::new(ConnHandle::new(1), 64, 32, 4, 0, 2),
+            &[0x89, 0xFD, 11, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0, 2],
+        )
+    }
+
+    /// The command and its encoding in releases without `max_channel_number`.
+    #[cfg(not(any(feature = "fw_1_23_0", feature = "fw_1_24_0")))]
+    fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
+        (
+            L2capCocConnectConfirm::new(ConnHandle::new(1), 64, 32, 4, 0),
+            &[0x89, 0xFD, 10, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0],
+        )
+    }
+
+    #[test]
+    fn added_members_exist_from_their_release() {
+        let (command, expected) = connect_confirm();
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..len], *expected);
+
+        let channels =
+            <L2capCocConnectConfirm as SyncCmd>::Return::from_hci_bytes_complete(&[2, 4, 5])
+                .unwrap();
+        assert_eq!(channels.channel_index_list.as_slice(), [4, 5]);
     }
 
     #[test]
