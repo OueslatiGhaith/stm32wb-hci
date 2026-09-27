@@ -53,16 +53,27 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// Declare an ST vendor command from its generated C name.
 ///
 /// The opcode, the completion kind, and the targets the command exists on
-/// come from the catalog; the declaration names and types the parameters.
-/// Parameters must match the catalog's members in order, spelled in snake
-/// case or mapped with `#[wire(name = "<member>")]`, and each type's
-/// `HciWireType::WIDTH` must equal the member's encoded width.
+/// come from the catalog; the declaration names and types the fields. Fields
+/// must match the catalog's members in order, spelled in snake case or mapped
+/// with `#[wire(name = "<member>")]`, and each type's `HciWireType::WIDTH`
+/// must equal the member's encoded width.
+///
+/// A Command Complete command that returns more than its status declares the
+/// rest after `->`; bt-hci checks the status itself.
 ///
 /// ```ignore
 /// vendor_command! {
 ///     /// Set the radio activity events to report.
 ///     aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
 ///         radio_activity_mask: u16,
+///     }
+/// }
+///
+/// vendor_command! {
+///     /// Read the current anchor period and the largest free slot.
+///     aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+///         anchor_period: u32,
+///         max_free_slot: u32,
 ///     }
 /// }
 /// ```

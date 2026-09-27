@@ -1,5 +1,5 @@
 //! `vendor_command!`: an ST vendor command whose identity, availability, and
-//! parameter layout come from the catalog.
+//! wire layout come from the catalog.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -16,13 +16,21 @@ use crate::cfg;
 
 /// ```text
 /// /// Documentation for the command.
-/// aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
-///     radio_activity_mask: u16,
+/// aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+///     anchor_period: u32,
+///     max_free_slot: u32,
 /// }
 /// ```
 pub struct Input {
     attrs: Vec<Attribute>,
     c_name: Ident,
+    params: Fields,
+    /// Return parameters after the status, which bt-hci consumes itself.
+    returns: Option<Fields>,
+}
+
+/// A named list of fields matched against a catalog layout.
+struct Fields {
     name: Ident,
     fields: Vec<InputField>,
 }
@@ -39,6 +47,23 @@ impl Parse for Input {
         let attrs = input.call(Attribute::parse_outer)?;
         let c_name = input.parse()?;
         input.parse::<Token![=>]>()?;
+        let params = input.parse()?;
+        let returns = if input.parse::<Option<Token![->]>>()?.is_some() {
+            Some(input.parse()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            attrs,
+            c_name,
+            params,
+            returns,
+        })
+    }
+}
+
+impl Parse for Fields {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let name = input.parse()?;
         let body;
         braced!(body in input);
@@ -49,12 +74,7 @@ impl Parse for Input {
         .into_iter()
         .map(InputField::new)
         .collect::<syn::Result<_>>()?;
-        Ok(Self {
-            attrs,
-            c_name,
-            name,
-            fields,
-        })
+        Ok(Self { name, fields })
     }
 }
 
@@ -63,7 +83,7 @@ impl InputField {
         if !matches!(field.vis, syn::Visibility::Inherited) {
             return Err(syn::Error::new(
                 field.vis.span(),
-                "parameters are always public; remove the visibility",
+                "fields are always public; remove the visibility",
             ));
         }
         let mut wire_name = None;
@@ -71,7 +91,7 @@ impl InputField {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
                     attr.span(),
-                    "only #[wire(name = \"...\")] is supported on parameters",
+                    "only #[wire(name = \"...\")] is supported on fields",
                 ));
             }
             attr.parse_nested_meta(|meta| {
@@ -106,57 +126,150 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         )
     })?;
     let command = Command::resolve(bundled, &input)?;
-    let params = check_params(&input, &command)?;
+    let facts = &command.facts;
+    let c_name = &input.c_name;
+    let name = &input.params.name;
 
-    let Input {
-        attrs,
-        name,
-        fields,
-        ..
-    } = &input;
-    let ocf = command.facts.opcode & 0x03FF;
+    let returned = match (facts.completion, &input.returns) {
+        (Completion::CommandStatus, Some(returns)) => {
+            return Err(syn::Error::new(
+                returns.name.span(),
+                format!("{c_name} completes with Command Status, which has no return parameters"),
+            ));
+        }
+        (Completion::CommandStatus, None) => None,
+        (Completion::CommandComplete, returns) => {
+            let after_status = match facts.returns {
+                [status, rest @ ..]
+                    if status.name == "Status" && status.ty == FieldType::Scalar(Scalar::U8) =>
+                {
+                    rest
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        c_name.span(),
+                        format!("{c_name}'s return parameters do not start with a status"),
+                    ));
+                }
+            };
+            match (after_status, returns) {
+                ([], None) => None,
+                ([], Some(returns)) => {
+                    return Err(syn::Error::new(
+                        returns.name.span(),
+                        format!(
+                            "{c_name} returns only a status; remove `-> {}`",
+                            returns.name
+                        ),
+                    ));
+                }
+                (_, None) => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "{c_name} returns {}; declare them with `-> {name}Return {{ ... }}`",
+                            after_status
+                                .iter()
+                                .map(|member| snake_case(&member.name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    ));
+                }
+                (members, Some(returns)) => Some((
+                    returns,
+                    check_fields(
+                        c_name,
+                        returns,
+                        members,
+                        facts.return_structs,
+                        "return parameter",
+                    )?,
+                )),
+            }
+        }
+    };
+    let params = check_fields(
+        c_name,
+        &input.params,
+        facts.params,
+        facts.structs,
+        "parameter",
+    )?;
+
+    let ocf = facts.opcode & 0x03FF;
     let cfg = command
         .cfg
         .as_ref()
         .map(|predicate| quote!(#[cfg(#predicate)]));
-    let returns = match command.facts.completion {
-        Completion::CommandComplete => quote!(Return = ();),
-        Completion::CommandStatus => quote!(),
-    };
-    let body = if fields.is_empty() {
-        quote!(Params = (); #returns)
+    let params_tokens = if input.params.fields.is_empty() {
+        quote!(Params = ();)
     } else {
         let params_name = format_ident!("{name}Params");
-        let field_names = fields.iter().map(|field| &field.name);
-        let field_types = fields.iter().map(|field| &field.ty);
-        quote! {
-            #params_name { #(#field_names: #field_types,)* }
-            #returns
-        }
+        let (names, types) = names_and_types(&input.params);
+        quote!(#params_name { #(#names: #types,)* })
     };
-    let widths = fields.iter().zip(params).map(|(field, (member, width))| {
-        let ty = &field.ty;
-        let width = usize::from(width);
-        let message = format!(
-            "{name}.{}: the catalog encodes {} in {width} bytes",
-            field.name, member.name
-        );
-        quote_spanned! {ty.span()=>
-            #cfg
-            const _: () = ::core::assert!(
-                <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
-                #message
-            );
+    let returns_tokens = match (&returned, facts.completion) {
+        (Some((returns, _)), _) => {
+            let returns_name = &returns.name;
+            let (names, types) = names_and_types(returns);
+            quote!(#returns_name { #(#names: #types,)* })
         }
-    });
+        (None, Completion::CommandComplete) => quote!(Return = ();),
+        (None, Completion::CommandStatus) => quote!(),
+    };
+    let widths = width_assertions(&cfg, &input.params, &params).chain(
+        returned
+            .iter()
+            .flat_map(|(returns, widths)| width_assertions(&cfg, returns, widths)),
+    );
+    let attrs = &input.attrs;
     Ok(quote! {
         #cfg
         ::bt_hci::cmd::cmd! {
             #(#attrs)*
-            #name(VENDOR_SPECIFIC, #ocf) { #body }
+            #name(VENDOR_SPECIFIC, #ocf) {
+                #params_tokens
+                #returns_tokens
+            }
         }
         #(#widths)*
     })
+}
+
+fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
+    fields
+        .fields
+        .iter()
+        .map(|field| (&field.name, &field.ty))
+        .unzip()
+}
+
+/// Assert at compile time that each field's type has the catalog's width.
+fn width_assertions<'a>(
+    cfg: &'a Option<TokenStream>,
+    fields: &'a Fields,
+    widths: &'a [(&Field, u16)],
+) -> impl Iterator<Item = TokenStream> + 'a {
+    fields
+        .fields
+        .iter()
+        .zip(widths)
+        .map(move |(field, (member, width))| {
+            let ty = &field.ty;
+            let width = usize::from(*width);
+            let message = format!(
+                "{}.{}: the catalog encodes {} in {width} bytes",
+                fields.name, field.name, member.name
+            );
+            quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
+                    #message
+                );
+            }
+        })
 }
 
 /// The facts a declaration is generated from, identical in every release and
@@ -166,8 +279,10 @@ struct Facts<'a> {
     opcode: u16,
     completion: Completion,
     params: &'a [Field],
-    returns: &'a [Field],
     structs: &'a Structs,
+    /// Every return parameter, including the leading status.
+    returns: &'a [Field],
+    return_structs: &'a Structs,
 }
 
 struct Command<'a> {
@@ -201,20 +316,24 @@ impl<'a> Command<'a> {
                     "{c_name} has no derivable parameter layout in {releases}: {reason}"
                 ))
             })?;
-            let returns = match &active.returns {
-                Some(returns) => returns.fields.map_err(|reason| {
-                    error(format!(
-                        "{c_name} has no derivable return layout in {releases}: {reason}"
-                    ))
-                })?,
-                None => &[],
+            let (returns, return_structs) = match &active.returns {
+                Some(returns) => (
+                    returns.fields.map_err(|reason| {
+                        error(format!(
+                            "{c_name} has no derivable return layout in {releases}: {reason}"
+                        ))
+                    })?,
+                    returns.structs,
+                ),
+                None => (&[][..], active.params.structs),
             };
             let current = Facts {
                 opcode: active.command.opcode,
                 completion: active.definition.completion,
                 params,
-                returns,
                 structs: active.params.structs,
+                returns,
+                return_structs,
             };
             match &facts {
                 None => facts = Some(current),
@@ -227,21 +346,9 @@ impl<'a> Command<'a> {
                 }
             }
         }
-        let facts = facts.expect("command_segments never returns an empty history");
-
-        if facts.completion == Completion::CommandComplete
-            && !matches!(
-                facts.returns,
-                [status] if status.name == "Status" && status.ty == FieldType::Scalar(Scalar::U8)
-            )
-        {
-            return Err(error(format!(
-                "{c_name} returns more than a status; return parameters are not supported yet"
-            )));
-        }
 
         Ok(Self {
-            facts,
+            facts: facts.expect("command_segments never returns an empty history"),
             cfg: cfg::targets(
                 &bundled.catalog,
                 segments
@@ -254,18 +361,26 @@ impl<'a> Command<'a> {
 
 /// Match declared fields to catalog members in order and compute each
 /// member's encoded width.
-fn check_params<'a>(input: &Input, command: &Command<'a>) -> syn::Result<Vec<(&'a Field, u16)>> {
-    let c_name = &input.c_name;
-    for (index, member) in command.facts.params.iter().enumerate() {
-        let Some(field) = input.fields.get(index) else {
-            let missing = command.facts.params[index..]
+fn check_fields<'a>(
+    c_name: &Ident,
+    declared: &Fields,
+    members: &'a [Field],
+    structs: &Structs,
+    what: &str,
+) -> syn::Result<Vec<(&'a Field, u16)>> {
+    for (index, member) in members.iter().enumerate() {
+        let Some(field) = declared.fields.get(index) else {
+            let missing = members[index..]
                 .iter()
                 .map(|member| snake_case(&member.name))
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(syn::Error::new(
-                input.name.span(),
-                format!("{c_name} is missing parameters: {missing}"),
+                declared.name.span(),
+                format!(
+                    "{} is missing {what}s of {c_name}: {missing}",
+                    declared.name
+                ),
             ));
         };
         if !field.matches(&member.name) {
@@ -273,7 +388,7 @@ fn check_params<'a>(input: &Input, command: &Command<'a>) -> syn::Result<Vec<(&'
             return Err(syn::Error::new(
                 field.name.span(),
                 format!(
-                    "parameter {} of {c_name} is `{}` in the catalog; name this field \
+                    "{what} {} of {c_name} is `{}` in the catalog; name this field \
                      `{expected}` or add #[wire(name = \"{}\")]",
                     index + 1,
                     member.name,
@@ -282,35 +397,31 @@ fn check_params<'a>(input: &Input, command: &Command<'a>) -> syn::Result<Vec<(&'
             ));
         }
     }
-    if let Some(extra) = input.fields.get(command.facts.params.len()) {
+    if let Some(extra) = declared.fields.get(members.len()) {
         return Err(syn::Error::new(
             extra.name.span(),
             format!(
-                "{c_name} has {} parameters in the catalog; `{}` is not one of them",
-                command.facts.params.len(),
+                "{c_name} has {} {what}s in the catalog; `{}` is not one of them",
+                members.len(),
                 extra.name
             ),
         ));
     }
 
-    command
-        .facts
-        .params
+    members
         .iter()
-        .zip(&input.fields)
+        .zip(&declared.fields)
         .map(|(member, field)| {
             let width = match &member.ty {
                 FieldType::Scalar(scalar) => Ok(scalar.width()),
-                FieldType::Struct(name) => struct_width(name, command.facts.structs),
+                FieldType::Struct(name) => struct_width(name, structs),
                 FieldType::Array { element, len } => {
-                    element_width(element, command.facts.structs).map(|width| width * len)
+                    element_width(element, structs).map(|width| width * len)
                 }
                 FieldType::Counted { .. } | FieldType::Union { .. } => {
                     return Err(syn::Error::new(
                         field.name.span(),
-                        format!(
-                            "`{member}` is variable-length; such parameters are not supported yet"
-                        ),
+                        format!("`{member}` is variable-length; such fields are not supported yet"),
                     ));
                 }
             };
@@ -424,7 +535,10 @@ mod tests {
         assert!(error.contains("`RF_Channel`"), "{error}");
 
         let error = expand_err("aci_hal_tone_start => HalToneStart { rf_channel: u8 }");
-        assert!(error.contains("missing parameters: freq_offset"), "{error}");
+        assert!(
+            error.contains("missing parameters of aci_hal_tone_start: freq_offset"),
+            "{error}"
+        );
 
         let error = expand_err(
             "aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
@@ -440,7 +554,10 @@ mod tests {
         assert!(error.contains("variable-length"), "{error}");
 
         let error = expand_err("aci_hal_get_fw_build_number => HalGetFwBuildNumber {}");
-        assert!(error.contains("returns more than a status"), "{error}");
+        assert!(
+            error.contains("returns build_number; declare them with `-> HalGetFwBuildNumberReturn"),
+            "{error}"
+        );
 
         let error = expand_err("hci_reset => Reset {}");
         assert!(error.contains("not an ST vendor command"), "{error}");
@@ -449,5 +566,59 @@ mod tests {
             "aci_hal_tone_start => HalToneStart { #[doc = \"x\"] rf_channel: u8, freq_offset: u8 }",
         );
         assert!(error.contains("#[wire"), "{error}");
+    }
+
+    #[test]
+    fn return_parameters_follow_the_status() {
+        let tokens = expand_str(
+            "aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+                 anchor_period: u32,
+                 max_free_slot: u32,
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("Params = ()"), "{tokens}");
+        assert!(
+            tokens.contains("HalAnchorPeriod { anchor_period : u32 , max_free_slot : u32 , }"),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("Return ="), "{tokens}");
+        assert!(tokens.contains("WIDTH == 4usize"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_hal_get_link_status => HalGetLinkStatus {} -> HalLinkStatus {
+                 link_status: [u8; 8],
+                 link_connection_handle: [u16; 8],
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("WIDTH == 16usize"), "{tokens}");
+
+        let error = expand_err(
+            "aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+                 max_free_slot: u32,
+                 anchor_period: u32,
+             }",
+        );
+        assert!(error.contains("return parameter 1"), "{error}");
+
+        let error = expand_err("aci_hal_tone_stop => HalToneStop {} -> Nothing {}");
+        assert!(error.contains("returns only a status"), "{error}");
+    }
+
+    #[test]
+    fn command_status_commands_have_no_returns() {
+        let tokens = expand_str(
+            "aci_gap_peripheral_security_req => GapPeripheralSecurityReq { connection_handle: u16 }",
+        )
+        .unwrap();
+        assert!(!tokens.contains("Return"), "{tokens}");
+
+        let error = expand_err(
+            "aci_gap_peripheral_security_req => GapPeripheralSecurityReq {
+                 connection_handle: u16,
+             } -> Nothing {}",
+        );
+        assert!(error.contains("Command Status"), "{error}");
     }
 }

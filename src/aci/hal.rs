@@ -34,10 +34,33 @@ vendor_command! {
     aci_hal_stack_reset => HalStackReset {}
 }
 
+vendor_command! {
+    /// Read the current anchor period and the largest free slot, in microseconds.
+    aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+        anchor_period: u32,
+        max_free_slot: u32,
+    }
+}
+
+vendor_command! {
+    /// Read the RSSI of the last received packet, in dBm.
+    aci_hal_read_rssi => HalReadRssi {} -> HalRssi {
+        rssi: i8,
+    }
+}
+
+vendor_command! {
+    /// Read the state of each link and the connection handle it serves.
+    aci_hal_get_link_status => HalGetLinkStatus {} -> HalLinkStatus {
+        link_status: [u8; 8],
+        link_connection_handle: [u16; 8],
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bt_hci::WriteHci;
-    use bt_hci::cmd::Cmd;
+    use bt_hci::cmd::{Cmd, SyncCmd};
+    use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
 
@@ -71,5 +94,33 @@ mod tests {
     fn profile_specific_commands_follow_the_catalog() {
         let (bytes, len) = encode(&HalSetEventMask::new(0x0403_0201));
         assert_eq!(bytes[..len], [0x1A, 0xFC, 4, 1, 2, 3, 4]);
+    }
+
+    /// Decode the return parameters bt-hci hands over after the status.
+    fn decode<C: SyncCmd>(bytes: &[u8]) -> C::Return {
+        C::Return::from_hci_bytes_complete(bytes).unwrap()
+    }
+
+    #[test]
+    fn return_parameters_decode_after_the_status() {
+        assert_eq!(HalGetAnchorPeriod::OPCODE.to_raw(), 0xFC19);
+        let period = decode::<HalGetAnchorPeriod>(&[0x10, 0x27, 0, 0, 0xE8, 0x03, 0, 0]);
+        assert_eq!({ period.anchor_period }, 10_000);
+        assert_eq!({ period.max_free_slot }, 1_000);
+
+        assert_eq!(decode::<HalReadRssi>(&[0xC4]).rssi, -60);
+
+        assert!(<HalGetAnchorPeriod as SyncCmd>::Return::from_hci_bytes_complete(&[0; 7]).is_err());
+    }
+
+    #[cfg(feature = "stack-full-extended")]
+    #[test]
+    fn array_return_parameters_decode_element_wise() {
+        let mut bytes = [0; 24];
+        bytes[..8].copy_from_slice(&[1, 2, 0, 0, 0, 0, 0, 0]);
+        bytes[8..12].copy_from_slice(&[0x01, 0x08, 0x02, 0x08]);
+        let links = decode::<HalGetLinkStatus>(&bytes);
+        assert_eq!({ links.link_status }[..2], [1, 2]);
+        assert_eq!({ links.link_connection_handle }[..2], [0x0801, 0x0802]);
     }
 }
