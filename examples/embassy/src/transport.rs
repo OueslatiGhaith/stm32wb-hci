@@ -1,4 +1,5 @@
 use aligned::{A4, Aligned};
+use bt_hci::WriteHci;
 use bt_hci::transport::WithIndicator;
 use bt_hci_transport::PacketToController;
 use core::{
@@ -25,6 +26,7 @@ use embassy_sync::{
     signal::Signal,
     waitqueue::AtomicWaker,
 };
+use stm32wb_hci::wire::SystemCommand;
 
 const TL_PACKET_HEADER_SIZE: usize = mem::size_of::<LinkedListNode>();
 const TL_EVT_HEADER_SIZE: usize = 3;
@@ -36,11 +38,6 @@ const POOL_SIZE: usize =
     CFG_TL_BLE_EVT_QUEUE_LENGTH * 4 * (TL_PACKET_HEADER_SIZE + TL_BLE_EVENT_FRAME_SIZE).div_ceil(4);
 const TL_BLEEVT_CC_OPCODE: u8 = 0x0E;
 const TL_BLEEVT_CS_OPCODE: u8 = 0x0F;
-const SHCI_OGF: u16 = 0x3F;
-
-const fn shci_opcode(ocf: u16) -> u16 {
-    (SHCI_OGF << 10) + ocf
-}
 
 pub fn init(
     ipcc: Peri<'static, IPCC>,
@@ -127,8 +124,13 @@ impl<'a> Sys<'a> {
         self.read().await.payload()[0].try_into()
     }
 
-    pub async fn ble_init(&mut self, param: BleInitParam) -> Result<SysCommandStatus, ()> {
-        self.write(SHCI_OPCODE_BLE_INIT, param.payload()).await;
+    /// Send a system command and wait for its status.
+    pub async fn command<C: SystemCommand>(&mut self, command: &C) -> Result<SysCommandStatus, ()> {
+        let params = command.params();
+        let mut payload = [0; 255];
+        let len = params.size();
+        params.write_hci(&mut payload[..len]).map_err(|_| ())?;
+        self.write(C::OPCODE, &payload[..len]).await;
         // System command responses are written back into SYS_CMD_BUF after channel clears.
         self.cmd.flush().await;
         unsafe { SysCommandStatus::from_cmd_buffer(SYS_CMD_BUF.as_ptr()) }
@@ -587,85 +589,6 @@ impl<'a> EventMemoryManager for MemoryManager<'a> {
         Self::drop_event_packet(evt);
     }
 }
-
-#[derive(Clone, Copy)]
-#[repr(C, packed)]
-pub struct BleInitParam {
-    p_ble_buffer_address: u32,
-    ble_buffer_size: u32,
-    num_attr_record: u16,
-    num_attr_serv: u16,
-    attr_value_arr_size: u16,
-    num_of_links: u8,
-    extended_packet_length_enable: u8,
-    prepare_write_list_size: u8,
-    block_count: u8,
-    att_mtu: u16,
-    slave_sca: u16,
-    master_sca: u8,
-    ls_source: u8,
-    max_conn_event_length: u32,
-    hs_startup_time: u16,
-    viterbi_enable: u8,
-    options: u8,
-    hw_version: u8,
-    max_coc_initiator_nbr: u8,
-    min_tx_power: i8,
-    max_tx_power: i8,
-    rx_model_config: u8,
-    max_adv_set_nbr: u8,
-    max_adv_data_len: u16,
-    tx_path_compens: i16,
-    rx_path_compens: i16,
-    ble_core_version: u8,
-    options_extension: u8,
-    max_add_eatt_bearers: u8,
-}
-
-impl BleInitParam {
-    fn payload(&self) -> &[u8] {
-        // SHCI command parameters are packed C ABI bytes defined by STM32WB firmware.
-        unsafe { slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>()) }
-    }
-}
-
-impl Default for BleInitParam {
-    fn default() -> Self {
-        Self {
-            p_ble_buffer_address: 0,
-            ble_buffer_size: 0,
-            num_attr_record: 68,
-            num_attr_serv: 4,
-            attr_value_arr_size: 1344,
-            num_of_links: 2,
-            extended_packet_length_enable: 1,
-            prepare_write_list_size: 0x3A,
-            block_count: 0x79,
-            att_mtu: 156,
-            slave_sca: 500,
-            master_sca: 0,
-            ls_source: 1,
-            max_conn_event_length: 0xFFFF_FFFF,
-            hs_startup_time: 0x148,
-            viterbi_enable: 1,
-            options: 0,
-            hw_version: 0,
-            max_coc_initiator_nbr: 32,
-            min_tx_power: -40,
-            max_tx_power: 6,
-            rx_model_config: 0,
-            max_adv_set_nbr: 2,
-            max_adv_data_len: 1650,
-            tx_path_compens: 0,
-            rx_path_compens: 0,
-            ble_core_version: 11,
-            options_extension: 0,
-            max_add_eatt_bearers: 4,
-        }
-    }
-}
-
-const SHCI_OPCODE_BLE_INIT: u16 = shci_opcode(0x66);
 
 #[derive(Clone, Copy, defmt::Format)]
 #[allow(clippy::enum_variant_names)]

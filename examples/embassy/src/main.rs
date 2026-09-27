@@ -15,6 +15,7 @@ use embassy_stm32::{
 use stm32wb_hci::{
     BdAddr,
     host::{HostHci, uart::UartHci},
+    shci::{BleInit, BleInitParams},
     vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
 };
 
@@ -69,11 +70,7 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    if sys
-        .ble_init(transport::BleInitParam::default())
-        .await
-        .is_err()
-    {
+    if sys.command(&ble_init()).await.is_err() {
         error!("BLE stack init failed");
         return;
     }
@@ -123,4 +120,42 @@ async fn main(spawner: Spawner) {
         },
     )
     .await;
+}
+
+/// The BLE stack configuration, in the layout of the selected release.
+fn ble_init() -> BleInit {
+    BleInit::from(BleInitParams {
+        p_ble_buffer_address: 0,
+        ble_buffer_size: 0,
+        num_attr_record: 68,
+        num_attr_serv: 4,
+        attr_value_arr_size: 1344,
+        num_of_links: 2,
+        extended_packet_length_enable: 1,
+        pr_write_list_size: 0x3A,
+        mblock_count: 0x79,
+        att_mtu: 156,
+        peripheral_sca: 500,
+        central_sca: 0,
+        ls_source: 1,
+        max_conn_event_length: 0xFFFF_FFFF,
+        hs_startup_time: 0x148,
+        viterbi_enable: 1,
+        options: 0,
+        hw_version: 0,
+        max_coc_initiator_nbr: 32,
+        min_tx_power: -40,
+        max_tx_power: 6,
+        rx_model_config: 0,
+        max_adv_set_nbr: 2,
+        max_adv_data_len: 1650,
+        tx_path_compens: 0,
+        rx_path_compens: 0,
+        ble_core_version: 11,
+        options_extension: 0,
+        max_add_eatt_bearers: 4,
+        // No extra data buffer.
+        extra_data_buffer: 0,
+        extra_data_buffer_size: 0,
+    })
 }

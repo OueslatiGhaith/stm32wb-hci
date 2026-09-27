@@ -51,6 +51,7 @@ pub mod catalog;
 pub mod event;
 pub mod host;
 mod opcode;
+pub mod shci;
 pub mod types;
 pub mod vendor;
 pub mod wire;

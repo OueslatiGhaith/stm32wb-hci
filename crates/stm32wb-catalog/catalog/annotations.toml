@@ -104,3 +104,18 @@ command = "SHCI_C2_BLE_LLD_Init"
 source = "shci.h, SHCI_C2_BLE_LLD_Init: \"Starts the LLD tests BLE\""
 reason = "the LLD test binaries are outside this Bluetooth HCI crate"
 exclude = true
+
+# System commands whose parameter length depends on argument values, which a
+# catalog layout cannot state.
+
+[[annotations]]
+command = "SHCI_C2_FUS_FwUpgrade"
+source = "shci.c, SHCI_C2_FUS_FwUpgrade: sends fw_src_add only if it is nonzero and fw_dest_add only if it is nonzero, so 0, 4, or 8 bytes"
+reason = "the parameters depend on the argument values; declare it once the layout notation can express optional members"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_FUS_StoreUsrKey"
+source = "shci.c, SHCI_C2_FUS_StoreUsrKey: sends KeySize + 2 bytes, or KeySize + 14 when KeyType is KEYTYPE_ENCRYPTED, which appends a 12-byte IV"
+reason = "the key's length depends on its type; declare it once the layout notation can express it"
+exclude = true

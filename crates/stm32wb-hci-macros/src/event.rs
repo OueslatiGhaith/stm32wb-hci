@@ -9,8 +9,8 @@ use syn::{Attribute, Ident, Lifetime, Token};
 
 use crate::command::{
     ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
-    elements_lifetime_and_element, fields_in, plan, record_names, same_layout,
-    slice_lifetime_and_element, width_assertions,
+    elements_lifetime_and_element, fields_in, plan, record_history_names, record_names,
+    same_layout, slice_lifetime_and_element, width_assertions,
 };
 use crate::{cfg, complete};
 
@@ -119,6 +119,8 @@ impl<'a> Event<'a> {
         // Each variant with its code and the fields it declares, which it is
         // keyed by, and the targets it covers.
         let mut variants: Vec<((u16, Vec<bool>), Self, Targets<'a>)> = Vec::new();
+        // Every release's layout, for the names renamed members had.
+        let mut history: Vec<&'a [Field]> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
@@ -136,6 +138,7 @@ impl<'a> Event<'a> {
                     "{c_name} has no derivable parameter layout in {releases}: {reason}"
                 ))
             })?;
+            history.push(payload);
             let current = Facts {
                 code: active.event.code,
                 payload,
@@ -182,6 +185,9 @@ impl<'a> Event<'a> {
         Ok(variants
             .into_iter()
             .map(|(_, mut variant, targets)| {
+                for payload in &history {
+                    record_history_names(&mut variant.names, variant.facts.payload, payload);
+                }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
                 variant
             })

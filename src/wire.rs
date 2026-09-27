@@ -435,6 +435,27 @@ impl<'a, T: HciWireType + FromHciBytes<'a> + defmt::Format> defmt::Format for El
     }
 }
 
+/// An ST system (SHCI) command, sent on the CPU2 system channel.
+///
+/// System opcodes share OGF 0x3F with the ACI commands, and some share their
+/// full opcode with an ACI command too, so a system command is not a bt-hci
+/// [`Cmd`](bt_hci::cmd::Cmd) and cannot be sent to the BLE controller by
+/// mistake. The system channel's transport writes [`OPCODE`](Self::OPCODE)
+/// and the encoded [`params`](Self::params) into its command buffer, and
+/// answers with a Command Complete whose first return parameter is the
+/// status, followed by [`Return`](Self::Return).
+pub trait SystemCommand {
+    /// The command opcode.
+    const OPCODE: u16;
+    /// The parameters, encoded in catalog order.
+    type Params: WriteHci;
+    /// The return parameters after the status.
+    type Return: for<'de> FromHciBytes<'de> + Copy;
+
+    /// The command's parameters.
+    fn params(&self) -> &Self::Params;
+}
+
 /// An ST vendor event, which bt-hci delivers as [`bt_hci::event::Vendor`]:
 /// a 16-bit vendor event code followed by the event's parameters.
 pub trait VendorEvent<'a>: FromHciBytes<'a> {

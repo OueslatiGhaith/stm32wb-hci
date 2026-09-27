@@ -114,7 +114,31 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn vendor_command(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as command::Input);
-    command::expand(input)
+    command::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an ST system (SHCI) command from its C function name.
+///
+/// The catalog checks the fields as for [`vendor_command!`], `since` and
+/// `before` included, and the command's return parameters after the status
+/// are declared after `->`. The command is not a bt-hci command: it wraps its
+/// parameters and implements `SystemCommand`, which the system channel's
+/// transport sends it with.
+///
+/// ```ignore
+/// system_command! {
+///     /// Read the state of the firmware upgrade service.
+///     SHCI_C2_FUS_GetState => FusGetState {} -> FusState {
+///         error_code: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input, command::Channel::System)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -176,12 +200,12 @@ pub fn vendor_event(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Require a declaration of every vendor command and event the catalog lists
-/// for the selected target.
+/// Require a declaration of every vendor command and event, and every system
+/// command, the catalog lists for the selected target.
 ///
 /// Invoked once, in `stm32wb_hci::catalog`. It defines a marker type for each
-/// catalog entry and the `Declared` trait, which [`vendor_command!`] and
-/// [`vendor_event!`] implement for the markers of the entries they declare,
+/// catalog entry and the `Declared` trait, which [`vendor_command!`],
+/// [`system_command!`], and [`vendor_event!`] implement for the markers of the entries they declare,
 /// on the targets they declare them for. A target whose binary implements an
 /// entry nothing declares fails to compile, naming the entry.
 #[proc_macro]

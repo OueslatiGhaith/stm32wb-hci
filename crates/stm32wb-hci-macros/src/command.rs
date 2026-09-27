@@ -154,18 +154,43 @@ impl InputField {
     }
 }
 
-pub fn expand(input: Input) -> syn::Result<TokenStream> {
+/// Which channel a command is sent on, which decides how it is declared.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Channel {
+    /// An ACI command on the BLE channel: a bt-hci command.
+    Vendor,
+    /// An SHCI command on the system channel: a `SystemCommand`.
+    System,
+}
+
+impl Channel {
+    fn scope(self) -> CommandScope {
+        match self {
+            Channel::Vendor => CommandScope::Vendor,
+            Channel::System => CommandScope::System,
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Channel::Vendor => "an ST vendor command",
+            Channel::System => "an ST system command",
+        }
+    }
+}
+
+pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
     let bundled = bundled().map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),
         )
     })?;
-    let variants = Command::resolve(bundled, &input)?;
+    let variants = Command::resolve(bundled, &input, channel)?;
     let several = variants.len() > 1;
     let mut tokens = TokenStream::new();
     for variant in &variants {
-        let expanded = expand_variant(variant).map_err(|error| {
+        let expanded = expand_variant(variant, channel).map_err(|error| {
             if several {
                 syn::Error::new(
                     error.span(),
@@ -186,7 +211,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
 }
 
 /// The declaration for the releases sharing one set of declared fields.
-fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
+fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenStream> {
     let input = &command.input;
     let facts = &command.facts;
     let c_name = &input.c_name;
@@ -261,7 +286,6 @@ fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
         Side::Params,
     )?;
 
-    let ocf = facts.opcode & 0x03FF;
     let cfg = command
         .cfg
         .as_ref()
@@ -283,7 +307,25 @@ fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
         .iter()
         .map(|(returns, slots)| return_struct(name, returns, slots, &cfg));
     let attrs = &input.attrs;
-    let declaration = if input.params.fields.is_empty() {
+    let declaration = if channel == Channel::System {
+        let return_type = match &returned {
+            Some((returns, _)) => {
+                let returns_name = &returns.name;
+                quote!(#returns_name)
+            }
+            None => quote!(()),
+        };
+        encoded_command(
+            input,
+            &params,
+            &cfg,
+            Declares::System {
+                opcode: facts.opcode,
+                return_type,
+            },
+        )?
+    } else if input.params.fields.is_empty() {
+        let ocf = facts.opcode & 0x03FF;
         quote! {
             #cfg
             ::bt_hci::cmd::cmd! {
@@ -295,7 +337,15 @@ fn expand_variant(command: &Command<'_>) -> syn::Result<TokenStream> {
             }
         }
     } else {
-        encoded_command(input, &params, &cfg, ocf, &returns_tokens)?
+        encoded_command(
+            input,
+            &params,
+            &cfg,
+            Declares::Vendor {
+                ocf: facts.opcode & 0x03FF,
+                returns: &returns_tokens,
+            },
+        )?
     };
     Ok(quote! {
         #declaration
@@ -474,8 +524,7 @@ fn encoded_command(
     input: &Input,
     slots: &[Slot<'_>],
     cfg: &Option<TokenStream>,
-    ocf: u16,
-    returns_tokens: &TokenStream,
+    declares: Declares<'_>,
 ) -> syn::Result<TokenStream> {
     let name = &input.params.name;
     let params_name = format_ident!("{name}Params");
@@ -647,6 +696,50 @@ fn encoded_command(
         )
     };
     let attrs = &input.attrs;
+    let command = match declares {
+        // The BASE arm declares the command without the `new(params)`
+        // constructor, which the parameters' private fields make unusable.
+        Declares::Vendor { ocf, returns } => quote! {
+            #cfg
+            ::bt_hci::cmd::cmd! {
+                BASE
+                #(#attrs)*
+                #name(VENDOR_SPECIFIC, #ocf) {
+                    Params #generics = #params_name #generics;
+                    #returns
+                }
+            }
+        },
+        Declares::System {
+            opcode,
+            return_type,
+        } => quote! {
+            #cfg
+            #(#attrs)*
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+            #[repr(transparent)]
+            pub struct #name #generics(#params_name #generics);
+
+            #cfg
+            impl #generics ::core::convert::From<#params_name #generics> for #name #generics {
+                fn from(params: #params_name #generics) -> Self {
+                    Self(params)
+                }
+            }
+
+            #cfg
+            impl #generics ::stm32wb_hci::wire::SystemCommand for #name #generics {
+                const OPCODE: u16 = #opcode;
+                type Params = #params_name #generics;
+                type Return = #return_type;
+
+                fn params(&self) -> &Self::Params {
+                    &self.0
+                }
+            }
+        },
+    };
     Ok(quote! {
         #cfg
         #[doc = #params_doc]
@@ -677,23 +770,24 @@ fn encoded_command(
             }
         }
 
-        // The BASE arm declares the command without the `new(params)`
-        // constructor, which the parameters' private fields make unusable.
-        #cfg
-        ::bt_hci::cmd::cmd! {
-            BASE
-            #(#attrs)*
-            #name(VENDOR_SPECIFIC, #ocf) {
-                Params #generics = #params_name #generics;
-                #returns_tokens
-            }
-        }
+        #command
 
         #cfg
         impl #generics #name #generics {
             #constructor
         }
     })
+}
+
+/// How `encoded_command` declares the command around its parameters.
+enum Declares<'t> {
+    /// A bt-hci vendor command, with its `Return = ...;` for `cmd!`.
+    Vendor { ocf: u16, returns: &'t TokenStream },
+    /// A system command, with its return type.
+    System {
+        opcode: u16,
+        return_type: TokenStream,
+    },
 }
 
 /// The encoded size of a field of `self`, summing array elements.
@@ -1029,6 +1123,26 @@ pub(crate) fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Fiel
     }
 }
 
+/// Add the names the members of `other`, another release's layout, had at
+/// the positions where every member up to them has the same layout as in
+/// `members`: a member renamed in a release with other changes is still
+/// recognized, but one an insertion moved is not mistaken for another.
+pub(crate) fn record_history_names<'a>(
+    names: &mut [Vec<&'a str>],
+    members: &[Field],
+    other: &'a [Field],
+) {
+    for position in 0..names.len().min(members.len()).min(other.len()) {
+        if !same_layout(&members[..=position], &other[..=position]) {
+            break;
+        }
+        let name = other[position].name.as_str();
+        if !names[position].contains(&name) {
+            names[position].push(name);
+        }
+    }
+}
+
 /// The declared fields existing throughout `releases`.
 pub(crate) fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
     Fields {
@@ -1045,7 +1159,7 @@ pub(crate) fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
 impl<'a> Command<'a> {
     /// One declaration per set of fields that exist together, each for the
     /// releases and profiles having exactly those fields.
-    fn resolve(bundled: &'a Bundled, input: &Input) -> syn::Result<Vec<Self>> {
+    fn resolve(bundled: &'a Bundled, input: &Input, channel: Channel) -> syn::Result<Vec<Self>> {
         let c_name = input.c_name.to_string();
         let error = |message: String| syn::Error::new(input.c_name.span(), message);
         let segments = bundled
@@ -1065,13 +1179,15 @@ impl<'a> Command<'a> {
             .collect::<Vec<_>>();
         check_bounds(bundled, &c_name, fields(), &ranges)?;
 
+        // Every release's layouts, for the names renamed members had.
+        let mut history: Vec<(&'a [Field], &'a [Field])> = Vec::new();
         // Each variant with the fields it declares and the targets it covers.
         let mut variants: Vec<(Vec<bool>, Self, Targets<'a>)> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
-            if active.command.scope != CommandScope::Vendor {
-                return Err(error(format!("{c_name} is not an ST vendor command")));
+            if active.command.scope != channel.scope() {
+                return Err(error(format!("{c_name} is not {}", channel.describe())));
             }
             if let Some(exclusion) = active.excluded {
                 return Err(error(format!(
@@ -1095,6 +1211,7 @@ impl<'a> Command<'a> {
                 ),
                 None => (&[][..], active.params.structs),
             };
+            history.push((params, returns));
             let current = Facts {
                 opcode: active.command.opcode,
                 completion: active.definition.completion,
@@ -1159,6 +1276,10 @@ impl<'a> Command<'a> {
         Ok(variants
             .into_iter()
             .map(|(_, mut variant, targets)| {
+                for (params, returns) in &history {
+                    record_history_names(&mut variant.param_names, variant.facts.params, params);
+                    record_history_names(&mut variant.return_names, variant.facts.returns, returns);
+                }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
                 variant
             })
@@ -1619,7 +1740,7 @@ mod tests {
 
     fn expand_str(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input)
+        expand(input, Channel::Vendor)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -2212,5 +2333,51 @@ mod tests {
             error.contains("writes Data_Length from the length of Data"),
             "{error}"
         );
+    }
+
+    fn expand_system(source: &str) -> Result<String, String> {
+        let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
+        expand(input, Channel::System)
+            .map(|tokens| tokens.to_string())
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn system_commands_are_not_bt_hci_commands() {
+        let tokens =
+            expand_system("SHCI_C2_FUS_GetState => FusGetState {} -> FusState { error_code: u8 }")
+                .unwrap();
+        assert!(tokens.contains("SystemCommand for FusGetState"), "{tokens}");
+        assert!(tokens.contains("const OPCODE : u16 = 64594u16"), "{tokens}");
+        assert!(tokens.contains("type Return = FusState"), "{tokens}");
+        assert!(!tokens.contains("cmd !"), "{tokens}");
+
+        let error = expand_system("aci_hal_tone_stop => HalToneStop {}").unwrap_err();
+        assert!(error.contains("is not an ST system command"), "{error}");
+        let error = expand_str("SHCI_C2_Reinit => Reinit {}").unwrap_err();
+        assert!(error.contains("is not an ST vendor command"), "{error}");
+    }
+
+    #[test]
+    fn renamed_members_are_recognized_across_layouts() {
+        let scalar = |name: &str| Field::new(name, FieldType::Scalar(Scalar::U8));
+        let before = [scalar("Count"), scalar("SlaveSca")];
+        let after = [
+            scalar("Count"),
+            scalar("PeripheralSca"),
+            scalar("Extension"),
+        ];
+        let mut names = vec![vec!["Count"], vec!["SlaveSca"]];
+        record_history_names(&mut names, &before, &after);
+        assert_eq!(names, [vec!["Count"], vec!["SlaveSca", "PeripheralSca"]]);
+
+        // A member inserted before changes the layout from there on.
+        let inserted = [
+            scalar("Count"),
+            Field::new("Inserted", FieldType::Scalar(Scalar::U16)),
+        ];
+        let mut names = vec![vec!["Count"], vec!["SlaveSca"]];
+        record_history_names(&mut names, &before, &inserted);
+        assert_eq!(names, [vec!["Count"], vec!["SlaveSca"]]);
     }
 }
