@@ -1,6 +1,5 @@
-//! `catalog_complete!`: every vendor command and event, and every system
-//! command, the selected target's wireless binary implements has a
-//! declaration.
+//! `catalog_complete!`: every vendor and system command and event the
+//! selected target's wireless binary implements has a declaration.
 //!
 //! Each catalog entry gets a marker type. A declaration implements `Declared`
 //! for the markers of the entries it covers, on the targets it covers, and
@@ -85,7 +84,7 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
     let events = catalog
         .events
         .iter()
-        .filter(|event| event.scope == EventScope::Vendor)
+        .filter(|event| matches!(event.scope, EventScope::Vendor | EventScope::System))
         .map(|event| (Kind::Event, event.name()));
     for (kind, name) in commands.chain(events) {
         if required.contains_key(name) {
@@ -109,7 +108,9 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
             Kind::Command => {
                 format!("Requires a `vendor_command!` or `system_command!` declaring `{entry}`.")
             }
-            Kind::Event => format!("Requires a `vendor_event!` declaring `{entry}`."),
+            Kind::Event => {
+                format!("Requires a `vendor_event!` or `system_event!` declaring `{entry}`.")
+            }
         };
         quote! {
             #cfg
@@ -122,7 +123,7 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
         /// covers, on the targets it covers.
         #[diagnostic::on_unimplemented(
             message = "the catalog lists `{Self}` for the selected target, but nothing declares it",
-            label = "no vendor_command!, system_command!, or vendor_event! declares `{Self}` for this target",
+            label = "no vendor_command!, system_command!, vendor_event!, or system_event! declares `{Self}` for this target",
             note = "declare it in the module of its group, or check the since/before bounds of an existing declaration"
         )]
         pub trait Declared {}
@@ -164,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn every_vendor_entry_is_required() {
+    fn every_vendor_and_system_entry_is_required() {
         let tokens = expand(bundled().unwrap()).unwrap().to_string();
         assert!(tokens.contains("pub struct aci_reset ;"), "{tokens}");
         assert!(
@@ -175,7 +176,11 @@ mod tests {
             !tokens.contains("hci_le_connection_complete_event"),
             "{tokens}"
         );
-        assert!(!tokens.contains("SHCI_SUB_EVT"), "{tokens}");
+        assert!(
+            tokens.contains("pub struct SHCI_SUB_EVT_CODE_READY ;"),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("SHCI_SUB_EVT_THREAD"), "{tokens}");
         assert!(
             tokens.contains("declared :: < aci_gatt_notification_complete_event > ()"),
             "{tokens}"

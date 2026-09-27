@@ -320,6 +320,12 @@ pub const fn declares_event<T: VendorEvent<'static>>(c_name: &str) -> bool {
     same_name(T::C_NAME, c_name)
 }
 
+/// Whether `T` is the type declared for the catalog's system event `c_name`.
+#[doc(hidden)]
+pub const fn declares_system_event<T: SystemEvent<'static>>(c_name: &str) -> bool {
+    same_name(T::C_NAME, c_name)
+}
+
 const fn same_name(left: &str, right: &str) -> bool {
     let (left, right) = (left.as_bytes(), right.as_bytes());
     if left.len() != right.len() {
@@ -477,6 +483,25 @@ pub trait VendorEvent<'a>: FromHciBytes<'a> {
         event: &'a bt_hci::event::Vendor<'_>,
     ) -> Option<Result<Self, FromHciBytesError>> {
         Self::from_vendor_params(&event.params)
+    }
+}
+
+/// An ST system (SHCI) event, which the wireless CPU sends on the system
+/// channel as a vendor-specific HCI event: a 16-bit sub-event code followed
+/// by the event's parameters.
+pub trait SystemEvent<'a>: FromHciBytes<'a> {
+    /// The sub-event code.
+    const CODE: u16;
+
+    /// The latest C name of the event in the catalog.
+    const C_NAME: &'static str;
+
+    /// Decode the parameters of a system event, sub-event code included, if
+    /// the code is this event's. The parameters must be exactly those the
+    /// catalog lists.
+    fn from_system_params(params: &'a [u8]) -> Option<Result<Self, FromHciBytesError>> {
+        let (code, payload) = params.split_first_chunk::<2>()?;
+        (u16::from_le_bytes(*code) == Self::CODE).then(|| Self::from_hci_bytes_complete(payload))
     }
 }
 

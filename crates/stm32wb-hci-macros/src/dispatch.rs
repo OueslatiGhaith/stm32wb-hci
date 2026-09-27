@@ -1,18 +1,19 @@
-//! `vendor_events!`: an enum of every vendor event the selected target's
-//! wireless binary emits, decoding a bt-hci vendor event into the variant its
-//! code selects.
+//! `vendor_events!` and `system_events!`: an enum of every vendor or system
+//! event the selected target's wireless binary emits, decoding an event into
+//! the variant its code selects.
 
 use std::collections::BTreeMap;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use stm32wb_catalog::{EventScope, bundled};
+use stm32wb_catalog::bundled;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Lifetime, Token, Type, Visibility, braced, parenthesized};
 
 use crate::cfg;
+use crate::command::Channel;
 use crate::complete::{Kind, entries};
 
 /// ```text
@@ -126,7 +127,7 @@ fn borrows(ty: &Type, lifetime: &Lifetime) -> bool {
         })
 }
 
-pub fn expand(input: Input) -> syn::Result<TokenStream> {
+pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
     let bundled = bundled().map_err(|error| {
         syn::Error::new(
             Span::call_site(),
@@ -147,8 +148,11 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
             .find(|event| event.names.iter().any(|named| named.name == c_name))
             .map(|event| event.scope)
             .ok_or_else(|| error(format!("the catalog has no event {c_name}")))?;
-        if scope != EventScope::Vendor {
-            return Err(error(format!("{c_name} is not an ST vendor event")));
+        if scope != channel.event_scope() {
+            return Err(error(format!(
+                "{c_name} is not an ST {} event",
+                channel.event_kind()
+            )));
         }
         let entries =
             entries(bundled, Kind::Event, &c_name).map_err(|failure| error(failure.to_string()))?;
@@ -175,7 +179,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     for event in catalog
         .events
         .iter()
-        .filter(|event| event.scope == EventScope::Vendor)
+        .filter(|event| event.scope == channel.event_scope())
     {
         let name = event.name();
         let required = entries(bundled, Kind::Event, name)
@@ -190,8 +194,9 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         return Err(syn::Error::new(
             input.name.span(),
             format!(
-                "{} has no variant for these vendor events of the catalog: {}",
+                "{} has no variant for these {} events of the catalog: {}",
                 input.name,
+                channel.event_kind(),
                 missing.join(", ")
             ),
         ));
@@ -215,12 +220,20 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
             #variant_name(#ty),
         }
     });
+    let (event_trait, declares, declaration) = match channel {
+        Channel::Vendor => (quote!(VendorEvent), quote!(declares_event), "vendor_event!"),
+        Channel::System => (
+            quote!(SystemEvent),
+            quote!(declares_system_event),
+            "system_event!",
+        ),
+    };
     let decodes = variants.iter().map(|(variant, _, _, cfg)| {
         let cfg = cfg_attr(cfg);
         let (variant_name, ty) = (&variant.name, &variant.ty);
         quote! {
             #cfg
-            if code == <#ty as ::stm32wb_hci::wire::VendorEvent<#lifetime>>::CODE {
+            if code == <#ty as ::stm32wb_hci::wire::#event_trait<#lifetime>>::CODE {
                 return ::core::option::Option::Some(
                     <#ty as ::bt_hci::FromHciBytes<#lifetime>>::from_hci_bytes_complete(payload)
                         .map(Self::#variant_name),
@@ -232,13 +245,13 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         let cfg = cfg_attr(cfg);
         let ty = with_static_lifetimes(&variant.ty);
         let message = format!(
-            "{name}::{}: the catalog event is {latest}; use the type vendor_event! declares for it",
+            "{name}::{}: the catalog event is {latest}; use the type {declaration} declares for it",
             variant.name
         );
         quote::quote_spanned! {variant.ty.span()=>
             #cfg
             const _: () = ::core::assert!(
-                ::stm32wb_hci::wire::declares_event::<#ty>(#latest),
+                ::stm32wb_hci::wire::#declares::<#ty>(#latest),
                 #message
             );
         }
@@ -263,6 +276,43 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         }
     };
 
+    let decode_params = quote! {
+        let (code, payload) = params.split_first_chunk::<2>()?;
+        let code = u16::from_le_bytes(*code);
+        #(#decodes)*
+        let _ = payload;
+        ::core::option::Option::None
+    };
+    let decoders = match channel {
+        Channel::Vendor => quote! {
+            /// Decode the parameters of a vendor event, code included, into
+            /// the variant its code selects, or `None` if the selected
+            /// target emits no vendor event with that code.
+            pub fn from_vendor_params(
+                params: &#lifetime [u8],
+            ) -> ::core::option::Option<::core::result::Result<Self, ::bt_hci::FromHciBytesError>> {
+                #decode_params
+            }
+
+            /// Decode a bt-hci vendor event into the variant its code selects.
+            pub fn from_vendor(
+                event: &#lifetime ::bt_hci::event::Vendor<'_>,
+            ) -> ::core::option::Option<::core::result::Result<Self, ::bt_hci::FromHciBytesError>> {
+                Self::from_vendor_params(&event.params)
+            }
+        },
+        Channel::System => quote! {
+            /// Decode the parameters of a system event, sub-event code
+            /// included, into the variant its code selects, or `None` if the
+            /// selected target emits no system event with that code.
+            pub fn from_system_params(
+                params: &#lifetime [u8],
+            ) -> ::core::option::Option<::core::result::Result<Self, ::bt_hci::FromHciBytesError>> {
+                #decode_params
+            }
+        },
+    };
+
     Ok(quote! {
         #(#attrs)*
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,25 +323,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         }
 
         impl<#lifetime> #name<#lifetime> {
-            /// Decode the parameters of a vendor event, code included, into
-            /// the variant its code selects, or `None` if the selected
-            /// target emits no vendor event with that code.
-            pub fn from_vendor_params(
-                params: &#lifetime [u8],
-            ) -> ::core::option::Option<::core::result::Result<Self, ::bt_hci::FromHciBytesError>> {
-                let (code, payload) = params.split_first_chunk::<2>()?;
-                let code = u16::from_le_bytes(*code);
-                #(#decodes)*
-                let _ = payload;
-                ::core::option::Option::None
-            }
-
-            /// Decode a bt-hci vendor event into the variant its code selects.
-            pub fn from_vendor(
-                event: &#lifetime ::bt_hci::event::Vendor<'_>,
-            ) -> ::core::option::Option<::core::result::Result<Self, ::bt_hci::FromHciBytesError>> {
-                Self::from_vendor_params(&event.params)
-            }
+            #decoders
         }
 
         #(#checks)*
@@ -303,8 +335,12 @@ mod tests {
     use super::*;
 
     fn expand_str(source: &str) -> Result<String, String> {
+        expand_on(source, Channel::Vendor)
+    }
+
+    fn expand_on(source: &str, channel: Channel) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input)
+        expand(input, channel)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -346,6 +382,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("is not an ST vendor event"), "{error}");
+    }
+
+    #[test]
+    fn system_enums_list_every_system_event() {
+        let error = expand_on(
+            "pub enum ShciEvent<'a> {
+                 SHCI_SUB_EVT_CODE_READY => Ready(ReadyEvent),
+             }",
+            Channel::System,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("ShciEvent has no variant for these system events of the catalog"),
+            "{error}"
+        );
+        assert!(error.contains("SHCI_SUB_EVT_NVM_END_ERASE"), "{error}");
+        assert!(!error.contains("SHCI_SUB_EVT_THREAD"), "{error}");
+
+        let error = expand_on(
+            "pub enum ShciEvent<'a> {
+                 aci_warning_event => HalWarning(hal::HalWarningEvent<'a>),
+             }",
+            Channel::System,
+        )
+        .unwrap_err();
+        assert!(error.contains("is not an ST system event"), "{error}");
     }
 
     #[test]

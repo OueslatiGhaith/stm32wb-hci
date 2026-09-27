@@ -26,6 +26,7 @@ use embassy_sync::{
     signal::Signal,
     waitqueue::AtomicWaker,
 };
+use stm32wb_hci::shci::ShciEvent;
 use stm32wb_hci::wire::SystemCommand;
 
 const TL_PACKET_HEADER_SIZE: usize = mem::size_of::<LinkedListNode>();
@@ -121,7 +122,11 @@ impl<'a> Sys<'a> {
     }
 
     pub async fn read_ready(&mut self) -> Result<SysEventReady, ()> {
-        self.read().await.payload()[0].try_into()
+        let event = self.read().await;
+        match ShciEvent::from_system_params(event.payload()) {
+            Some(Ok(ShciEvent::Ready(ready))) => ready.sysevt_ready_rsp.try_into(),
+            _ => Err(()),
+        }
     }
 
     /// Send a system command and wait for its status.

@@ -1,16 +1,20 @@
 //! ST system (SHCI) commands, sent on the CPU2 system channel, in opcode
-//! order.
+//! order, and the system events it delivers, in code order.
 //!
 //! Each command implements [`SystemCommand`](crate::wire::SystemCommand)
 //! rather than bt-hci's `Cmd`: the system channel has its own command buffer,
 //! and several system opcodes are also ACI opcodes. Addresses the wireless
 //! CPU reads, such as [`BleInit`]'s buffers, are `u32`s.
 //!
-//! The catalog rules out the commands for Thread, Zigbee, 802.15.4, and the
-//! LLD test binaries, and the firmware upgrade and user key storage commands
-//! whose parameter length depends on their values.
+//! Each event implements [`SystemEvent`](crate::wire::SystemEvent), and
+//! [`ShciEvent`] decodes any of them from the payload of a system event
+//! packet, which starts with the sub-event code.
+//!
+//! The catalog rules out the commands and events for Thread, Zigbee,
+//! 802.15.4, and the LLD test binaries, and the firmware upgrade and user key
+//! storage commands whose parameter length depends on their values.
 
-use stm32wb_hci_macros::system_command;
+use stm32wb_hci_macros::{system_command, system_event, system_events};
 
 system_command! {
     /// Read the state of the firmware upgrade service (FUS), which also
@@ -204,12 +208,76 @@ system_command! {
     }
 }
 
+system_event! {
+    /// The wireless CPU has started, running the firmware `sysevt_ready_rsp`
+    /// names: 0x00 the wireless stack, 0x01 the firmware upgrade service,
+    /// 0x10 or 0x11 an NVM backup or restore.
+    SHCI_SUB_EVT_CODE_READY => ReadyEvent {
+        sysevt_ready_rsp: u8,
+    }
+}
+
+system_event! {
+    /// The wireless CPU reports an error it cannot recover from.
+    SHCI_SUB_EVT_ERROR_NOTIF => ErrorNotifEvent {
+        error_code: u8,
+    }
+}
+
+system_event! {
+    /// The BLE stack updated the NVM data it keeps in SRAM, from
+    /// `start_address` over `size` bytes.
+    SHCI_SUB_EVT_BLE_NVM_RAM_UPDATE => BleNvmRamUpdateEvent {
+        start_address: u32,
+        size: u32,
+    }
+}
+
+system_event! {
+    /// The wireless CPU is about to write `number_of_words` words to flash.
+    SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWriteEvent {
+        number_of_words: u32,
+    }
+}
+
+system_event! {
+    /// The wireless CPU finished writing to flash.
+    SHCI_SUB_EVT_NVM_END_WRITE => NvmEndWriteEvent {}
+}
+
+system_event! {
+    /// The wireless CPU is about to erase `number_of_sectors` flash sectors.
+    SHCI_SUB_EVT_NVM_START_ERASE => NvmStartEraseEvent {
+        number_of_sectors: u32,
+    }
+}
+
+system_event! {
+    /// The wireless CPU finished erasing flash.
+    SHCI_SUB_EVT_NVM_END_ERASE => NvmEndEraseEvent {}
+}
+
+system_events! {
+    /// Every ST system event the selected target emits. Decode one from the
+    /// payload of a system event packet with
+    /// [`ShciEvent::from_system_params`].
+    pub enum ShciEvent<'a> {
+        SHCI_SUB_EVT_CODE_READY => Ready(ReadyEvent),
+        SHCI_SUB_EVT_ERROR_NOTIF => ErrorNotif(ErrorNotifEvent),
+        SHCI_SUB_EVT_BLE_NVM_RAM_UPDATE => BleNvmRamUpdate(BleNvmRamUpdateEvent),
+        SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWrite(NvmStartWriteEvent),
+        SHCI_SUB_EVT_NVM_END_WRITE => NvmEndWrite(NvmEndWriteEvent),
+        SHCI_SUB_EVT_NVM_START_ERASE => NvmStartErase(NvmStartEraseEvent),
+        SHCI_SUB_EVT_NVM_END_ERASE => NvmEndErase(NvmEndEraseEvent),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bt_hci::{FromHciBytes, WriteHci};
 
     use super::*;
-    use crate::wire::SystemCommand;
+    use crate::wire::{SystemCommand, SystemEvent};
 
     fn encode<C: SystemCommand>(command: &C) -> ([u8; 64], usize) {
         let mut buffer = [0; 64];
@@ -284,5 +352,42 @@ mod tests {
         assert_eq!(bytes[46], 4);
         assert_eq!(bytes[47..51], 0x2003_0000u32.to_le_bytes());
         assert_eq!(bytes[51..55], 0x100u32.to_le_bytes());
+    }
+
+    #[test]
+    fn system_events_decode_after_their_sub_event_code() {
+        // The payload of a ready event packet reporting the upgrade service.
+        let params = [0x00, 0x92, 0x01];
+        assert_eq!(
+            ShciEvent::from_system_params(&params),
+            Some(Ok(ShciEvent::Ready(ReadyEvent {
+                sysevt_ready_rsp: 1
+            })))
+        );
+        assert_eq!(
+            ReadyEvent::from_system_params(&params),
+            Some(Ok(ReadyEvent {
+                sysevt_ready_rsp: 1
+            }))
+        );
+
+        let params = [0x02, 0x92, 0x00, 0x00, 0x03, 0x20, 0x00, 0x10, 0x00, 0x00];
+        let Some(Ok(ShciEvent::BleNvmRamUpdate(update))) = ShciEvent::from_system_params(&params)
+        else {
+            panic!("0x9202 is the BLE NVM RAM update");
+        };
+        assert_eq!((update.start_address, update.size), (0x2003_0000, 0x1000));
+
+        assert_eq!(
+            ShciEvent::from_system_params(&[0x05, 0x92]),
+            Some(Ok(ShciEvent::NvmEndWrite(NvmEndWriteEvent {})))
+        );
+        // Thread's NVM update is outside this crate.
+        assert!(ShciEvent::from_system_params(&[0x03, 0x92, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+        assert!(
+            ShciEvent::from_system_params(&[0x00, 0x92])
+                .unwrap()
+                .is_err()
+        );
     }
 }

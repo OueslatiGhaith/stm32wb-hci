@@ -195,18 +195,42 @@ pub fn vendor_struct(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn vendor_event(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as event::Input);
-    event::expand(input)
+    event::expand(input, command::Channel::Vendor)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
 
-/// Require a declaration of every vendor command and event, and every system
-/// command, the catalog lists for the selected target.
+/// Declare an ST system (SHCI) event from its generated C name.
+///
+/// The catalog checks the parameters as for [`vendor_event!`]. The event
+/// becomes a plain struct implementing `FromHciBytes` for the parameters
+/// after its sub-event code, and `SystemEvent`, which decodes a system event
+/// carrying the code.
+///
+/// ```ignore
+/// system_event! {
+///     /// The wireless CPU is about to write to flash.
+///     SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWriteEvent {
+///         number_of_words: u32,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input, command::Channel::System)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Require a declaration of every vendor and system command and event the
+/// catalog lists for the selected target.
 ///
 /// Invoked once, in `stm32wb_hci::catalog`. It defines a marker type for each
 /// catalog entry and the `Declared` trait, which [`vendor_command!`],
-/// [`system_command!`], and [`vendor_event!`] implement for the markers of the entries they declare,
-/// on the targets they declare them for. A target whose binary implements an
+/// [`system_command!`], [`vendor_event!`], and [`system_event!`] implement
+/// for the markers of the entries they declare, on the targets they declare
+/// them for. A target whose binary implements an
 /// entry nothing declares fails to compile, naming the entry.
 #[proc_macro]
 pub fn catalog_complete(input: TokenStream) -> TokenStream {
@@ -243,7 +267,30 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn vendor_events(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as dispatch::Input);
-    dispatch::expand(input)
+    dispatch::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an enum of every ST system (SHCI) event the selected target emits.
+///
+/// The variants are checked as for [`vendor_events!`], against the types
+/// [`system_event!`] declares. `from_system_params` decodes a system event,
+/// sub-event code first, into the variant its code selects.
+///
+/// ```ignore
+/// system_events! {
+///     /// Every ST system event of the selected target.
+///     pub enum ShciEvent<'a> {
+///         SHCI_SUB_EVT_CODE_READY => Ready(ReadyEvent),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input, command::Channel::System)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

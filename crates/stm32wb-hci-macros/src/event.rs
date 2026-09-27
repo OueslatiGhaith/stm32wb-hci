@@ -1,14 +1,14 @@
-//! `vendor_event!`: an ST vendor event whose code, availability, and
-//! parameter layout come from the catalog.
+//! `vendor_event!` and `system_event!`: an ST vendor or system event whose
+//! code, availability, and parameter layout come from the catalog.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use stm32wb_catalog::{Bundled, EventScope, Field, ReleaseRange, Structs, bundled};
+use stm32wb_catalog::{Bundled, Field, ReleaseRange, Structs, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
 use crate::command::{
-    ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
+    Channel, ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
     elements_lifetime_and_element, fields_in, plan, record_history_names, record_names,
     same_layout, slice_lifetime_and_element, width_assertions,
 };
@@ -41,18 +41,18 @@ impl Parse for Input {
     }
 }
 
-pub fn expand(input: Input) -> syn::Result<TokenStream> {
+pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
     let bundled = bundled().map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),
         )
     })?;
-    let variants = Event::resolve(bundled, &input)?;
+    let variants = Event::resolve(bundled, &input, channel)?;
     let several = variants.len() > 1;
     let mut tokens = TokenStream::new();
     for variant in &variants {
-        let expanded = expand_variant(&input, variant).map_err(|error| {
+        let expanded = expand_variant(&input, variant, channel).map_err(|error| {
             if several {
                 syn::Error::new(
                     error.span(),
@@ -104,7 +104,7 @@ struct Event<'a> {
 impl<'a> Event<'a> {
     /// One declaration per set of fields that exist together, each for the
     /// releases and profiles having exactly those fields.
-    fn resolve(bundled: &'a Bundled, input: &Input) -> syn::Result<Vec<Self>> {
+    fn resolve(bundled: &'a Bundled, input: &Input, channel: Channel) -> syn::Result<Vec<Self>> {
         let c_name = input.c_name.to_string();
         let error = |message: String| syn::Error::new(input.c_name.span(), message);
         let segments = bundled
@@ -124,8 +124,11 @@ impl<'a> Event<'a> {
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
-            if active.event.scope != EventScope::Vendor {
-                return Err(error(format!("{c_name} is not an ST vendor event")));
+            if active.event.scope != channel.event_scope() {
+                return Err(error(format!(
+                    "{c_name} is not an ST {} event",
+                    channel.event_kind()
+                )));
             }
             if let Some(exclusion) = active.excluded {
                 return Err(error(format!(
@@ -218,9 +221,9 @@ fn borrowed_lifetime(fields: &[InputField]) -> syn::Result<Option<&Lifetime>> {
 }
 
 /// A plain struct with the event's parameters, decoded in catalog order from
-/// the bytes after the vendor event code. Variable-length parameters borrow
-/// the event, and their counts are left out.
-fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> {
+/// the bytes after the event code. Variable-length parameters borrow the
+/// event, and their counts are left out.
+fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Result<TokenStream> {
     let c_name = &input.c_name;
     let name = &event.fields.name;
     let slots = plan(
@@ -285,7 +288,14 @@ fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> 
     let widths = width_assertions(&cfg, name, &slots);
     let code = event.facts.code;
     let latest = event.latest;
-    let doc = format!("`{c_name}` in the catalog, vendor event code {code:#06X}.");
+    let doc = format!(
+        "`{c_name}` in the catalog, {} event code {code:#06X}.",
+        channel.event_kind()
+    );
+    let event_trait = match channel {
+        Channel::Vendor => quote!(VendorEvent),
+        Channel::System => quote!(SystemEvent),
+    };
     let attrs = &input.attrs;
     Ok(quote! {
         #cfg
@@ -311,7 +321,7 @@ fn expand_variant(input: &Input, event: &Event<'_>) -> syn::Result<TokenStream> 
         }
 
         #cfg
-        impl #impl_generics ::stm32wb_hci::wire::VendorEvent<#de> for #name #generics {
+        impl #impl_generics ::stm32wb_hci::wire::#event_trait<#de> for #name #generics {
             const CODE: u16 = #code;
             const C_NAME: &'static str = #latest;
         }
@@ -325,8 +335,12 @@ mod tests {
     use super::*;
 
     fn expand_str(source: &str) -> Result<String, String> {
+        expand_on(source, Channel::Vendor)
+    }
+
+    fn expand_on(source: &str, channel: Channel) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input)
+        expand(input, channel)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -426,5 +440,28 @@ mod tests {
             ),
             "{error}"
         );
+    }
+
+    #[test]
+    fn system_events_are_not_vendor_events() {
+        let tokens = expand_on(
+            "SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWriteEvent { number_of_words: u32 }",
+            Channel::System,
+        )
+        .unwrap();
+        assert!(tokens.contains("wire :: SystemEvent"), "{tokens}");
+        assert!(tokens.contains("const CODE : u16 = 37380u16"), "{tokens}");
+
+        let error = expand_str("SHCI_SUB_EVT_NVM_END_WRITE => NvmEndWriteEvent {}").unwrap_err();
+        assert!(error.contains("is not an ST vendor event"), "{error}");
+        let error =
+            expand_on("aci_warning_event => HalWarningEvent {}", Channel::System).unwrap_err();
+        assert!(error.contains("is not an ST system event"), "{error}");
+        let error = expand_on(
+            "SHCI_SUB_EVT_THREAD_NVM_RAM_UPDATE => ThreadNvmRamUpdateEvent {}",
+            Channel::System,
+        )
+        .unwrap_err();
+        assert!(error.contains("is excluded"), "{error}");
     }
 }

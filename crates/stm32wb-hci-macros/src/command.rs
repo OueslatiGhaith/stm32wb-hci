@@ -7,8 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bundled, CommandScope, Completion, Element, Field, FieldType, Profile, ReleaseRange, Scalar,
-    Structs, UnionVariant, Version, bundled,
+    Bundled, CommandScope, Completion, Element, EventScope, Field, FieldType, Profile,
+    ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -154,12 +154,15 @@ impl InputField {
     }
 }
 
-/// Which channel a command is sent on, which decides how it is declared.
+/// Which channel a command is sent on or an event arrives on, which decides
+/// how it is declared.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Channel {
-    /// An ACI command on the BLE channel: a bt-hci command.
+    /// The BLE channel: an ACI command is a bt-hci command, and an ACI event
+    /// a `VendorEvent`.
     Vendor,
-    /// An SHCI command on the system channel: a `SystemCommand`.
+    /// The system channel: an SHCI command is a `SystemCommand`, and an SHCI
+    /// event a `SystemEvent`.
     System,
 }
 
@@ -175,6 +178,21 @@ impl Channel {
         match self {
             Channel::Vendor => "an ST vendor command",
             Channel::System => "an ST system command",
+        }
+    }
+
+    pub(crate) fn event_scope(self) -> EventScope {
+        match self {
+            Channel::Vendor => EventScope::Vendor,
+            Channel::System => EventScope::System,
+        }
+    }
+
+    /// The kind of event the channel carries, `vendor` or `system`.
+    pub(crate) fn event_kind(self) -> &'static str {
+        match self {
+            Channel::Vendor => "vendor",
+            Channel::System => "system",
         }
     }
 }
