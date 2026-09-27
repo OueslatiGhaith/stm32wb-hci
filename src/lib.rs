@@ -34,12 +34,15 @@
 #![allow(async_fn_in_trait)]
 
 extern crate byteorder;
+// Lets catalog-derived declarations name this crate the same way inside and outside it.
+extern crate self as stm32wb_hci;
 
 stm32wb_hci_macros::check_target!();
 
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 
+pub mod aci;
 #[macro_use]
 pub mod bitflag_array;
 

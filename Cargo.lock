@@ -1294,6 +1294,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "stm32wb-catalog",
+ "syn 2.0.117",
 ]
 
 [[package]]

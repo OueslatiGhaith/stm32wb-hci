@@ -2,6 +2,9 @@
 //! STM32WB catalog, so the crate cannot drift from what the CPU2 wireless
 //! binaries accept and emit.
 
+mod cfg;
+mod command;
+
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
@@ -45,6 +48,30 @@ pub fn check_target(input: TokenStream) -> TokenStream {
         };
     }
     .into()
+}
+
+/// Declare an ST vendor command from its generated C name.
+///
+/// The opcode, the completion kind, and the targets the command exists on
+/// come from the catalog; the declaration names and types the parameters.
+/// Parameters must match the catalog's members in order, spelled in snake
+/// case or mapped with `#[wire(name = "<member>")]`, and each type's
+/// `HciWireType::WIDTH` must equal the member's encoded width.
+///
+/// ```ignore
+/// vendor_command! {
+///     /// Set the radio activity events to report.
+///     aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
+///         radio_activity_mask: u16,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 fn error(message: &str) -> TokenStream {

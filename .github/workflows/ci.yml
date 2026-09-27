@@ -22,7 +22,7 @@ jobs:
         with:
           toolchain: stable
           target: thumbv7em-none-eabihf
-      - run: cargo test --verbose -p stm32wb-hci
+      - run: cargo test --verbose -p stm32wb-hci -p stm32wb-hci-macros
 
   example:
     runs-on: ubuntu-latest

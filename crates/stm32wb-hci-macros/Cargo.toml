@@ -13,3 +13,4 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 stm32wb-catalog = { path = "../stm32wb-catalog", version = "0.1.0" }
+syn = { version = "2", features = ["full"] }
