@@ -1,35 +1,11 @@
 //! GAP commands, in opcode order.
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
-use bt_hci::param::BdAddr;
+use bt_hci::param::{BdAddr, ConnHandle};
 use stm32wb_hci_macros::{vendor_command, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::BoundedArray;
-
-vendor_struct! {
-    /// A peer device, before 1.17.0 renamed it [`PeerEntry`].
-    Whitelist_Entry_t => WhitelistEntry {
-        peer_address_type: u8,
-        peer_address: BdAddr,
-    }
-}
-
-vendor_struct! {
-    /// A peer device, named [`WhitelistEntry`] before 1.17.0.
-    Peer_Entry_t => PeerEntry {
-        peer_address_type: u8,
-        peer_address: BdAddr,
-    }
-}
-
-vendor_struct! {
-    /// A bonded device.
-    Bonded_Device_Entry_t => BondedDeviceEntry {
-        address_type: u8,
-        address: BdAddr,
-    }
-}
 
 vendor_command! {
     /// Stop advertising.
@@ -81,6 +57,67 @@ vendor_command! {
 }
 
 vendor_command! {
+    /// Set the input and output capabilities used in pairing.
+    aci_gap_set_io_capability => GapSetIoCapability {
+        io_capability: u8,
+    }
+}
+
+vendor_command! {
+    /// Set the bonding, MITM protection, Secure Connections, and key size
+    /// requirements of pairing, and the fixed passkey if `use_fixed_pin` is 0.
+    aci_gap_set_authentication_requirement => GapSetAuthenticationRequirement {
+        bonding_mode: bool,
+        mitm_mode: bool,
+        sc_support: u8,
+        key_press_notification_support: bool,
+        min_encryption_key_size: u8,
+        max_encryption_key_size: u8,
+        use_fixed_pin: u8,
+        fixed_pin: u32,
+        identity_address_type: u8,
+    }
+}
+
+vendor_command! {
+    /// Require the host to authorize the peer before it accesses attributes.
+    aci_gap_set_authorization_requirement => GapSetAuthorizationRequirement {
+        connection_handle: ConnHandle,
+        authorization_enable: bool,
+    }
+}
+
+vendor_command! {
+    /// Answer a passkey request with the passkey, 0 to 999999.
+    aci_gap_pass_key_resp => GapPassKeyResp {
+        connection_handle: ConnHandle,
+        pass_key: u32,
+    }
+}
+
+vendor_command! {
+    /// Answer an authorization request: 1 authorizes, 2 rejects.
+    aci_gap_authorization_resp => GapAuthorizationResp {
+        connection_handle: ConnHandle,
+        authorize: u8,
+    }
+}
+
+vendor_command! {
+    /// Initialize GAP in the given roles, adding the GAP service and its
+    /// characteristics.
+    aci_gap_init => GapInit {
+        role: u8,
+        privacy_enabled: u8,
+        device_name_char_len: u8,
+    } -> GapService {
+        service_handle: u16,
+        dev_name_char_handle: u16,
+        appearance_char_handle: u16,
+    }
+}
+
+vendor_command! {
     /// Advertise without accepting connections.
     aci_gap_set_non_connectable => GapSetNonConnectable {
         advertising_event_type: u8,
@@ -99,6 +136,14 @@ vendor_command! {
 }
 
 vendor_command! {
+    /// Ask the central to start security. Named `aci_gap_slave_security_req`
+    /// in earlier releases.
+    aci_gap_peripheral_security_req => GapPeripheralSecurityReq {
+        connection_handle: ConnHandle,
+    }
+}
+
+vendor_command! {
     /// Add or replace AD structures in the advertising data.
     aci_gap_update_adv_data => GapUpdateAdvData {
         adv_data: &'a [u8],
@@ -110,6 +155,49 @@ vendor_command! {
     aci_gap_delete_ad_type => GapDeleteAdType {
         #[wire(name = "ADType")]
         ad_type: u8,
+    }
+}
+
+vendor_command! {
+    /// Read the security mode and level of a connection.
+    aci_gap_get_security_level => GapGetSecurityLevel {
+        connection_handle: ConnHandle,
+    } -> GapSecurityLevel {
+        security_mode: u8,
+        security_level: u8,
+    }
+}
+
+vendor_command! {
+    /// Enable or disable the GAP events.
+    aci_gap_set_event_mask => GapSetEventMask {
+        gap_evt_mask: u16,
+    }
+}
+
+vendor_command! {
+    /// Put the addresses of the bonded devices in the controller's filter
+    /// accept list. Named `aci_gap_configure_whitelist` in earlier releases.
+    aci_gap_configure_filter_accept_list => GapConfigureFilterAcceptList {}
+}
+
+vendor_command! {
+    /// Terminate a connection.
+    aci_gap_terminate => GapTerminate {
+        connection_handle: ConnHandle,
+        reason: u8,
+    }
+}
+
+vendor_command! {
+    /// Remove every bonded device from the security database.
+    aci_gap_clear_security_db => GapClearSecurityDb {}
+}
+
+vendor_command! {
+    /// Allow pairing again with a bonded peer that lost its keys.
+    aci_gap_allow_rebond => GapAllowRebond {
+        connection_handle: ConnHandle,
     }
 }
 
@@ -133,6 +221,53 @@ vendor_command! {
     }
 }
 
+vendor_struct! {
+    /// A peer device, before 1.17.0 renamed it [`PeerEntry`].
+    Whitelist_Entry_t => WhitelistEntry {
+        peer_address_type: u8,
+        peer_address: BdAddr,
+    }
+}
+
+vendor_struct! {
+    /// A peer device, named [`WhitelistEntry`] before 1.17.0.
+    Peer_Entry_t => PeerEntry {
+        peer_address_type: u8,
+        peer_address: BdAddr,
+    }
+}
+
+vendor_command! {
+    /// Connect to any of the listed peers as soon as it advertises.
+    aci_gap_start_auto_connection_establish_proc => GapStartAutoConnectionEstablishProc {
+        le_scan_interval: u16,
+        le_scan_window: u16,
+        own_address_type: u8,
+        conn_interval_min: u16,
+        conn_interval_max: u16,
+        conn_latency: u16,
+        supervision_timeout: u16,
+        minimum_ce_length: u16,
+        maximum_ce_length: u16,
+        #[wire(before = "1.17.0")]
+        whitelist_entry: &'a [WhitelistEntry],
+        #[wire(since = "1.17.0")]
+        peer_entry: &'a [PeerEntry],
+    }
+}
+
+vendor_command! {
+    /// Scan for connectable peers, reporting them for the host to select one.
+    aci_gap_start_general_connection_establish_proc => GapStartGeneralConnectionEstablishProc {
+        le_scan_type: u8,
+        le_scan_interval: u16,
+        le_scan_window: u16,
+        own_address_type: u8,
+        scanning_filter_policy: u8,
+        filter_duplicates: bool,
+    }
+}
+
 vendor_command! {
     /// Scan for the listed peers and connect to the one the host selects.
     aci_gap_start_selective_connection_establish_proc => GapStartSelectiveConnectionEstablishProc {
@@ -146,6 +281,60 @@ vendor_command! {
         whitelist_entry: &'a [WhitelistEntry],
         #[wire(since = "1.17.0")]
         peer_entry: &'a [PeerEntry],
+    }
+}
+
+vendor_command! {
+    /// Connect to a peer.
+    aci_gap_create_connection => GapCreateConnection {
+        le_scan_interval: u16,
+        le_scan_window: u16,
+        peer_address_type: u8,
+        peer_address: BdAddr,
+        own_address_type: u8,
+        conn_interval_min: u16,
+        conn_interval_max: u16,
+        conn_latency: u16,
+        supervision_timeout: u16,
+        minimum_ce_length: u16,
+        maximum_ce_length: u16,
+    }
+}
+
+vendor_command! {
+    /// Terminate the GAP procedure `procedure_code`.
+    aci_gap_terminate_gap_proc => GapTerminateGapProc {
+        procedure_code: u8,
+    }
+}
+
+vendor_command! {
+    /// Update the parameters of a connection, as central.
+    aci_gap_start_connection_update => GapStartConnectionUpdate {
+        connection_handle: ConnHandle,
+        conn_interval_min: u16,
+        conn_interval_max: u16,
+        conn_latency: u16,
+        supervision_timeout: u16,
+        minimum_ce_length: u16,
+        maximum_ce_length: u16,
+    }
+}
+
+vendor_command! {
+    /// Start pairing, as central.
+    aci_gap_send_pairing_req => GapSendPairingReq {
+        connection_handle: ConnHandle,
+        force_rebond: bool,
+    }
+}
+
+vendor_command! {
+    /// Resolve a private address with the stored identity resolving keys.
+    aci_gap_resolve_private_addr => GapResolvePrivateAddr {
+        address: BdAddr,
+    } -> GapResolvedAddr {
+        actual_address: BdAddr,
     }
 }
 
@@ -177,10 +366,138 @@ vendor_command! {
     }
 }
 
+vendor_struct! {
+    /// A bonded device.
+    Bonded_Device_Entry_t => BondedDeviceEntry {
+        address_type: u8,
+        address: BdAddr,
+    }
+}
+
 vendor_command! {
     /// Read the addresses of the bonded devices.
     aci_gap_get_bonded_devices => GapGetBondedDevices {} -> GapBondedDevices {
         bonded_device_entry: BoundedArray<BondedDeviceEntry, 35>,
+    }
+}
+
+vendor_command! {
+    /// Check whether a peer is bonded. From 1.22.0 it also returns the
+    /// peer's identity address. Named `aci_gap_is_device_bonded` in earlier
+    /// releases.
+    aci_gap_check_bonded_device => GapCheckBondedDevice {
+        peer_address_type: u8,
+        peer_address: BdAddr,
+    } -> GapBondedIdentity {
+        #[wire(since = "1.22.0")]
+        id_address_type: u8,
+        #[wire(since = "1.22.0")]
+        id_address: BdAddr,
+    }
+}
+
+vendor_command! {
+    /// Confirm or reject the numeric comparison value.
+    aci_gap_numeric_comparison_value_confirm_yesno => GapNumericComparisonValueConfirmYesno {
+        connection_handle: ConnHandle,
+        confirm_yes_no: bool,
+    }
+}
+
+vendor_command! {
+    /// Report a keypress while the user enters the passkey.
+    aci_gap_passkey_input => GapPasskeyInput {
+        connection_handle: ConnHandle,
+        input_type: u8,
+    }
+}
+
+vendor_command! {
+    /// Read the local out-of-band pairing data of the given type.
+    aci_gap_get_oob_data => GapGetOobData {
+        oob_data_type: u8,
+    } -> GapOobData {
+        address_type: u8,
+        address: BdAddr,
+        oob_data_type: u8,
+        oob_data_len: u8,
+        oob_data: [u8; 16],
+    }
+}
+
+vendor_command! {
+    /// Set the local or remote out-of-band pairing data of the given type.
+    aci_gap_set_oob_data => GapSetOobData {
+        device_type: u8,
+        address_type: u8,
+        address: BdAddr,
+        oob_data_type: u8,
+        oob_data_len: u8,
+        oob_data: [u8; 16],
+    }
+}
+
+vendor_struct! {
+    /// A peer identity address, before 1.17.0 renamed it [`IdentityEntry`].
+    Whitelist_Identity_Entry_t => WhitelistIdentityEntry {
+        peer_identity_address_type: u8,
+        peer_identity_address: BdAddr,
+    }
+}
+
+vendor_struct! {
+    /// A peer identity address, named [`WhitelistIdentityEntry`] before 1.17.0.
+    Identity_Entry_t => IdentityEntry {
+        peer_identity_address_type: u8,
+        peer_identity_address: BdAddr,
+    }
+}
+
+vendor_command! {
+    /// Add bonded devices to the controller's resolving list, clearing it
+    /// first if `clear_resolving_list` is set.
+    aci_gap_add_devices_to_resolving_list => GapAddDevicesToResolvingList {
+        #[wire(before = "1.17.0")]
+        whitelist_identity_entry: &'a [WhitelistIdentityEntry],
+        #[wire(since = "1.17.0")]
+        identity_entry: &'a [IdentityEntry],
+        clear_resolving_list: bool,
+    }
+}
+
+vendor_command! {
+    /// Remove a bonded device from the security database.
+    aci_gap_remove_bonded_device => GapRemoveBondedDevice {
+        peer_identity_address_type: u8,
+        peer_identity_address: BdAddr,
+    }
+}
+
+vendor_struct! {
+    /// A device address.
+    List_Entry_t => ListEntry {
+        address_type: u8,
+        address: BdAddr,
+    }
+}
+
+vendor_command! {
+    /// Add devices to the controller's filter accept list, resolving list, or
+    /// both, as `mode` selects. Before 1.17.0 the list is raw bytes.
+    aci_gap_add_devices_to_list => GapAddDevicesToList {
+        #[wire(before = "1.17.0")]
+        list_entry: &'a [u8],
+        #[wire(since = "1.17.0")]
+        list_entry: &'a [ListEntry],
+        mode: u8,
+    }
+}
+
+vendor_command! {
+    /// Accept or reject the pairing request of a peer.
+    aci_gap_pairing_request_reply => GapPairingRequestReply {
+        connection_handle: ConnHandle,
+        accept: bool,
     }
 }
 
@@ -312,6 +629,37 @@ vendor_command! {
     }
 }
 
+vendor_struct! {
+    /// Connection parameters for one PHY.
+    Init_Param_Phy_t => InitParamPhy {
+        scan_interval: u16,
+        scan_window: u16,
+        conn_interval_min: u16,
+        conn_interval_max: u16,
+        conn_latency: u16,
+        supervision_timeout: u16,
+        min_ce_length: u16,
+        max_ce_length: u16,
+    }
+}
+
+vendor_command! {
+    /// Connect to a peer with extended scanning, with the parameters of the
+    /// LE 1M, LE 2M, and LE Coded PHYs the `initiating_phys` bits select.
+    aci_gap_ext_create_connection => GapExtCreateConnection {
+        initiating_mode: u8,
+        procedure: u8,
+        own_address_type: u8,
+        peer_address_type: u8,
+        peer_address: BdAddr,
+        advertising_handle: u8,
+        subevent: u8,
+        initiator_filter_policy: u8,
+        initiating_phys: u8,
+        init_param_phy: [InitParamPhy; 3],
+    }
+}
+
 #[cfg(all(test, feature = "stack-full-extended"))]
 mod tests {
     use bt_hci::cmd::{Cmd, CmdReturnBuf, SyncCmd};
@@ -392,6 +740,125 @@ mod tests {
         let (bytes, len) = encode(&GapAdvSetEnable::try_new(true, &sets).unwrap());
         assert_eq!(bytes[..len], [0xC1, 0xFC, 6, 1, 1, 3, 0x02, 0x01, 4]);
         assert!(GapAdvSetEnable::try_new(true, &[sets[0]; 64]).is_err());
+    }
+
+    #[test]
+    fn init_returns_the_gap_service_handles() {
+        let (bytes, len) = encode(&GapInit::new(0x01, 0, 7));
+        assert_eq!(bytes[..len], [0x8A, 0xFC, 3, 0x01, 0, 7]);
+        let service = <GapInit as SyncCmd>::Return::from_hci_bytes_complete(&[
+            0x01, 0x00, 0x02, 0x00, 0x03, 0x00,
+        ])
+        .unwrap();
+        assert_eq!(
+            (
+                service.service_handle,
+                service.dev_name_char_handle,
+                service.appearance_char_handle
+            ),
+            (1, 2, 3)
+        );
+    }
+
+    #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]
+    #[test]
+    fn device_lists_hold_addresses() {
+        let entry = ListEntry {
+            address_type: 1,
+            address: BdAddr::new([1, 2, 3, 4, 5, 6]),
+        };
+        let (bytes, len) = encode(&GapAddDevicesToList::try_new(&[entry], 2).unwrap());
+        assert_eq!(bytes[..len], [0xAB, 0xFC, 9, 1, 1, 1, 2, 3, 4, 5, 6, 2]);
+        assert!(GapAddDevicesToList::try_new(&[entry; 37], 2).is_err());
+    }
+
+    #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0"))]
+    #[test]
+    fn device_lists_hold_bytes() {
+        let (bytes, len) = encode(&GapAddDevicesToList::try_new(&[1, 2, 3], 2).unwrap());
+        assert_eq!(bytes[..len], [0xAB, 0xFC, 5, 3, 1, 2, 3, 2]);
+        assert!(GapAddDevicesToList::try_new(&[0; 253], 2).is_err());
+    }
+
+    #[cfg(not(any(
+        feature = "fw_1_15_0",
+        feature = "fw_1_16_0",
+        feature = "fw_1_17_0",
+        feature = "fw_1_17_1",
+        feature = "fw_1_17_2",
+        feature = "fw_1_17_3",
+        feature = "fw_1_18_0",
+        feature = "fw_1_19_0",
+        feature = "fw_1_19_1",
+        feature = "fw_1_20_0",
+        feature = "fw_1_21_0"
+    )))]
+    #[test]
+    fn bonded_device_checks_return_the_identity_address() {
+        let identity = <GapCheckBondedDevice as SyncCmd>::Return::from_hci_bytes_complete(&[
+            1, 6, 5, 4, 3, 2, 1,
+        ])
+        .unwrap();
+        assert_eq!(identity.id_address_type, 1);
+        assert_eq!(identity.id_address, BdAddr::new([6, 5, 4, 3, 2, 1]));
+    }
+
+    #[cfg(any(
+        feature = "fw_1_15_0",
+        feature = "fw_1_16_0",
+        feature = "fw_1_17_0",
+        feature = "fw_1_17_1",
+        feature = "fw_1_17_2",
+        feature = "fw_1_17_3",
+        feature = "fw_1_18_0",
+        feature = "fw_1_19_0",
+        feature = "fw_1_19_1",
+        feature = "fw_1_20_0",
+        feature = "fw_1_21_0"
+    ))]
+    #[test]
+    fn bonded_device_checks_return_nothing_before_1_22_0() {
+        let () = <GapCheckBondedDevice as SyncCmd>::Return::from_hci_bytes_complete(&[]).unwrap();
+    }
+
+    #[cfg(not(any(
+        feature = "fw_1_15_0",
+        feature = "fw_1_16_0",
+        feature = "fw_1_17_0",
+        feature = "fw_1_17_1",
+        feature = "fw_1_17_2",
+        feature = "fw_1_17_3"
+    )))]
+    #[test]
+    fn extended_connections_encode_three_phys() {
+        let phy = |n: u16| InitParamPhy {
+            scan_interval: n,
+            scan_window: n,
+            conn_interval_min: n,
+            conn_interval_max: n,
+            conn_latency: n,
+            supervision_timeout: n,
+            min_ce_length: n,
+            max_ce_length: n,
+        };
+        let command = GapExtCreateConnection::new(
+            0,
+            0,
+            0,
+            0,
+            BdAddr::new([1, 2, 3, 4, 5, 6]),
+            0xFF,
+            0xFF,
+            0,
+            0b111,
+            [phy(1), phy(2), phy(3)],
+        );
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..3], [0xD1, 0xFC, 14 + 3 * 16]);
+        assert_eq!(bytes[16], 0b111);
+        assert_eq!(bytes[17..19], [1, 0]);
+        assert_eq!(bytes[33..35], [2, 0]);
+        assert_eq!(bytes[len - 2..len], [3, 0]);
     }
 
     #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]
