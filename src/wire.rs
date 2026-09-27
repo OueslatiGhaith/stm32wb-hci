@@ -52,6 +52,30 @@ impl<T: HciWireType + ?Sized> HciWireType for &T {
     const WIDTH: usize = T::WIDTH;
 }
 
+/// A variable-length field longer than the capacity the catalog declares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TooLong {
+    /// The Rust name of the field.
+    pub field: &'static str,
+    /// The number of elements supplied.
+    pub len: usize,
+    /// The largest number of elements the command accepts.
+    pub capacity: usize,
+}
+
+impl fmt::Display for TooLong {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} has {} elements but holds at most {}",
+            self.field, self.len, self.capacity
+        )
+    }
+}
+
+impl core::error::Error for TooLong {}
+
 /// Up to `MAX_LEN` bytes of a variable-length field, owned so the value
 /// containing it can be `Copy`.
 #[derive(Clone, Copy)]

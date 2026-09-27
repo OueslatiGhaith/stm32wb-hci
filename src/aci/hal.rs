@@ -3,6 +3,14 @@
 use stm32wb_hci_macros::vendor_command;
 
 vendor_command! {
+    /// Write a value to the low-level configuration data at `offset`.
+    aci_hal_write_config_data => HalWriteConfigData {
+        offset: u8,
+        value: &'a [u8],
+    }
+}
+
+vendor_command! {
     /// Stop a tone started with [`HalToneStart`].
     aci_hal_tone_stop => HalToneStop {}
 }
@@ -122,5 +130,34 @@ mod tests {
         let links = decode::<HalGetLinkStatus>(&bytes);
         assert_eq!({ links.link_status }[..2], [1, 2]);
         assert_eq!({ links.link_connection_handle }[..2], [0x0801, 0x0802]);
+    }
+
+    #[test]
+    fn counts_are_written_from_the_counted_field() {
+        let command = HalWriteConfigData::try_new(0x2E, &[1, 2, 3]).unwrap();
+        assert_eq!(HalWriteConfigData::OPCODE.to_raw(), 0xFC0C);
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..len], [0x0C, 0xFC, 5, 0x2E, 3, 1, 2, 3]);
+
+        assert_eq!(
+            HalWriteConfigData::try_new(0, &[0; 254]),
+            Err(crate::wire::TooLong {
+                field: "value",
+                len: 254,
+                capacity: 253,
+            })
+        );
+        assert!(HalWriteConfigData::try_new(0, &[0; 253]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn asynchronous_encoding_matches_synchronous() {
+        let command = HalWriteConfigData::try_new(0x2E, &[1, 2, 3]).unwrap();
+        let mut buffer = [0; 16];
+        let mut writer = &mut buffer[..];
+        command.write_hci_async(&mut writer).await.unwrap();
+        let len = 16 - writer.len();
+        let (expected, expected_len) = encode(&command);
+        assert_eq!(buffer[..len], expected[..expected_len]);
     }
 }

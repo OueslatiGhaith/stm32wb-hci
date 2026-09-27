@@ -5,7 +5,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bundled, CommandScope, Completion, Field, FieldType, Scalar, Structs, bundled,
+    Bundled, CommandScope, Completion, Element, Field, FieldType, Scalar, Structs, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -178,23 +178,25 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
                 }
                 (members, Some(returns)) => Some((
                     returns,
-                    check_fields(
+                    plan(
                         c_name,
                         returns,
                         members,
                         facts.return_structs,
                         "return parameter",
+                        false,
                     )?,
                 )),
             }
         }
     };
-    let params = check_fields(
+    let params = plan(
         c_name,
         &input.params,
         facts.params,
         facts.structs,
         "parameter",
+        true,
     )?;
 
     let ocf = facts.opcode & 0x03FF;
@@ -202,13 +204,6 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         .cfg
         .as_ref()
         .map(|predicate| quote!(#[cfg(#predicate)]));
-    let params_tokens = if input.params.fields.is_empty() {
-        quote!(Params = ();)
-    } else {
-        let params_name = format_ident!("{name}Params");
-        let (names, types) = names_and_types(&input.params);
-        quote!(#params_name { #(#names: #types,)* })
-    };
     let returns_tokens = match (&returned, facts.completion) {
         (Some((returns, _)), _) => {
             let returns_name = &returns.name;
@@ -218,23 +213,199 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         (None, Completion::CommandComplete) => quote!(Return = ();),
         (None, Completion::CommandStatus) => quote!(),
     };
-    let widths = width_assertions(&cfg, &input.params, &params).chain(
+    let widths = width_assertions(&cfg, &input.params.name, &params).chain(
         returned
             .iter()
-            .flat_map(|(returns, widths)| width_assertions(&cfg, returns, widths)),
+            .flat_map(|(returns, slots)| width_assertions(&cfg, &returns.name, slots)),
+    );
+    let attrs = &input.attrs;
+    let declaration = if params.iter().any(|slot| matches!(slot, Slot::Bytes { .. })) {
+        variable_command(&input, &params, &cfg, ocf, &returns_tokens)?
+    } else {
+        let params_tokens = if input.params.fields.is_empty() {
+            quote!(Params = ();)
+        } else {
+            let params_name = format_ident!("{name}Params");
+            let (names, types) = names_and_types(&input.params);
+            quote!(#params_name { #(#names: #types,)* })
+        };
+        quote! {
+            #cfg
+            ::bt_hci::cmd::cmd! {
+                #(#attrs)*
+                #name(VENDOR_SPECIFIC, #ocf) {
+                    #params_tokens
+                    #returns_tokens
+                }
+            }
+        }
+    };
+    Ok(quote! {
+        #declaration
+        #(#widths)*
+    })
+}
+
+/// A command with variable-length parameters. bt-hci's cmd! still provides
+/// the command itself; the parameters get their own encoding, which derives
+/// each count from the length of the field it counts, and a constructor that
+/// enforces the catalog's capacities.
+fn variable_command(
+    input: &Input,
+    slots: &[Slot<'_>],
+    cfg: &Option<TokenStream>,
+    ocf: u16,
+    returns_tokens: &TokenStream,
+) -> syn::Result<TokenStream> {
+    let name = &input.params.name;
+    let params_name = format_ident!("{name}Params");
+    let mut lifetime: Option<&syn::Lifetime> = None;
+    for slot in slots {
+        if let Slot::Bytes { field, .. } = slot {
+            let this = byte_slice_lifetime(&field.ty).ok_or_else(|| {
+                syn::Error::new(
+                    field.ty.span(),
+                    "a variable-length byte field must be declared as `&'a [u8]`",
+                )
+            })?;
+            match lifetime {
+                Some(first) if first != this => {
+                    return Err(syn::Error::new(
+                        this.span(),
+                        "all variable-length fields must share one lifetime",
+                    ));
+                }
+                _ => lifetime = Some(this),
+            }
+        }
+    }
+    let lifetime = lifetime.expect("variable commands have a byte field");
+
+    let (names, types) = names_and_types(&input.params);
+    let sizes = slots.iter().map(|slot| match slot {
+        Slot::Fixed { field, .. } => {
+            let (field, ty) = (&field.name, &field.ty);
+            quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field))
+        }
+        Slot::Count { scalar, .. } => {
+            let width = usize::from(scalar.width());
+            quote!(#width)
+        }
+        Slot::Bytes { field, .. } => {
+            let field = &field.name;
+            quote!(self.#field.len())
+        }
+    });
+    let writes = |asynchronous: bool| {
+        let (write_hci, wait) = if asynchronous {
+            (quote!(write_hci_async), quote!(.await))
+        } else {
+            (quote!(write_hci), quote!())
+        };
+        slots
+            .iter()
+            .map(move |slot| match slot {
+                Slot::Fixed { field, .. } => {
+                    let (field, ty) = (&field.name, &field.ty);
+                    quote!(<#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;)
+                }
+                Slot::Count { counted, scalar } => {
+                    let (counted, scalar) = (&counted.name, format_ident!("{}", scalar.name()));
+                    quote!(writer.write_all(&(self.#counted.len() as #scalar).to_le_bytes())#wait?;)
+                }
+                Slot::Bytes { field, .. } => {
+                    let field = &field.name;
+                    quote!(writer.write_all(self.#field)#wait?;)
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let (sync_writes, async_writes) = (writes(false), writes(true));
+    let checks = slots.iter().filter_map(|slot| match slot {
+        Slot::Bytes { field, capacity } => {
+            let field = &field.name;
+            let label = field.to_string();
+            let capacity = usize::from(*capacity);
+            Some(quote! {
+                if #field.len() > #capacity {
+                    return Err(::stm32wb_hci::wire::TooLong {
+                        field: #label,
+                        len: #field.len(),
+                        capacity: #capacity,
+                    });
+                }
+            })
+        }
+        _ => None,
+    });
+    let params_doc = format!(
+        "Parameters of [`{name}`], built by [`{name}::try_new`] within the catalog's capacities."
     );
     let attrs = &input.attrs;
     Ok(quote! {
         #cfg
+        #[doc = #params_doc]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub struct #params_name<#lifetime> {
+            #(#names: #types,)*
+        }
+
+        #cfg
+        impl<#lifetime> ::bt_hci::WriteHci for #params_name<#lifetime> {
+            #[inline]
+            fn size(&self) -> usize {
+                0 #(+ #sizes)*
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+                #(#sync_writes)*
+                Ok(())
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                #(#async_writes)*
+                Ok(())
+            }
+        }
+
+        #cfg
         ::bt_hci::cmd::cmd! {
             #(#attrs)*
             #name(VENDOR_SPECIFIC, #ocf) {
-                #params_tokens
+                Params<#lifetime> = #params_name<#lifetime>;
                 #returns_tokens
             }
         }
-        #(#widths)*
+
+        #cfg
+        impl<#lifetime> #name<#lifetime> {
+            /// Build the command, rejecting variable-length fields longer than
+            /// the capacity the catalog declares for them.
+            #[allow(clippy::too_many_arguments)]
+            pub fn try_new(#(#names: #types),*) -> Result<Self, ::stm32wb_hci::wire::TooLong> {
+                #(#checks)*
+                Ok(Self::new(#params_name { #(#names),* }))
+            }
+        }
     })
+}
+
+/// The lifetime of a `&'a [u8]` type.
+fn byte_slice_lifetime(ty: &Type) -> Option<&syn::Lifetime> {
+    let Type::Reference(reference) = ty else {
+        return None;
+    };
+    let Type::Slice(slice) = &*reference.elem else {
+        return None;
+    };
+    let is_u8 = matches!(&*slice.elem, Type::Path(path) if path.qself.is_none() && path.path.is_ident("u8"));
+    (reference.mutability.is_none() && is_u8)
+        .then_some(reference.lifetime.as_ref())
+        .flatten()
 }
 
 fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
@@ -245,31 +416,36 @@ fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
         .unzip()
 }
 
-/// Assert at compile time that each field's type has the catalog's width.
+/// Assert at compile time that each fixed-width field's type has the
+/// catalog's width.
 fn width_assertions<'a>(
     cfg: &'a Option<TokenStream>,
-    fields: &'a Fields,
-    widths: &'a [(&Field, u16)],
+    owner: &'a Ident,
+    slots: &'a [Slot<'a>],
 ) -> impl Iterator<Item = TokenStream> + 'a {
-    fields
-        .fields
-        .iter()
-        .zip(widths)
-        .map(move |(field, (member, width))| {
-            let ty = &field.ty;
-            let width = usize::from(*width);
-            let message = format!(
-                "{}.{}: the catalog encodes {} in {width} bytes",
-                fields.name, field.name, member.name
+    slots.iter().filter_map(move |slot| {
+        let Slot::Fixed {
+            field,
+            member,
+            width,
+        } = slot
+        else {
+            return None;
+        };
+        let ty = &field.ty;
+        let width = usize::from(*width);
+        let message = format!(
+            "{owner}.{}: the catalog encodes {} in {width} bytes",
+            field.name, member.name
+        );
+        Some(quote_spanned! {ty.span()=>
+            #cfg
+            const _: () = ::core::assert!(
+                <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
+                #message
             );
-            quote_spanned! {ty.span()=>
-                #cfg
-                const _: () = ::core::assert!(
-                    <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
-                    #message
-                );
-            }
         })
+    })
 }
 
 /// The facts a declaration is generated from, identical in every release and
@@ -359,18 +535,65 @@ impl<'a> Command<'a> {
     }
 }
 
-/// Match declared fields to catalog members in order and compute each
-/// member's encoded width.
-fn check_fields<'a>(
+/// How one catalog member is encoded, in catalog order.
+enum Slot<'a> {
+    /// A declared fixed-width field.
+    Fixed {
+        field: &'a InputField,
+        member: &'a Field,
+        width: u16,
+    },
+    /// The element count of a variable-length field, derived from its length
+    /// rather than declared.
+    Count {
+        counted: &'a InputField,
+        scalar: Scalar,
+    },
+    /// A declared variable-length byte field.
+    Bytes {
+        field: &'a InputField,
+        capacity: u16,
+    },
+}
+
+/// Match declared fields to catalog members in order and decide how each
+/// member is encoded. Members counting a variable-length field are derived
+/// from that field and not declared.
+fn plan<'a>(
     c_name: &Ident,
-    declared: &Fields,
+    declared: &'a Fields,
     members: &'a [Field],
     structs: &Structs,
     what: &str,
-) -> syn::Result<Vec<(&'a Field, u16)>> {
-    for (index, member) in members.iter().enumerate() {
+    variable: bool,
+) -> syn::Result<Vec<Slot<'a>>> {
+    let counts = members
+        .iter()
+        .filter_map(|member| match &member.ty {
+            FieldType::Counted { count, .. } => Some(count.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let visible = members
+        .iter()
+        .filter(|member| !counts.contains(&member.name.as_str()))
+        .collect::<Vec<_>>();
+
+    for field in &declared.fields {
+        if let Some(count) = counts.iter().find(|count| field.matches(count)) {
+            return Err(syn::Error::new(
+                field.name.span(),
+                format!(
+                    "{count} counts a variable-length field of {c_name} and is written from \
+                 that field's length; remove `{}`",
+                    field.name
+                ),
+            ));
+        }
+    }
+    for (index, member) in visible.iter().enumerate() {
         let Some(field) = declared.fields.get(index) else {
-            let missing = members[index..]
+            let missing = visible[index..]
                 .iter()
                 .map(|member| snake_case(&member.name))
                 .collect::<Vec<_>>()
@@ -397,36 +620,84 @@ fn check_fields<'a>(
             ));
         }
     }
-    if let Some(extra) = declared.fields.get(members.len()) {
+    if let Some(extra) = declared.fields.get(visible.len()) {
         return Err(syn::Error::new(
             extra.name.span(),
             format!(
-                "{c_name} has {} {what}s in the catalog; `{}` is not one of them",
-                members.len(),
+                "{c_name} has {} {what}s to declare; `{}` is not one of them",
+                visible.len(),
                 extra.name
             ),
         ));
     }
 
+    let field_of = |member: &Field| {
+        visible
+            .iter()
+            .position(|visible| visible.name == member.name)
+            .map(|index| &declared.fields[index])
+    };
     members
         .iter()
-        .zip(&declared.fields)
-        .map(|(member, field)| {
+        .map(|member| {
+            let Some(field) = field_of(member) else {
+                let counted = members
+                    .iter()
+                    .find(|other| {
+                        matches!(&other.ty, FieldType::Counted { count, .. } if *count == member.name)
+                    })
+                    .and_then(field_of)
+                    .expect("a hidden member counts a declared field");
+                let FieldType::Scalar(scalar) = member.ty else {
+                    unreachable!("the catalog validates that counts are integers")
+                };
+                return Ok(Slot::Count { counted, scalar });
+            };
+            let unsupported = |kind: &str| {
+                Err(syn::Error::new(
+                    field.name.span(),
+                    format!("`{member}` is {kind}; such {what}s are not supported yet"),
+                ))
+            };
             let width = match &member.ty {
                 FieldType::Scalar(scalar) => Ok(scalar.width()),
                 FieldType::Struct(name) => struct_width(name, structs),
                 FieldType::Array { element, len } => {
                     element_width(element, structs).map(|width| width * len)
                 }
-                FieldType::Counted { .. } | FieldType::Union { .. } => {
-                    return Err(syn::Error::new(
-                        field.name.span(),
-                        format!("`{member}` is variable-length; such fields are not supported yet"),
-                    ));
+                FieldType::Counted {
+                    element: Element::Scalar(Scalar::U8),
+                    count,
+                    capacity,
+                } if variable => {
+                    let count_width = members
+                        .iter()
+                        .find(|other| other.name == *count)
+                        .map(|other| match other.ty {
+                            FieldType::Scalar(scalar) => scalar.width(),
+                            _ => unreachable!("the catalog validates that counts are integers"),
+                        })
+                        .expect("the catalog validates that counts exist");
+                    if u64::from(*capacity) >= 1 << (8 * u32::from(count_width)) {
+                        return Err(syn::Error::new(
+                            field.name.span(),
+                            format!("`{member}` has a capacity its {count} cannot express"),
+                        ));
+                    }
+                    return Ok(Slot::Bytes {
+                        field,
+                        capacity: *capacity,
+                    });
                 }
+                FieldType::Counted { .. } => return unsupported("variable-length"),
+                FieldType::Union { .. } => return unsupported("a union"),
             };
             width
-                .map(|width| (member, width))
+                .map(|width| Slot::Fixed {
+                    field,
+                    member,
+                    width,
+                })
                 .map_err(|error| syn::Error::new(field.name.span(), error.to_string()))
         })
         .collect()
@@ -546,12 +817,10 @@ mod tests {
                  extra: u8,
              }",
         );
-        assert!(error.contains("`extra` is not one of them"), "{error}");
-
-        let error = expand_err(
-            "aci_hal_write_config_data => HalWriteConfigData { offset: u8, length: u8, value: u8 }",
+        assert!(
+            error.contains("1 parameters to declare; `extra`"),
+            "{error}"
         );
-        assert!(error.contains("variable-length"), "{error}");
 
         let error = expand_err("aci_hal_get_fw_build_number => HalGetFwBuildNumber {}");
         assert!(
@@ -620,5 +889,61 @@ mod tests {
              } -> Nothing {}",
         );
         assert!(error.contains("Command Status"), "{error}");
+    }
+
+    #[test]
+    fn counted_bytes_derive_their_count() {
+        let tokens = expand_str(
+            "aci_hal_write_config_data => HalWriteConfigData {
+                 offset: u8,
+                 value: &'a [u8],
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("Params < 'a > = HalWriteConfigDataParams < 'a >"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("self . value . len () as u8"), "{tokens}");
+        assert!(tokens.contains("fn try_new"), "{tokens}");
+        assert!(tokens.contains("value . len () > 253usize"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_l2cap_coc_tx_data => L2capCocTxData { channel_index: u8, data: &'a [u8] }",
+        )
+        .unwrap();
+        assert!(tokens.contains("self . data . len () as u16"), "{tokens}");
+
+        let error = expand_err(
+            "aci_hal_write_config_data => HalWriteConfigData {
+                 offset: u8,
+                 length: u8,
+                 value: &'a [u8],
+             }",
+        );
+        assert!(
+            error.contains("Length counts a variable-length field"),
+            "{error}"
+        );
+
+        for ty in ["&'a [u16]", "&'a mut [u8]", "[u8; 4]"] {
+            let error = expand_err(&format!(
+                "aci_hal_write_config_data => HalWriteConfigData {{ offset: u8, value: {ty} }}"
+            ));
+            assert!(
+                error.contains("must be declared as `&'a [u8]`"),
+                "{ty}: {error}"
+            );
+        }
+
+        let error = expand_err(
+            "aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+                 data: &'a [u8],
+             }",
+        );
+        assert!(
+            error.contains("variable-length; such return parameters"),
+            "{error}"
+        );
     }
 }
