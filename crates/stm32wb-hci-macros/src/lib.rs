@@ -4,6 +4,7 @@
 
 mod cfg;
 mod command;
+mod event;
 mod structs;
 
 use proc_macro::TokenStream;
@@ -137,6 +138,36 @@ pub fn vendor_command(input: TokenStream) -> TokenStream {
 pub fn vendor_struct(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as structs::Input);
     structs::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an ST vendor event from its generated C name.
+///
+/// The vendor event code and the targets the event exists on come from the
+/// catalog; the declaration names and types the parameters, which must match
+/// the catalog's members as for [`vendor_command!`], `since` and `before`
+/// included. The event becomes a plain struct implementing `FromHciBytes`
+/// for the parameters after the code, and `VendorEvent`, which decodes a
+/// bt-hci vendor event carrying the code.
+///
+/// A byte parameter counted by another member leaves the count undeclared and
+/// is declared `&'a [u8]`, borrowing the event; the struct then takes that
+/// lifetime.
+///
+/// ```ignore
+/// vendor_event! {
+///     /// A warning from the wireless stack, with data depending on its type.
+///     aci_warning_event => HalWarning {
+///         warning_type: u8,
+///         data: &'a [u8],
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

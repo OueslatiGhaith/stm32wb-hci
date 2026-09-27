@@ -7,15 +7,16 @@
 //! implicit: the exact width of a fixed-size value, which declarations are
 //! checked against the catalog with at compile time, the alternatives of a
 //! value whose width a selector member decides, the identity of the Rust
-//! types standing for the catalog's C structures, and an owned buffer for
-//! variable-length data in return parameters that must be `Copy`.
+//! types standing for the catalog's C structures, an owned buffer for
+//! variable-length data in return parameters that must be `Copy`, and the
+//! vendor event code identifying each ST event.
 
 use core::fmt;
 use core::ops::Deref;
 
 use bt_hci::param::{BdAddr, ConnHandle};
 use bt_hci::uuid::BluetoothUuid;
-use bt_hci::{FromHciBytesError, WriteHci};
+use bt_hci::{FromHciBytes, FromHciBytesError, WriteHci};
 
 /// A value with one exact, canonical HCI wire width.
 ///
@@ -320,6 +321,27 @@ pub const fn stands_for<T: CatalogStruct>(c_name: &str) -> bool {
         index += 1;
     }
     true
+}
+
+/// An ST vendor event, which bt-hci delivers as [`bt_hci::event::Vendor`]:
+/// a 16-bit vendor event code followed by the event's parameters.
+pub trait VendorEvent<'a>: FromHciBytes<'a> {
+    /// The vendor event code.
+    const CODE: u16;
+
+    /// Decode the parameters of a vendor event, code included, if the code is
+    /// this event's. The parameters must be exactly those the catalog lists.
+    fn from_vendor_params(params: &'a [u8]) -> Option<Result<Self, FromHciBytesError>> {
+        let (code, payload) = params.split_first_chunk::<2>()?;
+        (u16::from_le_bytes(*code) == Self::CODE).then(|| Self::from_hci_bytes_complete(payload))
+    }
+
+    /// Decode a vendor event if its code is this event's.
+    fn from_vendor(
+        event: &'a bt_hci::event::Vendor<'_>,
+    ) -> Option<Result<Self, FromHciBytesError>> {
+        Self::from_vendor_params(&event.params)
+    }
 }
 
 #[cfg(test)]

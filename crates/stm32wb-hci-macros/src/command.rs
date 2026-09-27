@@ -141,7 +141,7 @@ impl InputField {
     }
 
     /// Whether the field exists throughout `releases`.
-    fn exists_in(&self, releases: ReleaseRange) -> bool {
+    pub(crate) fn exists_in(&self, releases: ReleaseRange) -> bool {
         self.since.is_none_or(|(since, _)| since <= releases.first)
             && self.before.is_none_or(|(before, _)| releases.last < before)
     }
@@ -768,7 +768,7 @@ fn slice_element(ty: &Type) -> Option<Option<&Type>> {
 }
 
 /// The lifetime and element type of a `&'a [T]` type.
-fn slice_lifetime_and_element(ty: &Type) -> Option<(&syn::Lifetime, &Type)> {
+pub(crate) fn slice_lifetime_and_element(ty: &Type) -> Option<(&syn::Lifetime, &Type)> {
     let Type::Reference(reference) = ty else {
         return None;
     };
@@ -941,7 +941,7 @@ impl Facts<'_> {
 
 /// Whether two member lists have the same types in the same order, with
 /// counts and selectors referring to the same positions.
-fn same_layout(left: &[Field], right: &[Field]) -> bool {
+pub(crate) fn same_layout(left: &[Field], right: &[Field]) -> bool {
     /// A member's type with the members it refers to replaced by their positions.
     fn shape(members: &[Field], member: &Field) -> FieldType {
         let position = |name: &str| {
@@ -990,10 +990,10 @@ struct Command<'a> {
 }
 
 /// Releases and the profiles supporting a command in them.
-type Targets<'a> = Vec<(ReleaseRange, &'a [Profile])>;
+pub(crate) type Targets<'a> = Vec<(ReleaseRange, &'a [Profile])>;
 
 /// Add the names of `members` to the names each position had so far.
-fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
+pub(crate) fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
     names.resize_with(members.len(), Vec::new);
     for (names, member) in names.iter_mut().zip(members) {
         if !names.contains(&member.name.as_str()) {
@@ -1003,7 +1003,7 @@ fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
 }
 
 /// The declared fields existing throughout `releases`.
-fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
+pub(crate) fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
     Fields {
         name: fields.name.clone(),
         fields: fields
@@ -1032,65 +1032,11 @@ impl<'a> Command<'a> {
                 .iter()
                 .chain(input.returns.iter().flat_map(|returns| &returns.fields))
         };
-        for field in fields() {
-            if let (Some((since, _)), Some((before, span))) = (field.since, field.before)
-                && before <= since
-            {
-                return Err(syn::Error::new(
-                    span,
-                    format!("`{}` must start before it ends", field.name),
-                ));
-            }
-            let bounds = [(field.since, "start in"), (field.before, "end before")];
-            for (release, span, verb) in bounds
-                .into_iter()
-                .filter_map(|(bound, verb)| bound.map(|(release, span)| (release, span, verb)))
-            {
-                if !bundled.catalog.versions().any(|known| known == release) {
-                    return Err(syn::Error::new(
-                        span,
-                        format!("{release} is not a release the catalog describes"),
-                    ));
-                }
-                if let Some(segment) = segments.iter().find(|segment| {
-                    segment.releases.first < release && release <= segment.releases.last
-                }) {
-                    return Err(syn::Error::new(
-                        span,
-                        format!(
-                            "{c_name} has one layout throughout {}; `{}` cannot {verb} {release}",
-                            segment.releases, field.name
-                        ),
-                    ));
-                }
-            }
-            let Some((_, span)) = field.since.or(field.before) else {
-                continue;
-            };
-            match segments
-                .iter()
-                .filter(|segment| field.exists_in(segment.releases))
-                .count()
-            {
-                0 => {
-                    return Err(syn::Error::new(
-                        span,
-                        format!("`{}` exists in no release of {c_name}", field.name),
-                    ));
-                }
-                count if count == segments.len() => {
-                    return Err(syn::Error::new(
-                        span,
-                        format!(
-                            "`{}` exists in every release of {c_name}; remove `since` and \
-                             `before`",
-                            field.name
-                        ),
-                    ));
-                }
-                _ => {}
-            }
-        }
+        let ranges = segments
+            .iter()
+            .map(|segment| segment.releases)
+            .collect::<Vec<_>>();
+        check_bounds(bundled, &c_name, fields(), &ranges)?;
 
         // Each variant with the fields it declares and the targets it covers.
         let mut variants: Vec<(Vec<bool>, Self, Targets<'a>)> = Vec::new();
@@ -1193,6 +1139,77 @@ impl<'a> Command<'a> {
     }
 }
 
+/// Check the `since` and `before` bounds of `fields` against the releases
+/// an entry exists in, one range per segment of its history.
+pub(crate) fn check_bounds<'f>(
+    bundled: &Bundled,
+    c_name: &str,
+    fields: impl Iterator<Item = &'f InputField>,
+    ranges: &[ReleaseRange],
+) -> syn::Result<()> {
+    for field in fields {
+        if let (Some((since, _)), Some((before, span))) = (field.since, field.before)
+            && before <= since
+        {
+            return Err(syn::Error::new(
+                span,
+                format!("`{}` must start before it ends", field.name),
+            ));
+        }
+        let bounds = [(field.since, "start in"), (field.before, "end before")];
+        for (release, span, verb) in bounds
+            .into_iter()
+            .filter_map(|(bound, verb)| bound.map(|(release, span)| (release, span, verb)))
+        {
+            if !bundled.catalog.versions().any(|known| known == release) {
+                return Err(syn::Error::new(
+                    span,
+                    format!("{release} is not a release the catalog describes"),
+                ));
+            }
+            if let Some(range) = ranges
+                .iter()
+                .find(|range| range.first < release && release <= range.last)
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "{c_name} has one layout throughout {range}; `{}` cannot {verb} {release}",
+                        field.name
+                    ),
+                ));
+            }
+        }
+        let Some((_, span)) = field.since.or(field.before) else {
+            continue;
+        };
+        match ranges
+            .iter()
+            .filter(|range| field.exists_in(**range))
+            .count()
+        {
+            0 => {
+                return Err(syn::Error::new(
+                    span,
+                    format!("`{}` exists in no release of {c_name}", field.name),
+                ));
+            }
+            count if count == ranges.len() => {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{}` exists in every release of {c_name}; remove `since` and \
+                         `before`",
+                        field.name
+                    ),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Which side of the command a layout describes.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Side {
@@ -1200,6 +1217,8 @@ pub(crate) enum Side {
     Returns,
     /// The fields of a C structure.
     Struct,
+    /// The parameters of an event, decoded in place.
+    Event,
 }
 
 impl Side {
@@ -1208,6 +1227,7 @@ impl Side {
             Side::Params => "parameter",
             Side::Returns => "return parameter",
             Side::Struct => "field",
+            Side::Event => "event parameter",
         }
     }
 }
@@ -1432,6 +1452,13 @@ pub(crate) fn plan<'a>(
                         Element::Struct(c_name) => format!("{capacity} {c_name}"),
                         Element::Scalar(_) => format!("{capacity} bytes"),
                     };
+                    let member_index = members
+                        .iter()
+                        .position(|other| ptr::eq(other, member))
+                        .expect("the member is one of the members");
+                    if side != Side::Params && count_index > member_index {
+                        return unsupported("counted by a later member");
+                    }
                     let (declared_element, expected) = match side {
                         Side::Params => (
                             slice_element(&field.ty),
@@ -1442,27 +1469,26 @@ pub(crate) fn plan<'a>(
                                 Element::Scalar(_) => "&'a [u8]`".to_owned(),
                             },
                         ),
-                        Side::Returns | Side::Struct => {
-                            let member_index = members
-                                .iter()
-                                .position(|other| ptr::eq(other, member))
-                                .expect("the member is one of the members");
-                            if count_index > member_index {
-                                return unsupported("counted by a later member");
+                        Side::Event => match element {
+                            Element::Struct(_) => {
+                                return unsupported("a variable-length array of structures");
                             }
-                            (
-                                bounded_array(&field.ty)
-                                    .filter(|(_, declared)| *declared == u64::from(*capacity))
-                                    .map(|(element, _)| element),
-                                match element {
-                                    Element::Struct(c_name) => format!(
-                                        "BoundedArray<T, {capacity}>` with T the type standing \
+                            Element::Scalar(_) => {
+                                (slice_element(&field.ty), "&'a [u8]`".to_owned())
+                            }
+                        },
+                        Side::Returns | Side::Struct => (
+                            bounded_array(&field.ty)
+                                .filter(|(_, declared)| *declared == u64::from(*capacity))
+                                .map(|(element, _)| element),
+                            match element {
+                                Element::Struct(c_name) => format!(
+                                    "BoundedArray<T, {capacity}>` with T the type standing \
                                          for {c_name}"
-                                    ),
-                                    Element::Scalar(_) => format!("BoundedBytes<{capacity}>`"),
-                                },
-                            )
-                        }
+                                ),
+                                Element::Scalar(_) => format!("BoundedBytes<{capacity}>`"),
+                            },
+                        ),
                     };
                     let element = match (element, declared_element) {
                         (Element::Scalar(_), Some(None)) => Some(ElementType::Byte),
