@@ -191,11 +191,12 @@ impl From<BluetoothUuid> for Uuid {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TooLong {
-    /// The Rust name of the field.
+    /// The Rust name of the field, or `"parameters"` when the fields fit their
+    /// capacities but not the 255 bytes of the parameters together.
     pub field: &'static str,
-    /// The number of elements supplied.
+    /// The number of elements supplied, or of parameter bytes.
     pub len: usize,
-    /// The largest number of elements the command accepts.
+    /// The largest number of elements the command accepts, or 255 bytes.
     pub capacity: usize,
 }
 

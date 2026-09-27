@@ -591,6 +591,20 @@ fn encoded_command(
             _ => None,
         })
         .collect::<Vec<_>>();
+    // Each capacity leaves room for the fixed members, but several
+    // variable-length members can still overflow the one-byte length together.
+    let total_check = (checks.len() > 1).then(|| {
+        quote! {
+            let len = ::bt_hci::WriteHci::size(&params);
+            if len > usize::from(u8::MAX) {
+                return Err(::stm32wb_hci::wire::TooLong {
+                    field: "parameters",
+                    len,
+                    capacity: usize::from(u8::MAX),
+                });
+            }
+        }
+    });
     let constructor = if checks.is_empty() {
         quote! {
             /// Create a new instance of the command.
@@ -602,11 +616,14 @@ fn encoded_command(
     } else {
         quote! {
             /// Build the command, rejecting variable-length fields longer than
-            /// the capacity the catalog declares for them.
+            /// the capacity the catalog declares for them, or parameters
+            /// longer than 255 bytes together.
             #[allow(clippy::too_many_arguments)]
             pub fn try_new(#(#names: #types),*) -> Result<Self, ::stm32wb_hci::wire::TooLong> {
                 #(#checks)*
-                Ok(Self::from(#params_name { #(#names),* }))
+                let params = #params_name { #(#names),* };
+                #total_check
+                Ok(Self::from(params))
             }
         }
     };
@@ -1972,6 +1989,31 @@ mod tests {
             error.contains("declare it as `BoundedArray<T, 35>` with T the type standing for Bonded_Device_Entry_t"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn several_counted_members_check_the_parameters_together() {
+        let bounded = |source: &str| {
+            expand_str(source)
+                .unwrap()
+                .contains("field : \"parameters\"")
+        };
+        assert!(!bounded(
+            "aci_gap_update_adv_data => GapUpdateAdvData { adv_data: &'a [u8] }"
+        ));
+        assert!(bounded(
+            "aci_gap_set_discoverable => GapSetDiscoverable {
+                 advertising_type: u8,
+                 advertising_interval_min: u16,
+                 advertising_interval_max: u16,
+                 own_address_type: u8,
+                 advertising_filter_policy: u8,
+                 local_name: &'a [u8],
+                 service_uuid_list: &'a [u8],
+                 conn_interval_min: u16,
+                 conn_interval_max: u16,
+             }"
+        ));
     }
 
     #[test]
