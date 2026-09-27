@@ -7,12 +7,12 @@ use stm32wb_catalog::{Bundled, EventScope, Field, ReleaseRange, Structs, bundled
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
-use crate::cfg;
 use crate::command::{
     ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
     elements_lifetime_and_element, fields_in, plan, record_names, same_layout,
     slice_lifetime_and_element, width_assertions,
 };
+use crate::{cfg, complete};
 
 /// ```text
 /// /// Documentation for the event.
@@ -64,6 +64,11 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         })?;
         tokens.extend(expanded);
     }
+    let c_name = input.c_name.to_string();
+    tokens.extend(
+        complete::declared(bundled, complete::Kind::Event, &c_name)
+            .map_err(|error| syn::Error::new(input.c_name.span(), error.to_string()))?,
+    );
     Ok(tokens)
 }
 

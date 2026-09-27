@@ -4,6 +4,7 @@
 
 mod cfg;
 mod command;
+mod complete;
 mod event;
 mod structs;
 
@@ -172,6 +173,28 @@ pub fn vendor_event(input: TokenStream) -> TokenStream {
     event::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Require a declaration of every vendor command and event the catalog lists
+/// for the selected target.
+///
+/// Invoked once, in `stm32wb_hci::catalog`. It defines a marker type for each
+/// catalog entry and the `Declared` trait, which [`vendor_command!`] and
+/// [`vendor_event!`] implement for the markers of the entries they declare,
+/// on the targets they declare them for. A target whose binary implements an
+/// entry nothing declares fails to compile, naming the entry.
+#[proc_macro]
+pub fn catalog_complete(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return error("catalog_complete! takes no arguments");
+    }
+    match bundled()
+        .map_err(|error| error.to_string())
+        .and_then(|bundled| complete::expand(bundled).map_err(|error| error.to_string()))
+    {
+        Ok(tokens) => tokens.into(),
+        Err(message) => error(&format!("the bundled catalog is invalid: {message}")),
+    }
 }
 
 fn error(message: &str) -> TokenStream {

@@ -45,6 +45,8 @@ mod fmt;
 pub mod aci;
 #[macro_use]
 pub mod bitflag_array;
+#[doc(hidden)]
+pub mod catalog;
 
 pub mod event;
 pub mod host;

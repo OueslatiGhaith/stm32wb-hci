@@ -8,5 +8,6 @@
 pub mod att;
 pub mod gap;
 pub mod gatt;
+pub mod general;
 pub mod hal;
 pub mod l2cap;

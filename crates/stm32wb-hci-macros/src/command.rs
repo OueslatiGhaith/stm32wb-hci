@@ -15,7 +15,7 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{Attribute, Ident, LitStr, Token, Type, braced};
 
-use crate::cfg;
+use crate::{cfg, complete};
 
 /// ```text
 /// /// Documentation for the command.
@@ -177,6 +177,11 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         })?;
         tokens.extend(expanded);
     }
+    let c_name = input.c_name.to_string();
+    tokens.extend(
+        complete::declared(bundled, complete::Kind::Command, &c_name)
+            .map_err(|error| syn::Error::new(input.c_name.span(), error.to_string()))?,
+    );
     Ok(tokens)
 }
 
