@@ -1,6 +1,11 @@
 //! GATT server commands.
 
-use stm32wb_hci_macros::vendor_command;
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no GATT commands"
+)]
+use bt_hci::param::ConnHandle;
+use stm32wb_hci_macros::{vendor_command, vendor_struct};
 
 #[allow(
     unused_imports,
@@ -30,6 +35,21 @@ vendor_command! {
         include_uuid: Uuid,
     } -> GattInclude {
         include_handle: u16,
+    }
+}
+
+vendor_struct! {
+    /// An attribute handle.
+    Handle_Entry_t => HandleEntry {
+        handle: u16,
+    }
+}
+
+vendor_command! {
+    /// Read the values of several characteristics at once.
+    aci_gatt_read_multiple_char_value => GattReadMultipleCharValue {
+        connection_handle: ConnHandle,
+        handle_entry: &'a [HandleEntry],
     }
 }
 
@@ -80,6 +100,20 @@ mod tests {
         let include =
             <GattIncludeService as SyncCmd>::Return::from_hci_bytes_complete(&[0x29, 0]).unwrap();
         assert_eq!(include.include_handle, 0x0029);
+    }
+
+    #[cfg(any(feature = "stack-full-extended", feature = "stack-full"))]
+    #[test]
+    fn handle_lists_encode_their_count() {
+        let handles = [
+            HandleEntry { handle: 0x0010 },
+            HandleEntry { handle: 0x0203 },
+        ];
+        let command = GattReadMultipleCharValue::try_new(ConnHandle::new(1), &handles).unwrap();
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..len], [0x1B, 0xFD, 7, 1, 0, 2, 0x10, 0, 0x03, 0x02]);
+        let too_many = [HandleEntry::default(); 127];
+        assert!(GattReadMultipleCharValue::try_new(ConnHandle::new(1), &too_many).is_err());
     }
 
     #[tokio::test]

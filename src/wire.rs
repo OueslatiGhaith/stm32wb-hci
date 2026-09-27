@@ -6,7 +6,8 @@
 //! traits leave
 //! implicit: the exact width of a fixed-size value, which declarations are
 //! checked against the catalog with at compile time, the alternatives of a
-//! value whose width a selector member decides, and an owned buffer for
+//! value whose width a selector member decides, the identity of the Rust
+//! types standing for the catalog's C structures, and an owned buffer for
 //! variable-length data in return parameters that must be `Copy`.
 
 use core::fmt;
@@ -210,76 +211,114 @@ impl fmt::Display for TooLong {
 
 impl core::error::Error for TooLong {}
 
-/// Up to `MAX_LEN` bytes of a variable-length field, owned so the value
+/// Up to `MAX_LEN` elements of a variable-length field, owned so the value
 /// containing it can be `Copy`.
 #[derive(Clone, Copy)]
-pub struct BoundedBytes<const MAX_LEN: usize> {
-    bytes: [u8; MAX_LEN],
+pub struct BoundedArray<T, const MAX_LEN: usize> {
+    elements: [T; MAX_LEN],
     len: usize,
 }
 
-impl<const MAX_LEN: usize> BoundedBytes<MAX_LEN> {
-    /// Copy `bytes`, which must not exceed the field's capacity.
-    pub fn new(bytes: &[u8]) -> Result<Self, FromHciBytesError> {
-        let mut buffer = [0; MAX_LEN];
-        buffer
-            .get_mut(..bytes.len())
+/// Up to `MAX_LEN` bytes of a variable-length field.
+pub type BoundedBytes<const MAX_LEN: usize> = BoundedArray<u8, MAX_LEN>;
+
+impl<T: Copy + Default, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
+    /// Copy `elements`, which must not exceed the field's capacity.
+    pub fn new(elements: &[T]) -> Result<Self, FromHciBytesError> {
+        let mut array = Self::default();
+        array
+            .elements
+            .get_mut(..elements.len())
             .ok_or(FromHciBytesError::InvalidSize)?
-            .copy_from_slice(bytes);
-        Ok(Self {
-            bytes: buffer,
-            len: bytes.len(),
-        })
+            .copy_from_slice(elements);
+        array.len = elements.len();
+        Ok(array)
     }
 
-    /// The bytes present on the wire.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.bytes[..self.len]
+    /// Append `element`, which must fit the field's capacity.
+    pub fn push(&mut self, element: T) -> Result<(), FromHciBytesError> {
+        *self
+            .elements
+            .get_mut(self.len)
+            .ok_or(FromHciBytesError::InvalidSize)? = element;
+        self.len += 1;
+        Ok(())
     }
 }
 
-impl<const MAX_LEN: usize> Default for BoundedBytes<MAX_LEN> {
+impl<T, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
+    /// The elements present on the wire.
+    pub fn as_slice(&self) -> &[T] {
+        &self.elements[..self.len]
+    }
+}
+
+impl<T: Copy + Default, const MAX_LEN: usize> Default for BoundedArray<T, MAX_LEN> {
     fn default() -> Self {
         Self {
-            bytes: [0; MAX_LEN],
+            elements: [T::default(); MAX_LEN],
             len: 0,
         }
     }
 }
 
-impl<const MAX_LEN: usize> Deref for BoundedBytes<MAX_LEN> {
-    type Target = [u8];
+impl<T, const MAX_LEN: usize> Deref for BoundedArray<T, MAX_LEN> {
+    type Target = [T];
 
-    fn deref(&self) -> &[u8] {
+    fn deref(&self) -> &[T] {
         self.as_slice()
     }
 }
 
-impl<const MAX_LEN: usize> AsRef<[u8]> for BoundedBytes<MAX_LEN> {
-    fn as_ref(&self) -> &[u8] {
+impl<T, const MAX_LEN: usize> AsRef<[T]> for BoundedArray<T, MAX_LEN> {
+    fn as_ref(&self) -> &[T] {
         self.as_slice()
     }
 }
 
-impl<const MAX_LEN: usize> PartialEq for BoundedBytes<MAX_LEN> {
+impl<T: PartialEq, const MAX_LEN: usize> PartialEq for BoundedArray<T, MAX_LEN> {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
 
-impl<const MAX_LEN: usize> Eq for BoundedBytes<MAX_LEN> {}
+impl<T: Eq, const MAX_LEN: usize> Eq for BoundedArray<T, MAX_LEN> {}
 
-impl<const MAX_LEN: usize> fmt::Debug for BoundedBytes<MAX_LEN> {
+impl<T: fmt::Debug, const MAX_LEN: usize> fmt::Debug for BoundedArray<T, MAX_LEN> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.as_slice()).finish()
     }
 }
 
 #[cfg(feature = "defmt")]
-impl<const MAX_LEN: usize> defmt::Format for BoundedBytes<MAX_LEN> {
+impl<T: defmt::Format, const MAX_LEN: usize> defmt::Format for BoundedArray<T, MAX_LEN> {
     fn format(&self, f: defmt::Formatter) {
-        defmt::write!(f, "{=[u8]}", self.as_slice());
+        defmt::write!(f, "{=[?]}", self.as_slice());
     }
+}
+
+/// A Rust type standing for one C structure of the catalog, which
+/// declarations check their structure members against.
+pub trait CatalogStruct: HciWireType {
+    /// The C name of the structure.
+    const C_NAME: &'static str;
+}
+
+/// Whether `T` stands for the catalog's C structure `c_name`.
+#[doc(hidden)]
+pub const fn stands_for<T: CatalogStruct>(c_name: &str) -> bool {
+    let (left, right) = (T::C_NAME.as_bytes(), c_name.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -387,6 +426,16 @@ mod tests {
             Uuid::from(BluetoothUuid::from_u32(0x1234_5678)),
             Uuid::from(BluetoothUuid::from_u32(0x1234_5678).to_u128())
         );
+    }
+
+    #[test]
+    fn bounded_arrays_grow_to_their_capacity() {
+        let mut array = BoundedArray::<u16, 2>::default();
+        array.push(1).unwrap();
+        array.push(2).unwrap();
+        assert_eq!(array.push(3), Err(FromHciBytesError::InvalidSize));
+        assert_eq!(array.as_slice(), [1, 2]);
+        assert_eq!(array, BoundedArray::new(&[1, 2]).unwrap());
     }
 
     #[test]

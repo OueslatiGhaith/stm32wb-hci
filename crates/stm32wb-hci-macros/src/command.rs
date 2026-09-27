@@ -34,19 +34,21 @@ pub struct Input {
 
 /// A named list of fields matched against a catalog layout.
 #[derive(Clone)]
-struct Fields {
-    name: Ident,
-    fields: Vec<InputField>,
+pub(crate) struct Fields {
+    pub(crate) name: Ident,
+    pub(crate) fields: Vec<InputField>,
 }
 
 #[derive(Clone)]
-struct InputField {
+pub(crate) struct InputField {
     /// The catalog member this field encodes, when it is not the Rust name.
     wire_name: Option<LitStr>,
     /// The first release with the field; it is declared in no earlier one.
-    since: Option<(Version, Span)>,
-    name: Ident,
-    ty: Type,
+    pub(crate) since: Option<(Version, Span)>,
+    /// The first release without the field; it is declared in no later one.
+    pub(crate) before: Option<(Version, Span)>,
+    pub(crate) name: Ident,
+    pub(crate) ty: Type,
 }
 
 impl Parse for Input {
@@ -95,42 +97,53 @@ impl InputField {
         }
         let mut wire_name = None;
         let mut since = None;
+        let mut before = None;
         for attr in &field.attrs {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
                     attr.span(),
-                    "only #[wire(name = \"...\", since = \"...\")] is supported on fields",
+                    "only #[wire(name = \"...\", since = \"...\", before = \"...\")] is supported \
+                     on fields",
                 ));
             }
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
                     wire_name = Some(meta.value()?.parse()?);
                     Ok(())
-                } else if meta.path.is_ident("since") {
+                } else if meta.path.is_ident("since") || meta.path.is_ident("before") {
                     let release: LitStr = meta.value()?.parse()?;
                     let version = release
                         .value()
                         .parse::<Version>()
                         .map_err(|error| syn::Error::new(release.span(), error.to_string()))?;
-                    since = Some((version, release.span()));
+                    let bound = Some((version, release.span()));
+                    if meta.path.is_ident("since") {
+                        since = bound;
+                    } else {
+                        before = bound;
+                    }
                     Ok(())
                 } else {
-                    Err(meta
-                        .error("expected `name = \"<catalog member>\"` or `since = \"<release>\"`"))
+                    Err(meta.error(
+                        "expected `name = \"<catalog member>\"`, `since = \"<release>\"`, or \
+                         `before = \"<release>\"`",
+                    ))
                 }
             })?;
         }
         Ok(Self {
             wire_name,
             since,
+            before,
             name: field.ident.expect("parse_named yields named fields"),
             ty: field.ty,
         })
     }
 
-    /// Whether the field exists in releases starting at `first`.
-    fn exists_from(&self, first: Version) -> bool {
-        self.since.is_none_or(|(since, _)| since <= first)
+    /// Whether the field exists throughout `releases`.
+    fn exists_in(&self, releases: ReleaseRange) -> bool {
+        self.since.is_none_or(|(since, _)| since <= releases.first)
+            && self.before.is_none_or(|(before, _)| releases.last < before)
     }
 
     fn matches(&self, member: &str) -> bool {
@@ -308,14 +321,39 @@ fn return_struct(
             let (count, scalar) = (count_of(counted), format_ident!("{}", scalar.name()));
             quote!(let (#count, rest) = <#scalar as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;)
         }
-        Slot::Bytes { field, .. } => {
+        Slot::Elements {
+            field,
+            element: ElementType::Byte,
+            ..
+        } => {
             let count = count_of(field);
             let field = &field.name;
             quote! {
                 let len = usize::from(#count);
                 let bytes = rest.get(..len).ok_or(::bt_hci::FromHciBytesError::InvalidSize)?;
                 let rest = &rest[len..];
-                let #field = ::stm32wb_hci::wire::BoundedBytes::new(bytes)?;
+                let #field = ::stm32wb_hci::wire::BoundedArray::new(bytes)?;
+            }
+        }
+        Slot::Elements {
+            field,
+            element: ElementType::Struct { ty, .. },
+            ..
+        } => {
+            let count = count_of(field);
+            let field = &field.name;
+            quote! {
+                let (#field, rest) = {
+                    let mut rest = rest;
+                    let mut elements = ::stm32wb_hci::wire::BoundedArray::default();
+                    for _ in 0..usize::from(#count) {
+                        let (element, next) =
+                            <#ty as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;
+                        elements.push(element)?;
+                        rest = next;
+                    }
+                    (elements, rest)
+                };
             }
         }
         Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
@@ -324,7 +362,9 @@ fn return_struct(
         let len = match slot {
             Slot::Fixed { width, .. } => usize::from(*width),
             Slot::Count { scalar, .. } => usize::from(scalar.width()),
-            Slot::Bytes { capacity, .. } => usize::from(*capacity),
+            Slot::Elements {
+                capacity, element, ..
+            } => usize::from(*capacity) * usize::from(element.width()),
             Slot::Selector { .. } | Slot::Union { .. } => {
                 unreachable!("plan rejects unions in return parameters")
             }
@@ -346,9 +386,10 @@ fn return_struct(
                         let scalar = format_ident!("{}", scalar.name());
                         (quote!(#width), Some((count_of(counted), scalar)))
                     }
-                    Slot::Bytes { field, .. } => {
+                    Slot::Elements { field, element, .. } => {
                         let count = count_of(field);
-                        (quote!(usize::from(#count)), None)
+                        let width = usize::from(element.width());
+                        (quote!(usize::from(#count) * #width), None)
                     }
                     Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
                 };
@@ -435,13 +476,9 @@ fn encoded_command(
     let params_name = format_ident!("{name}Params");
     let mut lifetime: Option<&syn::Lifetime> = None;
     for slot in slots {
-        if let Slot::Bytes { field, .. } = slot {
-            let this = byte_slice_lifetime(&field.ty).ok_or_else(|| {
-                syn::Error::new(
-                    field.ty.span(),
-                    "a variable-length byte field must be declared as `&'a [u8]`",
-                )
-            })?;
+        if let Slot::Elements { field, .. } = slot {
+            let (this, _) = slice_lifetime_and_element(&field.ty)
+                .expect("plan checks that variable-length parameters are slices");
             match lifetime {
                 Some(first) if first != this => {
                     return Err(syn::Error::new(
@@ -457,22 +494,26 @@ fn encoded_command(
 
     let (names, types) = names_and_types(&input.params);
     let sizes = slots.iter().map(|slot| match slot {
-        Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
-            let (field, ty) = (&field.name, &field.ty);
-            match array_element(ty) {
-                Some(element) => quote! {
-                    self.#field.iter().map(<#element as ::bt_hci::WriteHci>::size).sum::<usize>()
-                },
-                None => quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field)),
-            }
-        }
+        Slot::Fixed { field, .. } | Slot::Union { field, .. } => field_size(field),
         Slot::Count { scalar, .. } | Slot::Selector { scalar, .. } => {
             let width = usize::from(scalar.width());
             quote!(#width)
         }
-        Slot::Bytes { field, .. } => {
+        Slot::Elements {
+            field,
+            element: ElementType::Byte,
+            ..
+        } => {
             let field = &field.name;
             quote!(self.#field.len())
+        }
+        Slot::Elements {
+            field,
+            element: ElementType::Struct { ty, .. },
+            ..
+        } => {
+            let field = &field.name;
+            quote!(self.#field.iter().map(<#ty as ::bt_hci::WriteHci>::size).sum::<usize>())
         }
     });
     let writes = |asynchronous: bool| {
@@ -485,17 +526,7 @@ fn encoded_command(
             .iter()
             .map(move |slot| match slot {
                 Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
-                    let (field, ty) = (&field.name, &field.ty);
-                    match array_element(ty) {
-                        Some(element) => quote! {
-                            for element in &self.#field {
-                                <#element as ::bt_hci::WriteHci>::#write_hci(element, &mut writer)#wait?;
-                            }
-                        },
-                        None => quote! {
-                            <#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;
-                        },
-                    }
+                    field_write(field, asynchronous)
                 }
                 Slot::Count { counted, scalar } => {
                     let (counted, scalar) = (&counted.name, format_ident!("{}", scalar.name()));
@@ -514,9 +545,25 @@ fn encoded_command(
                             #wait?;
                     }
                 }
-                Slot::Bytes { field, .. } => {
+                Slot::Elements {
+                    field,
+                    element: ElementType::Byte,
+                    ..
+                } => {
                     let field = &field.name;
                     quote!(writer.write_all(self.#field)#wait?;)
+                }
+                Slot::Elements {
+                    field,
+                    element: ElementType::Struct { ty, .. },
+                    ..
+                } => {
+                    let field = &field.name;
+                    quote! {
+                        for element in self.#field {
+                            <#ty as ::bt_hci::WriteHci>::#write_hci(element, &mut writer)#wait?;
+                        }
+                    }
                 }
             })
             .collect::<Vec<_>>()
@@ -525,7 +572,9 @@ fn encoded_command(
     let checks = slots
         .iter()
         .filter_map(|slot| match slot {
-            Slot::Bytes { field, capacity } => {
+            Slot::Elements {
+                field, capacity, ..
+            } => {
                 let field = &field.name;
                 let label = field.to_string();
                 let capacity = usize::from(*capacity);
@@ -625,6 +674,37 @@ fn encoded_command(
     })
 }
 
+/// The encoded size of a field of `self`, summing array elements.
+pub(crate) fn field_size(field: &InputField) -> TokenStream {
+    let (field, ty) = (&field.name, &field.ty);
+    match array_element(ty) {
+        Some(element) => quote! {
+            self.#field.iter().map(<#element as ::bt_hci::WriteHci>::size).sum::<usize>()
+        },
+        None => quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field)),
+    }
+}
+
+/// Write a field of `self` to `writer`, one element at a time for arrays.
+pub(crate) fn field_write(field: &InputField, asynchronous: bool) -> TokenStream {
+    let (write_hci, wait) = if asynchronous {
+        (quote!(write_hci_async), quote!(.await))
+    } else {
+        (quote!(write_hci), quote!())
+    };
+    let (field, ty) = (&field.name, &field.ty);
+    match array_element(ty) {
+        Some(element) => quote! {
+            for element in &self.#field {
+                <#element as ::bt_hci::WriteHci>::#write_hci(element, &mut writer)#wait?;
+            }
+        },
+        None => quote! {
+            <#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;
+        },
+    }
+}
+
 /// The element type of an array type `[T; N]`.
 fn array_element(ty: &Type) -> Option<&Type> {
     match ty {
@@ -633,8 +713,9 @@ fn array_element(ty: &Type) -> Option<&Type> {
     }
 }
 
-/// The capacity of a `BoundedBytes<N>` type with a literal `N`.
-fn bounded_bytes_capacity(ty: &Type) -> Option<u64> {
+/// The element type (`None` for bytes) and literal capacity of a
+/// `BoundedBytes<N>` or `BoundedArray<T, N>` type.
+fn bounded_array(ty: &Type) -> Option<(Option<&Type>, u64)> {
     let Type::Path(path) = ty else {
         return None;
     };
@@ -643,32 +724,48 @@ fn bounded_bytes_capacity(ty: &Type) -> Option<u64> {
         return None;
     };
     let arguments = arguments.args.iter().collect::<Vec<_>>();
-    let [
-        syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(capacity),
-            ..
-        })),
-    ] = arguments[..]
+    let (element, capacity) = match (segment.ident.to_string().as_str(), &arguments[..]) {
+        ("BoundedBytes", [capacity]) => (None, capacity),
+        ("BoundedArray", [syn::GenericArgument::Type(element), capacity]) => {
+            (Some(element), capacity)
+        }
+        _ => return None,
+    };
+    let syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Int(capacity),
+        ..
+    })) = capacity
     else {
         return None;
     };
-    (path.qself.is_none() && segment.ident == "BoundedBytes")
-        .then(|| capacity.base10_parse().ok())
-        .flatten()
+    if path.qself.is_some() {
+        return None;
+    }
+    Some((element, capacity.base10_parse().ok()?))
 }
 
-/// The lifetime of a `&'a [u8]` type.
-fn byte_slice_lifetime(ty: &Type) -> Option<&syn::Lifetime> {
+/// The element type of a `&'a [T]` type, as `Some` to match
+/// [`bounded_array`].
+fn slice_element(ty: &Type) -> Option<Option<&Type>> {
+    slice_lifetime_and_element(ty).map(|(_, element)| Some(element))
+}
+
+/// The lifetime and element type of a `&'a [T]` type.
+fn slice_lifetime_and_element(ty: &Type) -> Option<(&syn::Lifetime, &Type)> {
     let Type::Reference(reference) = ty else {
         return None;
     };
     let Type::Slice(slice) = &*reference.elem else {
         return None;
     };
-    let is_u8 = matches!(&*slice.elem, Type::Path(path) if path.qself.is_none() && path.path.is_ident("u8"));
-    (reference.mutability.is_none() && is_u8)
-        .then_some(reference.lifetime.as_ref())
-        .flatten()
+    if reference.mutability.is_some() {
+        return None;
+    }
+    Some((reference.lifetime.as_ref()?, &slice.elem))
+}
+
+fn is_u8(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path) if path.qself.is_none() && path.path.is_ident("u8"))
 }
 
 fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
@@ -681,7 +778,7 @@ fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
 
 /// Assert at compile time that each fixed-width field's type has the
 /// catalog's width, and each union's type the catalog's alternatives.
-fn width_assertions<'a>(
+pub(crate) fn width_assertions<'a>(
     cfg: &'a Option<TokenStream>,
     owner: &'a Ident,
     slots: &'a [Slot<'a>],
@@ -691,6 +788,7 @@ fn width_assertions<'a>(
             field,
             member,
             width,
+            structure,
         } => {
             let ty = &field.ty;
             let width = usize::from(*width);
@@ -698,12 +796,35 @@ fn width_assertions<'a>(
                 "{owner}.{}: the catalog encodes {} in {width} bytes",
                 field.name, member.name
             );
+            let identity =
+                structure.map(|(ty, c_name)| struct_identity(cfg, owner, field, ty, c_name));
             Some(quote_spanned! {ty.span()=>
                 #cfg
                 const _: () = ::core::assert!(
                     <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
                     #message
                 );
+                #identity
+            })
+        }
+        Slot::Elements {
+            field,
+            element: ElementType::Struct { ty, c_name, width },
+            ..
+        } => {
+            let width = usize::from(*width);
+            let message = format!(
+                "{owner}.{}: the catalog encodes each {c_name} in {width} bytes",
+                field.name
+            );
+            let identity = struct_identity(cfg, owner, field, ty, c_name);
+            Some(quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
+                    #message
+                );
+                #identity
             })
         }
         Slot::Union {
@@ -752,6 +873,28 @@ fn width_assertions<'a>(
         }
         _ => None,
     })
+}
+
+/// Assert at compile time that `ty` stands for the C structure `c_name`.
+fn struct_identity(
+    cfg: &Option<TokenStream>,
+    owner: &Ident,
+    field: &InputField,
+    ty: &Type,
+    c_name: &str,
+) -> TokenStream {
+    let message = format!(
+        "{owner}.{}: the catalog member is a {c_name}; declare it with the type standing for \
+         {c_name}",
+        field.name
+    );
+    quote_spanned! {ty.span()=>
+        #cfg
+        const _: () = ::core::assert!(
+            ::stm32wb_hci::wire::stands_for::<#ty>(#c_name),
+            #message
+        );
+    }
 }
 
 /// The facts a declaration is generated from, identical on the wire in every
@@ -842,14 +985,14 @@ fn record_names<'a>(names: &mut Vec<Vec<&'a str>>, members: &'a [Field]) {
     }
 }
 
-/// The declared fields existing in releases starting at `first`.
-fn fields_from(fields: &Fields, first: Version) -> Fields {
+/// The declared fields existing throughout `releases`.
+fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
     Fields {
         name: fields.name.clone(),
         fields: fields
             .fields
             .iter()
-            .filter(|field| field.exists_from(first))
+            .filter(|field| field.exists_in(releases))
             .cloned()
             .collect(),
     }
@@ -873,38 +1016,62 @@ impl<'a> Command<'a> {
                 .chain(input.returns.iter().flat_map(|returns| &returns.fields))
         };
         for field in fields() {
-            let Some((since, span)) = field.since else {
+            if let (Some((since, _)), Some((before, span))) = (field.since, field.before)
+                && before <= since
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!("`{}` must start before it ends", field.name),
+                ));
+            }
+            let bounds = [(field.since, "start in"), (field.before, "end before")];
+            for (release, span, verb) in bounds
+                .into_iter()
+                .filter_map(|(bound, verb)| bound.map(|(release, span)| (release, span, verb)))
+            {
+                if !bundled.catalog.versions().any(|known| known == release) {
+                    return Err(syn::Error::new(
+                        span,
+                        format!("{release} is not a release the catalog describes"),
+                    ));
+                }
+                if let Some(segment) = segments.iter().find(|segment| {
+                    segment.releases.first < release && release <= segment.releases.last
+                }) {
+                    return Err(syn::Error::new(
+                        span,
+                        format!(
+                            "{c_name} has one layout throughout {}; `{}` cannot {verb} {release}",
+                            segment.releases, field.name
+                        ),
+                    ));
+                }
+            }
+            let Some((_, span)) = field.since.or(field.before) else {
                 continue;
             };
-            if !bundled.catalog.versions().any(|release| release == since) {
-                return Err(syn::Error::new(
-                    span,
-                    format!("{since} is not a release the catalog describes"),
-                ));
-            }
-            if let Some(segment) = segments
+            match segments
                 .iter()
-                .find(|segment| segment.releases.first < since && since <= segment.releases.last)
+                .filter(|segment| field.exists_in(segment.releases))
+                .count()
             {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "{c_name} has one layout throughout {}; `{}` cannot start in {since}",
-                        segment.releases, field.name
-                    ),
-                ));
-            }
-            if segments
-                .iter()
-                .all(|segment| field.exists_from(segment.releases.first))
-            {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "`{}` exists in every release of {c_name}; remove `since`",
-                        field.name
-                    ),
-                ));
+                0 => {
+                    return Err(syn::Error::new(
+                        span,
+                        format!("`{}` exists in no release of {c_name}", field.name),
+                    ));
+                }
+                count if count == segments.len() => {
+                    return Err(syn::Error::new(
+                        span,
+                        format!(
+                            "`{}` exists in every release of {c_name}; remove `since` and \
+                             `before`",
+                            field.name
+                        ),
+                    ));
+                }
+                _ => {}
             }
         }
 
@@ -948,7 +1115,7 @@ impl<'a> Command<'a> {
             };
 
             let key = fields()
-                .map(|field| field.exists_from(releases.first))
+                .map(|field| field.exists_in(releases))
                 .collect::<Vec<_>>();
             let Some((_, variant, targets)) = variants.iter_mut().find(|(other, ..)| *other == key)
             else {
@@ -957,7 +1124,7 @@ impl<'a> Command<'a> {
                 let declared_returns = input
                     .returns
                     .as_ref()
-                    .map(|returns| fields_from(returns, releases.first))
+                    .map(|returns| fields_in(returns, releases))
                     .filter(|returns| {
                         !returns.fields.is_empty()
                             || input
@@ -969,7 +1136,7 @@ impl<'a> Command<'a> {
                     input: Input {
                         attrs: input.attrs.clone(),
                         c_name: input.c_name.clone(),
-                        params: fields_from(&input.params, releases.first),
+                        params: fields_in(&input.params, releases),
                         returns: declared_returns,
                     },
                     facts: current,
@@ -986,7 +1153,8 @@ impl<'a> Command<'a> {
             if !variant.facts.same_wire(&current) {
                 return Err(error(format!(
                     "{c_name} changes its opcode, completion, or layout in {releases}; if it \
-                     adds members there, declare them with #[wire(since = \"{}\")]",
+                     adds or removes members there, declare them with \
+                     #[wire(since = \"{0}\")] or #[wire(before = \"{0}\")]",
                     releases.first
                 )));
             }
@@ -1010,9 +1178,11 @@ impl<'a> Command<'a> {
 
 /// Which side of the command a layout describes.
 #[derive(Clone, Copy, PartialEq)]
-enum Side {
+pub(crate) enum Side {
     Params,
     Returns,
+    /// The fields of a C structure.
+    Struct,
 }
 
 impl Side {
@@ -1020,17 +1190,21 @@ impl Side {
         match self {
             Side::Params => "parameter",
             Side::Returns => "return parameter",
+            Side::Struct => "field",
         }
     }
 }
 
 /// How one catalog member is encoded, in catalog order.
-enum Slot<'a> {
+pub(crate) enum Slot<'a> {
     /// A declared fixed-width field.
     Fixed {
         field: &'a InputField,
         member: &'a Field,
         width: u16,
+        /// The declared type standing for the C structure the member is, or
+        /// is an array of.
+        structure: Option<(&'a Type, &'a str)>,
     },
     /// The element count of a variable-length field, derived from its length
     /// rather than declared.
@@ -1038,10 +1212,11 @@ enum Slot<'a> {
         counted: &'a InputField,
         scalar: Scalar,
     },
-    /// A declared variable-length byte field.
-    Bytes {
+    /// A declared variable-length field.
+    Elements {
         field: &'a InputField,
         capacity: u16,
+        element: ElementType<'a>,
     },
     /// The selector of a union, derived from the alternative of the union's
     /// value rather than declared.
@@ -1058,6 +1233,27 @@ enum Slot<'a> {
     },
 }
 
+/// The elements of a variable-length field.
+#[derive(Clone, Copy)]
+pub(crate) enum ElementType<'a> {
+    Byte,
+    /// A C structure, with the declared type standing for it.
+    Struct {
+        ty: &'a Type,
+        c_name: &'a str,
+        width: u16,
+    },
+}
+
+impl ElementType<'_> {
+    fn width(self) -> u16 {
+        match self {
+            ElementType::Byte => 1,
+            ElementType::Struct { width, .. } => width,
+        }
+    }
+}
+
 /// The member another member is derived from: the variable-length field a
 /// count counts, or the union a selector selects.
 fn dependent<'a>(members: &'a [Field], name: &str) -> Option<&'a Field> {
@@ -1071,7 +1267,7 @@ fn dependent<'a>(members: &'a [Field], name: &str) -> Option<&'a Field> {
 /// Match declared fields to catalog members in order and decide how each
 /// member is encoded. Members counting a variable-length field or selecting
 /// a union's alternative are derived from that field and not declared.
-fn plan<'a>(
+pub(crate) fn plan<'a>(
     c_name: &Ident,
     declared: &'a Fields,
     members: &'a [Field],
@@ -1192,8 +1388,11 @@ fn plan<'a>(
                 FieldType::Array { element, len } => {
                     element_width(element, structs).map(|width| width * len)
                 }
+                FieldType::Counted { .. } if side == Side::Struct => {
+                    return unsupported("a variable-length array");
+                }
                 FieldType::Counted {
-                    element: Element::Scalar(Scalar::U8),
+                    element: element @ (Element::Scalar(Scalar::U8) | Element::Struct(_)),
                     count,
                     capacity,
                 } => {
@@ -1212,31 +1411,72 @@ fn plan<'a>(
                             format!("`{member}` has a capacity its {count} cannot express"),
                         ));
                     }
-                    if side == Side::Returns {
-                        let member_index = members
-                            .iter()
-                            .position(|other| ptr::eq(other, member))
-                            .expect("the member is one of the members");
-                        if count_index > member_index {
-                            return unsupported("counted by a later member");
+                    let what_holds = match element {
+                        Element::Struct(c_name) => format!("{capacity} {c_name}"),
+                        Element::Scalar(_) => format!("{capacity} bytes"),
+                    };
+                    let (declared_element, expected) = match side {
+                        Side::Params => (
+                            slice_element(&field.ty),
+                            match element {
+                                Element::Struct(c_name) => {
+                                    format!("&'a [T]` with T the type standing for {c_name}")
+                                }
+                                Element::Scalar(_) => "&'a [u8]`".to_owned(),
+                            },
+                        ),
+                        Side::Returns | Side::Struct => {
+                            let member_index = members
+                                .iter()
+                                .position(|other| ptr::eq(other, member))
+                                .expect("the member is one of the members");
+                            if count_index > member_index {
+                                return unsupported("counted by a later member");
+                            }
+                            (
+                                bounded_array(&field.ty)
+                                    .filter(|(_, declared)| *declared == u64::from(*capacity))
+                                    .map(|(element, _)| element),
+                                match element {
+                                    Element::Struct(c_name) => format!(
+                                        "BoundedArray<T, {capacity}>` with T the type standing \
+                                         for {c_name}"
+                                    ),
+                                    Element::Scalar(_) => format!("BoundedBytes<{capacity}>`"),
+                                },
+                            )
                         }
-                        if bounded_bytes_capacity(&field.ty) != Some(u64::from(*capacity)) {
-                            return Err(syn::Error::new(
-                                field.ty.span(),
-                                format!(
-                                    "`{member}` holds up to {capacity} bytes; declare it as \
-                                     `BoundedBytes<{capacity}>`"
-                                ),
-                            ));
+                    };
+                    let element = match (element, declared_element) {
+                        (Element::Scalar(_), Some(None)) => Some(ElementType::Byte),
+                        (Element::Scalar(_), Some(Some(ty))) if is_u8(ty) => {
+                            Some(ElementType::Byte)
                         }
-                    }
-                    return Ok(Slot::Bytes {
+                        (Element::Struct(c_name), Some(Some(ty))) => Some(ElementType::Struct {
+                            ty,
+                            c_name,
+                            width: struct_width(c_name, structs).map_err(|error| {
+                                syn::Error::new(field.name.span(), error.to_string())
+                            })?,
+                        }),
+                        _ => None,
+                    };
+                    let Some(element) = element else {
+                        return Err(syn::Error::new(
+                            field.ty.span(),
+                            format!(
+                                "`{member}` holds up to {what_holds}; declare it as `{expected}"
+                            ),
+                        ));
+                    };
+                    return Ok(Slot::Elements {
                         field,
                         capacity: *capacity,
+                        element,
                     });
                 }
                 FieldType::Counted { .. } => return unsupported("a variable-length array"),
-                FieldType::Union { .. } if side == Side::Returns => {
+                FieldType::Union { .. } if side != Side::Params => {
                     return unsupported("a union");
                 }
                 FieldType::Union { selector, variants } => {
@@ -1252,19 +1492,40 @@ fn plan<'a>(
                 }
             };
             width
-                .map(|width| Slot::Fixed {
-                    field,
-                    member,
-                    width,
-                })
                 .map_err(|error| syn::Error::new(field.name.span(), error.to_string()))
+                .and_then(|width| {
+                    let structure = match &member.ty {
+                        FieldType::Struct(c_name) => Some((&field.ty, c_name.as_str())),
+                        FieldType::Array {
+                            element: Element::Struct(c_name),
+                            ..
+                        } => Some((
+                            array_element(&field.ty).ok_or_else(|| {
+                                syn::Error::new(
+                                    field.ty.span(),
+                                    format!(
+                                        "`{member}` is an array of {c_name}; declare it as `[T; N]`"
+                                    ),
+                                )
+                            })?,
+                            c_name.as_str(),
+                        )),
+                        _ => None,
+                    };
+                    Ok(Slot::Fixed {
+                        field,
+                        member,
+                        width,
+                        structure,
+                    })
+                })
         })
         .collect()
 }
 
 /// The Rust spelling of a catalog member: `Radio_Activity_Mask` and
 /// `RadioActivityMask` both become `radio_activity_mask`.
-fn snake_case(member: &str) -> String {
+pub(crate) fn snake_case(member: &str) -> String {
     let mut name = String::with_capacity(member.len() + 4);
     let mut previous: Option<char> = None;
     for character in member.chars() {
@@ -1619,6 +1880,100 @@ mod tests {
         );
     }
 
+    const SELECTIVE: &str = "aci_gap_start_selective_connection_establish_proc => GapSelective {
+        le_scan_type: u8,
+        le_scan_interval: u16,
+        le_scan_window: u16,
+        own_address_type: u8,
+        scanning_filter_policy: u8,
+        filter_duplicates: bool,
+        #[wire(before = \"BEFORE\")]
+        whitelist_entry: WHITELIST,
+        #[wire(since = \"1.17.0\")]
+        peer_entry: &'a [PeerEntry],
+    }";
+
+    #[test]
+    fn renamed_structures_end_where_their_successor_starts() {
+        let selective = |before: &str, whitelist: &str| {
+            SELECTIVE
+                .replace("BEFORE", before)
+                .replace("WHITELIST", whitelist)
+        };
+        let tokens = expand_str(&selective("1.17.0", "&'a [WhitelistEntry]")).unwrap();
+        assert_eq!(
+            tokens.matches(":: bt_hci :: cmd :: cmd !").count(),
+            2,
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("stands_for :: < WhitelistEntry > (\"Whitelist_Entry_t\")"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("stands_for :: < PeerEntry > (\"Peer_Entry_t\")"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "for element in self . peer_entry { < PeerEntry as :: bt_hci :: WriteHci >"
+            ),
+            "{tokens}"
+        );
+
+        let error = expand_err(&selective("1.18.0", "&'a [WhitelistEntry]"));
+        assert!(
+            error.contains(
+                "one layout throughout 1.17.0..=1.24.0; `whitelist_entry` cannot end before 1.18.0"
+            ),
+            "{error}"
+        );
+        let error = expand_err(&selective("1.17.0", "[WhitelistEntry; 35]"));
+        assert!(
+            error.contains(
+                "holds up to 35 Whitelist_Entry_t; declare it as `&'a [T]` with T the type \
+                 standing for Whitelist_Entry_t"
+            ),
+            "{error}"
+        );
+
+        let error = expand_err(
+            "aci_l2cap_coc_disconnect => L2capCocDisconnect {
+                 #[wire(since = \"1.17.0\", before = \"1.17.0\")]
+                 channel_index: u8,
+             }",
+        );
+        assert!(error.contains("must start before it ends"), "{error}");
+    }
+
+    #[test]
+    fn counted_return_structures_are_bounded() {
+        let tokens = expand_str(
+            "aci_gap_get_bonded_devices => GapGetBondedDevices {} -> GapBondedDevices {
+                 bonded_device_entry: BoundedArray<BondedDeviceEntry, 35>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("MAX_LEN : usize = 0 + 1usize + 245usize"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("usize :: from (__bonded_device_entry_count) * 7usize"),
+            "{tokens}"
+        );
+
+        let error = expand_err(
+            "aci_gap_get_bonded_devices => GapGetBondedDevices {} -> GapBondedDevices {
+                 bonded_device_entry: BoundedBytes<35>,
+             }",
+        );
+        assert!(
+            error.contains("declare it as `BoundedArray<T, 35>` with T the type standing for Bonded_Device_Entry_t"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn counted_bytes_derive_their_count() {
         let tokens = expand_str(
@@ -1659,7 +2014,7 @@ mod tests {
                 "aci_hal_write_config_data => HalWriteConfigData {{ offset: u8, value: {ty} }}"
             ));
             assert!(
-                error.contains("must be declared as `&'a [u8]`"),
+                error.contains("holds up to 253 bytes; declare it as `&'a [u8]`"),
                 "{ty}: {error}"
             );
         }

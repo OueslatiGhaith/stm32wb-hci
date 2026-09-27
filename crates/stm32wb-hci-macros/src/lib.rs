@@ -4,6 +4,7 @@
 
 mod cfg;
 mod command;
+mod structs;
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -74,9 +75,15 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// alternative.
 ///
 /// A field the catalog adds in a later release is marked with
-/// `#[wire(since = "<release>")]`, the first release that has it. Each set of
-/// fields that exist together becomes its own declaration, compiled only for
-/// the releases that have exactly those fields.
+/// `#[wire(since = "<release>")]`, the first release that has it, and a field
+/// it removes with `#[wire(before = "<release>")]`, the first release without
+/// it. Each set of fields that exist together becomes its own declaration,
+/// compiled only for the releases that have exactly those fields.
+///
+/// A member that is a C structure, or an array of them, is declared with the
+/// type [`vendor_struct!`] declares for that structure: `T`, `[T; N]`,
+/// `&'a [T]` for a counted parameter, or `BoundedArray<T, CAPACITY>` for a
+/// counted return parameter.
 ///
 /// ```ignore
 /// vendor_command! {
@@ -105,6 +112,31 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 pub fn vendor_command(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as command::Input);
     command::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare the Rust type standing for one of the catalog's C structures.
+///
+/// Fields must match the structure's members in order, as for
+/// [`vendor_command!`], in every definition of the structure. The type exists
+/// on the targets where a command uses the structure, and implements
+/// `WriteHci`, `FromHciBytes`, `HciWireType`, and `CatalogStruct`, which
+/// commands check their structure members against.
+///
+/// ```ignore
+/// vendor_struct! {
+///     /// A peer device address.
+///     Peer_Entry_t => PeerEntry {
+///         peer_address_type: u8,
+///         peer_address: BdAddr,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_struct(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as structs::Input);
+    structs::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

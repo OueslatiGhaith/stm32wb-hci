@@ -5,6 +5,7 @@
 //! `stack-*` features; a command the selected binary does not implement is
 //! not compiled.
 
+pub mod gap;
 pub mod gatt;
 pub mod hal;
 pub mod l2cap;
