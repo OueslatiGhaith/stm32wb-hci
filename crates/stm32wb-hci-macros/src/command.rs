@@ -7,7 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bundled, CommandScope, Completion, Element, Field, FieldType, Scalar, Structs, bundled,
+    Bundled, CommandScope, Completion, Element, Field, FieldType, Scalar, Structs, UnionVariant,
+    bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -220,8 +221,11 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         .iter()
         .map(|(returns, slots)| return_struct(name, returns, slots, &cfg));
     let attrs = &input.attrs;
-    let declaration = if params.iter().any(|slot| matches!(slot, Slot::Bytes { .. })) {
-        variable_command(&input, &params, &cfg, ocf, &returns_tokens)?
+    let derived = params
+        .iter()
+        .any(|slot| matches!(slot, Slot::Count { .. } | Slot::Selector { .. }));
+    let declaration = if derived {
+        encoded_command(&input, &params, &cfg, ocf, &returns_tokens)?
     } else {
         let params_tokens = if input.params.fields.is_empty() {
             quote!(Params = ();)
@@ -280,12 +284,16 @@ fn return_struct(
                 let #field = ::stm32wb_hci::wire::BoundedBytes::new(bytes)?;
             }
         }
+        Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
     });
     let max_lens = slots.iter().map(|slot| {
         let len = match slot {
             Slot::Fixed { width, .. } => usize::from(*width),
             Slot::Count { scalar, .. } => usize::from(scalar.width()),
             Slot::Bytes { capacity, .. } => usize::from(*capacity),
+            Slot::Selector { .. } | Slot::Union { .. } => {
+                unreachable!("plan rejects unions in return parameters")
+            }
         };
         quote!(#len)
     });
@@ -308,6 +316,7 @@ fn return_struct(
                         let count = count_of(field);
                         (quote!(usize::from(#count)), None)
                     }
+                    Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
                 };
                 let count = count.map(|(count, scalar)| {
                     quote! {
@@ -374,11 +383,13 @@ fn return_struct(
     }
 }
 
-/// A command with variable-length parameters. bt-hci's cmd! still provides
-/// the command itself; the parameters get their own encoding, which derives
-/// each count from the length of the field it counts, and a constructor that
-/// enforces the catalog's capacities.
-fn variable_command(
+/// A command whose parameters bt-hci cannot encode field by field: some
+/// member is derived from a declared field, the count of a variable-length
+/// field or the selector of a union. bt-hci's cmd! still provides the command
+/// itself; the parameters get their own encoding, writing each derived
+/// member from the field it serves, and a constructor that enforces the
+/// catalog's capacities.
+fn encoded_command(
     input: &Input,
     slots: &[Slot<'_>],
     cfg: &Option<TokenStream>,
@@ -407,15 +418,15 @@ fn variable_command(
             }
         }
     }
-    let lifetime = lifetime.expect("variable commands have a byte field");
+    let generics = lifetime.map(|lifetime| quote!(<#lifetime>));
 
     let (names, types) = names_and_types(&input.params);
     let sizes = slots.iter().map(|slot| match slot {
-        Slot::Fixed { field, .. } => {
+        Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
             let (field, ty) = (&field.name, &field.ty);
             quote!(<#ty as ::bt_hci::WriteHci>::size(&self.#field))
         }
-        Slot::Count { scalar, .. } => {
+        Slot::Count { scalar, .. } | Slot::Selector { scalar, .. } => {
             let width = usize::from(scalar.width());
             quote!(#width)
         }
@@ -433,13 +444,26 @@ fn variable_command(
         slots
             .iter()
             .map(move |slot| match slot {
-                Slot::Fixed { field, .. } => {
+                Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
                     let (field, ty) = (&field.name, &field.ty);
                     quote!(<#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;)
                 }
                 Slot::Count { counted, scalar } => {
                     let (counted, scalar) = (&counted.name, format_ident!("{}", scalar.name()));
                     quote!(writer.write_all(&(self.#counted.len() as #scalar).to_le_bytes())#wait?;)
+                }
+                Slot::Selector { union, scalar } => {
+                    let (union, ty) = (&union.name, &union.ty);
+                    let scalar = format_ident!("{}", scalar.name());
+                    quote! {
+                        writer
+                            .write_all(
+                                &(<#ty as ::stm32wb_hci::wire::HciWireUnion>::selector(&self.#union)
+                                    as #scalar)
+                                    .to_le_bytes(),
+                            )
+                            #wait?;
+                    }
                 }
                 Slot::Bytes { field, .. } => {
                     let field = &field.name;
@@ -449,38 +473,65 @@ fn variable_command(
             .collect::<Vec<_>>()
     };
     let (sync_writes, async_writes) = (writes(false), writes(true));
-    let checks = slots.iter().filter_map(|slot| match slot {
-        Slot::Bytes { field, capacity } => {
-            let field = &field.name;
-            let label = field.to_string();
-            let capacity = usize::from(*capacity);
-            Some(quote! {
-                if #field.len() > #capacity {
-                    return Err(::stm32wb_hci::wire::TooLong {
-                        field: #label,
-                        len: #field.len(),
-                        capacity: #capacity,
-                    });
-                }
-            })
+    let checks = slots
+        .iter()
+        .filter_map(|slot| match slot {
+            Slot::Bytes { field, capacity } => {
+                let field = &field.name;
+                let label = field.to_string();
+                let capacity = usize::from(*capacity);
+                Some(quote! {
+                    if #field.len() > #capacity {
+                        return Err(::stm32wb_hci::wire::TooLong {
+                            field: #label,
+                            len: #field.len(),
+                            capacity: #capacity,
+                        });
+                    }
+                })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let constructor = if checks.is_empty() {
+        quote! {
+            /// Create a new instance of the command.
+            #[allow(clippy::too_many_arguments)]
+            pub fn new(#(#names: #types),*) -> Self {
+                Self::from(#params_name { #(#names),* })
+            }
         }
-        _ => None,
-    });
-    let params_doc = format!(
-        "Parameters of [`{name}`], built by [`{name}::try_new`] within the catalog's capacities."
-    );
+    } else {
+        quote! {
+            /// Build the command, rejecting variable-length fields longer than
+            /// the capacity the catalog declares for them.
+            #[allow(clippy::too_many_arguments)]
+            pub fn try_new(#(#names: #types),*) -> Result<Self, ::stm32wb_hci::wire::TooLong> {
+                #(#checks)*
+                Ok(Self::from(#params_name { #(#names),* }))
+            }
+        }
+    };
+    let params_doc = if checks.is_empty() {
+        format!("Parameters of [`{name}`], built by [`{name}::new`].")
+    } else {
+        format!(
+            "Parameters of [`{name}`], built by [`{name}::try_new`] within the catalog's \
+             capacities."
+        )
+    };
     let attrs = &input.attrs;
     Ok(quote! {
         #cfg
         #[doc = #params_doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-        pub struct #params_name<#lifetime> {
+        pub struct #params_name #generics {
             #(#names: #types,)*
         }
 
         #cfg
-        impl<#lifetime> ::bt_hci::WriteHci for #params_name<#lifetime> {
+        impl #generics ::bt_hci::WriteHci for #params_name #generics {
             #[inline]
             fn size(&self) -> usize {
                 0 #(+ #sizes)*
@@ -500,24 +551,21 @@ fn variable_command(
             }
         }
 
+        // The BASE arm declares the command without the `new(params)`
+        // constructor, which the parameters' private fields make unusable.
         #cfg
         ::bt_hci::cmd::cmd! {
+            BASE
             #(#attrs)*
             #name(VENDOR_SPECIFIC, #ocf) {
-                Params<#lifetime> = #params_name<#lifetime>;
+                Params #generics = #params_name #generics;
                 #returns_tokens
             }
         }
 
         #cfg
-        impl<#lifetime> #name<#lifetime> {
-            /// Build the command, rejecting variable-length fields longer than
-            /// the capacity the catalog declares for them.
-            #[allow(clippy::too_many_arguments)]
-            pub fn try_new(#(#names: #types),*) -> Result<Self, ::stm32wb_hci::wire::TooLong> {
-                #(#checks)*
-                Ok(Self::new(#params_name { #(#names),* }))
-            }
+        impl #generics #name #generics {
+            #constructor
         }
     })
 }
@@ -569,34 +617,77 @@ fn names_and_types(fields: &Fields) -> (Vec<&Ident>, Vec<&Type>) {
 }
 
 /// Assert at compile time that each fixed-width field's type has the
-/// catalog's width.
+/// catalog's width, and each union's type the catalog's alternatives.
 fn width_assertions<'a>(
     cfg: &'a Option<TokenStream>,
     owner: &'a Ident,
     slots: &'a [Slot<'a>],
 ) -> impl Iterator<Item = TokenStream> + 'a {
-    slots.iter().filter_map(move |slot| {
-        let Slot::Fixed {
+    slots.iter().filter_map(move |slot| match slot {
+        Slot::Fixed {
             field,
             member,
             width,
-        } = slot
-        else {
-            return None;
-        };
-        let ty = &field.ty;
-        let width = usize::from(*width);
-        let message = format!(
-            "{owner}.{}: the catalog encodes {} in {width} bytes",
-            field.name, member.name
-        );
-        Some(quote_spanned! {ty.span()=>
-            #cfg
-            const _: () = ::core::assert!(
-                <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
-                #message
+        } => {
+            let ty = &field.ty;
+            let width = usize::from(*width);
+            let message = format!(
+                "{owner}.{}: the catalog encodes {} in {width} bytes",
+                field.name, member.name
             );
-        })
+            Some(quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    <#ty as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
+                    #message
+                );
+            })
+        }
+        Slot::Union {
+            field,
+            member,
+            variants,
+            selector,
+        } => {
+            let ty = &field.ty;
+            let explicit = variants
+                .iter()
+                .filter_map(|variant| {
+                    let width = usize::from(variant.width);
+                    variant.tag.map(|tag| quote!((#tag, #width)))
+                })
+                .collect::<Vec<_>>();
+            let default = match variants.iter().find(|variant| variant.tag.is_none()) {
+                Some(variant) => {
+                    let width = usize::from(variant.width);
+                    quote!(::core::option::Option::Some(#width))
+                }
+                None => quote!(::core::option::Option::None),
+            };
+            let FieldType::Scalar(scalar) = selector.ty else {
+                unreachable!("the catalog validates that selectors are integers")
+            };
+            let selector_width = usize::from(scalar.width());
+            let message = format!(
+                "{owner}.{}: the catalog encodes `{member}`, and the type's \
+                 HciWireUnion::VARIANTS must list exactly those alternatives",
+                field.name
+            )
+            .replace('{', "{{")
+            .replace('}', "}}");
+            Some(quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    ::stm32wb_hci::wire::union_matches::<#ty>(
+                        &[#(#explicit),*],
+                        #default,
+                        #selector_width,
+                    ),
+                    #message
+                );
+            })
+        }
+        _ => None,
     })
 }
 
@@ -722,11 +813,34 @@ enum Slot<'a> {
         field: &'a InputField,
         capacity: u16,
     },
+    /// The selector of a union, derived from the alternative of the union's
+    /// value rather than declared.
+    Selector {
+        union: &'a InputField,
+        scalar: Scalar,
+    },
+    /// A declared union, whose type's alternatives must be the catalog's.
+    Union {
+        field: &'a InputField,
+        member: &'a Field,
+        variants: &'a [UnionVariant],
+        selector: &'a Field,
+    },
+}
+
+/// The member another member is derived from: the variable-length field a
+/// count counts, or the union a selector selects.
+fn dependent<'a>(members: &'a [Field], name: &str) -> Option<&'a Field> {
+    members.iter().find(|other| match &other.ty {
+        FieldType::Counted { count, .. } => count == name,
+        FieldType::Union { selector, .. } => selector == name,
+        _ => false,
+    })
 }
 
 /// Match declared fields to catalog members in order and decide how each
-/// member is encoded. Members counting a variable-length field are derived
-/// from that field and not declared.
+/// member is encoded. Members counting a variable-length field or selecting
+/// a union's alternative are derived from that field and not declared.
 fn plan<'a>(
     c_name: &Ident,
     declared: &'a Fields,
@@ -735,29 +849,30 @@ fn plan<'a>(
     side: Side,
 ) -> syn::Result<Vec<Slot<'a>>> {
     let what = side.what();
-    let counts = members
-        .iter()
-        .filter_map(|member| match &member.ty {
-            FieldType::Counted { count, .. } => Some(count.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
     let visible = members
         .iter()
-        .filter(|member| !counts.contains(&member.name.as_str()))
+        .filter(|member| dependent(members, &member.name).is_none())
         .collect::<Vec<_>>();
 
     for field in &declared.fields {
-        if let Some(count) = counts.iter().find(|count| field.matches(count)) {
-            return Err(syn::Error::new(
-                field.name.span(),
-                format!(
-                    "{count} counts a variable-length field of {c_name} and is written from \
-                 that field's length; remove `{}`",
-                    field.name
-                ),
-            ));
-        }
+        let Some((derived, dependent)) = members.iter().find_map(|member| {
+            dependent(members, &member.name)
+                .filter(|_| field.matches(&member.name))
+                .map(|dependent| (member, dependent))
+        }) else {
+            continue;
+        };
+        let source = match dependent.ty {
+            FieldType::Union { .. } => "alternative",
+            _ => "length",
+        };
+        return Err(syn::Error::new(
+            field.name.span(),
+            format!(
+                "{c_name} writes {} from the {source} of {}; remove `{}`",
+                derived.name, dependent.name, field.name
+            ),
+        ));
     }
     for (index, member) in visible.iter().enumerate() {
         let Some(field) = declared.fields.get(index) else {
@@ -809,17 +924,22 @@ fn plan<'a>(
         .iter()
         .map(|member| {
             let Some(field) = field_of(member) else {
-                let counted = members
-                    .iter()
-                    .find(|other| {
-                        matches!(&other.ty, FieldType::Counted { count, .. } if *count == member.name)
-                    })
-                    .and_then(field_of)
-                    .expect("a hidden member counts a declared field");
+                let dependent =
+                    dependent(members, &member.name).expect("hidden members are derived");
+                let field = field_of(dependent).expect("derived members serve declared fields");
                 let FieldType::Scalar(scalar) = member.ty else {
-                    unreachable!("the catalog validates that counts are integers")
+                    unreachable!("the catalog validates that counts and selectors are integers")
                 };
-                return Ok(Slot::Count { counted, scalar });
+                return Ok(match dependent.ty {
+                    FieldType::Union { .. } => Slot::Selector {
+                        union: field,
+                        scalar,
+                    },
+                    _ => Slot::Count {
+                        counted: field,
+                        scalar,
+                    },
+                });
             };
             let unsupported = |kind: &str| {
                 Err(syn::Error::new(
@@ -877,7 +997,20 @@ fn plan<'a>(
                     });
                 }
                 FieldType::Counted { .. } => return unsupported("a variable-length array"),
-                FieldType::Union { .. } => return unsupported("a union"),
+                FieldType::Union { .. } if side == Side::Returns => {
+                    return unsupported("a union");
+                }
+                FieldType::Union { selector, variants } => {
+                    return Ok(Slot::Union {
+                        field,
+                        member,
+                        variants,
+                        selector: members
+                            .iter()
+                            .find(|other| other.name == *selector)
+                            .expect("the catalog validates that selectors exist"),
+                    });
+                }
             };
             width
                 .map(|width| Slot::Fixed {
@@ -1112,7 +1245,7 @@ mod tests {
              }",
         );
         assert!(
-            error.contains("Length counts a variable-length field"),
+            error.contains("writes Length from the length of Value; remove `length`"),
             "{error}"
         );
 
@@ -1125,6 +1258,62 @@ mod tests {
                 "{ty}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn union_selectors_derive_from_the_alternative() {
+        let tokens = expand_str(
+            "aci_gatt_add_service => GattAddService {
+                 service_uuid: Uuid,
+                 service_type: u8,
+                 max_attribute_records: u8,
+             } -> GattService { service_handle: u16 }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("HciWireUnion > :: selector (& self . service_uuid) as u8"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("union_matches :: < Uuid > (& [(1u64 , 2usize) , (2u64 , 16usize)] , :: core :: option :: Option :: None , 1usize ,)"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("pub fn new (service_uuid : Uuid"),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("try_new"), "{tokens}");
+        assert!(tokens.contains("BASE"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_gatt_include_service => GattIncludeService {
+                 service_handle: u16,
+                 include_start_handle: u16,
+                 include_end_handle: u16,
+                 include_uuid: Uuid,
+             } -> GattInclude { include_handle: u16 }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("& [(2u64 , 16usize)] , :: core :: option :: Option :: Some (2usize)"),
+            "{tokens}"
+        );
+
+        let error = expand_err(
+            "aci_gatt_add_service => GattAddService {
+                 service_uuid_type: u8,
+                 service_uuid: Uuid,
+                 service_type: u8,
+                 max_attribute_records: u8,
+             } -> GattService { service_handle: u16 }",
+        );
+        assert!(
+            error.contains(
+                "writes Service_UUID_Type from the alternative of Service_UUID; remove \
+                 `service_uuid_type`"
+            ),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1163,7 +1352,7 @@ mod tests {
              }",
         );
         assert!(
-            error.contains("Data_Length counts a variable-length field"),
+            error.contains("writes Data_Length from the length of Data"),
             "{error}"
         );
     }

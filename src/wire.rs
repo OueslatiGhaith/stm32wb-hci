@@ -5,14 +5,16 @@
 //! rejects big-endian targets at compile time). This module adds what those
 //! traits leave
 //! implicit: the exact width of a fixed-size value, which declarations are
-//! checked against the catalog with at compile time, and an owned buffer for
+//! checked against the catalog with at compile time, the alternatives of a
+//! value whose width a selector member decides, and an owned buffer for
 //! variable-length data in return parameters that must be `Copy`.
 
 use core::fmt;
 use core::ops::Deref;
 
-use bt_hci::FromHciBytesError;
 use bt_hci::param::{BdAddr, ConnHandle};
+use bt_hci::uuid::BluetoothUuid;
+use bt_hci::{FromHciBytesError, WriteHci};
 
 /// A value with one exact, canonical HCI wire width.
 ///
@@ -50,6 +52,138 @@ impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
 
 impl<T: HciWireType + ?Sized> HciWireType for &T {
     const WIDTH: usize = T::WIDTH;
+}
+
+/// A value encoded as one of several alternatives, which an earlier member
+/// (the selector) identifies.
+///
+/// The selector is written from [`selector`](Self::selector) rather than
+/// declared, so it cannot disagree with the value.
+pub trait HciWireUnion: WriteHci {
+    /// The selector value and encoded width of every alternative.
+    const VARIANTS: &'static [(u64, usize)];
+
+    /// The selector value of this alternative, one of [`Self::VARIANTS`].
+    fn selector(&self) -> u64;
+}
+
+/// Whether every alternative of `T` is one the catalog encodes with the same
+/// width, every alternative the catalog names is one of `T`'s, and every
+/// selector value fits the selector member's `selector_width` bytes.
+///
+/// `explicit` lists the catalog's `(selector, width)` alternatives and
+/// `default` the width of every selector value not listed.
+#[doc(hidden)]
+pub const fn union_matches<T: HciWireUnion>(
+    explicit: &[(u64, usize)],
+    default: Option<usize>,
+    selector_width: usize,
+) -> bool {
+    let mut index = 0;
+    while index < T::VARIANTS.len() {
+        let (selector, width) = T::VARIANTS[index];
+        if selector_width < 8 && selector >> (8 * selector_width) != 0 {
+            return false;
+        }
+        let mut catalog = default;
+        let mut explicit_index = 0;
+        while explicit_index < explicit.len() {
+            if explicit[explicit_index].0 == selector {
+                catalog = Some(explicit[explicit_index].1);
+            }
+            explicit_index += 1;
+        }
+        match catalog {
+            Some(catalog) if catalog == width => {}
+            _ => return false,
+        }
+        index += 1;
+    }
+    let mut explicit_index = 0;
+    while explicit_index < explicit.len() {
+        let mut found = false;
+        let mut index = 0;
+        while index < T::VARIANTS.len() {
+            found |= T::VARIANTS[index].0 == explicit[explicit_index].0;
+            index += 1;
+        }
+        if !found {
+            return false;
+        }
+        explicit_index += 1;
+    }
+    true
+}
+
+/// A 16-bit or 128-bit UUID, as the vendor commands select it with a UUID
+/// type member (1 for 16 bits, 2 for 128 bits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Uuid {
+    /// A 16-bit UUID assigned by the Bluetooth SIG.
+    Uuid16(u16),
+    /// A full 128-bit UUID, in little-endian byte order.
+    Uuid128([u8; 16]),
+}
+
+impl HciWireUnion for Uuid {
+    const VARIANTS: &'static [(u64, usize)] = &[(1, 2), (2, 16)];
+
+    fn selector(&self) -> u64 {
+        match self {
+            Uuid::Uuid16(_) => 1,
+            Uuid::Uuid128(_) => 2,
+        }
+    }
+}
+
+impl WriteHci for Uuid {
+    fn size(&self) -> usize {
+        match self {
+            Uuid::Uuid16(_) => 2,
+            Uuid::Uuid128(_) => 16,
+        }
+    }
+
+    fn write_hci<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        match self {
+            Uuid::Uuid16(uuid) => writer.write_all(&uuid.to_le_bytes()),
+            Uuid::Uuid128(uuid) => writer.write_all(uuid),
+        }
+    }
+
+    async fn write_hci_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        match self {
+            Uuid::Uuid16(uuid) => writer.write_all(&uuid.to_le_bytes()).await,
+            Uuid::Uuid128(uuid) => writer.write_all(uuid).await,
+        }
+    }
+}
+
+impl From<u16> for Uuid {
+    fn from(uuid: u16) -> Self {
+        Uuid::Uuid16(uuid)
+    }
+}
+
+impl From<u128> for Uuid {
+    fn from(uuid: u128) -> Self {
+        Uuid::Uuid128(uuid.to_le_bytes())
+    }
+}
+
+/// 32-bit UUIDs, which the vendor commands cannot select, become their
+/// 128-bit form.
+impl From<BluetoothUuid> for Uuid {
+    fn from(uuid: BluetoothUuid) -> Self {
+        match uuid {
+            BluetoothUuid::Uuid16(uuid) => Uuid::Uuid16(uuid.to_u16()),
+            uuid => Uuid::from(uuid.to_u128()),
+        }
+    }
 }
 
 /// A variable-length field longer than the capacity the catalog declares.
@@ -177,6 +311,82 @@ mod tests {
         encoded_width(ConnHandle::new(0x0EFF));
         encoded_width([0u16; 3]);
         assert_eq!(<&[BdAddr; 2]>::WIDTH, 12);
+    }
+
+    struct Wide;
+
+    impl WriteHci for Wide {
+        fn size(&self) -> usize {
+            0
+        }
+
+        fn write_hci<W: embedded_io::Write>(&self, _: W) -> Result<(), W::Error> {
+            Ok(())
+        }
+
+        async fn write_hci_async<W: embedded_io_async::Write>(&self, _: W) -> Result<(), W::Error> {
+            Ok(())
+        }
+    }
+
+    impl HciWireUnion for Wide {
+        const VARIANTS: &'static [(u64, usize)] = &[(0x100, 2)];
+
+        fn selector(&self) -> u64 {
+            0x100
+        }
+    }
+
+    #[test]
+    fn unions_match_the_catalog_alternatives() {
+        assert!(union_matches::<Uuid>(&[(1, 2), (2, 16)], None, 1));
+        assert!(union_matches::<Uuid>(&[(2, 16)], Some(2), 1));
+        assert!(
+            !union_matches::<Uuid>(&[(1, 2)], None, 1),
+            "no 128-bit alternative"
+        );
+        assert!(
+            !union_matches::<Uuid>(&[(1, 2), (2, 4)], None, 1),
+            "wrong width"
+        );
+        assert!(
+            !union_matches::<Uuid>(&[(1, 2), (2, 16), (3, 4)], None, 1),
+            "missing alternative"
+        );
+        assert!(
+            !union_matches::<Wide>(&[], Some(2), 1),
+            "selector wider than its member"
+        );
+        assert!(union_matches::<Wide>(&[], Some(2), 2));
+    }
+
+    #[test]
+    fn uuids_encode_their_alternative() {
+        for (uuid, selector, bytes) in [
+            (Uuid::from(0x180Du16), 1, &[0x0D, 0x18][..]),
+            (
+                Uuid::from(0x0F0E_0D0C_0B0A_0908_0706_0504_0302_0100u128),
+                2,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15][..],
+            ),
+        ] {
+            let mut buffer = [0; 16];
+            let mut writer = &mut buffer[..];
+            uuid.write_hci(&mut writer).unwrap();
+            let written = 16 - writer.len();
+            assert_eq!(&buffer[..written], bytes);
+            assert_eq!(uuid.size(), written);
+            assert_eq!(uuid.selector(), selector);
+            assert!(Uuid::VARIANTS.contains(&(selector, written)));
+        }
+        assert_eq!(
+            Uuid::from(BluetoothUuid::from_u16(0x2A00)),
+            Uuid::Uuid16(0x2A00)
+        );
+        assert_eq!(
+            Uuid::from(BluetoothUuid::from_u32(0x1234_5678)),
+            Uuid::from(BluetoothUuid::from_u32(0x1234_5678).to_u128())
+        );
     }
 
     #[test]

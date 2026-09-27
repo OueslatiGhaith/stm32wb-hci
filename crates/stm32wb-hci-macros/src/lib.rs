@@ -68,6 +68,11 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// catalog's capacity; as a return parameter it is declared
 /// `BoundedBytes<CAPACITY>` and decoded after its count.
 ///
+/// A union parameter leaves its selector undeclared as well: it is declared
+/// with a type implementing `HciWireUnion` whose alternatives are exactly the
+/// catalog's, such as `Uuid`, and the selector is written from the value's
+/// alternative.
+///
 /// ```ignore
 /// vendor_command! {
 ///     /// Set the radio activity events to report.
