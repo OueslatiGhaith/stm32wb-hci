@@ -2,6 +2,10 @@
 
 use stm32wb_hci_macros::vendor_command;
 
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no GATT commands"
+)]
 use crate::wire::Uuid;
 
 vendor_command! {

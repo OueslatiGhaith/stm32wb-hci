@@ -1,8 +1,19 @@
-//! Hardware abstraction layer commands.
+//! Hardware abstraction layer commands, in opcode order.
+//!
+//! The catalog also rules out commands other ST stacks define in this
+//! group: no STM32WB wireless binary implements `aci_hal_get_link_status_v2`,
+//! `aci_hal_set_sync_event_config`, or `aci_hal_continuous_tx_start`.
 
 use stm32wb_hci_macros::vendor_command;
 
 use crate::wire::BoundedBytes;
+
+vendor_command! {
+    /// Read the build number of the wireless stack.
+    aci_hal_get_fw_build_number => HalGetFwBuildNumber {} -> HalFwBuildNumber {
+        build_number: u16,
+    }
+}
 
 vendor_command! {
     /// Write a value to the low-level configuration data at `offset`.
@@ -20,15 +31,40 @@ vendor_command! {
 }
 
 vendor_command! {
+    /// Set the transmit power level. The level applies immediately and lasts
+    /// until the next call or a reset; `en_high_power` is ignored on STM32WB.
+    aci_hal_set_tx_power_level => HalSetTxPowerLevel {
+        en_high_power: bool,
+        pa_level: u8,
+    }
+}
+
+vendor_command! {
+    /// Read the number of packets sent by the last direct transmit test.
+    aci_hal_le_tx_test_packet_number => HalLeTxTestPacketNumber {} -> HalTxTestPacketNumber {
+        number_of_packets: u32,
+    }
+}
+
+vendor_command! {
+    /// Start transmitting a continuous tone on an RF channel (0 to 39), for
+    /// debugging while no other radio activity is ongoing.
+    aci_hal_tone_start => HalToneStart {
+        rf_channel: u8,
+        freq_offset: u8,
+    }
+}
+
+vendor_command! {
     /// Stop a tone started with [`HalToneStart`].
     aci_hal_tone_stop => HalToneStop {}
 }
 
 vendor_command! {
-    /// Start transmitting a continuous tone on an RF channel.
-    aci_hal_tone_start => HalToneStart {
-        rf_channel: u8,
-        freq_offset: u8,
+    /// Read the state of each link and the connection handle it serves.
+    aci_hal_get_link_status => HalGetLinkStatus {} -> HalLinkStatus {
+        link_status: [u8; 8],
+        link_connection_handle: [u16; 8],
     }
 }
 
@@ -40,6 +76,14 @@ vendor_command! {
 }
 
 vendor_command! {
+    /// Read the current anchor period and the largest free slot, in microseconds.
+    aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+        anchor_period: u32,
+        max_free_slot: u32,
+    }
+}
+
+vendor_command! {
     /// Enable or disable the HAL events.
     aci_hal_set_event_mask => HalSetEventMask {
         event_mask: u32,
@@ -47,15 +91,19 @@ vendor_command! {
 }
 
 vendor_command! {
-    /// Reset the BLE stack.
-    aci_hal_stack_reset => HalStackReset {}
+    /// Read how many buffers are allocated for ACL packets.
+    aci_hal_get_pm_debug_info => HalGetPmDebugInfo {} -> HalPmDebugInfo {
+        allocated_for_tx: u8,
+        allocated_for_rx: u8,
+        allocated_mblocks: u8,
+    }
 }
 
 vendor_command! {
-    /// Read the current anchor period and the largest free slot, in microseconds.
-    aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
-        anchor_period: u32,
-        max_free_slot: u32,
+    /// Enable or disable peripheral latency on connections, which is enabled
+    /// by default. Named `aci_hal_set_slave_latency` before 1.17.0.
+    aci_hal_set_peripheral_latency => HalSetPeripheralLatency {
+        enable: bool,
     }
 }
 
@@ -67,11 +115,56 @@ vendor_command! {
 }
 
 vendor_command! {
-    /// Read the state of each link and the connection handle it serves.
-    aci_hal_get_link_status => HalGetLinkStatus {} -> HalLinkStatus {
-        link_status: [u8; 8],
-        link_connection_handle: [u16; 8],
+    /// Encrypt (`mode` 0) or decrypt (`mode` 1) data with the Encrypted
+    /// Advertising Data scheme.
+    aci_hal_ead_encrypt_decrypt => HalEadEncryptDecrypt {
+        mode: u8,
+        key: [u8; 16],
+        iv: [u8; 8],
+        in_data: &'a [u8],
+    } -> HalEadData {
+        out_data: BoundedBytes<249>,
     }
+}
+
+vendor_command! {
+    /// Read a register of the RF module.
+    aci_hal_read_radio_reg => HalReadRadioReg { register_address: u8 } -> HalRadioReg {
+        #[wire(name = "reg_val")]
+        register_value: u8,
+    }
+}
+
+vendor_command! {
+    /// Write a register of the RF module.
+    aci_hal_write_radio_reg => HalWriteRadioReg {
+        register_address: u8,
+        register_value: u8,
+    }
+}
+
+vendor_command! {
+    /// Read the raw RSSI value.
+    aci_hal_read_raw_rssi => HalReadRawRssi {} -> HalRawRssi {
+        value: [u8; 3],
+    }
+}
+
+vendor_command! {
+    /// Start receiving on an RF channel (0 to 39) until [`HalRxStop`].
+    aci_hal_rx_start => HalRxStart {
+        rf_channel: u8,
+    }
+}
+
+vendor_command! {
+    /// Stop receiving started with [`HalRxStart`].
+    aci_hal_rx_stop => HalRxStop {}
+}
+
+vendor_command! {
+    /// Reset the BLE stack, entering sleep mode as soon as it completes.
+    aci_hal_stack_reset => HalStackReset {}
 }
 
 #[cfg(test)]
@@ -81,11 +174,11 @@ mod tests {
 
     use super::*;
 
-    fn encode(command: &impl WriteHci) -> ([u8; 16], usize) {
-        let mut buffer = [0; 16];
+    fn encode(command: &impl WriteHci) -> ([u8; 64], usize) {
+        let mut buffer = [0; 64];
         let mut writer = &mut buffer[..];
         command.write_hci(&mut writer).unwrap();
-        let len = 16 - writer.len();
+        let len = 64 - writer.len();
         (buffer, len)
     }
 
@@ -111,6 +204,79 @@ mod tests {
     fn profile_specific_commands_follow_the_catalog() {
         let (bytes, len) = encode(&HalSetEventMask::new(0x0403_0201));
         assert_eq!(bytes[..len], [0x1A, 0xFC, 4, 1, 2, 3, 4]);
+        let (bytes, len) = encode(&HalWriteRadioReg::new(0x12, 0x34));
+        assert_eq!(bytes[..len], [0x31, 0xFC, 2, 0x12, 0x34]);
+        let (bytes, len) = encode(&HalRxStart::new(19));
+        assert_eq!(bytes[..len], [0x33, 0xFC, 1, 19]);
+        assert_eq!(HalRxStop::OPCODE.to_raw(), 0xFC34);
+        assert_eq!(decode::<HalReadRadioReg>(&[0x5A]).register_value, 0x5A);
+        assert_eq!(decode::<HalReadRawRssi>(&[1, 2, 3]).value, [1, 2, 3]);
+    }
+
+    #[test]
+    fn flags_encode_as_one_byte() {
+        let (bytes, len) = encode(&HalSetTxPowerLevel::new(true, 0x19));
+        assert_eq!(bytes[..len], [0x0F, 0xFC, 2, 1, 0x19]);
+    }
+
+    #[cfg(not(feature = "stack-hci-adv-scan"))]
+    #[test]
+    fn renamed_commands_keep_their_opcode() {
+        let (bytes, len) = encode(&HalSetPeripheralLatency::new(false));
+        assert_eq!(bytes[..len], [0x20, 0xFC, 1, 0]);
+        let count = decode::<HalLeTxTestPacketNumber>(&[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(count.number_of_packets, 0x0403_0201);
+    }
+
+    #[cfg(all(feature = "fw_1_24_0", feature = "stack-full-extended"))]
+    #[test]
+    fn two_byte_counts_encode_and_decode() {
+        let command = HalEadEncryptDecrypt::try_new(0, [0xAA; 16], [0xBB; 8], &[1, 2, 3]).unwrap();
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..4], [0x2F, 0xFC, 30, 0]);
+        assert_eq!(bytes[4..20], [0xAA; 16]);
+        assert_eq!(bytes[20..28], [0xBB; 8]);
+        assert_eq!(bytes[28..len], [3, 0, 1, 2, 3]);
+        assert!(HalEadEncryptDecrypt::try_new(0, [0; 16], [0; 8], &[0; 229]).is_err());
+
+        let data = decode::<HalEadEncryptDecrypt>(&[2, 0, 0xCC, 0xDD]);
+        assert_eq!(data.out_data.as_slice(), [0xCC, 0xDD]);
+        assert_eq!(<HalEadEncryptDecrypt as SyncCmd>::ReturnBuf::LEN, 2 + 249);
+    }
+
+    #[cfg(all(
+        feature = "stack-full-extended",
+        any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0",
+            feature = "fw_1_22_0",
+            feature = "fw_1_22_1"
+        )
+    ))]
+    #[test]
+    fn retired_commands_exist_in_their_releases() {
+        assert_eq!(
+            decode::<HalGetFwBuildNumber>(&[0x34, 0x12]).build_number,
+            0x1234
+        );
+        let info = decode::<HalGetPmDebugInfo>(&[1, 2, 3]);
+        assert_eq!(
+            (
+                info.allocated_for_tx,
+                info.allocated_for_rx,
+                info.allocated_mblocks
+            ),
+            (1, 2, 3)
+        );
     }
 
     /// Decode the return parameters bt-hci hands over after the status.
