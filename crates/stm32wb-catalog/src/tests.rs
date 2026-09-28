@@ -210,6 +210,7 @@ fn set_discoverable(profiles: &[Profile], params: Layout) -> SnapshotCommand {
         returns: Some(fields(&["Status: u8"])),
         structs: Structs::new(),
         bearers: Vec::new(),
+        domains: Vec::new(),
     }
 }
 
@@ -230,6 +231,7 @@ fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
             payload: Layout::Unresolved("field sysevt_ready_rsp is an enum".into()),
             structs: Structs::new(),
             bearers: Vec::new(),
+            domains: Vec::new(),
         }],
     }
 }
@@ -262,6 +264,105 @@ fn merge_produces_independent_histories() {
     // Availability and definitions change in different releases, so each
     // history splits on its own boundary.
     assert_eq!(merged, sample());
+}
+
+#[test]
+fn domains_have_their_own_histories() {
+    let layout = fields(&["Advertising_Type: u8", "Interval: u16"]);
+    let types = |items: &[&str]| Domain {
+        kind: DomainKind::Values,
+        items: items.iter().map(|item| item.parse().unwrap()).collect(),
+        unit_us: None,
+    };
+    let interval = Domain {
+        kind: DomainKind::Values,
+        items: vec!["0x0020..=0x4000".parse().unwrap()],
+        unit_us: Some(625),
+    };
+    let documented = |items: &[&str]| {
+        let mut command = set_discoverable(&[Profile::FullExtended], layout.clone());
+        command.domains = vec![
+            ("Advertising_Type".into(), false, types(items)),
+            ("Interval".into(), false, interval.clone()),
+        ];
+        command
+    };
+    let merged = merge_snapshots(
+        Platform::Stm32wb,
+        vec![
+            snapshot("1.15.0", vec![documented(&["0x00: ADV_IND"])]),
+            snapshot("1.16.0", vec![documented(&["0x00: ADV_IND"])]),
+            snapshot(
+                "1.17.0",
+                vec![documented(&["0x00: ADV_IND", "0x02: ADV_SCAN_IND"])],
+            ),
+        ],
+    )
+    .unwrap();
+    let command = &merged.commands[0];
+    // A relabelled list splits the member's history, not the definition.
+    assert_eq!(command.definitions.len(), 1);
+    let ranges = command
+        .domains
+        .iter()
+        .map(|domain| format!("{} {}", domain.member, domain.releases))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ranges,
+        [
+            "Advertising_Type 1.15.0..=1.16.0",
+            "Advertising_Type 1.17.0",
+            "Interval 1.15.0..=1.17.0",
+        ]
+    );
+    let reparsed = Catalog::from_toml(&merged.to_toml().unwrap()).unwrap();
+    assert_eq!(reparsed, merged);
+
+    let mut unknown = documented(&["0x00: ADV_IND"]);
+    unknown.domains[0].0 = "Missing".into();
+    let mut too_wide = documented(&["0x00: ADV_IND"]);
+    too_wide.domains[0].2 = types(&["0x100: Too wide"]);
+    let unordered = documented(&["0x02: ADV_SCAN_IND", "0x00: ADV_IND"]);
+    let mut returned = documented(&["0x00: ADV_IND"]);
+    returned.domains[0].1 = true;
+    let mut flags = documented(&["0x00: None", "0x03: Two bits"]);
+    flags.domains[0].2.kind = DomainKind::Flags;
+    for (command, expected) in [
+        (unknown, "is not a member"),
+        (too_wide, "which a u8 cannot hold"),
+        (unordered, "out of order"),
+        (returned, "is not a member"),
+        (flags, "not a single bit"),
+    ] {
+        let error = merge_snapshots(Platform::Stm32wb, vec![snapshot("1.15.0", vec![command])])
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn domain_items_round_trip_as_documented() {
+    for source in [
+        "0x00: ADV_IND (Connectable undirected advertising)",
+        "0x0020..=0x4000",
+        "-127..=20: Tx power",
+        "0xFFFF: No specific minimum",
+        "23..=65535",
+        "0x0000000000000000: No events specified",
+    ] {
+        let item: DomainItem = source.parse().unwrap();
+        assert_eq!(item.to_string(), source);
+    }
+    for source in [
+        "0x20..=10",
+        "0x0a",
+        "5..=1",
+        "0x10..=0x0F",
+        "x: y",
+        "0x00:label",
+    ] {
+        assert!(source.parse::<DomainItem>().is_err(), "{source}");
+    }
 }
 
 #[test]

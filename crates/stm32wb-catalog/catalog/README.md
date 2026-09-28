@@ -34,6 +34,32 @@ Adv_Set: [Adv_Set_t; Number_of_Sets] (capacity 84)          counted structures
 Service_UUID: union(Service_UUID_Type) { 1 => 2, 2 => 16 }  width selected by an earlier member
 ```
 
+Optional members, written `fw_src_add: u32 (optional)`, end a layout: each is
+sent only if every earlier one is.
+
+## Documented values
+
+Each command and event lists, under `domains`, the values its members may
+take, read from the `Values:` and `Flags:` lists of the generated headers'
+`@param` blocks. Each list has its own release range, so relabelling a value
+does not split a definition:
+
+```toml
+[[commands.domains]]
+releases = "1.15.0..=1.24.0"
+member = "Advertising_Interval_Min"
+values = ["0x0020..=0x4000"]
+unit_us = 625
+```
+
+An item is a value or an inclusive range, written as the header writes it,
+with its label or note. `flags` lists single bits and, where documented, a
+named zero. `unit_us` is the duration of one unit, derived from the
+durations the list writes next to its values and checked against every one
+of them. `returned = true` marks a return parameter. Items may overlap, since
+some lists depend on the stack profile or the MCU (`for BO variant`,
+`not supported on STM32WB`); their labels say so.
+
 Command returns include the leading status byte. Capacities are the element
 capacities the generated C buffers declare.
 

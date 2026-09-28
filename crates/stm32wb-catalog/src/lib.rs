@@ -7,7 +7,7 @@
 //! 1. **Generated C** (`ble_*_aci.c`, `ble_hci_le.c`, `ble_events.c`,
 //!    `ble_types.h`, `shci.h`, `shci.c`): opcodes, completion kinds, and wire
 //!    layouts, and from the generated headers' doc comments, the parameters
-//!    addressing an ATT bearer.
+//!    addressing an ATT bearer and the values each member may take.
 //! 2. **ST documents** (`STM32WB_BLE_Wireless_Interface.html` and each
 //!    family's `Release_Notes.html`): which stack profile supports each
 //!    command and event, and which binaries exist per MCU family.
@@ -21,6 +21,7 @@
 
 pub mod annotations;
 mod bundled;
+pub mod domain;
 mod error;
 mod hex;
 mod history;
@@ -38,6 +39,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 pub use bundled::{Bundled, bundled};
+pub use domain::{Domain, DomainItem, DomainKind, MemberDomain};
 pub use error::{Error, ErrorKind};
 pub use history::{CommandSegment, EventSegment, Segment};
 pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
@@ -145,6 +147,9 @@ pub struct Command {
     pub names: Vec<Named>,
     pub availability: Vec<Availability>,
     pub definitions: Vec<CommandDefinition>,
+    /// The documented values of members, by member and release.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<MemberDomain>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -173,6 +178,9 @@ pub struct Event {
     pub names: Vec<Named>,
     pub availability: Vec<Availability>,
     pub definitions: Vec<EventDefinition>,
+    /// The documented values of members, by member and release.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<MemberDomain>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -444,6 +452,17 @@ impl Catalog {
                 validate_bearers(&definition.params, &definition.bearers)
                     .map_err(|error| error.context(format!("{} params", context())))?;
             }
+            validate_domains(&versions, &command.domains, &label, |release, returned| {
+                let definition = command
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.releases.contains(release))?;
+                if returned {
+                    definition.returns.as_ref()
+                } else {
+                    Some(&definition.params)
+                }
+            })?;
         }
 
         let mut identities = BTreeSet::new();
@@ -478,6 +497,14 @@ impl Catalog {
                 validate_bearers(&definition.payload, &definition.bearers)
                     .map_err(|error| error.context(context()))?;
             }
+            validate_domains(&versions, &event.domains, &label, |release, returned| {
+                (!returned).then_some(())?;
+                event
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.releases.contains(release))
+                    .map(|definition| &definition.payload)
+            })?;
         }
         Ok(())
     }
@@ -543,6 +570,44 @@ fn validate_history(
                 "{}: availability profiles must be sorted and unique",
                 label()
             )));
+        }
+    }
+    Ok(())
+}
+
+/// Each domain applies to releases with a layout holding its member, valid
+/// for every one of them, and no two domains of a member overlap.
+fn validate_domains<'a>(
+    versions: &[Version],
+    domains: &[MemberDomain],
+    label: &dyn Fn() -> String,
+    layout: impl Fn(Version, bool) -> Option<&'a Layout>,
+) -> Result<(), Error> {
+    for (index, domain) in domains.iter().enumerate() {
+        let context = || format!("{} ({}) domain", label(), domain.releases);
+        if domains[..index].iter().any(|other| {
+            other.member == domain.member
+                && other.returned == domain.returned
+                && other.releases.overlaps(domain.releases)
+        }) {
+            return Err(Error::invalid(format!(
+                "{}: {} has overlapping domains",
+                context(),
+                domain.member
+            )));
+        }
+        for &release in versions
+            .iter()
+            .filter(|release| domain.releases.contains(**release))
+        {
+            let layout = layout(release, domain.returned).ok_or_else(|| {
+                Error::invalid(format!(
+                    "{}: {} is not defined in {release}",
+                    context(),
+                    domain.member
+                ))
+            })?;
+            domain::validate_domain(layout, domain).map_err(|error| error.context(context()))?;
         }
     }
     Ok(())

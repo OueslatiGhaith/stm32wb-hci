@@ -5,6 +5,7 @@ mod c;
 mod commands;
 mod cube;
 mod docs;
+mod domains;
 mod events;
 mod shci;
 mod snapshot;
@@ -198,6 +199,10 @@ fn extract(cube: &Path, releases: &[Version]) -> Result<Catalog, String> {
         );
         for (name, layout, reason) in &report.unresolved {
             eprintln!("  unresolved {name} {layout}: {reason}");
+        }
+        eprintln!("  {} documented value lists", report.domains);
+        for (name, member) in &report.dropped_domains {
+            eprintln!("  dropped the values of {name} {member}: its layout is unresolved");
         }
         snapshots.push(snapshot);
     }

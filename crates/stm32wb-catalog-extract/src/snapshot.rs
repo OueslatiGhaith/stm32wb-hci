@@ -28,6 +28,10 @@ pub struct Report {
     pub proven_counts: usize,
     /// `(entry, layout, reason)` for every layout left unresolved.
     pub unresolved: Vec<(String, &'static str, String)>,
+    /// Documented values in total, and `(entry, member)` for every list
+    /// dropped because its layout is unresolved.
+    pub domains: usize,
+    pub dropped_domains: Vec<(String, String)>,
 }
 
 pub fn extract(
@@ -134,6 +138,8 @@ pub fn extract(
         events: extracted_events.len(),
         proven_counts,
         unresolved: Vec::new(),
+        domains: 0,
+        dropped_domains: Vec::new(),
     };
     let mut commands = Vec::new();
     for command in extracted_commands {
@@ -148,6 +154,13 @@ pub fn extract(
         if let Some(returns) = &command.returns {
             note_unresolved(&mut report, &command.name, "returns", returns);
         }
+        let domains = resolved_domains(&mut report, &command.name, command.domains, |returned| {
+            if returned {
+                command.returns.as_ref()
+            } else {
+                Some(&command.params)
+            }
+        });
         commands.push(SnapshotCommand {
             scope: command.scope,
             opcode: command.opcode,
@@ -158,6 +171,7 @@ pub fn extract(
             returns: command.returns,
             structs: command.structs,
             bearers: command.bearers,
+            domains,
         });
     }
     let mut events = Vec::new();
@@ -170,6 +184,12 @@ pub fn extract(
             availability(Key::Event(event.scope, event.code), &event.name)?
         };
         note_unresolved(&mut report, &event.name, "payload", &event.payload);
+        let domains = resolved_domains(&mut report, &event.name, event.domains, |returned| {
+            (!returned).then_some(&event.payload)
+        })
+        .into_iter()
+        .map(|(member, _, domain)| (member, domain))
+        .collect();
         events.push(SnapshotEvent {
             scope: event.scope,
             code: event.code,
@@ -178,6 +198,7 @@ pub fn extract(
             payload: event.payload,
             structs: event.structs,
             bearers: event.bearers,
+            domains,
         });
     }
     // The transport layer (`hci_tl.c`), not the event tables, consumes the
@@ -199,6 +220,7 @@ pub fn extract(
                 ),
                 structs: Default::default(),
                 bearers: Vec::new(),
+                domains: Vec::new(),
             });
         }
     }
@@ -229,6 +251,32 @@ pub fn extract(
         return Err(format!("{}: no BLE wireless binaries were found", tag.tag));
     }
     Ok((snapshot, report))
+}
+
+/// The documented lists whose side has a resolved layout; the others have no
+/// member to belong to and are reported. A list for a side the entry does not
+/// have is an error.
+fn resolved_domains<'a>(
+    report: &mut Report,
+    name: &str,
+    domains: Vec<crate::domains::Documented>,
+    layout: impl Fn(bool) -> Option<&'a Layout>,
+) -> Vec<crate::domains::Documented> {
+    domains
+        .into_iter()
+        .filter(|(member, returned, _)| match layout(*returned) {
+            Some(Layout::Fields(_)) => {
+                report.domains += 1;
+                true
+            }
+            _ => {
+                report
+                    .dropped_domains
+                    .push((name.to_owned(), member.clone()));
+                false
+            }
+        })
+        .collect()
 }
 
 fn note_unresolved(report: &mut Report, name: &str, what: &'static str, layout: &Layout) {

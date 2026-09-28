@@ -30,6 +30,8 @@ pub struct ExtractedEvent {
     pub structs: Structs,
     /// Parameters documented to accept an enhanced ATT bearer.
     pub bearers: Vec<Bearer>,
+    /// Documented values of parameters.
+    pub domains: Vec<crate::domains::Documented>,
 }
 
 const TABLES: [(&str, EventScope); 3] = [
@@ -100,6 +102,8 @@ pub fn extract(
                 .get(&name)
                 .ok_or_else(|| format!("the callback {name} is not declared"))?;
             let bearers = c::bearers(*callback).map_err(|error| format!("{name}: {error}"))?;
+            let domains =
+                crate::domains::domains(*callback).map_err(|error| format!("{name}: {error}"))?;
             events.push(ExtractedEvent {
                 scope,
                 code,
@@ -107,6 +111,7 @@ pub fn extract(
                 payload,
                 structs,
                 bearers,
+                domains,
             });
         }
     }

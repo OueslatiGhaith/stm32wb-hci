@@ -571,3 +571,104 @@ fn bearer_ranges_are_read_not_guessed() {
         "{error}"
     );
 }
+
+#[test]
+fn domains_come_from_the_header_documentation() {
+    let commands = command_fixture(&format!("{BEARER_DOC}{SET_NAME}")).unwrap();
+    let (member, returned, domain) = &commands[0].domains[0];
+    assert_eq!((member.as_str(), *returned), ("Interval", false));
+    let items = domain
+        .items
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items,
+        [
+            "0x0000..=0x0EFF: Unenhanced ATT bearer (the parameter is the connection handle)",
+            "0xEA00..=0xEA3F: Enhanced ATT bearer (the LSB-byte of the parameter is the \
+             connection-oriented channel index)",
+        ]
+    );
+}
+
+/// Written as the generated headers write them, from `aci_gap_set_discoverable`,
+/// `aci_gap_init`, and `hci_read_transmit_power_level`.
+const DOMAIN_DOC: &str = "/**
+ * @brief Documented values.
+ *
+ * @param Advertising_Interval_Min Minimum advertising interval.
+ *        Time = N * 0.625 ms.
+ *        Values:
+ *        - 0x0020 (20.000 ms)  ... 0x4000 (10240.000 ms)
+ * @param Conn_Interval_Min Connection interval minimum value suggested by
+ *        Peripheral.
+ *        Values:
+ *        - 0x0000 (NaN)
+ *        - 0xFFFF (NaN) : No specific minimum
+ *        - 0x0006 (7.50 ms)  ... 0x0C80 (4000.00 ms)
+ * @param Role Bitmap of allowed roles.
+ *        Flags:
+ *        - 0x01: Peripheral
+ *        - 0x02: Broadcaster
+ * @param device_name_char_len Length of the device name characteristic
+ * @param[out] Transmit_Power_Level Size: 1 Octet (signed integer)
+ *        Units: dBm
+ *        Values:
+ *        - -30 ... 20
+ * @return Value indicating success or error code.
+ */";
+
+#[test]
+fn domains_read_values_flags_units_and_notes() {
+    let domains = crate::domains::domains_in(DOMAIN_DOC).unwrap();
+    let summary = domains
+        .iter()
+        .map(|(member, returned, domain)| {
+            let items = domain
+                .items
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "{member}{} {:?} [{items}] {:?}",
+                if *returned { " (out)" } else { "" },
+                domain.kind,
+                domain.unit_us
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [
+            "Advertising_Interval_Min Values [0x0020..=0x4000] Some(625)",
+            "Conn_Interval_Min Values [0x0000: NaN, 0x0006..=0x0C80, 0xFFFF: No specific \
+             minimum] Some(1250)",
+            "Role Flags [0x01: Peripheral, 0x02: Broadcaster] None",
+            "Transmit_Power_Level (out) Values [-30..=20] None",
+        ]
+    );
+}
+
+#[test]
+fn domains_are_read_not_guessed() {
+    let error = |comment: &str| crate::domains::domains_in(comment).unwrap_err();
+    let unit = error(
+        "/**\n * @param Interval Values:\n *        Values:\n *        \
+         - 0x0020 (20.000 ms)  ... 0x4000 (10000.000 ms)\n */",
+    );
+    assert!(unit.contains("is written as 20.000 ms"), "{unit}");
+    let stray = error(
+        "/**\n * @param Mode Values\n *        Values:\n *        - 0x00: Off\n *     \
+         Note: in the middle of the list\n */",
+    );
+    assert!(stray.contains("not an item"), "{stray}");
+    let twice = error(
+        "/**\n * @param Mode Mode\n *        Values:\n *        - 0x00: Off\n *        \
+         Flags:\n *        - 0x01: On\n */",
+    );
+    assert!(twice.contains("two lists"), "{twice}");
+    let value = error("/**\n * @param Mode Mode\n *        Values:\n *        - zero: Off\n */");
+    assert!(value.contains("is not a value"), "{value}");
+}

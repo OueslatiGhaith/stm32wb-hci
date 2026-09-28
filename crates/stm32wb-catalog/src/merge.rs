@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::{
     Availability, Bearer, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion,
-    Error, Event, EventDefinition, EventScope, Family, Layout, Named, Platform, Profile,
-    ReleaseRange, ReleaseSource, Structs, Version,
+    Domain, Error, Event, EventDefinition, EventScope, Family, Layout, MemberDomain, Named,
+    Platform, Profile, ReleaseRange, ReleaseSource, Structs, Version,
 };
 
 /// Everything extracted from one tagged release.
@@ -34,6 +34,8 @@ pub struct SnapshotCommand {
     pub returns: Option<Layout>,
     pub structs: Structs,
     pub bearers: Vec<Bearer>,
+    /// Documented values by member, and whether it is a return parameter.
+    pub domains: Vec<(String, bool, Domain)>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +47,8 @@ pub struct SnapshotEvent {
     pub payload: Layout,
     pub structs: Structs,
     pub bearers: Vec<Bearer>,
+    /// Documented values by member.
+    pub domains: Vec<(String, Domain)>,
 }
 
 /// Coalesce snapshots into one catalog. Identical facts in consecutive
@@ -152,6 +156,7 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                     },
                 )
                 .collect(),
+                domains: domains(&entries, &versions, |command| command.domains.clone()),
             })
             .collect(),
         events: events
@@ -179,6 +184,13 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                     bearers,
                 })
                 .collect(),
+                domains: domains(&entries, &versions, |event| {
+                    event
+                        .domains
+                        .iter()
+                        .map(|(member, domain)| (member.clone(), false, domain.clone()))
+                        .collect()
+                }),
             })
             .collect(),
     };
@@ -217,6 +229,37 @@ fn available<T>(
 
 /// Group `(release index, value)` pairs, sorted by index, into maximal runs of
 /// consecutive releases carrying an equal value.
+/// Each member's documented values over the releases documenting them,
+/// ordered by member, side, and release.
+fn domains<T>(
+    entries: &[(usize, T)],
+    versions: &[Version],
+    domains: impl Fn(&T) -> Vec<(String, bool, Domain)>,
+) -> Vec<MemberDomain> {
+    let mut by_member: BTreeMap<(String, bool), Vec<(usize, Domain)>> = BTreeMap::new();
+    for (index, entry) in entries {
+        for (member, returned, domain) in domains(entry) {
+            by_member
+                .entry((member, returned))
+                .or_default()
+                .push((*index, domain));
+        }
+    }
+    by_member
+        .into_iter()
+        .flat_map(|((member, returned), entries)| {
+            runs(&entries, versions)
+                .into_iter()
+                .map(move |(releases, domain)| MemberDomain {
+                    releases,
+                    member: member.clone(),
+                    returned,
+                    domain,
+                })
+        })
+        .collect()
+}
+
 fn runs<T: Clone + PartialEq>(
     entries: &[(usize, T)],
     versions: &[Version],

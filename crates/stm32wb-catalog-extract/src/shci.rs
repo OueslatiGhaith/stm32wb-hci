@@ -109,6 +109,7 @@ pub fn extract(
             payload,
             structs,
             bearers: Vec::new(),
+            domains: Vec::new(),
         });
     }
     if events.is_empty() {
@@ -215,6 +216,7 @@ pub fn commands(
             returns: Some(returns),
             structs,
             bearers: Vec::new(),
+            domains: Vec::new(),
             proven_counts: Vec::new(),
         });
     }

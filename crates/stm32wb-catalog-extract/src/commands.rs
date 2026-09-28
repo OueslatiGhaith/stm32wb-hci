@@ -46,6 +46,8 @@ pub struct ExtractedCommand {
     pub structs: Structs,
     /// Parameters documented to accept an enhanced ATT bearer.
     pub bearers: Vec<Bearer>,
+    /// Documented values of parameters and return parameters.
+    pub domains: Vec<crate::domains::Documented>,
     /// Count relationships the code proves: (count member, buffer member,
     /// whether the count immediately precedes the buffer).
     pub proven_counts: Vec<(String, String, bool)>,
@@ -169,6 +171,7 @@ fn analyze(
         returns,
         structs: referenced,
         bearers: c::bearers(function)?,
+        domains: crate::domains::domains(function)?,
         proven_counts,
     })
 }
