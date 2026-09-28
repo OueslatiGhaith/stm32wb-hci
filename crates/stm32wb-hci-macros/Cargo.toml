@@ -5,6 +5,8 @@ edition = "2024"
 description = "Procedural macros deriving stm32wb-hci declarations from the STM32WB catalog"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+categories = ["embedded", "no-std"]
+keywords = ["ble", "bluetooth", "stm32", "hci"]
 
 [lib]
 proc-macro = true

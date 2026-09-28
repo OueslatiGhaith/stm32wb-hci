@@ -5,6 +5,9 @@ edition = "2024"
 description = "Normalized STM32WB wireless-interface catalog shared by stm32wb-hci tooling"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+readme = "catalog/README.md"
+categories = ["embedded"]
+keywords = ["ble", "bluetooth", "stm32", "hci"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
