@@ -1,12 +1,12 @@
-//! `standard_commands!`: the bt-hci types of the Bluetooth Core commands the
-//! catalog lists, checked against it and marked `Supported` on the targets
-//! implementing them.
+//! `standard_commands!` and `standard_events!`: the bt-hci types of the
+//! Bluetooth Core commands and events the catalog lists, checked against it.
+//! Commands are marked `Supported` on the targets implementing them.
 
 use std::collections::BTreeSet;
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use stm32wb_catalog::{Bundled, CommandScope, Completion, bundled};
+use stm32wb_catalog::{Bundled, CommandScope, Completion, EventScope, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -16,7 +16,8 @@ use crate::command::Targets;
 use crate::dispatch::with_static_lifetimes;
 use crate::{cfg, complete};
 
-/// Types are paths in `bt_hci::cmd`:
+/// Types are paths in `bt_hci::cmd` for commands, and in `bt_hci::event` for
+/// events:
 ///
 /// ```text
 /// hci_reset => controller_baseband::Reset,
@@ -28,7 +29,7 @@ pub struct Input {
 
 struct Entry {
     c_name: Ident,
-    /// The type, relative to `bt_hci::cmd`.
+    /// The type, relative to its bt-hci module.
     ty: Type,
 }
 
@@ -45,21 +46,22 @@ impl Parse for Entry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let c_name = input.parse()?;
         input.parse::<Token![=>]>()?;
-        let mut ty: Type = input.parse()?;
-        match &mut ty {
-            Type::Path(path) if path.qself.is_none() && path.path.leading_colon.is_none() => {
-                let relative = &path.path;
-                path.path = syn::parse_quote!(::bt_hci::cmd::#relative);
-            }
-            _ => {
-                return Err(syn::Error::new(
-                    ty.span(),
-                    "name the bt-hci command by its path in bt_hci::cmd, such as \
-                     `le::LeSetEventMask`",
-                ));
-            }
-        }
+        let ty = input.parse()?;
         Ok(Self { c_name, ty })
+    }
+}
+
+/// `ty`, a path relative to the bt-hci module `module`, as an absolute path.
+fn resolve(ty: &Type, module: TokenStream, example: &str) -> syn::Result<Type> {
+    match ty {
+        Type::Path(path) if path.qself.is_none() && path.path.leading_colon.is_none() => {
+            let relative = &path.path;
+            Ok(syn::parse_quote!(::bt_hci::#module::#relative))
+        }
+        _ => Err(syn::Error::new(
+            ty.span(),
+            format!("name the bt-hci type by its path in bt_hci::{module}, such as `{example}`"),
+        )),
     }
 }
 
@@ -110,6 +112,137 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     Ok(tokens)
 }
 
+pub fn expand_events(input: Input) -> syn::Result<TokenStream> {
+    let bundled = bundled().map_err(|error| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("the bundled catalog is invalid: {error}"),
+        )
+    })?;
+    let mut declared = BTreeSet::new();
+    let mut tokens = TokenStream::new();
+    for entry in &input.entries {
+        tokens.extend(expand_event(bundled, entry, &mut declared)?);
+    }
+    Ok(tokens)
+}
+
+/// Check an event type's code at compile time and, where the catalog's
+/// width is fixed, generate a test that bt-hci decodes exactly that width.
+fn expand_event(
+    bundled: &Bundled,
+    entry: &Entry,
+    declared: &mut BTreeSet<String>,
+) -> syn::Result<TokenStream> {
+    let c_name = entry.c_name.to_string();
+    let error = |message: String| syn::Error::new(entry.c_name.span(), message);
+    let ty = resolve(&entry.ty, quote!(event), "le::LeConnectionComplete")?;
+    let segments = bundled
+        .event_segments(&c_name)
+        .map_err(|failure| error(failure.to_string()))?;
+    let latest = segments
+        .last()
+        .map(|segment| segment.entry.event.name())
+        .ok_or_else(|| error(format!("{c_name} exists in no release")))?;
+    if !declared.insert(latest.to_owned()) {
+        return Err(error(format!("{latest} is listed twice")));
+    }
+
+    // Each distinct scope, code, and fixed width, with the targets having it.
+    type Key = (EventScope, u16, Option<usize>);
+    let mut groups: Vec<(Key, Targets<'_>)> = Vec::new();
+    for segment in &segments {
+        let active = &segment.entry;
+        let releases = segment.releases;
+        if !matches!(
+            active.event.scope,
+            EventScope::Standard | EventScope::LeMeta
+        ) {
+            return Err(error(format!("{c_name} is not a Bluetooth Core event")));
+        }
+        if let Some(exclusion) = active.excluded {
+            return Err(error(format!(
+                "{c_name} is excluded in {releases}: {}",
+                exclusion.reason
+            )));
+        }
+        // A layout the extractor left unresolved has no width to test.
+        let width = match active.payload.fields {
+            Ok(fields) => {
+                let envelope = stm32wb_catalog::Layout::Fields(fields.to_vec())
+                    .envelope(active.payload.structs)
+                    .map_err(|failure| error(failure.to_string()))?
+                    .expect("a resolved layout has an envelope");
+                (envelope.min == envelope.max).then_some(envelope.max)
+            }
+            Err(_) => None,
+        };
+        let key = (active.event.scope, active.event.code, width);
+        let target = (releases, segment.profiles);
+        match groups.iter_mut().find(|(other, _)| *other == key) {
+            Some((_, targets)) => targets.push(target),
+            None => groups.push((key, vec![target])),
+        }
+    }
+
+    let catalog = &bundled.catalog;
+    let checked = with_static_lifetimes(&ty);
+    let shown = quote!(#ty).to_string().replace(' ', "");
+    let mut tokens = TokenStream::new();
+    for (index, ((scope, code, width), targets)) in groups.into_iter().enumerate() {
+        let predicate = cfg::targets(catalog, targets.iter().copied());
+        let cfg = predicate
+            .as_ref()
+            .map(|predicate| quote!(#[cfg(#predicate)]));
+        let code = u8::try_from(code).map_err(|_| {
+            error(format!(
+                "{latest} has code 0x{code:04X}, wider than bt-hci's"
+            ))
+        })?;
+        let (code_of, what) = match scope {
+            EventScope::LeMeta => (
+                quote!(<#checked as ::bt_hci::event::le::LeEventParams<'static>>::SUBEVENT_CODE),
+                "LE meta subevent code",
+            ),
+            _ => (
+                quote!(<#checked as ::bt_hci::event::EventParams<'static>>::EVENT_CODE),
+                "event code",
+            ),
+        };
+        let message = format!("{latest} is {what} 0x{code:02X}, but `{shown}` has another");
+        tokens.extend(quote_spanned! {ty.span()=>
+            #cfg
+            const _: () = ::core::assert!(#code_of == #code, #message);
+        });
+        if let Some(width) = width {
+            let test = Ident::new(
+                &format!(
+                    "{}_decodes_the_catalog_width_{index}",
+                    latest.to_lowercase()
+                ),
+                entry.c_name.span(),
+            );
+            let test_cfg = match &predicate {
+                Some(predicate) => quote!(#[cfg(all(test, #predicate))]),
+                None => quote!(#[cfg(test)]),
+            };
+            tokens.extend(quote! {
+                #test_cfg
+                #[test]
+                #[allow(non_snake_case)]
+                fn #test() {
+                    ::stm32wb_hci::wire::assert_event_width::<#checked>(#width);
+                }
+            });
+        }
+    }
+    tokens.extend(
+        complete::declared(bundled, complete::Kind::Event, &c_name)
+            .map_err(|failure| error(failure.to_string()))?,
+    );
+    Ok(tokens)
+}
+
 fn expand_entry(
     bundled: &Bundled,
     entry: &Entry,
@@ -117,6 +250,7 @@ fn expand_entry(
 ) -> syn::Result<TokenStream> {
     let c_name = entry.c_name.to_string();
     let error = |message: String| syn::Error::new(entry.c_name.span(), message);
+    let ty = resolve(&entry.ty, quote!(cmd), "le::LeSetEventMask")?;
     let segments = bundled
         .command_segments(&c_name)
         .map_err(|failure| error(failure.to_string()))?;
@@ -173,7 +307,7 @@ fn expand_entry(
     }
 
     let catalog = &bundled.catalog;
-    let ty = &entry.ty;
+    let ty = &ty;
     let checked = with_static_lifetimes(ty);
     let lifetimes = lifetimes(ty);
     let shown = quote!(#ty).to_string().replace(' ', "");
@@ -320,5 +454,47 @@ mod tests {
             expand_str("hci_le_read_local_supported_features => le::LeReadLocalSupportedFeatures")
                 .unwrap();
         assert_eq!(tokens.matches("to_raw ()").count(), 1, "{tokens}");
+    }
+
+    fn expand_events_str(source: &str) -> Result<String, String> {
+        let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
+        expand_events(input)
+            .map(|tokens| tokens.to_string())
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn events_check_their_code_and_test_their_width() {
+        let tokens =
+            expand_events_str("hci_disconnection_complete_event => DisconnectionComplete").unwrap();
+        assert!(
+            tokens.contains("EventParams < 'static >> :: EVENT_CODE == 5u8"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("assert_event_width"), "{tokens}");
+        assert!(tokens.contains("(4usize)"), "{tokens}");
+        assert!(
+            tokens.contains(
+                "Declared for :: stm32wb_hci :: catalog :: hci_disconnection_complete_event"
+            ),
+            "{tokens}"
+        );
+
+        let tokens =
+            expand_events_str("hci_le_connection_complete_event => le::LeConnectionComplete")
+                .unwrap();
+        assert!(tokens.contains("SUBEVENT_CODE == 1u8"), "{tokens}");
+
+        // Unresolved layouts, and variable ones, have only their code checked.
+        let tokens =
+            expand_events_str("hci_le_advertising_report_event => le::LeAdvertisingReport<'a>")
+                .unwrap();
+        assert!(tokens.contains("SUBEVENT_CODE == 2u8"), "{tokens}");
+        assert!(!tokens.contains("assert_event_width"), "{tokens}");
+
+        let error = expand_events_str("aci_warning_event => Vendor<'a>").unwrap_err();
+        assert!(error.contains("is not a Bluetooth Core event"), "{error}");
+        let error = expand_events_str("hci_reset => Reset").unwrap_err();
+        assert!(error.contains("no event"), "{error}");
     }
 }

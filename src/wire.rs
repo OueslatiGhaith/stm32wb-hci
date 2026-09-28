@@ -592,6 +592,33 @@ pub const fn fixed_width<T: FixedWidth>() -> usize {
     core::mem::size_of::<T>()
 }
 
+/// Assert that bt-hci decodes the parameters of an event of `width` bytes,
+/// and neither one byte fewer nor one more: the catalog's width.
+///
+/// Values are all zeros or all ones, one of which each field accepts.
+#[doc(hidden)]
+pub fn assert_event_width<T: for<'a> FromHciBytes<'a>>(width: usize) {
+    let decodes = |fill: u8, width: usize| {
+        let buffer = [fill; 256];
+        T::from_hci_bytes_complete(&buffer[..width]).is_ok()
+    };
+    let name = core::any::type_name::<T>();
+    assert!(
+        decodes(0, width) || decodes(1, width),
+        "{} does not decode {} bytes",
+        name,
+        width
+    );
+    for fill in [0, 1] {
+        assert!(
+            !decodes(fill, width + 1) && (width == 0 || !decodes(fill, width - 1)),
+            "{} decodes a width other than {}",
+            name,
+            width
+        );
+    }
+}
+
 /// An ST system (SHCI) command, sent on the CPU2 system channel.
 ///
 /// System opcodes share OGF 0x3F with the ACI commands, and some share their

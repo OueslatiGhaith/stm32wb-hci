@@ -303,6 +303,28 @@ pub fn standard_commands(input: TokenStream) -> TokenStream {
         .into()
 }
 
+/// Check bt-hci's types for the Bluetooth Core events against the catalog.
+///
+/// Each entry names a catalog event, by any name it had, and the bt-hci type
+/// decoding it, by its path in `bt_hci::event`. On every target the event
+/// exists on, the type's event code, or LE meta subevent code, must be the
+/// catalog's, checked at compile time. Where the catalog's width is fixed, a
+/// generated test checks that bt-hci decodes exactly that width.
+///
+/// ```ignore
+/// standard_events! {
+///     hci_disconnection_complete_event => DisconnectionComplete,
+///     hci_le_connection_complete_event => le::LeConnectionComplete,
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as standard::Input);
+    standard::expand_events(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// The last enhanced ATT bearer the selected release documents, as
 /// `LAST_ENHANCED` constants.
 ///

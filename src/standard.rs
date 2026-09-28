@@ -1,4 +1,5 @@
-//! The Bluetooth Core commands of the catalog, sent with bt-hci's own types.
+//! The Bluetooth Core commands and events of the catalog, sent and decoded
+//! with bt-hci's own types where bt-hci agrees with the catalog.
 //!
 //! Each bt-hci type listed here, by its path in `bt_hci::cmd`, is checked at compile time against the
 //! catalog on every target implementing the command: its opcode, whether it
@@ -27,6 +28,14 @@
 //!
 //! Their names follow bt-hci's, so importing both modules' command of one
 //! name needs a rename.
+//!
+//! Every Core event is bt-hci's. Its event code, or LE meta subevent code, is
+//! checked at compile time on every target emitting it, and a generated test
+//! checks that bt-hci decodes exactly the catalog's width where that width is
+//! fixed. The events carrying lists are tested here by hand. The transport
+//! consumes Command Complete and Command Status, and ST's C decodes the LE
+//! advertising report procedurally, so the catalog has no layout for them to
+//! check.
 
 use stm32wb_hci_macros::{standard_command, vendor_struct};
 
@@ -219,6 +228,33 @@ stm32wb_hci_macros::standard_commands! {
     hci_le_set_privacy_mode => le::LeSetPrivacyMode,
 }
 
+stm32wb_hci_macros::standard_events! {
+    hci_disconnection_complete_event => DisconnectionComplete,
+    hci_encryption_change_event => EncryptionChangeV1,
+    hci_read_remote_version_information_complete_event => ReadRemoteVersionInformationComplete,
+    hci_command_complete_event => CommandComplete<'a>,
+    hci_command_status_event => CommandStatus,
+    hci_hardware_error_event => HardwareError,
+    hci_number_of_completed_packets_event => NumberOfCompletedPackets<'a>,
+    hci_encryption_key_refresh_complete_event => EncryptionKeyRefreshComplete,
+    hci_le_connection_complete_event => le::LeConnectionComplete,
+    hci_le_advertising_report_event => le::LeAdvertisingReport<'a>,
+    hci_le_connection_update_complete_event => le::LeConnectionUpdateComplete,
+    hci_le_read_remote_features_complete_event => le::LeReadRemoteFeaturesComplete,
+    hci_le_long_term_key_request_event => le::LeLongTermKeyRequest,
+    hci_le_data_length_change_event => le::LeDataLengthChange,
+    hci_le_read_local_p256_public_key_complete_event => le::LeReadLocalP256PublicKeyComplete,
+    hci_le_generate_dhkey_complete_event => le::LeGenerateDhkeyComplete,
+    hci_le_enhanced_connection_complete_event => le::LeEnhancedConnectionComplete,
+    hci_le_directed_advertising_report_event => le::LeDirectedAdvertisingReport<'a>,
+    hci_le_phy_update_complete_event => le::LePhyUpdateComplete,
+    hci_le_extended_advertising_report_event => le::LeExtendedAdvertisingReport<'a>,
+    hci_le_scan_timeout_event => le::LeScanTimeout,
+    hci_le_advertising_set_terminated_event => le::LeAdvertisingSetTerminated,
+    hci_le_scan_request_received_event => le::LeScanRequestReceived,
+    hci_le_channel_selection_algorithm_event => le::LeChannelSelectionAlgorithm,
+}
+
 #[cfg(test)]
 mod tests {
     use bt_hci::cmd::{Cmd, controller_baseband, le};
@@ -227,6 +263,56 @@ mod tests {
     use crate::catalog::Supported;
 
     fn supported<T: Supported>() {}
+
+    /// Each Number Of Completed Packets entry is a handle and a count.
+    #[cfg(not(feature = "stack-hci-adv-scan"))]
+    #[test]
+    fn completed_packets_list_handle_and_count_pairs() {
+        use bt_hci::FromHciBytes;
+        use bt_hci::event::NumberOfCompletedPackets;
+
+        let event = NumberOfCompletedPackets::from_hci_bytes_complete(&[2, 1, 8, 3, 0, 2, 8, 1, 0])
+            .unwrap();
+        assert_eq!(event.completed_packets.len(), 2);
+        assert_eq!(event.completed_packets[1].handle().unwrap().raw(), 0x0802);
+        assert_eq!(
+            event.completed_packets[1].num_completed_packets().unwrap(),
+            1
+        );
+    }
+
+    /// Each directed advertising report is 16 bytes, as
+    /// `Direct_Advertising_Report_t`.
+    #[cfg(not(feature = "stack-hci-adv-scan"))]
+    #[test]
+    fn directed_reports_are_16_bytes_each() {
+        use bt_hci::FromHciBytes;
+        use bt_hci::event::le::LeDirectedAdvertisingReport;
+
+        let mut params = [1; 33];
+        params[0] = 2;
+        let report = LeDirectedAdvertisingReport::from_hci_bytes_complete(&params).unwrap();
+        assert_eq!(report.reports.len(), 2);
+        assert!(LeDirectedAdvertisingReport::from_hci_bytes_complete(&params[..32]).is_err());
+    }
+
+    /// ST's layout is one extended advertising report with its data.
+    #[cfg(any(feature = "stack-full-extended", feature = "stack-hci-layer-extended"))]
+    #[test]
+    fn extended_reports_follow_the_catalog_layout() {
+        use bt_hci::FromHciBytes;
+        use bt_hci::event::le::LeExtendedAdvertisingReport;
+
+        // Num_Reports, 23 bytes of report up to Data_Length, then the data.
+        let mut params = [0u8; 28];
+        params[0] = 1;
+        params[10] = 1; // Primary_PHY: LE 1M
+        params[24] = 3; // Data_Length
+        params[25..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+        let event = LeExtendedAdvertisingReport::from_hci_bytes_complete(&params).unwrap();
+        let report = event.reports.iter().next().unwrap().unwrap();
+        assert_eq!(report.data, [0xAA, 0xBB, 0xCC]);
+    }
 
     #[test]
     fn listed_and_vendor_commands_are_supported() {
