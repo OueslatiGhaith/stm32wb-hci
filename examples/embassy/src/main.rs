@@ -15,7 +15,13 @@ use embassy_stm32::{
     rcc::WPAN_DEFAULT,
 };
 use stm32wb_hci::{
-    aci::{flags::Role, gap::GapInit, gatt::GattInit, hal::HalWriteConfigData, values::Privacy},
+    aci::{
+        flags::Role,
+        gap::GapInit,
+        gatt::GattInit,
+        hal::HalWriteConfigData,
+        values::{ConfigDataOffset, Privacy},
+    },
     shci::{BleInit, BleInitParams},
 };
 
@@ -94,12 +100,13 @@ async fn main(spawner: Spawner) {
             defmt::info!("{}", response.is_ok());
 
             defmt::info!("hci: write config data");
-            // Offset 0x00 holds the public address, least significant byte first.
+            // The public address, least significant byte first.
             let public_address = [0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1];
-            let response = match HalWriteConfigData::try_new(0x00, &public_address) {
-                Ok(command) => ble.exec(&command).await.is_ok(),
-                Err(_) => false,
-            };
+            let response =
+                match HalWriteConfigData::entry(ConfigDataOffset::PublicAddress, &public_address) {
+                    Some(command) => ble.exec(&command).await.is_ok(),
+                    None => false,
+                };
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gatt");

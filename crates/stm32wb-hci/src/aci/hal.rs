@@ -10,6 +10,7 @@ use bt_hci::param::BdAddr;
 use stm32wb_hci_macros::{vendor_command, vendor_event};
 
 use crate::aci::flags::{HalEventMask, RadioActivityMask};
+use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
 use crate::wire::BoundedBytes;
 
 vendor_command! {
@@ -20,16 +21,30 @@ vendor_command! {
 }
 
 vendor_command! {
-    /// Write a value to the low-level configuration data at `offset`.
+    /// Write a value to the low-level configuration data at `offset`;
+    /// [`entry`](Self::entry) also checks its length.
     aci_hal_write_config_data => HalWriteConfigData {
-        offset: u8,
+        offset: ConfigDataOffset,
         value: &'a [u8],
+    }
+}
+
+impl<'a> HalWriteConfigData<'a> {
+    /// Write `value` at `offset`, or `None` unless it is as long as the data
+    /// the catalog documents there.
+    pub fn entry(offset: ConfigDataOffset, value: &'a [u8]) -> Option<Self> {
+        if value.len() != offset.length() {
+            return None;
+        }
+        Self::try_new(offset, value).ok()
     }
 }
 
 vendor_command! {
     /// Read the low-level configuration data at `offset`.
-    aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+    aci_hal_read_config_data => HalReadConfigData {
+        offset: ReadableConfigDataOffset,
+    } -> HalConfigData {
         data: BoundedBytes<250>,
     }
 }
@@ -398,25 +413,38 @@ mod tests {
 
     #[test]
     fn counts_are_written_from_the_counted_field() {
-        let command = HalWriteConfigData::try_new(0x2E, &[1, 2, 3]).unwrap();
+        let command =
+            HalWriteConfigData::try_new(ConfigDataOffset::StaticRandomAddress, &[1, 2, 3]).unwrap();
         assert_eq!(HalWriteConfigData::OPCODE.to_raw(), 0xFC0C);
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..len], [0x0C, 0xFC, 5, 0x2E, 3, 1, 2, 3]);
 
         assert_eq!(
-            HalWriteConfigData::try_new(0, &[0; 254]),
+            HalWriteConfigData::try_new(ConfigDataOffset::PublicAddress, &[0; 254]),
             Err(crate::wire::TooLong {
                 field: "value",
                 len: 254,
                 capacity: 253,
             })
         );
-        assert!(HalWriteConfigData::try_new(0, &[0; 253]).is_ok());
+        assert!(HalWriteConfigData::try_new(ConfigDataOffset::PublicAddress, &[0; 253]).is_ok());
+    }
+
+    #[test]
+    fn entries_are_as_long_as_their_offset() {
+        let address = [1, 2, 3, 4, 5, 6];
+        let command =
+            HalWriteConfigData::entry(ConfigDataOffset::StaticRandomAddress, &address).unwrap();
+        let (bytes, len) = encode(&command);
+        assert_eq!(bytes[..len], [0x0C, 0xFC, 8, 0x2E, 6, 1, 2, 3, 4, 5, 6]);
+        assert!(HalWriteConfigData::entry(ConfigDataOffset::SmpMode, &address).is_none());
+        assert!(HalWriteConfigData::entry(ConfigDataOffset::SmpMode, &[0x01]).is_some());
     }
 
     #[tokio::test]
     async fn asynchronous_encoding_matches_synchronous() {
-        let command = HalWriteConfigData::try_new(0x2E, &[1, 2, 3]).unwrap();
+        let command =
+            HalWriteConfigData::try_new(ConfigDataOffset::StaticRandomAddress, &[1, 2, 3]).unwrap();
         let mut buffer = [0; 16];
         let mut writer = &mut buffer[..];
         command.write_hci_async(&mut writer).await.unwrap();

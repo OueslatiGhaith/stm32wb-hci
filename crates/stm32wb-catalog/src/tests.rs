@@ -953,21 +953,18 @@ fn stm32wb_items_follow_the_mcu_conditions() {
             "0x03: Scan channel map (only for STM32WB)",
             "0x0004..=0x5DC0: extended advertising with STM32WB",
             "0x0004..=0xFFFF: extended advertising with STM32WBA",
+            "0x5DC1: Max data length (only for STM32WB full stack)",
+            "0x5DC2: Max data length [only for full stack]",
         ],
     );
     assert_eq!(
         values.stm32wb_ranges().unwrap(),
         [(0, 0), (3, 3), (4, 0x5DC0)]
     );
-    for label in [
-        "0x00: Max data length (only for STM32WB full stack)",
-        "0x00..=0x25: for BO variant",
-    ] {
-        let error = domain(DomainKind::Values, &[label])
-            .stm32wb_ranges()
-            .unwrap_err();
-        assert!(error.contains("cannot interpret"), "{error}");
-    }
+    let error = domain(DomainKind::Values, &["0x00..=0x25: for BO variant"])
+        .stm32wb_ranges()
+        .unwrap_err();
+    assert!(error.contains("cannot interpret"), "{error}");
     let flags = domain(
         DomainKind::Flags,
         &[
@@ -988,4 +985,32 @@ fn stm32wb_items_follow_the_mcu_conditions() {
             .unwrap(),
         []
     );
+}
+
+#[test]
+fn stm32wb_lengths_end_the_labels() {
+    let offsets = Domain {
+        kind: DomainKind::Values,
+        items: [
+            "0x00: CONFIG_DATA_PUBLIC_ADDRESS_OFFSET; Bluetooth public address; 6 bytes",
+            "0x34: CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET; GAP service additional record number",
+            "0xB0: CONFIG_DATA_SMP_MODE_OFFSET; SMP mode; 1 byte",
+            "0xC2: CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET [only for STM32WBA]; LL RSSI golden range; 2 bytes",
+            "0xD0..=0xD1: Reserved; 2 bytes",
+        ]
+        .iter()
+        .map(|item| item.parse().unwrap())
+        .collect(),
+        unit_us: None,
+    };
+    assert_eq!(offsets.stm32wb_lengths().unwrap(), [(0x00, 6), (0xB0, 1)]);
+    let item: DomainItem = "0xD1: Max data length (bytes #0-1: \"tx\"); 8 bytes"
+        .parse()
+        .unwrap();
+    assert_eq!(item.length(), Some(8));
+    let flags = Domain {
+        kind: DomainKind::Flags,
+        ..offsets
+    };
+    assert!(flags.stm32wb_lengths().unwrap_err().contains("bits"));
 }

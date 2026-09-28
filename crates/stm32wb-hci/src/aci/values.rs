@@ -5,7 +5,8 @@
 //! command using one checks at compile time, on every target, that each of
 //! its values is one the catalog documents for that parameter on STM32WB. A
 //! parameter documenting fewer values takes a narrower type, such as
-//! [`ConnectableOwnAddressType`].
+//! [`ConnectableOwnAddressType`]. A value only some releases or profiles
+//! document is left out, and its type says so.
 
 use crate::wire_values;
 
@@ -104,12 +105,55 @@ wire_values! {
     }
 }
 
+wire_values! {
+    /// Where a value of the configuration data starts, with its length.
+    /// Every command using one also checks the length is the one the catalog
+    /// documents. `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET` (0xC1, from 1.16.0),
+    /// `CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET` and
+    /// `CONFIG_DATA_SC_KEY_TYPE_OFFSET` (0x34 and 0x35, from 1.17.0),
+    /// `CONFIG_DATA_LL_RPA_MODE_OFFSET` (0xC3, from 1.21.0), and
+    /// `CONFIG_DATA_LL_MAX_DATA_EXT_OFFSET` (0xD1, only for the full stack)
+    /// are left out.
+    pub enum ConfigDataOffset: u8 {
+        /// `CONFIG_DATA_PUBLIC_ADDRESS_OFFSET`: the public address.
+        PublicAddress = 0x00 => [u8; 6],
+        /// `CONFIG_DATA_ER_OFFSET`: the encryption root key.
+        EncryptionRoot = 0x08 => [u8; 16],
+        /// `CONFIG_DATA_IR_OFFSET`: the identity root key.
+        IdentityRoot = 0x18 => [u8; 16],
+        /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
+        StaticRandomAddress = 0x2E => [u8; 6],
+        /// `CONFIG_DATA_SMP_MODE_OFFSET`: the SMP mode.
+        SmpMode = 0xB0 => [u8; 1],
+        /// `CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET`: the channels scanning uses,
+        /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap).
+        ScanChannelMap = 0xC0 => [u8; 1],
+    }
+}
+
+wire_values! {
+    /// Where a value of the configuration data that can be read back starts,
+    /// with its length.
+    pub enum ReadableConfigDataOffset: u8 {
+        /// `CONFIG_DATA_PUBLIC_ADDRESS_OFFSET`: the public address.
+        PublicAddress = 0x00 => [u8; 6],
+        /// `CONFIG_DATA_ER_OFFSET`: the encryption root key.
+        EncryptionRoot = 0x08 => [u8; 16],
+        /// `CONFIG_DATA_IR_OFFSET`: the identity root key.
+        IdentityRoot = 0x18 => [u8; 16],
+        /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
+        StaticRandomAddress = 0x2E => [u8; 6],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bt_hci::{FromHciBytes, FromHciBytesError, WriteHci};
 
     use super::*;
-    use crate::wire::{HciWireType, is_opaque, values_documented};
+    use crate::wire::{
+        HciWireType, flags_documented, is_opaque, lengths_documented, values_documented,
+    };
 
     #[test]
     fn values_encode_as_their_documented_byte() {
@@ -140,5 +184,29 @@ mod tests {
         assert!(!is_opaque::<Privacy>(), "undocumented member");
         assert!(values_documented::<u8>(&[]), "integers stand for no values");
         assert!(is_opaque::<u8>());
+    }
+
+    #[test]
+    fn offsets_give_their_documented_lengths() {
+        assert_eq!(ConfigDataOffset::EncryptionRoot.length(), 16);
+        assert_eq!(ReadableConfigDataOffset::StaticRandomAddress.length(), 6);
+        let lengths = &[(0x00, 6), (0x08, 16), (0x18, 16), (0x2E, 6)][..];
+        assert!(lengths_documented::<ReadableConfigDataOffset>(lengths));
+        assert!(
+            !lengths_documented::<ReadableConfigDataOffset>(&lengths[..3]),
+            "the random address has no documented length"
+        );
+        assert!(
+            !lengths_documented::<ReadableConfigDataOffset>(&[
+                (0x00, 6),
+                (0x08, 16),
+                (0x18, 8),
+                (0x2E, 6)
+            ]),
+            "another length"
+        );
+        assert!(lengths_documented::<Privacy>(&[]), "no lengths given");
+        assert!(!flags_documented::<ConfigDataOffset>(0xFF));
+        assert!(!is_opaque::<ReadableConfigDataOffset>());
     }
 }

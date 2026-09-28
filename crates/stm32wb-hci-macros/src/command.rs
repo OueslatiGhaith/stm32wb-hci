@@ -1335,9 +1335,10 @@ pub(crate) fn bearer_assertions(
 pub(crate) enum Documented {
     /// No values.
     Nothing,
-    /// The inclusive ranges of values an STM32WB binary accepts, and the
-    /// duration of one unit in microseconds for a time member.
-    Values(Vec<(i64, i64)>, Option<u32>),
+    /// The inclusive ranges of values an STM32WB binary accepts, the
+    /// duration of one unit in microseconds for a time member, and the
+    /// length of the data at each value documenting one.
+    Values(Vec<(i64, i64)>, Option<u32>, Vec<(i64, u16)>),
     /// The union of the flags an STM32WB binary accepts.
     Flags(u64),
     /// Values or flags that cannot be checked, and why.
@@ -1360,9 +1361,10 @@ pub(crate) fn documents(
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
-                DomainKind::Values => domain
-                    .stm32wb_ranges()
-                    .map(|ranges| Documented::Values(ranges, domain.unit_us)),
+                DomainKind::Values => domain.stm32wb_ranges().and_then(|ranges| {
+                    let lengths = domain.stm32wb_lengths()?;
+                    Ok(Documented::Values(ranges, domain.unit_us, lengths))
+                }),
                 DomainKind::Flags => domain.stm32wb_bits().map(Documented::Flags),
             };
             documented.unwrap_or_else(Documented::Unreadable)
@@ -1472,7 +1474,37 @@ pub(crate) fn value_assertions(
                 .cfg
                 .as_ref()
                 .map(|predicate| quote!(#[cfg(#predicate)]));
-            if let Documented::Values(_, unit) = &group.documents[position] {
+            if let Documented::Values(_, _, lengths) = &group.documents[position] {
+                let pairs = lengths
+                    .iter()
+                    .map(|(value, length)| quote!((#value, #length)));
+                let listed = match lengths.as_slice() {
+                    [] => "no lengths".to_owned(),
+                    lengths => {
+                        let lengths = lengths
+                            .iter()
+                            .map(|(value, length)| {
+                                let unit = if *length == 1 { "byte" } else { "bytes" };
+                                format!("{length} {unit} at {value}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("the lengths {lengths}")
+                    }
+                };
+                let message = format!(
+                    "{owner}.{}: the catalog documents {listed} for {} on STM32WB in {}; each length the declared type gives must be one of them",
+                    field.name, member.name, group.releases
+                );
+                assertions.push(quote_spanned! {ty.span()=>
+                    #cfg
+                    const _: () = ::core::assert!(
+                        ::stm32wb_hci::wire::lengths_documented::<#ty>(&[#(#pairs),*]),
+                        #message
+                    );
+                });
+            }
+            if let Documented::Values(_, unit, _) = &group.documents[position] {
                 let (documented, message) = match unit {
                     Some(unit) => (
                         quote!(::core::option::Option::Some(#unit)),
@@ -1498,7 +1530,7 @@ pub(crate) fn value_assertions(
                 });
             }
             let (check, message) = match &group.documents[position] {
-                Documented::Values(ranges, _) => {
+                Documented::Values(ranges, _, _) => {
                     let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
                     let listed = ranges
                         .iter()
@@ -3073,6 +3105,44 @@ mod tests {
         .unwrap();
         assert!(
             tokens.contains("unit_documented :: < Privacy > (:: core :: option :: Option :: None)"),
+            "{tokens}"
+        );
+    }
+
+    #[test]
+    fn offsets_are_checked_against_the_documented_lengths() {
+        let tokens = expand_str(
+            "aci_hal_read_config_data => HalReadConfigData {
+                 offset: ReadableConfigDataOffset,
+             } -> HalConfigData {
+                 data: BoundedBytes<250>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "lengths_documented :: < ReadableConfigDataOffset > (& [(0i64 , 6u16) , (8i64 , 16u16) , (24i64 , 16u16) , (46i64 , 6u16)])"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "the catalog documents the lengths 6 bytes at 0, 16 bytes at 8, 16 bytes at 24, 6 bytes at 46 for Offset on STM32WB in 1.15.0..=1.24.0"
+            ),
+            "{tokens}"
+        );
+        // A member documenting no lengths is checked too, as a type giving
+        // lengths must not stand for it.
+        let tokens = expand_str(
+            "aci_gap_set_io_capability => GapSetIoCapability { io_capability: IoCapability }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("lengths_documented :: < IoCapability > (& [])"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("the catalog documents no lengths"),
             "{tokens}"
         );
     }

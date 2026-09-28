@@ -17,6 +17,12 @@ use crate::aci::flags::ResetOptions;
     unused_imports,
     reason = "releases before 1.23.0 have no general commands"
 )]
+use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
+
+#[allow(
+    unused_imports,
+    reason = "releases before 1.23.0 have no general commands"
+)]
 use crate::wire::BoundedBytes;
 
 vendor_command! {
@@ -39,16 +45,31 @@ vendor_command! {
 }
 
 vendor_command! {
-    /// Write a value to the configuration data at `offset`.
+    /// Write a value to the configuration data at `offset`;
+    /// [`entry`](Self::entry) also checks its length.
     aci_write_config_data => AciWriteConfigData {
-        offset: u8,
+        offset: ConfigDataOffset,
         value: &'a [u8],
+    }
+}
+
+#[cfg(any(feature = "fw_1_23_0", feature = "fw_1_24_0"))]
+impl<'a> AciWriteConfigData<'a> {
+    /// Write `value` at `offset`, or `None` unless it is as long as the data
+    /// the catalog documents there.
+    pub fn entry(offset: ConfigDataOffset, value: &'a [u8]) -> Option<Self> {
+        if value.len() != offset.length() {
+            return None;
+        }
+        Self::try_new(offset, value).ok()
     }
 }
 
 vendor_command! {
     /// Read the configuration data at `offset`.
-    aci_read_config_data => AciReadConfigData { offset: u8 } -> AciConfigData {
+    aci_read_config_data => AciReadConfigData {
+        offset: ReadableConfigDataOffset,
+    } -> AciConfigData {
         data: BoundedBytes<250>,
     }
 }

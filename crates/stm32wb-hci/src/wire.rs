@@ -60,6 +60,13 @@ pub trait HciWireType {
     /// member.
     #[doc(hidden)]
     const UNIT_US: Option<u32> = None;
+
+    /// The length in bytes of the data at each value, for a type standing
+    /// for offsets into some data, such as those [`wire_values!`] declares
+    /// with lengths; `None` for any other type. Declarations check each is
+    /// the length the catalog documents for the value.
+    #[doc(hidden)]
+    const LENGTHS: Option<&'static [(i64, usize)]> = None;
 }
 
 macro_rules! wire_width {
@@ -155,13 +162,37 @@ pub const fn unit_documented<T: HciWireType>(documented: Option<u32>) -> bool {
     }
 }
 
+/// Whether the catalog documents, for a member listing values, the length
+/// `T` gives the data at each of its values, `documented` pairing values
+/// with the lengths it documents. A type giving no lengths always is.
+#[doc(hidden)]
+pub const fn lengths_documented<T: HciWireType>(documented: &[(i64, u16)]) -> bool {
+    let Some(lengths) = T::LENGTHS else {
+        return true;
+    };
+    let mut index = 0;
+    while index < lengths.len() {
+        let (value, length) = lengths[index];
+        let mut item = 0;
+        while item < documented.len() && documented[item].0 != value {
+            item += 1;
+        }
+        if item == documented.len() || documented[item].1 as usize != length {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// Whether every bit `T` may set is one the catalog documents for a member
 /// listing flags, `documented` being their union. A value type is checked
-/// as the bits of each of its values; a range of values never is; a type
-/// standing for no particular values or flags always is.
+/// as the bits of each of its values; a range of values, or offsets giving
+/// lengths, never is; a type standing for no particular values or flags
+/// always is.
 #[doc(hidden)]
 pub const fn flags_documented<T: HciWireType>(documented: u64) -> bool {
-    if T::RANGES.is_some() {
+    if T::RANGES.is_some() || T::LENGTHS.is_some() {
         return false;
     }
     if let Some(bits) = T::BITS {
@@ -184,7 +215,11 @@ pub const fn flags_documented<T: HciWireType>(documented: u64) -> bool {
 /// catalog documents no checkable values for requires.
 #[doc(hidden)]
 pub const fn is_opaque<T: HciWireType>() -> bool {
-    T::VALUES.is_none() && T::BITS.is_none() && T::RANGES.is_none() && T::UNIT_US.is_none()
+    T::VALUES.is_none()
+        && T::BITS.is_none()
+        && T::RANGES.is_none()
+        && T::UNIT_US.is_none()
+        && T::LENGTHS.is_none()
 }
 
 /// Declare an enum standing for some documented values of an integer member,
@@ -203,6 +238,20 @@ pub const fn is_opaque<T: HciWireType>() -> bool {
 ///     }
 /// }
 /// ```
+///
+/// Values standing for offsets into some data may each give the length of
+/// the data there, which the declarations check against the length the
+/// catalog documents for the value, and `length` returns:
+///
+/// ```ignore
+/// wire_values! {
+///     /// Where a value of the configuration data starts.
+///     pub enum ConfigDataOffset: u8 {
+///         /// The public address.
+///         PublicAddress = 0x00 => [u8; 6],
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! wire_values {
     (
@@ -213,6 +262,62 @@ macro_rules! wire_values {
                 $variant:ident = $value:expr
             ),+ $(,)?
         }
+    ) => {
+        $crate::wire_values! {
+            @declare
+            $(#[$attr])*
+            $vis enum $name: $repr {
+                $(
+                    $(#[$variant_attr])*
+                    $variant = $value
+                ),+
+            }
+            {}
+        }
+    };
+    (
+        $(#[$attr:meta])*
+        $vis:vis enum $name:ident: $repr:ident {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr => [u8; $length:literal]
+            ),+ $(,)?
+        }
+    ) => {
+        $crate::wire_values! {
+            @declare
+            $(#[$attr])*
+            $vis enum $name: $repr {
+                $(
+                    $(#[$variant_attr])*
+                    $variant = $value
+                ),+
+            }
+            {
+                const LENGTHS: ::core::option::Option<&'static [(i64, usize)]> =
+                    ::core::option::Option::Some(&[$(($name::$variant as $repr as i64, $length)),+]);
+            }
+        }
+
+        impl $name {
+            /// The length in bytes of the data at this offset.
+            pub const fn length(self) -> usize {
+                match self {
+                    $($name::$variant => $length,)+
+                }
+            }
+        }
+    };
+    (
+        @declare
+        $(#[$attr:meta])*
+        $vis:vis enum $name:ident: $repr:ident {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr
+            ),+
+        }
+        { $($lengths:tt)* }
     ) => {
         $(#[$attr])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,6 +334,7 @@ macro_rules! wire_values {
             const WIDTH: usize = ::core::mem::size_of::<$repr>();
             const VALUES: ::core::option::Option<&'static [i64]> =
                 ::core::option::Option::Some(&[$($name::$variant as $repr as i64),+]);
+            $($lengths)*
         }
 
         impl ::core::convert::From<$name> for $repr {
@@ -652,6 +758,7 @@ impl<T: HciWireType + ?Sized> HciWireType for &T {
     const BITS: Option<u64> = T::BITS;
     const RANGES: Option<&'static [(i64, i64)]> = T::RANGES;
     const UNIT_US: Option<u32> = T::UNIT_US;
+    const LENGTHS: Option<&'static [(i64, usize)]> = T::LENGTHS;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member

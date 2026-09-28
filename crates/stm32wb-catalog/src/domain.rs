@@ -42,6 +42,17 @@ pub struct DomainItem {
 }
 
 impl DomainItem {
+    /// The length of the data at this value, as a label such as
+    /// `Static Random Address; 6 bytes` ends.
+    pub fn length(&self) -> Option<u16> {
+        let label = self.label.as_deref()?;
+        let (_, last) = label.rsplit_once("; ")?;
+        let count = last
+            .strip_suffix(" bytes")
+            .or_else(|| last.strip_suffix(" byte"))?;
+        count.parse().ok()
+    }
+
     fn write_value(&self, f: &mut fmt::Formatter<'_>, value: i64) -> fmt::Result {
         match self.hex_digits {
             Some(digits) => write!(f, "0x{value:0width$X}", width = usize::from(digits)),
@@ -340,9 +351,10 @@ fn mcu_after(label: &str, phrase: &str) -> Option<Mcu> {
 
 impl Domain {
     /// The items an STM32WB binary accepts: every item, except those whose
-    /// label says they are not supported, not supported on STM32WB, or only
-    /// on STM32WBA. A label naming any other condition, such as a stack
-    /// variant, is an error rather than a guess.
+    /// label says they are not supported, not supported on STM32WB, only on
+    /// STM32WBA, or only for the full stack, which not every profile is. A
+    /// label naming any other condition, such as a stack variant, is an
+    /// error rather than a guess.
     fn stm32wb_items(&self) -> Result<Vec<&DomainItem>, String> {
         let mut items = Vec::new();
         for item in &self.items {
@@ -351,8 +363,12 @@ impl Domain {
                 .map(|mcu| (mcu, false))
                 .or_else(|| mcu_after(label, "only for").map(|mcu| (mcu, true)))
                 .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)));
+            let full_stack_only = ["only for full stack", "only for STM32WB full stack"]
+                .iter()
+                .any(|phrase| label.contains(phrase));
             let applies = match mcu {
                 Some((mcu, only)) => (mcu == Mcu::Stm32wb) == only,
+                None if full_stack_only => false,
                 None if label.contains("STM32WB") || label.contains("variant") => {
                     return Err(format!(
                         "{item} names a condition the catalog cannot interpret"
@@ -378,6 +394,19 @@ impl Domain {
             .stm32wb_items()?
             .into_iter()
             .map(|item| (item.first, item.last))
+            .collect())
+    }
+
+    /// The length each single value an STM32WB binary accepts documents for
+    /// its data, as [`stm32wb_items`](Self::stm32wb_items) selects them.
+    /// Flags are an error, as for [`stm32wb_ranges`](Self::stm32wb_ranges).
+    pub fn stm32wb_lengths(&self) -> Result<Vec<(i64, u16)>, String> {
+        self.stm32wb_ranges()?;
+        Ok(self
+            .stm32wb_items()?
+            .into_iter()
+            .filter(|item| item.first == item.last)
+            .filter_map(|item| Some((item.first, item.length()?)))
             .collect())
     }
 
