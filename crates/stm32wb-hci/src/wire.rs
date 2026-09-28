@@ -32,6 +32,13 @@ pub trait HciWireType {
     /// members.
     #[doc(hidden)]
     const LAST_ENHANCED_BEARER: u16 = 0;
+
+    /// Every value the type encodes, for a type standing for some values of
+    /// an integer member, such as those [`wire_values!`] declares; `None`
+    /// for any other type. Declarations check each value is one the catalog
+    /// documents for the member.
+    #[doc(hidden)]
+    const VALUES: Option<&'static [i64]> = None;
 }
 
 macro_rules! wire_width {
@@ -51,9 +58,134 @@ wire_width! {
     i16 => 2,
     u32 => 4,
     u64 => 8,
-    bool => 1,
     BdAddr => 6,
     ConnHandle => 2,
+}
+
+/// A `bool` parameter is sent as 0 or 1, so the member must document both.
+impl HciWireType for bool {
+    const WIDTH: usize = 1;
+    const VALUES: Option<&'static [i64]> = Some(&[0, 1]);
+}
+
+/// Whether every value `T` encodes is one the catalog documents, each
+/// documented item being an inclusive range; `None` when the catalog
+/// documents no values for the member. A type encoding no fixed set of
+/// values is always accepted.
+#[doc(hidden)]
+pub const fn values_documented<T: HciWireType>(documented: Option<&[(i64, i64)]>) -> bool {
+    let Some(values) = T::VALUES else {
+        return true;
+    };
+    let Some(documented) = documented else {
+        return false;
+    };
+    let mut index = 0;
+    while index < values.len() {
+        let value = values[index];
+        let mut found = false;
+        let mut item = 0;
+        while item < documented.len() {
+            found |= documented[item].0 <= value && value <= documented[item].1;
+            item += 1;
+        }
+        if !found {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// Declare an enum standing for some documented values of an integer member,
+/// encoded as its `repr` integer. Every declaration using it for a member
+/// checks at compile time that each of its values is one the catalog
+/// documents for that member, on every target.
+///
+/// ```ignore
+/// wire_values! {
+///     /// Whether the scan requests advertising reports.
+///     pub enum ScanType: u8 {
+///         /// Listen only.
+///         Passive = 0x00,
+///         /// Send scan requests.
+///         Active = 0x01,
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! wire_values {
+    (
+        $(#[$attr:meta])*
+        $vis:vis enum $name:ident: $repr:ident {
+            $(
+                $(#[$variant_attr:meta])*
+                $variant:ident = $value:expr
+            ),+ $(,)?
+        }
+    ) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[repr($repr)]
+        $vis enum $name {
+            $(
+                $(#[$variant_attr])*
+                $variant = $value,
+            )+
+        }
+
+        impl $crate::wire::HciWireType for $name {
+            const WIDTH: usize = ::core::mem::size_of::<$repr>();
+            const VALUES: ::core::option::Option<&'static [i64]> =
+                ::core::option::Option::Some(&[$($name::$variant as $repr as i64),+]);
+        }
+
+        impl ::core::convert::From<$name> for $repr {
+            fn from(value: $name) -> $repr {
+                value as $repr
+            }
+        }
+
+        impl ::core::convert::TryFrom<$repr> for $name {
+            type Error = ::bt_hci::FromHciBytesError;
+
+            fn try_from(value: $repr) -> ::core::result::Result<Self, Self::Error> {
+                $(
+                    if value == $name::$variant as $repr {
+                        return ::core::result::Result::Ok($name::$variant);
+                    }
+                )+
+                ::core::result::Result::Err(::bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+
+        impl ::bt_hci::WriteHci for $name {
+            fn size(&self) -> usize {
+                ::core::mem::size_of::<$repr>()
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+                writer.write_all(&(*self as $repr).to_le_bytes())
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                writer.write_all(&(*self as $repr).to_le_bytes()).await
+            }
+        }
+
+        impl<'de> ::bt_hci::FromHciBytes<'de> for $name {
+            fn from_hci_bytes(
+                data: &'de [u8],
+            ) -> ::core::result::Result<(Self, &'de [u8]), ::bt_hci::FromHciBytesError> {
+                let (raw, rest) = <$repr as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(data)?;
+                ::core::result::Result::Ok((<$name as ::core::convert::TryFrom<$repr>>::try_from(raw)?, rest))
+            }
+        }
+    };
 }
 
 impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
@@ -63,6 +195,7 @@ impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
 impl<T: HciWireType + ?Sized> HciWireType for &T {
     const WIDTH: usize = T::WIDTH;
     const LAST_ENHANCED_BEARER: u16 = T::LAST_ENHANCED_BEARER;
+    const VALUES: Option<&'static [i64]> = T::VALUES;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member

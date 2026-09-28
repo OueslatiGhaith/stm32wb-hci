@@ -7,8 +7,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bearer, Bundled, Catalog, CommandScope, Completion, Element, EventScope, Field, FieldType,
-    Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
+    Bearer, Bundled, Catalog, Command as CatalogCommand, CommandScope, Completion, Domain, Element,
+    EventScope, Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version,
+    bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -336,6 +337,12 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
             &params,
             facts.params,
             &command.bearers,
+        ))
+        .chain(value_assertions(
+            &input.params.name,
+            &params,
+            facts.params,
+            &command.documented,
         ))
         .chain(returned.iter().flat_map(|(returns, slots)| {
             width_assertions(&cfg, &returns.name, slots).chain(bearer_assertions(
@@ -1323,6 +1330,180 @@ pub(crate) fn bearer_assertions(
     assertions
 }
 
+/// What the catalog documents for each member of one release, by position:
+/// the ranges an STM32WB binary accepts, `None` for an undocumented member,
+/// or why its values cannot be checked.
+pub(crate) type Documents = Vec<Result<Option<Vec<(i64, i64)>>, String>>;
+
+/// What the catalog documents for each parameter of `command` in `release`.
+pub(crate) fn documents(
+    command: &CatalogCommand,
+    members: &[Field],
+    release: Version,
+) -> Documents {
+    members
+        .iter()
+        .map(|member| {
+            command
+                .domain(&member.name, false, release)
+                .map(Domain::stm32wb_ranges)
+                .transpose()
+        })
+        .collect()
+}
+
+/// Add one release's documents to the groups of a declaration.
+pub(crate) fn add_documents<'a>(
+    groups: &mut Vec<(Documents, Targets<'a>)>,
+    documents: Documents,
+    target: (ReleaseRange, &'a [Profile]),
+) {
+    match groups.iter_mut().find(|(other, _)| *other == documents) {
+        Some((_, targets)) => targets.push(target),
+        None => groups.push((documents, vec![target])),
+    }
+}
+
+/// Releases documenting the same values, with the predicate selecting them.
+pub(crate) struct DocumentedGroup {
+    documents: Documents,
+    cfg: Option<TokenStream>,
+    releases: String,
+}
+
+pub(crate) fn documented_groups(
+    catalog: &Catalog,
+    groups: Vec<(Documents, Targets<'_>)>,
+) -> Vec<DocumentedGroup> {
+    groups
+        .into_iter()
+        .map(|(documents, targets)| {
+            let releases = release_runs(catalog, targets.iter().map(|(releases, _)| *releases));
+            DocumentedGroup {
+                documents,
+                cfg: cfg::targets(catalog, targets),
+                releases,
+            }
+        })
+        .collect()
+}
+
+/// The releases `ranges` cover, as consecutive runs such as
+/// `1.15.0..=1.16.0, 1.18.0`.
+fn release_runs(catalog: &Catalog, ranges: impl Iterator<Item = ReleaseRange>) -> String {
+    let ranges = ranges.collect::<Vec<_>>();
+    let mut runs: Vec<ReleaseRange> = Vec::new();
+    let mut previous: Option<Version> = None;
+    for release in catalog.versions() {
+        if !ranges.iter().any(|range| range.contains(release)) {
+            previous = None;
+            continue;
+        }
+        match (runs.last_mut(), previous) {
+            (Some(run), Some(previous)) if run.last == previous => run.last = release,
+            _ => runs.push(ReleaseRange::single(release)),
+        }
+        previous = Some(release);
+    }
+    runs.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether `ty` is a primitive integer, which stands for no fixed values.
+fn is_integer(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path)
+    if path.qself.is_none()
+        && path.path.get_ident().is_some_and(|ident| {
+            ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"]
+                .iter()
+                .any(|integer| ident == integer)
+        }))
+}
+
+/// Assert at compile time that each value a declared type stands for is one
+/// the catalog documents for its member, in each group of releases.
+pub(crate) fn value_assertions(
+    owner: &Ident,
+    slots: &[Slot<'_>],
+    members: &[Field],
+    groups: &[DocumentedGroup],
+) -> Vec<TokenStream> {
+    let mut assertions = Vec::new();
+    for slot in slots {
+        let (field, member, ty) = match slot {
+            Slot::Fixed { field, member, .. } => (*field, *member, &field.ty),
+            Slot::Optional {
+                field,
+                member,
+                value,
+                ..
+            } => (*field, *member, *value),
+            _ => continue,
+        };
+        if is_integer(ty) {
+            continue;
+        }
+        let position = members
+            .iter()
+            .position(|other| ptr::eq(other, member))
+            .expect("the member is one of the members");
+        for group in groups {
+            let cfg = group
+                .cfg
+                .as_ref()
+                .map(|predicate| quote!(#[cfg(#predicate)]));
+            let (documented, message) = match &group.documents[position] {
+                Ok(Some(ranges)) => {
+                    let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
+                    let listed = ranges
+                        .iter()
+                        .map(|(first, last)| {
+                            if first == last {
+                                first.to_string()
+                            } else {
+                                format!("{first}..={last}")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    (
+                        quote!(::core::option::Option::Some(&[#(#pairs),*])),
+                        format!(
+                            "{owner}.{}: the catalog documents {} as one of {listed} on STM32WB in {}; every value of the declared type must be one of them",
+                            field.name, member.name, group.releases
+                        ),
+                    )
+                }
+                Ok(None) => (
+                    quote!(::core::option::Option::None),
+                    format!(
+                        "{owner}.{}: the catalog documents no values for {} in {}; declare it as an integer",
+                        field.name, member.name, group.releases
+                    ),
+                ),
+                Err(reason) => (
+                    quote!(::core::option::Option::None),
+                    format!(
+                        "{owner}.{}: the catalog's values for {} in {} cannot be checked: {reason}; declare it as an integer",
+                        field.name, member.name, group.releases
+                    ),
+                ),
+            };
+            let message = message.replace('{', "{{").replace('}', "}}");
+            assertions.push(quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    ::stm32wb_hci::wire::values_documented::<#ty>(#documented),
+                    #message
+                );
+            });
+        }
+    }
+    assertions
+}
+
 /// The facts a declaration is generated from, identical on the wire in every
 /// release and profile the command exists on. Member names are the latest
 /// release's.
@@ -1398,6 +1579,8 @@ struct Command<'a> {
     cfg: Option<TokenStream>,
     /// The parameters addressing ATT bearers.
     bearers: Vec<BearerGroup>,
+    /// What the catalog documents for each parameter, by group of releases.
+    documented: Vec<DocumentedGroup>,
 }
 
 /// Releases and the profiles supporting a command in them.
@@ -1479,6 +1662,7 @@ impl<'a> Command<'a> {
             Self,
             Targets<'a>,
             Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+            Vec<(Documents, Targets<'a>)>,
         )> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
@@ -1522,7 +1706,18 @@ impl<'a> Command<'a> {
                 .map(|field| field.exists_in(releases))
                 .collect::<Vec<_>>();
             let bearers = bearer_positions(params, &active.definition.bearers);
-            let Some((_, variant, targets, groups)) =
+            let documents = bundled
+                .catalog
+                .versions()
+                .filter(|release| releases.contains(*release))
+                .map(|release| {
+                    (
+                        documents(active.command, params, release),
+                        (ReleaseRange::single(release), segment.profiles),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let Some((_, variant, targets, groups, documented)) =
                 variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 // A release without any of the declared return fields, which
@@ -1551,11 +1746,22 @@ impl<'a> Command<'a> {
                     releases,
                     cfg: None,
                     bearers: Vec::new(),
+                    documented: Vec::new(),
                 };
                 record_names(&mut variant.param_names, params);
                 record_names(&mut variant.return_names, returns);
                 let target = (releases, segment.profiles);
-                variants.push((key, variant, vec![target], vec![(bearers, vec![target])]));
+                let mut documented = Vec::new();
+                for (documents, target) in documents {
+                    add_documents(&mut documented, documents, target);
+                }
+                variants.push((
+                    key,
+                    variant,
+                    vec![target],
+                    vec![(bearers, vec![target])],
+                    documented,
+                ));
                 continue;
             };
             if !variant.facts.same_wire(&current) {
@@ -1573,17 +1779,21 @@ impl<'a> Command<'a> {
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
             add_bearers(groups, bearers, (releases, segment.profiles));
+            for (documents, target) in documents {
+                add_documents(documented, documents, target);
+            }
         }
 
         Ok(variants
             .into_iter()
-            .map(|(_, mut variant, targets, groups)| {
+            .map(|(_, mut variant, targets, groups, documented)| {
                 for (params, returns) in &history {
                     record_history_names(&mut variant.param_names, variant.facts.params, params);
                     record_history_names(&mut variant.return_names, variant.facts.returns, returns);
                 }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
                 variant.bearers = bearer_groups(&bundled.catalog, groups);
+                variant.documented = documented_groups(&bundled.catalog, documented);
                 variant
             })
             .collect())
@@ -2721,6 +2931,36 @@ mod tests {
                 .contains("`fw_src_add: u32 (optional)` may be omitted; declare it as `Option<T>`"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn value_types_are_checked_against_the_documented_values() {
+        let tokens = expand_str(
+            "aci_gap_init => GapInit {
+                 role: u8,
+                 privacy_enabled: Privacy,
+                 device_name_char_len: u8,
+             } -> GapService {
+                 service_handle: u16,
+                 dev_name_char_handle: u16,
+                 appearance_char_handle: u16,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "values_documented :: < Privacy > (:: core :: option :: Option :: Some (& \
+                 [(0i64 , 0i64) , (2i64 , 2i64)]))"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens
+                .contains("documents privacy_enabled as one of 0, 2 on STM32WB in 1.15.0..=1.24.0"),
+            "{tokens}"
+        );
+        // Integers stand for no values, so they are not checked.
+        assert!(!tokens.contains("values_documented :: < u8 >"), "{tokens}");
     }
 
     #[test]

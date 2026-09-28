@@ -5,6 +5,11 @@ use bt_hci::param::{BdAddr, ConnHandle};
 use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
+use crate::aci::values::{
+    AddressType, AdvertisingType, ConnectableOwnAddressType, IoCapability,
+    NonConnectableAdvertisingType, OwnAddressType, Privacy, ScanType,
+};
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::BoundedArray;
 
 vendor_command! {
@@ -16,10 +21,10 @@ vendor_command! {
     /// Advertise in limited discoverable mode for about 180 seconds, with the
     /// local name and service UUIDs in the advertising data.
     aci_gap_set_limited_discoverable => GapSetLimitedDiscoverable {
-        advertising_type: u8,
+        advertising_type: AdvertisingType,
         advertising_interval_min: u16,
         advertising_interval_max: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         advertising_filter_policy: u8,
         local_name: &'a [u8],
         service_uuid_list: &'a [u8],
@@ -32,10 +37,10 @@ vendor_command! {
     /// Advertise in general discoverable mode, with the local name and service
     /// UUIDs in the advertising data.
     aci_gap_set_discoverable => GapSetDiscoverable {
-        advertising_type: u8,
+        advertising_type: AdvertisingType,
         advertising_interval_min: u16,
         advertising_interval_max: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         advertising_filter_policy: u8,
         local_name: &'a [u8],
         service_uuid_list: &'a [u8],
@@ -47,9 +52,9 @@ vendor_command! {
 vendor_command! {
     /// Advertise to a single peer with directed connectable advertising.
     aci_gap_set_direct_connectable => GapSetDirectConnectable {
-        own_address_type: u8,
+        own_address_type: ConnectableOwnAddressType,
         directed_advertising_type: u8,
-        direct_address_type: u8,
+        direct_address_type: AddressType,
         direct_address: BdAddr,
         advertising_interval_min: u16,
         advertising_interval_max: u16,
@@ -59,7 +64,7 @@ vendor_command! {
 vendor_command! {
     /// Set the input and output capabilities used in pairing.
     aci_gap_set_io_capability => GapSetIoCapability {
-        io_capability: u8,
+        io_capability: IoCapability,
     }
 }
 
@@ -75,7 +80,7 @@ vendor_command! {
         max_encryption_key_size: u8,
         use_fixed_pin: u8,
         fixed_pin: u32,
-        identity_address_type: u8,
+        identity_address_type: AddressType,
     }
 }
 
@@ -108,7 +113,7 @@ vendor_command! {
     /// characteristics.
     aci_gap_init => GapInit {
         role: u8,
-        privacy_enabled: u8,
+        privacy_enabled: Privacy,
         device_name_char_len: u8,
     } -> GapService {
         service_handle: u16,
@@ -120,8 +125,8 @@ vendor_command! {
 vendor_command! {
     /// Advertise without accepting connections.
     aci_gap_set_non_connectable => GapSetNonConnectable {
-        advertising_event_type: u8,
-        own_address_type: u8,
+        advertising_event_type: NonConnectableAdvertisingType,
+        own_address_type: OwnAddressType,
     }
 }
 
@@ -130,7 +135,7 @@ vendor_command! {
     aci_gap_set_undirected_connectable => GapSetUndirectedConnectable {
         advertising_interval_min: u16,
         advertising_interval_max: u16,
-        own_address_type: u8,
+        own_address_type: ConnectableOwnAddressType,
         adv_filter_policy: u8,
     }
 }
@@ -206,7 +211,7 @@ vendor_command! {
     aci_gap_start_limited_discovery_proc => GapStartLimitedDiscoveryProc {
         le_scan_interval: u16,
         le_scan_window: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         filter_duplicates: bool,
     }
 }
@@ -216,7 +221,7 @@ vendor_command! {
     aci_gap_start_general_discovery_proc => GapStartGeneralDiscoveryProc {
         le_scan_interval: u16,
         le_scan_window: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         filter_duplicates: bool,
     }
 }
@@ -242,7 +247,7 @@ vendor_command! {
     aci_gap_start_auto_connection_establish_proc => GapStartAutoConnectionEstablishProc {
         le_scan_interval: u16,
         le_scan_window: u16,
-        own_address_type: u8,
+        own_address_type: ConnectableOwnAddressType,
         conn_interval_min: u16,
         conn_interval_max: u16,
         conn_latency: u16,
@@ -259,10 +264,10 @@ vendor_command! {
 vendor_command! {
     /// Scan for connectable peers, reporting them for the host to select one.
     aci_gap_start_general_connection_establish_proc => GapStartGeneralConnectionEstablishProc {
-        le_scan_type: u8,
+        le_scan_type: ScanType,
         le_scan_interval: u16,
         le_scan_window: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         scanning_filter_policy: u8,
         filter_duplicates: bool,
     }
@@ -271,10 +276,10 @@ vendor_command! {
 vendor_command! {
     /// Scan for the listed peers and connect to the one the host selects.
     aci_gap_start_selective_connection_establish_proc => GapStartSelectiveConnectionEstablishProc {
-        le_scan_type: u8,
+        le_scan_type: ScanType,
         le_scan_interval: u16,
         le_scan_window: u16,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         scanning_filter_policy: u8,
         filter_duplicates: bool,
         #[wire(before = "1.17.0")]
@@ -289,9 +294,9 @@ vendor_command! {
     aci_gap_create_connection => GapCreateConnection {
         le_scan_interval: u16,
         le_scan_window: u16,
-        peer_address_type: u8,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
-        own_address_type: u8,
+        own_address_type: ConnectableOwnAddressType,
         conn_interval_min: u16,
         conn_interval_max: u16,
         conn_latency: u16,
@@ -344,8 +349,8 @@ vendor_command! {
     aci_gap_set_broadcast_mode => GapSetBroadcastMode {
         advertising_interval_min: u16,
         advertising_interval_max: u16,
-        advertising_type: u8,
-        own_address_type: u8,
+        advertising_type: NonConnectableAdvertisingType,
+        own_address_type: OwnAddressType,
         adv_data: &'a [u8],
         #[wire(before = "1.17.0")]
         whitelist_entry: &'a [WhitelistEntry],
@@ -359,8 +364,8 @@ vendor_command! {
     aci_gap_start_observation_proc => GapStartObservationProc {
         le_scan_interval: u16,
         le_scan_window: u16,
-        le_scan_type: u8,
-        own_address_type: u8,
+        le_scan_type: ScanType,
+        own_address_type: OwnAddressType,
         filter_duplicates: bool,
         scanning_filter_policy: u8,
     }
@@ -386,7 +391,7 @@ vendor_command! {
     /// peer's identity address. Named `aci_gap_is_device_bonded` in earlier
     /// releases.
     aci_gap_check_bonded_device => GapCheckBondedDevice {
-        peer_address_type: u8,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
     } -> GapBondedIdentity {
         #[wire(since = "1.22.0")]
@@ -429,7 +434,7 @@ vendor_command! {
     /// Set the local or remote out-of-band pairing data of the given type.
     aci_gap_set_oob_data => GapSetOobData {
         device_type: u8,
-        address_type: u8,
+        address_type: AddressType,
         address: BdAddr,
         oob_data_type: u8,
         oob_data_len: u8,
@@ -468,7 +473,7 @@ vendor_command! {
 vendor_command! {
     /// Remove a bonded device from the security database.
     aci_gap_remove_bonded_device => GapRemoveBondedDevice {
-        peer_identity_address_type: u8,
+        peer_identity_address_type: AddressType,
         peer_identity_address: BdAddr,
     }
 }
@@ -508,7 +513,7 @@ vendor_command! {
         adv_interval_min: u16,
         adv_interval_max: u16,
         adv_channel_map: u8,
-        own_address_type: u8,
+        own_address_type: AddressType,
         own_address: BdAddr,
         pa_level: u8,
     }
@@ -535,8 +540,8 @@ vendor_command! {
         primary_adv_interval_min: u32,
         primary_adv_interval_max: u32,
         primary_adv_channel_map: u8,
-        own_address_type: u8,
-        peer_address_type: u8,
+        own_address_type: OwnAddressType,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
         adv_filter_policy: u8,
         adv_tx_power: i8,
@@ -619,7 +624,7 @@ vendor_command! {
     aci_gap_ext_start_scan => GapExtStartScan {
         scan_mode: u8,
         procedure: u8,
-        own_address_type: u8,
+        own_address_type: OwnAddressType,
         filter_duplicates: u8,
         duration: u16,
         period: u16,
@@ -649,8 +654,8 @@ vendor_command! {
     aci_gap_ext_create_connection => GapExtCreateConnection {
         initiating_mode: u8,
         procedure: u8,
-        own_address_type: u8,
-        peer_address_type: u8,
+        own_address_type: ConnectableOwnAddressType,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
         advertising_handle: u8,
         subevent: u8,
@@ -764,9 +769,18 @@ mod tests {
 
     #[test]
     fn two_names_fit_their_capacities_but_not_the_parameters_together() {
-        let command =
-            GapSetDiscoverable::try_new(0, 0x20, 0x30, 0, 0, b"ab", &[0x02, 0x0A, 0x18], 6, 7)
-                .unwrap();
+        let command = GapSetDiscoverable::try_new(
+            AdvertisingType::ConnectableUndirected,
+            0x20,
+            0x30,
+            OwnAddressType::Public,
+            0,
+            b"ab",
+            &[0x02, 0x0A, 0x18],
+            6,
+            7,
+        )
+        .unwrap();
         assert_eq!(GapSetDiscoverable::OPCODE.to_raw(), 0xFC83);
         let (bytes, len) = encode(&command);
         assert_eq!(
@@ -777,11 +791,34 @@ mod tests {
             ]
         );
         let name = [0; 242];
-        let error =
-            GapSetDiscoverable::try_new(0, 0x20, 0x30, 0, 0, &name, &name[..10], 6, 7).unwrap_err();
+        let error = GapSetDiscoverable::try_new(
+            AdvertisingType::ConnectableUndirected,
+            0x20,
+            0x30,
+            OwnAddressType::Public,
+            0,
+            &name,
+            &name[..10],
+            6,
+            7,
+        )
+        .unwrap_err();
         assert_eq!(error.field, "parameters");
         assert_eq!(error.len, 265);
-        assert!(GapSetDiscoverable::try_new(0, 0x20, 0x30, 0, 0, &name, &[], 6, 7).is_ok());
+        assert!(
+            GapSetDiscoverable::try_new(
+                AdvertisingType::ConnectableUndirected,
+                0x20,
+                0x30,
+                OwnAddressType::Public,
+                0,
+                &name,
+                &[],
+                6,
+                7
+            )
+            .is_ok()
+        );
     }
 
     #[cfg(not(any(
@@ -802,7 +839,7 @@ mod tests {
         let command = GapExtStartScan::new(
             0,
             1,
-            0,
+            OwnAddressType::Public,
             0,
             0,
             0,
@@ -831,7 +868,7 @@ mod tests {
 
     #[test]
     fn init_returns_the_gap_service_handles() {
-        let (bytes, len) = encode(&GapInit::new(0x01, 0, 7));
+        let (bytes, len) = encode(&GapInit::new(0x01, Privacy::Disabled, 7));
         assert_eq!(bytes[..len], [0x8A, 0xFC, 3, 0x01, 0, 7]);
         let service = <GapInit as SyncCmd>::Return::from_hci_bytes_complete(&[
             0x01, 0x00, 0x02, 0x00, 0x03, 0x00,
@@ -931,8 +968,8 @@ mod tests {
         let command = GapExtCreateConnection::new(
             0,
             0,
-            0,
-            0,
+            ConnectableOwnAddressType::Public,
+            AddressType::Public,
             BdAddr::new([1, 2, 3, 4, 5, 6]),
             0xFF,
             0xFF,
@@ -979,9 +1016,16 @@ mod tests {
     #[test]
     fn counted_structures_encode_element_by_element() {
         let peers = peers();
-        let command =
-            GapStartSelectiveConnectionEstablishProc::try_new(1, 0x10, 0x10, 0, 0, true, &peers)
-                .unwrap();
+        let command = GapStartSelectiveConnectionEstablishProc::try_new(
+            ScanType::Active,
+            0x10,
+            0x10,
+            OwnAddressType::Public,
+            0,
+            true,
+            &peers,
+        )
+        .unwrap();
         assert_eq!(
             GapStartSelectiveConnectionEstablishProc::OPCODE.to_raw(),
             0xFC9B
@@ -995,8 +1039,16 @@ mod tests {
         );
         let too_many = [peers[0]; 36];
         assert!(
-            GapStartSelectiveConnectionEstablishProc::try_new(1, 0x10, 0x10, 0, 0, true, &too_many)
-                .is_err()
+            GapStartSelectiveConnectionEstablishProc::try_new(
+                ScanType::Active,
+                0x10,
+                0x10,
+                OwnAddressType::Public,
+                0,
+                true,
+                &too_many,
+            )
+            .is_err()
         );
     }
 

@@ -315,3 +315,59 @@ pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<
     }
     Ok(())
 }
+
+/// How an item's label restricts it to one MCU of the documented family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Mcu {
+    Stm32wb,
+    Stm32wba,
+}
+
+/// The MCU a phrase such as `only for STM32WB` names, if it ends right after
+/// the name, as in `(only for STM32WB)` or `with STM32WBA`.
+fn mcu_after(label: &str, phrase: &str) -> Option<Mcu> {
+    let rest = &label[label.find(phrase)? + phrase.len()..];
+    let rest = rest.strip_prefix(" STM32WB")?;
+    let (mcu, rest) = match rest.strip_prefix('A') {
+        Some(rest) => (Mcu::Stm32wba, rest),
+        None => (Mcu::Stm32wb, rest),
+    };
+    rest.chars()
+        .next()
+        .is_none_or(|next| !next.is_ascii_alphanumeric() && next != ' ')
+        .then_some(mcu)
+}
+
+impl Domain {
+    /// The inclusive ranges of values an STM32WB binary accepts: every item,
+    /// except those whose label says they are not supported on STM32WB or
+    /// only on STM32WBA. A label naming any other condition, such as a stack
+    /// variant, is an error rather than a guess, and so are flags, which
+    /// document bits rather than values.
+    pub fn stm32wb_ranges(&self) -> Result<Vec<(i64, i64)>, String> {
+        if self.kind == DomainKind::Flags {
+            return Err("its documentation lists bits rather than values".to_owned());
+        }
+        let mut ranges = Vec::new();
+        for item in &self.items {
+            let label = item.label.as_deref().unwrap_or_default();
+            let mcu = mcu_after(label, "not supported on")
+                .map(|mcu| (mcu, false))
+                .or_else(|| mcu_after(label, "only for").map(|mcu| (mcu, true)))
+                .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)));
+            let applies = match mcu {
+                Some((mcu, only)) => (mcu == Mcu::Stm32wb) == only,
+                None if label.contains("STM32WB") || label.contains("variant") => {
+                    return Err(format!(
+                        "{item} names a condition the catalog cannot interpret"
+                    ));
+                }
+                None => true,
+            };
+            if applies {
+                ranges.push((item.first, item.last));
+            }
+        }
+        Ok(ranges)
+    }
+}

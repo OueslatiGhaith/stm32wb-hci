@@ -262,6 +262,19 @@ impl<'de> Deserialize<'de> for Bearer {
 }
 
 impl Command {
+    /// The documented values of a parameter, or a return parameter if
+    /// `returned`, in `release`.
+    pub fn domain(&self, member: &str, returned: bool, release: Version) -> Option<&Domain> {
+        self.domains
+            .iter()
+            .find(|domain| {
+                domain.member == member
+                    && domain.returned == returned
+                    && domain.releases.contains(release)
+            })
+            .map(|domain| &domain.domain)
+    }
+
     /// The name in the newest release that defines this command.
     pub fn name(&self) -> &str {
         latest_name(&self.names)

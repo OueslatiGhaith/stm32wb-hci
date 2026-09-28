@@ -11,6 +11,7 @@ pub mod gatt;
 pub mod general;
 pub mod hal;
 pub mod l2cap;
+pub mod values;
 
 stm32wb_hci_macros::vendor_events! {
     /// Every ST vendor event the selected target emits. Decode one from a

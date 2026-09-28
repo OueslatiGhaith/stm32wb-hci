@@ -936,3 +936,38 @@ fn distinct_targets_cover_every_interface_once() {
     );
     assert!(targets.len() < bundled.catalog.releases.len() * Profile::ALL.len());
 }
+
+#[test]
+fn stm32wb_ranges_follow_the_mcu_conditions() {
+    let domain = |kind, items: &[&str]| Domain {
+        kind,
+        items: items.iter().map(|item| item.parse().unwrap()).collect(),
+        unit_us: None,
+    };
+    let values = domain(
+        DomainKind::Values,
+        &[
+            "0x00: 1M PHY",
+            "0x01: Coded PHY [not supported on STM32WB]",
+            "0x02: Periodic advertising [only for STM32WBA]",
+            "0x03: Scan channel map (only for STM32WB)",
+            "0x0004..=0x5DC0: extended advertising with STM32WB",
+            "0x0004..=0xFFFF: extended advertising with STM32WBA",
+        ],
+    );
+    assert_eq!(
+        values.stm32wb_ranges().unwrap(),
+        [(0, 0), (3, 3), (4, 0x5DC0)]
+    );
+    for label in [
+        "0x00: Max data length (only for STM32WB full stack)",
+        "0x00..=0x25: for BO variant",
+    ] {
+        let error = domain(DomainKind::Values, &[label])
+            .stm32wb_ranges()
+            .unwrap_err();
+        assert!(error.contains("cannot interpret"), "{error}");
+    }
+    let flags = domain(DomainKind::Flags, &["0x01: Peripheral"]);
+    assert!(flags.stm32wb_ranges().unwrap_err().contains("bits"));
+}

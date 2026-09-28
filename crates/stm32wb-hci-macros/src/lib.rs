@@ -90,6 +90,12 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// it. Each set of fields that exist together becomes its own declaration,
 /// compiled only for the releases that have exactly those fields.
 ///
+/// A parameter whose type stands for some values, such as a `bool` or a type
+/// `wire_values!` declares, is checked against the values the catalog
+/// documents for its member on STM32WB, in every release: each value of the
+/// type must be documented, and a member documenting no values takes an
+/// integer. Integers stand for no values and are not checked.
+///
 /// A `u16` member the catalog documents as addressing an ATT bearer is
 /// declared `AttBearer`, and no other member is; its enhanced range must be
 /// the selected release's. A member that only addresses a bearer from a
