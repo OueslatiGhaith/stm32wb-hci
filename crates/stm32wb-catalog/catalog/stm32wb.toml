@@ -5120,9 +5120,16 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5140,13 +5147,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "UUID_Type: u8",
     "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5164,13 +5182,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Start_Handle: u16",
     "End_Handle: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5188,13 +5217,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Start_Handle: u16",
     "End_Handle: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5212,7 +5252,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5221,6 +5261,19 @@ params = [
     "UUID_Type: u8",
     "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5238,13 +5291,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Char_Handle: u16",
     "End_Handle: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Char_Handle: u16",
+    "End_Handle: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5262,12 +5326,22 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Attr_Handle: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5285,7 +5359,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5294,6 +5368,19 @@ params = [
     "UUID_Type: u8",
     "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 2 => 16, _ => 2 }",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5311,13 +5398,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Attr_Handle: u16",
     "Val_Offset: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Val_Offset: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5335,13 +5433,27 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Number_of_Handles: u8",
     "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[commands.definitions.structs]
+Handle_Entry_t = ["Handle: u16"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Number_of_Handles: u8",
+    "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [commands.definitions.structs]
 Handle_Entry_t = ["Handle: u16"]
@@ -5362,7 +5474,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5370,6 +5482,18 @@ params = [
     "Attribute_Val_Length: u8",
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5387,7 +5511,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5396,6 +5520,19 @@ params = [
     "Attribute_Val_Length: u8",
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Val_Offset: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5413,7 +5550,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5422,6 +5559,19 @@ params = [
     "Attribute_Val_Length: u8",
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Val_Offset: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5439,7 +5589,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5448,6 +5598,19 @@ params = [
     "Attribute_Val_Length: u8",
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Val_Offset: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5465,13 +5628,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Attr_Handle: u16",
     "Val_Offset: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Val_Offset: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5489,7 +5663,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
@@ -5497,6 +5671,18 @@ params = [
     "Attribute_Val_Length: u8",
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5514,12 +5700,22 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Attr_Handle: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5537,7 +5733,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-complete"
 params = [
     "Connection_Handle: u16",
@@ -5546,6 +5742,19 @@ params = [
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
 ]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 250)",
+]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5589,10 +5798,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 completion = "command-complete"
 params = ["Connection_Handle: u16"]
 returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.16.0"
+completion = "command-complete"
+params = ["Connection_Handle: u16"]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-complete"
+params = ["Connection_Handle: u16"]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5615,7 +5838,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-complete"
 params = [
     "Connection_Handle: u16",
@@ -5626,6 +5849,21 @@ params = [
     "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
 ]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Write_status: u8",
+    "Error_Code: u8",
+    "Attribute_Val_Length: u8",
+    "Attribute_Val: [u8; Attribute_Val_Length] (capacity 248)",
+]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5648,10 +5886,18 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-complete"
 params = ["Connection_Handle: u16"]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-complete"
+params = ["Connection_Handle: u16"]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands.definitions]]
 releases = "1.24.0"
@@ -5663,6 +5909,7 @@ params = [
     "Attr_Handle: u16",
 ]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5767,7 +6014,7 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 completion = "command-complete"
 params = [
     "Conn_Handle_To_Notify: u16",
@@ -5780,6 +6027,38 @@ params = [
     "Value: [u8; Value_Length] (capacity 243)",
 ]
 returns = ["Status: u8"]
+
+[[commands.definitions]]
+releases = "1.16.0"
+completion = "command-complete"
+params = [
+    "Conn_Handle_To_Notify: u16",
+    "Service_Handle: u16",
+    "Char_Handle: u16",
+    "Update_Type: u8",
+    "Char_Length: u16",
+    "Value_Offset: u16",
+    "Value_Length: u8",
+    "Value: [u8; Value_Length] (capacity 243)",
+]
+returns = ["Status: u8"]
+bearers = ["Conn_Handle_To_Notify: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "Conn_Handle_To_Notify: u16",
+    "Service_Handle: u16",
+    "Char_Handle: u16",
+    "Update_Type: u8",
+    "Char_Length: u16",
+    "Value_Offset: u16",
+    "Value_Length: u8",
+    "Value: [u8; Value_Length] (capacity 243)",
+]
+returns = ["Status: u8"]
+bearers = ["Conn_Handle_To_Notify: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5798,13 +6077,24 @@ profiles = [
 ]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.23.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-complete"
 params = [
     "Connection_Handle: u16",
     "Error_Code: u8",
 ]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.23.0"
+completion = "command-complete"
+params = [
+    "Connection_Handle: u16",
+    "Error_Code: u8",
+]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[commands]]
 scope = "vendor"
@@ -5867,7 +6157,7 @@ releases = "1.15.0..=1.24.0"
 profiles = ["full-extended"]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-complete"
 params = [
     "Connection_Handle: u16",
@@ -5875,6 +6165,21 @@ params = [
     "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
 ]
 returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[commands.definitions.structs]
+Handle_Entry_t = ["Handle: u16"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-complete"
+params = [
+    "Connection_Handle: u16",
+    "Number_of_Handles: u8",
+    "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
+]
+returns = ["Status: u8"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [commands.definitions.structs]
 Handle_Entry_t = ["Handle: u16"]
@@ -5892,13 +6197,27 @@ releases = "1.15.0..=1.24.0"
 profiles = ["full-extended"]
 
 [[commands.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 completion = "command-status"
 params = [
     "Connection_Handle: u16",
     "Number_of_Handles: u8",
     "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[commands.definitions.structs]
+Handle_Entry_t = ["Handle: u16"]
+
+[[commands.definitions]]
+releases = "1.17.0..=1.24.0"
+completion = "command-status"
+params = [
+    "Connection_Handle: u16",
+    "Number_of_Handles: u8",
+    "Handle_Entry: [Handle_Entry_t; Number_of_Handles] (capacity 126)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [commands.definitions.structs]
 Handle_Entry_t = ["Handle: u16"]
@@ -8681,7 +9000,7 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attr_Handle: u16",
@@ -8689,6 +9008,18 @@ payload = [
     "Attr_Data_Length: u16",
     "Attr_Data: [u8; Attr_Data_Length] (capacity 245)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attr_Handle: u16",
+    "Offset: u16",
+    "Attr_Data_Length: u16",
+    "Attr_Data: [u8; Attr_Data_Length] (capacity 245)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8707,8 +9038,14 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8749,13 +9086,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Format: u8",
     "Event_Data_Length: u8",
     "Handle_UUID_Pair: [u8; Event_Data_Length] (capacity 249)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Format: u8",
+    "Event_Data_Length: u8",
+    "Handle_UUID_Pair: [u8; Event_Data_Length] (capacity 249)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8773,12 +9121,28 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Num_of_Handle_Pair: u8",
     "Attribute_Group_Handle_Pair: [Attribute_Group_Handle_Pair_t; Num_of_Handle_Pair] (capacity 62)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[events.definitions.structs]
+Attribute_Group_Handle_Pair_t = [
+    "Found_Attribute_Handle: u16",
+    "Group_End_Handle: u16",
+]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Num_of_Handle_Pair: u8",
+    "Attribute_Group_Handle_Pair: [Attribute_Group_Handle_Pair_t; Num_of_Handle_Pair] (capacity 62)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [events.definitions.structs]
 Attribute_Group_Handle_Pair_t = [
@@ -8802,13 +9166,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Handle_Value_Pair_Length: u8",
     "Data_Length: u8",
     "Handle_Value_Pair_Data: [u8; Data_Length] (capacity 249)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Handle_Value_Pair_Length: u8",
+    "Data_Length: u8",
+    "Handle_Value_Pair_Data: [u8; Data_Length] (capacity 249)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8826,12 +9201,22 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Event_Data_Length: u8",
     "Attribute_Value: [u8; Event_Data_Length] (capacity 250)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Event_Data_Length: u8",
+    "Attribute_Value: [u8; Event_Data_Length] (capacity 250)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8849,12 +9234,22 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Event_Data_Length: u8",
     "Attribute_Value: [u8; Event_Data_Length] (capacity 250)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Event_Data_Length: u8",
+    "Attribute_Value: [u8; Event_Data_Length] (capacity 250)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8872,12 +9267,22 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Event_Data_Length: u8",
     "Set_Of_Values: [u8; Event_Data_Length] (capacity 250)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Event_Data_Length: u8",
+    "Set_Of_Values: [u8; Event_Data_Length] (capacity 250)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8895,13 +9300,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Data_Length: u8",
     "Data_Length: u8",
     "Attribute_Data_List: [u8; Data_Length] (capacity 249)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Data_Length: u8",
+    "Data_Length: u8",
+    "Attribute_Data_List: [u8; Data_Length] (capacity 249)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8919,7 +9335,7 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
@@ -8927,6 +9343,18 @@ payload = [
     "Part_Attribute_Value_Length: u8",
     "Part_Attribute_Value: [u8; Part_Attribute_Value_Length] (capacity 246)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+    "Part_Attribute_Value_Length: u8",
+    "Part_Attribute_Value: [u8; Part_Attribute_Value_Length] (capacity 246)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8944,8 +9372,14 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8963,13 +9397,33 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
     "Attribute_Value_Length: u8",
     "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
 ]
+
+[[events.definitions]]
+releases = "1.16.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Attribute_Value_Length: u8",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Attribute_Value_Length: u8",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -8987,13 +9441,33 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
     "Attribute_Value_Length: u8",
     "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
 ]
+
+[[events.definitions]]
+releases = "1.16.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Attribute_Value_Length: u8",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Attribute_Value_Length: u8",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9011,11 +9485,20 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Error_Code: u8",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Error_Code: u8",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9033,13 +9516,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Req_Opcode: u8",
     "Attribute_Handle: u16",
     "Error_Code: u8",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Req_Opcode: u8",
+    "Attribute_Handle: u16",
+    "Error_Code: u8",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9057,13 +9551,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
     "Attribute_Value_Length: u8",
     "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Attribute_Value_Length: u8",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9082,13 +9587,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
     "Data_Length: u8",
     "Data: [u8; Data_Length] (capacity 248)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Data_Length: u8",
+    "Data: [u8; Data_Length] (capacity 248)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9107,12 +9623,22 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
     "Offset: u16",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9131,12 +9657,25 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Number_of_Handles: u8",
     "Handle_Item: [Handle_Item_t; Number_of_Handles] (capacity 125)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[events.definitions.structs]
+Handle_Item_t = ["Handle: u16"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Number_of_Handles: u8",
+    "Handle_Item: [Handle_Item_t; Number_of_Handles] (capacity 125)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [events.definitions.structs]
 Handle_Item_t = ["Handle: u16"]
@@ -9181,8 +9720,18 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 payload = ["Connection_Handle: u16"]
+
+[[events.definitions]]
+releases = "1.16.0"
+payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = ["Connection_Handle: u16"]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9201,7 +9750,7 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
@@ -9209,6 +9758,18 @@ payload = [
     "Data_Length: u8",
     "Data: [u8; Data_Length] (capacity 246)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+    "Data_Length: u8",
+    "Data: [u8; Data_Length] (capacity 246)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9252,13 +9813,24 @@ releases = "1.15.0..=1.24.0"
 profiles = ["full-extended"]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Offset: u16",
     "Data_Length: u16",
     "Data: [u8; Data_Length] (capacity 247)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Offset: u16",
+    "Data_Length: u16",
+    "Data: [u8; Data_Length] (capacity 247)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9296,13 +9868,24 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Offset: u16",
     "Event_Data_Length: u16",
     "Attribute_Value: [u8; Event_Data_Length] (capacity 247)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Offset: u16",
+    "Event_Data_Length: u16",
+    "Attribute_Value: [u8; Event_Data_Length] (capacity 247)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9320,7 +9903,7 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
@@ -9328,6 +9911,28 @@ payload = [
     "Attribute_Value_Length: u16",
     "Attribute_Value: [u8; Attribute_Value_Length] (capacity 245)",
 ]
+
+[[events.definitions]]
+releases = "1.16.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+    "Attribute_Value_Length: u16",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 245)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+    "Attribute_Value_Length: u16",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 245)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"
@@ -9345,7 +9950,7 @@ profiles = [
 ]
 
 [[events.definitions]]
-releases = "1.15.0..=1.24.0"
+releases = "1.15.0..=1.16.0"
 payload = [
     "Connection_Handle: u16",
     "Attribute_Handle: u16",
@@ -9353,6 +9958,18 @@ payload = [
     "Attribute_Value_Length: u16",
     "Attribute_Value: [u8; Attribute_Value_Length] (capacity 245)",
 ]
+bearers = ["Connection_Handle: 0xEA00..=0xEA1F"]
+
+[[events.definitions]]
+releases = "1.17.0..=1.24.0"
+payload = [
+    "Connection_Handle: u16",
+    "Attribute_Handle: u16",
+    "Offset: u16",
+    "Attribute_Value_Length: u16",
+    "Attribute_Value: [u8; Attribute_Value_Length] (capacity 245)",
+]
+bearers = ["Connection_Handle: 0xEA00..=0xEA3F"]
 
 [[events]]
 scope = "vendor"

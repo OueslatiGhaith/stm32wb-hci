@@ -209,6 +209,7 @@ fn set_discoverable(profiles: &[Profile], params: Layout) -> SnapshotCommand {
         params,
         returns: Some(fields(&["Status: u8"])),
         structs: Structs::new(),
+        bearers: Vec::new(),
     }
 }
 
@@ -228,6 +229,7 @@ fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
             profiles: [Profile::ALL.as_slice(), &[Profile::Full]].concat(),
             payload: Layout::Unresolved("field sysevt_ready_rsp is an enum".into()),
             structs: Structs::new(),
+            bearers: Vec::new(),
         }],
     }
 }
@@ -565,6 +567,102 @@ fn bundled_system_commands_keep_their_history() {
     let segments = bundled.command_segments("SHCI_C2_FUS_GetState").unwrap();
     let returns = segments[0].entry.returns.unwrap().fields.unwrap();
     assert_eq!(returns.len(), 2);
+}
+
+#[test]
+fn bearers_are_written_with_their_range() {
+    let bearer = "Connection_Handle: 0xEA00..=0xEA3F"
+        .parse::<Bearer>()
+        .unwrap();
+    assert_eq!(
+        bearer,
+        Bearer {
+            member: "Connection_Handle".into(),
+            first: 0xEA00,
+            last: 0xEA3F,
+        }
+    );
+    assert_eq!(bearer.to_string(), "Connection_Handle: 0xEA00..=0xEA3F");
+    for malformed in [
+        "Connection_Handle",
+        "Connection_Handle: 0xea00..=0xea3f",
+        "Connection_Handle: 0xEA00...0xEA3F",
+    ] {
+        assert!(malformed.parse::<Bearer>().is_err(), "{malformed}");
+    }
+}
+
+#[test]
+fn validation_checks_bearer_members() {
+    let params = fields(&["Connection_Handle: u16", "Attr_Handle: u16", "Offset: u8"]);
+    let check = |bearer: &str| validate_bearers(&params, &[bearer.parse().unwrap()]);
+    assert!(check("Connection_Handle: 0xEA00..=0xEA3F").is_ok());
+    let error = check("Offset: 0xEA00..=0xEA3F").unwrap_err().to_string();
+    assert!(error.contains("Offset is not a u16 member"), "{error}");
+    let error = check("Missing: 0xEA00..=0xEA3F").unwrap_err().to_string();
+    assert!(error.contains("Missing is not a u16 member"), "{error}");
+    let error = check("Connection_Handle: 0xEA10..=0xEA3F")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not 0xEA00 and channel indexes"), "{error}");
+    let error = check("Connection_Handle: 0xEA00..=0xEB00")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not 0xEA00 and channel indexes"), "{error}");
+
+    let bearer = "Connection_Handle: 0xEA00..=0xEA1F"
+        .parse::<Bearer>()
+        .unwrap();
+    let twice = [bearer.clone(), bearer];
+    let error = validate_bearers(&params, &twice).unwrap_err().to_string();
+    assert!(error.contains("listed twice"), "{error}");
+    let unresolved = Layout::Unresolved("procedural".into());
+    assert!(validate_bearers(&unresolved, &twice[..1]).is_err());
+}
+
+/// The GATT client took enhanced ATT bearers on 32 channels, then 64 from
+/// 1.17.0; the server side confirms and notifies on them from 1.16.0.
+#[test]
+fn bundled_bearers_follow_the_documentation() {
+    let catalog = &bundled().unwrap().catalog;
+    let bearers = |name: &str, release: Version| {
+        catalog
+            .command_named(name)
+            .unwrap()
+            .definition_at(release)
+            .unwrap()
+            .bearers
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    let (v1_15, v1_16, v1_24) = (
+        Version::new(1, 15, 0),
+        Version::new(1, 16, 0),
+        Version::new(1, 24, 0),
+    );
+    assert_eq!(
+        bearers("aci_gatt_read_char_value", v1_15),
+        ["Connection_Handle: 0xEA00..=0xEA1F"]
+    );
+    assert_eq!(
+        bearers("aci_gatt_read_char_value", v1_24),
+        ["Connection_Handle: 0xEA00..=0xEA3F"]
+    );
+    assert!(bearers("aci_gatt_confirm_indication", v1_15).is_empty());
+    assert_eq!(
+        bearers("aci_gatt_confirm_indication", v1_16),
+        ["Connection_Handle: 0xEA00..=0xEA1F"]
+    );
+    assert_eq!(
+        bearers("aci_gatt_update_char_value_ext", v1_24),
+        ["Conn_Handle_To_Notify: 0xEA00..=0xEA3F"]
+    );
+    assert!(bearers("aci_gap_terminate", v1_24).is_empty());
+
+    let event = catalog.event_named("aci_gatt_notification_event").unwrap();
+    assert!(event.definition_at(v1_15).unwrap().bearers.is_empty());
+    assert_eq!(event.definition_at(v1_24).unwrap().bearers.len(), 1);
 }
 
 fn ranges<T>(segments: &[Segment<'_, T>]) -> Vec<String> {

@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Availability, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion, Error,
-    Event, EventDefinition, EventScope, Family, Layout, Named, Platform, Profile, ReleaseRange,
-    ReleaseSource, Structs, Version,
+    Availability, Bearer, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion,
+    Error, Event, EventDefinition, EventScope, Family, Layout, Named, Platform, Profile,
+    ReleaseRange, ReleaseSource, Structs, Version,
 };
 
 /// Everything extracted from one tagged release.
@@ -33,6 +33,7 @@ pub struct SnapshotCommand {
     pub params: Layout,
     pub returns: Option<Layout>,
     pub structs: Structs,
+    pub bearers: Vec<Bearer>,
 }
 
 #[derive(Clone, Debug)]
@@ -43,6 +44,7 @@ pub struct SnapshotEvent {
     pub profiles: Vec<Profile>,
     pub payload: Layout,
     pub structs: Structs,
+    pub bearers: Vec<Bearer>,
 }
 
 /// Coalesce snapshots into one catalog. Identical facts in consecutive
@@ -131,18 +133,22 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                             command.params.clone(),
                             command.returns.clone(),
                             command.structs.clone(),
+                            command.bearers.clone(),
                         )
                     }),
                     &versions,
                 )
                 .into_iter()
                 .map(
-                    |(releases, (completion, params, returns, structs))| CommandDefinition {
-                        releases,
-                        completion,
-                        params,
-                        returns,
-                        structs,
+                    |(releases, (completion, params, returns, structs, bearers))| {
+                        CommandDefinition {
+                            releases,
+                            completion,
+                            params,
+                            returns,
+                            structs,
+                            bearers,
+                        }
                     },
                 )
                 .collect(),
@@ -157,15 +163,20 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                 availability: available(&entries, &versions, |event| event.profiles.clone()),
                 definitions: runs(
                     &project(&entries, |event| {
-                        (event.payload.clone(), event.structs.clone())
+                        (
+                            event.payload.clone(),
+                            event.structs.clone(),
+                            event.bearers.clone(),
+                        )
                     }),
                     &versions,
                 )
                 .into_iter()
-                .map(|(releases, (payload, structs))| EventDefinition {
+                .map(|(releases, (payload, structs, bearers))| EventDefinition {
                     releases,
                     payload,
                     structs,
+                    bearers,
                 })
                 .collect(),
             })

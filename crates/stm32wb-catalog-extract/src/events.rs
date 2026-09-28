@@ -5,6 +5,8 @@
 //! packet to `<event>_rp0` and forwards its members to the callback defines
 //! the payload as that packed structure. Anything more (loops, pointer
 //! arithmetic) decodes the payload procedurally and is left unresolved.
+//! Parameters addressing an ATT bearer come from the doc comment of the
+//! callback in `ble_events.h`, as for commands.
 //!
 //! Event payloads carry no code relating a variable buffer to its count, so
 //! one rule of ST's generator is applied: a buffer sized by
@@ -15,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit};
-use stm32wb_catalog::{EventScope, Field, FieldType, Layout, Structs};
+use stm32wb_catalog::{Bearer, EventScope, Field, FieldType, Layout, Structs};
 
 use crate::c::{self, CRecord, CType, descendants, int_value, member, strip};
 
@@ -26,6 +28,8 @@ pub struct ExtractedEvent {
     pub name: String,
     pub payload: Layout,
     pub structs: Structs,
+    /// Parameters documented to accept an enhanced ATT bearer.
+    pub bearers: Vec<Bearer>,
 }
 
 const TABLES: [(&str, EventScope); 3] = [
@@ -39,6 +43,15 @@ pub fn extract(
     records: &BTreeMap<String, CRecord>,
 ) -> Result<Vec<ExtractedEvent>, String> {
     let entities = c::main_file_entities(unit);
+    // The callbacks the process functions forward to, which `ble_events.h`
+    // declares and documents.
+    let callbacks = unit
+        .get_entity()
+        .get_children()
+        .into_iter()
+        .filter(|entity| entity.get_kind() == EntityKind::FunctionDecl)
+        .filter_map(|entity| Some((entity.get_name()?, entity)))
+        .collect::<BTreeMap<_, _>>();
     let functions = entities
         .iter()
         .filter(|entity| entity.get_kind() == EntityKind::FunctionDecl && entity.is_definition())
@@ -83,12 +96,17 @@ pub fn extract(
                     structs.clear();
                     Layout::Unresolved(reason)
                 });
+            let callback = callbacks
+                .get(&name)
+                .ok_or_else(|| format!("the callback {name} is not declared"))?;
+            let bearers = c::bearers(*callback).map_err(|error| format!("{name}: {error}"))?;
             events.push(ExtractedEvent {
                 scope,
                 code,
                 name,
                 payload,
                 structs,
+                bearers,
             });
         }
     }

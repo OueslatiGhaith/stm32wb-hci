@@ -507,3 +507,67 @@ uint32_t LocalInformation(void) { return 0; }
         Layout::Unresolved(reason) if reason.contains("written at [1]")
     ));
 }
+
+/// The generated headers document a parameter addressing an ATT bearer with
+/// both of its ranges.
+const BEARER_DOC: &str = r#"
+/**
+ * @brief ACI_SET_NAME
+ * @param Mode Mode.
+ * @param Name_Length Length of Name.
+ * @param Name Name.
+ * @param Interval Specifies the ATT bearer for which the command
+ *        applies.
+ *        Values:
+ *        - 0x0000 ... 0x0EFF: Unenhanced ATT bearer (the parameter is the
+ *          connection handle)
+ *        - 0xEA00 ... 0xEA3F: Enhanced ATT bearer (the LSB-byte of the
+ *          parameter is the connection-oriented channel index)
+ * @return Value indicating success or error code.
+ */
+tBleStatus aci_set_name(uint8_t Mode, uint8_t Name_Length, const uint8_t *Name, uint16_t Interval);
+"#;
+
+#[test]
+fn bearers_come_from_the_header_documentation() {
+    let commands = command_fixture(&format!("{BEARER_DOC}{SET_NAME}")).unwrap();
+    let bearers = commands[0]
+        .bearers
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(bearers, ["Interval: 0xEA00..=0xEA3F"]);
+
+    let commands = command_fixture(SET_NAME).unwrap();
+    assert!(commands[0].bearers.is_empty());
+}
+
+#[test]
+fn bearer_ranges_are_read_not_guessed() {
+    let bearers = c::bearers_in(
+        "/** @param Connection_Handle Values:\n *  - 0x0000 ... 0x0EFF: connection\n \
+         *  - 0xEA00 ... 0xEA1F: Enhanced ATT bearer\n * @param Offset 0xEA00 is not in it\n \
+         * @return Status */",
+    );
+    assert!(
+        bearers
+            .as_ref()
+            .unwrap_err()
+            .contains("Offset documents a value at 0xEA that is not a range"),
+        "{bearers:?}"
+    );
+
+    let bearers = c::bearers_in(
+        "/** @param Connection_Handle Values:\n *  - 0xEA00 ... 0xEA1F: Enhanced ATT bearer\n \
+         * @return 0xEA00 is not a parameter */",
+    )
+    .unwrap();
+    assert_eq!(bearers[0].to_string(), "Connection_Handle: 0xEA00..=0xEA1F");
+
+    let error =
+        c::bearers_in("/** @param Handle 0xEA00 ... 0xEA1F or 0xEA40 ... 0xEA7F */").unwrap_err();
+    assert!(
+        error.contains("several enhanced ATT bearer ranges"),
+        "{error}"
+    );
+}

@@ -16,7 +16,9 @@
 //! - a union's width is the `size` chosen by a `switch` or `?:` on a
 //!   parameter, traced back to the member holding that parameter;
 //! - return parameters come from the `<name>_rp0` structure, with variable
-//!   buffers counted by the `resp` member the copy length refers to.
+//!   buffers counted by the `resp` member the copy length refers to;
+//! - parameters addressing an ATT bearer are those the header's doc comment
+//!   for the wrapper gives an enhanced bearer range (`0xEA00 ... 0xEAnn`).
 //!
 //! Anything outside these shapes leaves the layout unresolved with a reason.
 
@@ -24,7 +26,8 @@ use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit};
 use stm32wb_catalog::{
-    CommandScope, Completion, Element, Field, FieldType, Layout, Scalar, Structs, UnionVariant,
+    Bearer, CommandScope, Completion, Element, Field, FieldType, Layout, Scalar, Structs,
+    UnionVariant,
 };
 
 use crate::c::{
@@ -41,6 +44,8 @@ pub struct ExtractedCommand {
     pub params: Layout,
     pub returns: Option<Layout>,
     pub structs: Structs,
+    /// Parameters documented to accept an enhanced ATT bearer.
+    pub bearers: Vec<Bearer>,
     /// Count relationships the code proves: (count member, buffer member,
     /// whether the count immediately precedes the buffer).
     pub proven_counts: Vec<(String, String, bool)>,
@@ -163,6 +168,7 @@ fn analyze(
         params,
         returns,
         structs: referenced,
+        bearers: c::bearers(function)?,
         proven_counts,
     })
 }

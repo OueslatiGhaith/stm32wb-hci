@@ -157,6 +157,7 @@ pub fn extract(
             params: command.params,
             returns: command.returns,
             structs: command.structs,
+            bearers: command.bearers,
         });
     }
     let mut events = Vec::new();
@@ -176,6 +177,7 @@ pub fn extract(
             profiles,
             payload: event.payload,
             structs: event.structs,
+            bearers: event.bearers,
         });
     }
     // The transport layer (`hci_tl.c`), not the event tables, consumes the
@@ -196,6 +198,7 @@ pub fn extract(
                         .to_owned(),
                 ),
                 structs: Default::default(),
+                bearers: Vec::new(),
             });
         }
     }

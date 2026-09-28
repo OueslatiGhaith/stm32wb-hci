@@ -5,7 +5,9 @@
 //! distinct source:
 //!
 //! 1. **Generated C** (`ble_*_aci.c`, `ble_hci_le.c`, `ble_events.c`,
-//!    `ble_types.h`, `shci.h`, `shci.c`): opcodes, completion kinds, and wire layouts.
+//!    `ble_types.h`, `shci.h`, `shci.c`): opcodes, completion kinds, and wire
+//!    layouts, and from the generated headers' doc comments, the parameters
+//!    addressing an ATT bearer.
 //! 2. **ST documents** (`STM32WB_BLE_Wireless_Interface.html` and each
 //!    family's `Release_Notes.html`): which stack profile supports each
 //!    command and event, and which binaries exist per MCU family.
@@ -29,7 +31,9 @@ mod target;
 mod view;
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -155,6 +159,9 @@ pub struct CommandDefinition {
     pub returns: Option<Layout>,
     #[serde(default, skip_serializing_if = "Structs::is_empty")]
     pub structs: Structs,
+    /// Parameters addressing an ATT bearer rather than only a connection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bearers: Vec<Bearer>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -176,6 +183,74 @@ pub struct EventDefinition {
     pub payload: Layout,
     #[serde(default, skip_serializing_if = "Structs::is_empty")]
     pub structs: Structs,
+    /// Parameters addressing an ATT bearer rather than only a connection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bearers: Vec<Bearer>,
+}
+
+/// A parameter addressing an ATT bearer: a connection handle
+/// (0x0000..=0x0EFF) for the unenhanced bearer, or `first..=last` for an
+/// enhanced one, whose low byte is its L2CAP channel index. The generated
+/// documentation states the range; C declares only a `uint16_t`.
+///
+/// Written `"<member>: 0xEA00..=0xEA3F"`.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Bearer {
+    pub member: String,
+    pub first: u16,
+    pub last: u16,
+}
+
+impl fmt::Display for Bearer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: 0x{:04X}..=0x{:04X}",
+            self.member, self.first, self.last
+        )
+    }
+}
+
+impl FromStr for Bearer {
+    type Err = Error;
+
+    fn from_str(source: &str) -> Result<Self, Error> {
+        let hex = |value: &str| {
+            value
+                .strip_prefix("0x")
+                .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+        };
+        source
+            .split_once(": ")
+            .and_then(|(member, range)| {
+                let (first, last) = range.split_once("..=")?;
+                Some(Self {
+                    member: member.to_owned(),
+                    first: hex(first)?,
+                    last: hex(last)?,
+                })
+            })
+            .filter(|bearer| bearer.to_string() == source)
+            .ok_or_else(|| {
+                Error::parse(format!(
+                    "expected \"<member>: 0xEA00..=0xEAnn\", got {source:?}"
+                ))
+            })
+    }
+}
+
+impl Serialize for Bearer {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Bearer {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl Command {
@@ -366,6 +441,8 @@ impl Catalog {
                         .map_err(|error| error.context(format!("{} returns", context())))?,
                     (_, None) => {}
                 }
+                validate_bearers(&definition.params, &definition.bearers)
+                    .map_err(|error| error.context(format!("{} params", context())))?;
             }
         }
 
@@ -395,9 +472,11 @@ impl Catalog {
                 check_range(*range, &label)?;
             }
             for definition in &event.definitions {
-                validate_layout(&definition.payload, &definition.structs).map_err(|error| {
-                    error.context(format!("{} ({}) payload", label(), definition.releases))
-                })?;
+                let context = || format!("{} ({}) payload", label(), definition.releases);
+                validate_layout(&definition.payload, &definition.structs)
+                    .map_err(|error| error.context(context()))?;
+                validate_bearers(&definition.payload, &definition.bearers)
+                    .map_err(|error| error.context(context()))?;
             }
         }
         Ok(())
@@ -463,6 +542,40 @@ fn validate_history(
             return Err(Error::invalid(format!(
                 "{}: availability profiles must be sorted and unique",
                 label()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Each bearer is a distinct `u16` member of a resolved layout, with an
+/// enhanced range of channel indexes after 0xEA00.
+fn validate_bearers(layout: &Layout, bearers: &[Bearer]) -> Result<(), Error> {
+    if bearers.is_empty() {
+        return Ok(());
+    }
+    let Layout::Fields(fields) = layout else {
+        return Err(Error::invalid(
+            "an unresolved layout cannot have bearer members",
+        ));
+    };
+    for (index, bearer) in bearers.iter().enumerate() {
+        let member = &bearer.member;
+        if bearers[..index].iter().any(|other| other.member == *member) {
+            return Err(Error::invalid(format!("bearer {member} is listed twice")));
+        }
+        if !fields
+            .iter()
+            .any(|field| field.name == *member && field.ty == FieldType::Scalar(Scalar::U16))
+        {
+            return Err(Error::invalid(format!(
+                "bearer {member} is not a u16 member"
+            )));
+        }
+        if bearer.first != 0xEA00 || !(bearer.first..=0xEAFF).contains(&bearer.last) {
+            return Err(Error::invalid(format!(
+                "bearer {member} has the range 0x{:04X}..=0x{:04X}, not 0xEA00 and channel indexes",
+                bearer.first, bearer.last
             )));
         }
     }

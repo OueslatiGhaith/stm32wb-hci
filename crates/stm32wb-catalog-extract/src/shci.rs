@@ -108,6 +108,7 @@ pub fn extract(
             name,
             payload,
             structs,
+            bearers: Vec::new(),
         });
     }
     if events.is_empty() {
@@ -213,6 +214,7 @@ pub fn commands(
             params,
             returns: Some(returns),
             structs,
+            bearers: Vec::new(),
             proven_counts: Vec::new(),
         });
     }

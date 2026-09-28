@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use clang::diagnostic::Severity;
 use clang::{Entity, EntityKind, EvaluationResult, Index, TranslationUnit, Type, TypeKind};
-use stm32wb_catalog::{Element, Field, FieldType, Scalar, Structs};
+use stm32wb_catalog::{Bearer, Element, Field, FieldType, Scalar, Structs};
 use tempfile::TempDir;
 
 const SHIM_HEADERS: [(&str, &str); 5] = [
@@ -113,6 +113,68 @@ pub fn main_file_entities<'tu>(unit: &'tu TranslationUnit<'_>) -> Vec<Entity<'tu
         .into_iter()
         .filter(|entity| entity.is_in_main_file())
         .collect()
+}
+
+/// The parameters an entity's documentation says address an ATT bearer,
+/// with the range of enhanced bearers it gives.
+pub fn bearers(entity: Entity<'_>) -> Result<Vec<Bearer>, String> {
+    entity
+        .get_comment()
+        .map_or(Ok(Vec::new()), |comment| bearers_in(&comment))
+}
+
+/// The `@param` blocks of a doc comment that list an enhanced ATT bearer
+/// range, written `0xEA00 ... 0xEAnn`. Any other spelling of a value starting
+/// at 0xEA is an error rather than a guess.
+pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>, String> {
+    let mut bearers = Vec::new();
+    for block in comment.split("@param").skip(1) {
+        let block = block.split("@return").next().unwrap_or_default();
+        let words = block
+            .split_whitespace()
+            .filter(|word| !word.starts_with('*'))
+            .collect::<Vec<_>>();
+        let Some((name, _)) = words.split_first() else {
+            continue;
+        };
+        let hex = |word: &str| {
+            word.trim_end_matches(':')
+                .strip_prefix("0x")
+                .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+        };
+        // Values at 0xEA that do not end a range each start one.
+        let mut ranges = (0..words.len())
+            .filter(|&index| {
+                words[index].starts_with("0xEA") && (index == 0 || words[index - 1] != "...")
+            })
+            .map(|index| {
+                let window = &words[index..words.len().min(index + 3)];
+                match window {
+                    [first, "...", last] => hex(first).zip(hex(last)).ok_or_else(|| {
+                        format!("{name} documents a malformed range {}", window.join(" "))
+                    }),
+                    _ => Err(format!(
+                        "{name} documents a value at 0xEA that is not a range: {}",
+                        window.join(" ")
+                    )),
+                }
+            });
+        let Some(range) = ranges.next() else {
+            continue;
+        };
+        let (first, last) = range?;
+        if ranges.next().is_some() {
+            return Err(format!(
+                "{name} documents several enhanced ATT bearer ranges"
+            ));
+        }
+        bearers.push(Bearer {
+            member: (*name).to_owned(),
+            first,
+            last,
+        });
+    }
+    Ok(bearers)
 }
 
 /// Descend through implicit conversions, parentheses, and casts.
