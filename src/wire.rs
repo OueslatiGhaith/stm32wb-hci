@@ -26,6 +26,12 @@ use bt_hci::{FromHciBytes, FromHciBytesError, WriteHci};
 pub trait HciWireType {
     /// Number of bytes in the HCI encoding.
     const WIDTH: usize;
+
+    /// For [`AttBearer`], the last enhanced ATT bearer it accepts; 0 for any
+    /// other type. Declarations check it against the catalog's bearer
+    /// members.
+    #[doc(hidden)]
+    const LAST_ENHANCED_BEARER: u16 = 0;
 }
 
 macro_rules! wire_width {
@@ -56,6 +62,7 @@ impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
 
 impl<T: HciWireType + ?Sized> HciWireType for &T {
     const WIDTH: usize = T::WIDTH;
+    const LAST_ENHANCED_BEARER: u16 = T::LAST_ENHANCED_BEARER;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member
@@ -187,6 +194,108 @@ impl From<BluetoothUuid> for Uuid {
             BluetoothUuid::Uuid16(uuid) => Uuid::Uuid16(uuid.to_u16()),
             uuid => Uuid::from(uuid.to_u128()),
         }
+    }
+}
+
+/// The ATT bearer a GATT or ATT procedure runs on: the unenhanced bearer of a
+/// connection, named by its handle, or an enhanced ATT bearer, an L2CAP
+/// connection-oriented channel named by its index.
+///
+/// It is encoded in 16 bits, as the connection handle (0x0000..=0x0EFF) or
+/// as 0xEA00 plus the channel index, up to [`LAST_ENHANCED`](Self::LAST_ENHANCED).
+/// The catalog records which parameters take a bearer rather than a
+/// connection handle, and declarations check that exactly those are
+/// `AttBearer`s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttBearer(u16);
+
+impl AttBearer {
+    stm32wb_hci_macros::att_bearer_range!();
+
+    /// The first enhanced ATT bearer, channel index 0.
+    const FIRST_ENHANCED: u16 = 0xEA00;
+
+    /// The last connection handle.
+    const LAST_CONNECTION: u16 = 0x0EFF;
+
+    /// The unenhanced bearer of the connection `handle`.
+    pub fn unenhanced(handle: ConnHandle) -> Self {
+        Self(handle.raw())
+    }
+
+    /// The enhanced ATT bearer on the L2CAP channel `channel_index`, if the
+    /// selected release has that channel.
+    pub const fn enhanced(channel_index: u8) -> Option<Self> {
+        Self::from_raw(Self::FIRST_ENHANCED + channel_index as u16)
+    }
+
+    /// The bearer encoded as `raw`, if it names one.
+    pub const fn from_raw(raw: u16) -> Option<Self> {
+        if raw <= Self::LAST_CONNECTION
+            || (Self::FIRST_ENHANCED <= raw && raw <= Self::LAST_ENHANCED)
+        {
+            Some(Self(raw))
+        } else {
+            None
+        }
+    }
+
+    /// The encoded bearer.
+    pub const fn raw(self) -> u16 {
+        self.0
+    }
+
+    /// The connection whose unenhanced bearer this is.
+    pub fn connection(self) -> Option<ConnHandle> {
+        (self.0 <= Self::LAST_CONNECTION).then(|| ConnHandle::new(self.0))
+    }
+
+    /// The L2CAP channel index of an enhanced bearer.
+    pub const fn channel_index(self) -> Option<u8> {
+        if self.0 >= Self::FIRST_ENHANCED {
+            Some((self.0 - Self::FIRST_ENHANCED) as u8)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<ConnHandle> for AttBearer {
+    fn from(handle: ConnHandle) -> Self {
+        Self::unenhanced(handle)
+    }
+}
+
+impl HciWireType for AttBearer {
+    const WIDTH: usize = 2;
+    const LAST_ENHANCED_BEARER: u16 = Self::LAST_ENHANCED;
+}
+
+impl WriteHci for AttBearer {
+    fn size(&self) -> usize {
+        2
+    }
+
+    fn write_hci<W: embedded_io::Write>(&self, writer: W) -> Result<(), W::Error> {
+        self.0.write_hci(writer)
+    }
+
+    async fn write_hci_async<W: embedded_io_async::Write>(
+        &self,
+        writer: W,
+    ) -> Result<(), W::Error> {
+        self.0.write_hci_async(writer).await
+    }
+}
+
+/// A value naming neither a connection nor an enhanced bearer of the
+/// selected release is invalid.
+impl<'de> FromHciBytes<'de> for AttBearer {
+    fn from_hci_bytes(data: &'de [u8]) -> Result<(Self, &'de [u8]), FromHciBytesError> {
+        let (raw, rest) = u16::from_hci_bytes(data)?;
+        let bearer = Self::from_raw(raw).ok_or(FromHciBytesError::InvalidValue)?;
+        Ok((bearer, rest))
     }
 }
 
@@ -647,5 +756,50 @@ mod tests {
         assert!(Elements::<bool>::decode(&[1, 2], 2).is_err());
         assert!(Elements::<bool>::decode(&[1], 2).is_err());
         assert!(Elements::<u16>::decode(&[], usize::MAX).is_err());
+    }
+
+    #[test]
+    fn att_bearers_name_a_connection_or_an_enhanced_channel() {
+        encoded_width(AttBearer::enhanced(0).unwrap());
+        let bearer = AttBearer::from(ConnHandle::new(0x0801));
+        assert_eq!(bearer.raw(), 0x0801);
+        assert_eq!(bearer.connection(), Some(ConnHandle::new(0x0801)));
+        assert_eq!(bearer.channel_index(), None);
+
+        let bearer = AttBearer::enhanced(5).unwrap();
+        assert_eq!(bearer.raw(), 0xEA05);
+        assert_eq!(bearer.connection(), None);
+        assert_eq!(bearer.channel_index(), Some(5));
+        assert_eq!(
+            AttBearer::from_hci_bytes_complete(&[0x05, 0xEA]),
+            Ok(bearer)
+        );
+
+        let last_channel = (AttBearer::LAST_ENHANCED - 0xEA00) as u8;
+        assert!(AttBearer::enhanced(last_channel).is_some());
+        assert_eq!(AttBearer::enhanced(last_channel + 1), None);
+        for invalid in [0x0F00, 0xE9FF, AttBearer::LAST_ENHANCED + 1] {
+            assert_eq!(AttBearer::from_raw(invalid), None, "{}", invalid);
+            assert_eq!(
+                AttBearer::from_hci_bytes_complete(&invalid.to_le_bytes()),
+                Err(FromHciBytesError::InvalidValue)
+            );
+        }
+    }
+
+    /// Releases before 1.17.0 document 32 enhanced ATT bearers, later ones 64.
+    #[test]
+    fn enhanced_bearers_follow_the_selected_release() {
+        let last = if cfg!(any(feature = "fw_1_15_0", feature = "fw_1_16_0")) {
+            0xEA1F
+        } else {
+            0xEA3F
+        };
+        assert_eq!(AttBearer::LAST_ENHANCED, last);
+        assert_eq!(
+            <AttBearer as HciWireType>::LAST_ENHANCED_BEARER,
+            AttBearer::LAST_ENHANCED
+        );
+        assert_eq!(<ConnHandle as HciWireType>::LAST_ENHANCED_BEARER, 0);
     }
 }

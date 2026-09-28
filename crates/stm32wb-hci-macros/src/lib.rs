@@ -2,6 +2,7 @@
 //! STM32WB catalog, so the crate cannot drift from what the CPU2 wireless
 //! binaries accept and emit.
 
+mod bearer;
 mod cfg;
 mod command;
 mod complete;
@@ -82,6 +83,12 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// it removes with `#[wire(before = "<release>")]`, the first release without
 /// it. Each set of fields that exist together becomes its own declaration,
 /// compiled only for the releases that have exactly those fields.
+///
+/// A `u16` member the catalog documents as addressing an ATT bearer is
+/// declared `AttBearer`, and no other member is; its enhanced range must be
+/// the selected release's. A member that only addresses a bearer from a
+/// later release is declared twice, as `ConnHandle` with `before` and as
+/// `AttBearer` with `since`.
 ///
 /// A member that is a C structure, or an array of them, is declared with the
 /// type [`vendor_struct!`] declares for that structure: `T`, `[T; N]`,
@@ -243,6 +250,26 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
     {
         Ok(tokens) => tokens.into(),
         Err(message) => error(&format!("the bundled catalog is invalid: {message}")),
+    }
+}
+
+/// The last enhanced ATT bearer the selected release documents, as
+/// `LAST_ENHANCED` constants.
+///
+/// Invoked once, in `stm32wb_hci::wire::AttBearer`'s `impl` block. Every
+/// parameter the catalog lists as addressing an ATT bearer must give the same
+/// range in a release.
+#[proc_macro]
+pub fn att_bearer_range(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return error("att_bearer_range! takes no arguments");
+    }
+    match bundled()
+        .map_err(|error| format!("the bundled catalog is invalid: {error}"))
+        .and_then(bearer::expand)
+    {
+        Ok(tokens) => tokens.into(),
+        Err(message) => error(&message),
     }
 }
 

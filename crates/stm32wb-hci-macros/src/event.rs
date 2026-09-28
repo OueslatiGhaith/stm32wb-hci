@@ -8,7 +8,8 @@ use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
 use crate::command::{
-    Channel, ElementType, Fields, InputField, Side, Slot, Targets, check_bounds,
+    BearerGroup, Channel, ElementType, Fields, InputField, Side, Slot, Targets, add_bearers,
+    bearer_assertions, bearer_groups, bearer_positions, check_bounds,
     elements_lifetime_and_element, fields_in, plan, record_history_names, record_names,
     same_layout, slice_lifetime_and_element, width_assertions,
 };
@@ -99,6 +100,8 @@ struct Event<'a> {
     cfg: Option<TokenStream>,
     /// The latest C name of the catalog entry, which the event's type names.
     latest: &'a str,
+    /// The parameters addressing ATT bearers.
+    bearers: Vec<BearerGroup>,
 }
 
 impl<'a> Event<'a> {
@@ -118,7 +121,13 @@ impl<'a> Event<'a> {
 
         // Each variant with its code and the fields it declares, which it is
         // keyed by, and the targets it covers.
-        let mut variants: Vec<((u16, Vec<bool>), Self, Targets<'a>)> = Vec::new();
+        #[allow(clippy::type_complexity)]
+        let mut variants: Vec<(
+            (u16, Vec<bool>),
+            Self,
+            Targets<'a>,
+            Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+        )> = Vec::new();
         // Every release's layout, for the names renamed members had.
         let mut history: Vec<&'a [Field]> = Vec::new();
         for segment in &segments {
@@ -156,7 +165,9 @@ impl<'a> Event<'a> {
                     .map(|field| field.exists_in(releases))
                     .collect::<Vec<_>>(),
             );
-            let Some((_, variant, targets)) = variants.iter_mut().find(|(other, ..)| *other == key)
+            let bearers = bearer_positions(payload, &active.definition.bearers);
+            let Some((_, variant, targets, groups)) =
+                variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 let mut variant = Self {
                     fields: fields_in(&input.fields, releases),
@@ -165,9 +176,11 @@ impl<'a> Event<'a> {
                     releases,
                     cfg: None,
                     latest: active.event.name(),
+                    bearers: Vec::new(),
                 };
                 record_names(&mut variant.names, payload);
-                variants.push((key, variant, vec![(releases, segment.profiles)]));
+                let target = (releases, segment.profiles);
+                variants.push((key, variant, vec![target], vec![(bearers, vec![target])]));
                 continue;
             };
             if !variant.facts.same_wire(&current) {
@@ -183,15 +196,17 @@ impl<'a> Event<'a> {
             variant.releases.first = variant.releases.first.min(releases.first);
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
+            add_bearers(groups, bearers, (releases, segment.profiles));
         }
 
         Ok(variants
             .into_iter()
-            .map(|(_, mut variant, targets)| {
+            .map(|(_, mut variant, targets, groups)| {
                 for payload in &history {
                     record_history_names(&mut variant.names, variant.facts.payload, payload);
                 }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
+                variant.bearers = bearer_groups(&bundled.catalog, groups);
                 variant
             })
             .collect())
@@ -285,7 +300,12 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
     let names = event.fields.fields.iter().map(|field| &field.name);
     let types = event.fields.fields.iter().map(|field| &field.ty);
     let field_names = names.clone();
-    let widths = width_assertions(&cfg, name, &slots);
+    let widths = width_assertions(&cfg, name, &slots).chain(bearer_assertions(
+        name,
+        &slots,
+        event.facts.payload,
+        &event.bearers,
+    ));
     let code = event.facts.code;
     let latest = event.latest;
     let doc = format!(

@@ -11,7 +11,7 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
     unused_imports,
     reason = "the HCI-layer and light profiles have no ATT client commands"
 )]
-use crate::wire::{Elements, Uuid};
+use crate::wire::{AttBearer, Elements, Uuid};
 
 vendor_command! {
     /// Find the handles and types of the attributes in a handle range.
@@ -84,7 +84,7 @@ vendor_event! {
     /// The server answered a find information request with handle and UUID
     /// pairs, whose UUIDs are 16-bit (`format` 1) or 128-bit (`format` 2).
     aci_att_find_info_resp_event => AttFindInfoRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         format: u8,
         handle_uuid_pair: &'a [u8],
     }
@@ -101,7 +101,7 @@ vendor_struct! {
 vendor_event! {
     /// The server answered a find by type value request.
     aci_att_find_by_type_value_resp_event => AttFindByTypeValueRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_group_handle_pair: Elements<'a, AttributeGroupHandlePair>,
     }
 }
@@ -110,7 +110,7 @@ vendor_event! {
     /// The server answered a read by type request with handle and value
     /// pairs of `handle_value_pair_length` bytes each.
     aci_att_read_by_type_resp_event => AttReadByTypeRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         handle_value_pair_length: u8,
         handle_value_pair_data: &'a [u8],
     }
@@ -119,7 +119,7 @@ vendor_event! {
 vendor_event! {
     /// The server answered a read request.
     aci_att_read_resp_event => AttReadRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_value: &'a [u8],
     }
 }
@@ -127,7 +127,7 @@ vendor_event! {
 vendor_event! {
     /// The server answered a read blob request.
     aci_att_read_blob_resp_event => AttReadBlobRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_value: &'a [u8],
     }
 }
@@ -135,7 +135,7 @@ vendor_event! {
 vendor_event! {
     /// The server answered a read multiple request.
     aci_att_read_multiple_resp_event => AttReadMultipleRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         set_of_values: &'a [u8],
     }
 }
@@ -144,7 +144,7 @@ vendor_event! {
     /// The server answered a read by group type request with attribute data
     /// of `attribute_data_length` bytes each.
     aci_att_read_by_group_type_resp_event => AttReadByGroupTypeRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_data_length: u8,
         attribute_data_list: &'a [u8],
     }
@@ -153,7 +153,7 @@ vendor_event! {
 vendor_event! {
     /// The server queued part of a value to write, echoing it back.
     aci_att_prepare_write_resp_event => AttPrepareWriteRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         offset: u16,
         part_attribute_value: &'a [u8],
@@ -163,7 +163,7 @@ vendor_event! {
 vendor_event! {
     /// The server wrote or cancelled the queued writes.
     aci_att_exec_write_resp_event => AttExecWriteRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
     }
 }
 

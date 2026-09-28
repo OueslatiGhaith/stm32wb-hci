@@ -7,8 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bundled, CommandScope, Completion, Element, EventScope, Field, FieldType, Profile,
-    ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
+    Bearer, Bundled, Catalog, CommandScope, Completion, Element, EventScope, Field, FieldType,
+    Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -316,11 +316,27 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
         (None, Completion::CommandComplete) => quote!(Return = ();),
         (None, Completion::CommandStatus) => quote!(),
     };
-    let widths = width_assertions(&cfg, &input.params.name, &params).chain(
-        returned
-            .iter()
-            .flat_map(|(returns, slots)| width_assertions(&cfg, &returns.name, slots)),
-    );
+    // No return parameter addresses a bearer.
+    let no_bearers = [BearerGroup {
+        positions: Vec::new(),
+        cfg: command.cfg.clone(),
+        releases: command.releases.to_string(),
+    }];
+    let widths = width_assertions(&cfg, &input.params.name, &params)
+        .chain(bearer_assertions(
+            &input.params.name,
+            &params,
+            facts.params,
+            &command.bearers,
+        ))
+        .chain(returned.iter().flat_map(|(returns, slots)| {
+            width_assertions(&cfg, &returns.name, slots).chain(bearer_assertions(
+                &returns.name,
+                slots,
+                facts.returns,
+                &no_bearers,
+            ))
+        }));
     let return_struct = returned
         .iter()
         .map(|(returns, slots)| return_struct(name, returns, slots, &cfg));
@@ -1053,6 +1069,119 @@ fn struct_identity(
     }
 }
 
+/// The catalog's ATT bearer members, by position with the last enhanced
+/// bearer each takes, for the releases and profiles listing exactly those.
+pub(crate) struct BearerGroup {
+    positions: Vec<(usize, u16)>,
+    cfg: Option<TokenStream>,
+    /// The releases, for messages.
+    releases: String,
+}
+
+/// The bearer positions of one release's members.
+pub(crate) fn bearer_positions(members: &[Field], bearers: &[Bearer]) -> Vec<(usize, u16)> {
+    bearers
+        .iter()
+        .map(|bearer| {
+            let position = members
+                .iter()
+                .position(|member| member.name == bearer.member)
+                .expect("the catalog validates that bearers are members");
+            (position, bearer.last)
+        })
+        .collect()
+}
+
+/// Add a segment's bearer positions to the groups of a declaration.
+pub(crate) fn add_bearers<'a>(
+    groups: &mut Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+    positions: Vec<(usize, u16)>,
+    target: (ReleaseRange, &'a [Profile]),
+) {
+    match groups.iter_mut().find(|(other, _)| *other == positions) {
+        Some((_, targets)) => targets.push(target),
+        None => groups.push((positions, vec![target])),
+    }
+}
+
+pub(crate) fn bearer_groups(
+    catalog: &Catalog,
+    groups: Vec<(Vec<(usize, u16)>, Targets<'_>)>,
+) -> Vec<BearerGroup> {
+    groups
+        .into_iter()
+        .map(|(positions, targets)| {
+            let mut releases = targets
+                .iter()
+                .map(|(releases, _)| releases.to_string())
+                .collect::<Vec<_>>();
+            releases.dedup();
+            BearerGroup {
+                positions,
+                cfg: cfg::targets(catalog, targets),
+                releases: releases.join(", "),
+            }
+        })
+        .collect()
+}
+
+/// Assert at compile time that each `u16` member is an [`AttBearer`] with the
+/// catalog's range exactly where the catalog lists it as a bearer, in each
+/// group of releases.
+pub(crate) fn bearer_assertions(
+    owner: &Ident,
+    slots: &[Slot<'_>],
+    members: &[Field],
+    groups: &[BearerGroup],
+) -> Vec<TokenStream> {
+    let mut assertions = Vec::new();
+    for group in groups {
+        let cfg = group
+            .cfg
+            .as_ref()
+            .map(|predicate| quote!(#[cfg(#predicate)]));
+        for slot in slots {
+            let Slot::Fixed { field, member, .. } = slot else {
+                continue;
+            };
+            if member.ty != FieldType::Scalar(Scalar::U16) {
+                continue;
+            }
+            let position = members
+                .iter()
+                .position(|other| ptr::eq(other, *member))
+                .expect("the member is one of the members");
+            let last = group
+                .positions
+                .iter()
+                .find(|(bearer, _)| *bearer == position)
+                .map_or(0, |(_, last)| *last);
+            let message = if last == 0 {
+                format!(
+                    "{owner}.{}: the catalog does not document {} as an ATT bearer in {}; \
+                     declare it with another type, such as ConnHandle",
+                    field.name, member.name, group.releases
+                )
+            } else {
+                format!(
+                    "{owner}.{}: the catalog documents {} as an ATT bearer, enhanced up to \
+                     0x{last:04X}, in {}; declare it AttBearer",
+                    field.name, member.name, group.releases
+                )
+            };
+            let ty = &field.ty;
+            assertions.push(quote_spanned! {ty.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    <#ty as ::stm32wb_hci::wire::HciWireType>::LAST_ENHANCED_BEARER == #last,
+                    #message
+                );
+            });
+        }
+    }
+    assertions
+}
+
 /// The facts a declaration is generated from, identical on the wire in every
 /// release and profile the command exists on. Member names are the latest
 /// release's.
@@ -1126,6 +1255,8 @@ struct Command<'a> {
     /// The span of the releases, for messages.
     releases: ReleaseRange,
     cfg: Option<TokenStream>,
+    /// The parameters addressing ATT bearers.
+    bearers: Vec<BearerGroup>,
 }
 
 /// Releases and the profiles supporting a command in them.
@@ -1199,8 +1330,15 @@ impl<'a> Command<'a> {
 
         // Every release's layouts, for the names renamed members had.
         let mut history: Vec<(&'a [Field], &'a [Field])> = Vec::new();
-        // Each variant with the fields it declares and the targets it covers.
-        let mut variants: Vec<(Vec<bool>, Self, Targets<'a>)> = Vec::new();
+        // Each variant with the fields it declares, the targets it covers,
+        // and its bearer members.
+        #[allow(clippy::type_complexity)]
+        let mut variants: Vec<(
+            Vec<bool>,
+            Self,
+            Targets<'a>,
+            Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+        )> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
@@ -1242,7 +1380,9 @@ impl<'a> Command<'a> {
             let key = fields()
                 .map(|field| field.exists_in(releases))
                 .collect::<Vec<_>>();
-            let Some((_, variant, targets)) = variants.iter_mut().find(|(other, ..)| *other == key)
+            let bearers = bearer_positions(params, &active.definition.bearers);
+            let Some((_, variant, targets, groups)) =
+                variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 // A release without any of the declared return fields, which
                 // are all added later, returns only a status.
@@ -1269,10 +1409,12 @@ impl<'a> Command<'a> {
                     return_names: Vec::new(),
                     releases,
                     cfg: None,
+                    bearers: Vec::new(),
                 };
                 record_names(&mut variant.param_names, params);
                 record_names(&mut variant.return_names, returns);
-                variants.push((key, variant, vec![(releases, segment.profiles)]));
+                let target = (releases, segment.profiles);
+                variants.push((key, variant, vec![target], vec![(bearers, vec![target])]));
                 continue;
             };
             if !variant.facts.same_wire(&current) {
@@ -1289,16 +1431,18 @@ impl<'a> Command<'a> {
             variant.releases.first = variant.releases.first.min(releases.first);
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
+            add_bearers(groups, bearers, (releases, segment.profiles));
         }
 
         Ok(variants
             .into_iter()
-            .map(|(_, mut variant, targets)| {
+            .map(|(_, mut variant, targets, groups)| {
                 for (params, returns) in &history {
                     record_history_names(&mut variant.param_names, variant.facts.params, params);
                     record_history_names(&mut variant.return_names, variant.facts.returns, returns);
                 }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
+                variant.bearers = bearer_groups(&bundled.catalog, groups);
                 variant
             })
             .collect())
@@ -2397,5 +2541,87 @@ mod tests {
         let mut names = vec![vec!["Count"], vec!["SlaveSca"]];
         record_history_names(&mut names, &before, &inserted);
         assert_eq!(names, [vec!["Count"], vec!["SlaveSca"]]);
+    }
+
+    #[test]
+    fn bearer_members_are_checked_in_each_range() {
+        let tokens = expand_str(
+            "aci_gatt_read_char_value => GattReadCharValue {
+                 connection_handle: AttBearer,
+                 attr_handle: u16,
+             }",
+        )
+        .unwrap();
+        // 32 enhanced channels before 1.17.0, 64 from it; other u16 members
+        // are never bearers.
+        assert!(
+            tokens.contains("LAST_ENHANCED_BEARER == 59935u16"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("LAST_ENHANCED_BEARER == 59967u16"),
+            "{tokens}"
+        );
+        assert_eq!(
+            tokens.matches("LAST_ENHANCED_BEARER == 0u16").count(),
+            2,
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("in 1.17.0..=1.24.0; declare it AttBearer"),
+            "{tokens}"
+        );
+
+        // The server side confirms on enhanced bearers from 1.16.0.
+        let tokens = expand_str(
+            "aci_gatt_confirm_indication => GattConfirmIndication {
+                 #[wire(before = \"1.16.0\")]
+                 connection_handle: ConnHandle,
+                 #[wire(since = \"1.16.0\")]
+                 connection_handle: AttBearer,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "the catalog does not document Connection_Handle as an ATT bearer in 1.15.0"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("pub connection_handle : ConnHandle"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("pub connection_handle : AttBearer"),
+            "{tokens}"
+        );
+    }
+
+    #[test]
+    fn return_parameters_are_never_bearers() {
+        let tokens = expand_str(
+            "aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+                 anchor_period: u32,
+                 max_free_slot: u32,
+             }",
+        )
+        .unwrap();
+        assert!(!tokens.contains("LAST_ENHANCED_BEARER"), "{tokens}");
+        let tokens = expand_str(
+            "aci_gatt_read_handle_value => GattReadHandleValue {
+                 attr_handle: u16,
+                 offset: u16,
+                 value_length_requested: u16,
+             } -> GattHandleValue {
+                 length: u16,
+                 value: BoundedBytes<247>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("GattHandleValue.length: the catalog does not document"),
+            "{tokens}"
+        );
     }
 }

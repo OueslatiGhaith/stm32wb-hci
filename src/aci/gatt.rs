@@ -11,7 +11,7 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
-use crate::wire::{BoundedBytes, Elements, Uuid};
+use crate::wire::{AttBearer, BoundedBytes, Elements, Uuid};
 
 vendor_command! {
     /// Initialize the GATT server, adding the GATT service and its service
@@ -130,14 +130,14 @@ vendor_command! {
 vendor_command! {
     /// Discover every primary service of the server.
     aci_gatt_disc_all_primary_services => GattDiscAllPrimaryServices {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
     }
 }
 
 vendor_command! {
     /// Discover the primary services of the server with the given UUID.
     aci_gatt_disc_primary_service_by_uuid => GattDiscPrimaryServiceByUuid {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         uuid: Uuid,
     }
 }
@@ -145,7 +145,7 @@ vendor_command! {
 vendor_command! {
     /// Find the services a service includes, within its handle range.
     aci_gatt_find_included_services => GattFindIncludedServices {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         start_handle: u16,
         end_handle: u16,
     }
@@ -154,7 +154,7 @@ vendor_command! {
 vendor_command! {
     /// Discover every characteristic of a service, within its handle range.
     aci_gatt_disc_all_char_of_service => GattDiscAllCharOfService {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         start_handle: u16,
         end_handle: u16,
     }
@@ -163,7 +163,7 @@ vendor_command! {
 vendor_command! {
     /// Discover the characteristics with the given UUID in a handle range.
     aci_gatt_disc_char_by_uuid => GattDiscCharByUuid {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         start_handle: u16,
         end_handle: u16,
         uuid: Uuid,
@@ -173,7 +173,7 @@ vendor_command! {
 vendor_command! {
     /// Discover the descriptors of a characteristic, up to `end_handle`.
     aci_gatt_disc_all_char_desc => GattDiscAllCharDesc {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         char_handle: u16,
         end_handle: u16,
     }
@@ -182,7 +182,7 @@ vendor_command! {
 vendor_command! {
     /// Read a characteristic value.
     aci_gatt_read_char_value => GattReadCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
     }
 }
@@ -191,7 +191,7 @@ vendor_command! {
     /// Read the values of the characteristics with the given UUID in a handle
     /// range.
     aci_gatt_read_using_char_uuid => GattReadUsingCharUuid {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         start_handle: u16,
         end_handle: u16,
         uuid: Uuid,
@@ -202,7 +202,7 @@ vendor_command! {
     /// Read a characteristic value from `val_offset`, in as many requests as
     /// it takes.
     aci_gatt_read_long_char_value => GattReadLongCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         val_offset: u16,
     }
@@ -218,7 +218,7 @@ vendor_struct! {
 vendor_command! {
     /// Read the values of several characteristics at once.
     aci_gatt_read_multiple_char_value => GattReadMultipleCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         handle_entry: &'a [HandleEntry],
     }
 }
@@ -226,7 +226,7 @@ vendor_command! {
 vendor_command! {
     /// Write a characteristic value, waiting for the server's response.
     aci_gatt_write_char_value => GattWriteCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         attribute_val: &'a [u8],
     }
@@ -236,7 +236,7 @@ vendor_command! {
     /// Write a characteristic value from `val_offset`, in as many prepared
     /// writes as it takes.
     aci_gatt_write_long_char_value => GattWriteLongCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         val_offset: u16,
         attribute_val: &'a [u8],
@@ -247,7 +247,7 @@ vendor_command! {
     /// Write a characteristic value with reliable writes, which the server
     /// echoes back for checking.
     aci_gatt_write_char_reliable => GattWriteCharReliable {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         val_offset: u16,
         attribute_val: &'a [u8],
@@ -257,7 +257,7 @@ vendor_command! {
 vendor_command! {
     /// Write a long characteristic descriptor from `val_offset`.
     aci_gatt_write_long_char_desc => GattWriteLongCharDesc {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         val_offset: u16,
         attribute_val: &'a [u8],
@@ -267,7 +267,7 @@ vendor_command! {
 vendor_command! {
     /// Read a long characteristic descriptor from `val_offset`.
     aci_gatt_read_long_char_desc => GattReadLongCharDesc {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         val_offset: u16,
     }
@@ -276,7 +276,7 @@ vendor_command! {
 vendor_command! {
     /// Write a characteristic descriptor.
     aci_gatt_write_char_desc => GattWriteCharDesc {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         attribute_val: &'a [u8],
     }
@@ -285,7 +285,7 @@ vendor_command! {
 vendor_command! {
     /// Read a characteristic descriptor.
     aci_gatt_read_char_desc => GattReadCharDesc {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
     }
 }
@@ -293,7 +293,7 @@ vendor_command! {
 vendor_command! {
     /// Write a characteristic value without waiting for a response.
     aci_gatt_write_without_resp => GattWriteWithoutResp {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         attribute_val: &'a [u8],
     }
@@ -312,7 +312,10 @@ vendor_command! {
 vendor_command! {
     /// Confirm an indication.
     aci_gatt_confirm_indication => GattConfirmIndication {
+        #[wire(before = "1.16.0")]
         connection_handle: ConnHandle,
+        #[wire(since = "1.16.0")]
+        connection_handle: AttBearer,
     }
 }
 
@@ -320,7 +323,7 @@ vendor_command! {
     /// Answer a write the server asked the host to approve. Named
     /// `aci_gatt_write_resp` before 1.24.0.
     aci_gatt_permit_write => GattPermitWrite {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         write_status: u8,
         error_code: u8,
@@ -333,7 +336,7 @@ vendor_command! {
     /// also reject the read of `attr_handle` with `error_code`. Named
     /// `aci_gatt_allow_read` before 1.24.0.
     aci_gatt_permit_read => GattPermitRead {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         #[wire(since = "1.24.0")]
         read_status: u8,
         #[wire(since = "1.24.0")]
@@ -379,9 +382,13 @@ vendor_command! {
 vendor_command! {
     /// Update a characteristic value of `char_length` bytes from
     /// `value_offset`, notifying or indicating the client
-    /// `conn_handle_to_notify` as `update_type` selects.
+    /// `conn_handle_to_notify` as `update_type` selects. The unenhanced
+    /// bearer of connection handle 0x0000 notifies every subscribed client.
     aci_gatt_update_char_value_ext => GattUpdateCharValueExt {
-        conn_handle_to_notify: u16,
+        #[wire(before = "1.16.0")]
+        conn_handle_to_notify: ConnHandle,
+        #[wire(since = "1.16.0")]
+        conn_handle_to_notify: AttBearer,
         service_handle: u16,
         char_handle: u16,
         update_type: u8,
@@ -394,7 +401,7 @@ vendor_command! {
 vendor_command! {
     /// Reject a read the server asked the host to approve.
     aci_gatt_deny_read => GattDenyRead {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         error_code: u8,
     }
 }
@@ -416,7 +423,7 @@ vendor_command! {
 vendor_command! {
     /// Notify the values of several characteristics at once.
     aci_gatt_send_mult_notification => GattSendMultNotification {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         handle_entry: &'a [HandleEntry],
     }
 }
@@ -424,7 +431,7 @@ vendor_command! {
 vendor_command! {
     /// Read the values of several variable-length characteristics at once.
     aci_gatt_read_multiple_var_char_value => GattReadMultipleVarCharValue {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         handle_entry: &'a [HandleEntry],
     }
 }
@@ -459,7 +466,7 @@ vendor_command! {
 vendor_event! {
     /// A client modified a local attribute from `offset`.
     aci_gatt_attribute_modified_event => GattAttributeModifiedEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attr_handle: u16,
         offset: u16,
         attr_data: &'a [u8],
@@ -469,7 +476,7 @@ vendor_event! {
 vendor_event! {
     /// A GATT procedure timed out.
     aci_gatt_proc_timeout_event => GattProcTimeoutEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
     }
 }
 
@@ -477,7 +484,10 @@ vendor_event! {
     /// The server indicated a characteristic value; confirm it with
     /// [`GattConfirmIndication`].
     aci_gatt_indication_event => GattIndicationEvent {
+        #[wire(before = "1.16.0")]
         connection_handle: ConnHandle,
+        #[wire(since = "1.16.0")]
+        connection_handle: AttBearer,
         attribute_handle: u16,
         attribute_value: &'a [u8],
     }
@@ -486,7 +496,10 @@ vendor_event! {
 vendor_event! {
     /// The server notified a characteristic value.
     aci_gatt_notification_event => GattNotificationEvent {
+        #[wire(before = "1.16.0")]
         connection_handle: ConnHandle,
+        #[wire(since = "1.16.0")]
+        connection_handle: AttBearer,
         attribute_handle: u16,
         attribute_value: &'a [u8],
     }
@@ -495,7 +508,7 @@ vendor_event! {
 vendor_event! {
     /// A GATT client procedure completed, with `error_code` 0 on success.
     aci_gatt_proc_complete_event => GattProcCompleteEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         error_code: u8,
     }
 }
@@ -504,7 +517,7 @@ vendor_event! {
     /// The server rejected the request with opcode `req_opcode` on an
     /// attribute.
     aci_gatt_error_resp_event => GattErrorRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         req_opcode: u8,
         attribute_handle: u16,
         error_code: u8,
@@ -514,7 +527,7 @@ vendor_event! {
 vendor_event! {
     /// A characteristic found by UUID, with its value.
     aci_gatt_disc_read_char_by_uuid_resp_event => GattDiscReadCharByUuidRespEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         attribute_value: &'a [u8],
     }
@@ -524,7 +537,7 @@ vendor_event! {
     /// A client wants to write an attribute that needs the host's approval;
     /// answer with [`GattPermitWrite`].
     aci_gatt_write_permit_req_event => GattWritePermitReqEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         data: &'a [u8],
     }
@@ -534,7 +547,7 @@ vendor_event! {
     /// A client wants to read an attribute that needs the host's approval;
     /// answer with [`GattPermitRead`].
     aci_gatt_read_permit_req_event => GattReadPermitReqEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         offset: u16,
     }
@@ -551,7 +564,7 @@ vendor_event! {
     /// A client wants to read several attributes that need the host's
     /// approval; answer with [`GattPermitRead`].
     aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         handle_item: Elements<'a, HandleItem>,
     }
 }
@@ -567,7 +580,10 @@ vendor_event! {
 vendor_event! {
     /// The client confirmed an indication.
     aci_gatt_server_confirmation_event => GattServerConfirmationEvent {
+        #[wire(before = "1.16.0")]
         connection_handle: ConnHandle,
+        #[wire(since = "1.16.0")]
+        connection_handle: AttBearer,
     }
 }
 
@@ -575,7 +591,7 @@ vendor_event! {
     /// A client wants to queue a write that needs the host's approval;
     /// answer with [`GattPermitWrite`].
     aci_gatt_prepare_write_permit_req_event => GattPrepareWritePermitReqEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         offset: u16,
         data: &'a [u8],
@@ -600,7 +616,7 @@ vendor_event! {
 vendor_event! {
     /// The server notified several characteristic values at once.
     aci_gatt_mult_notification_event => GattMultNotificationEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         offset: u16,
         data: &'a [u8],
     }
@@ -616,7 +632,7 @@ vendor_event! {
 vendor_event! {
     /// Part of a long read response, from `offset`.
     aci_gatt_read_ext_event => GattReadExtEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         offset: u16,
         attribute_value: &'a [u8],
     }
@@ -625,7 +641,10 @@ vendor_event! {
 vendor_event! {
     /// Part of a long indicated value, from `offset`.
     aci_gatt_indication_ext_event => GattIndicationExtEvent {
+        #[wire(before = "1.16.0")]
         connection_handle: ConnHandle,
+        #[wire(since = "1.16.0")]
+        connection_handle: AttBearer,
         attribute_handle: u16,
         offset: u16,
         attribute_value: &'a [u8],
@@ -635,7 +654,7 @@ vendor_event! {
 vendor_event! {
     /// Part of a long notified value, from `offset`.
     aci_gatt_notification_ext_event => GattNotificationExtEvent {
-        connection_handle: ConnHandle,
+        connection_handle: AttBearer,
         attribute_handle: u16,
         offset: u16,
         attribute_value: &'a [u8],
@@ -699,11 +718,12 @@ mod tests {
             HandleEntry { handle: 0x0010 },
             HandleEntry { handle: 0x0203 },
         ];
-        let command = GattReadMultipleCharValue::try_new(ConnHandle::new(1), &handles).unwrap();
+        let command =
+            GattReadMultipleCharValue::try_new(ConnHandle::new(1).into(), &handles).unwrap();
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..len], [0x1B, 0xFD, 7, 1, 0, 2, 0x10, 0, 0x03, 0x02]);
         let too_many = [HandleEntry::default(); 127];
-        assert!(GattReadMultipleCharValue::try_new(ConnHandle::new(1), &too_many).is_err());
+        assert!(GattReadMultipleCharValue::try_new(ConnHandle::new(1).into(), &too_many).is_err());
     }
 
     #[test]
@@ -755,14 +775,19 @@ mod tests {
     #[cfg(feature = "fw_1_24_0")]
     #[test]
     fn read_permissions_answer_for_an_attribute_from_1_24_0() {
-        let (bytes, len) = encode(&GattPermitRead::new(ConnHandle::new(1), 1, 0x0E, 0x0020));
+        let (bytes, len) = encode(&GattPermitRead::new(
+            ConnHandle::new(1).into(),
+            1,
+            0x0E,
+            0x0020,
+        ));
         assert_eq!(bytes[..len], [0x27, 0xFD, 6, 1, 0, 1, 0x0E, 0x20, 0]);
     }
 
     #[cfg(not(feature = "fw_1_24_0"))]
     #[test]
     fn read_permissions_name_only_the_connection_before_1_24_0() {
-        let (bytes, len) = encode(&GattPermitRead::new(ConnHandle::new(1)));
+        let (bytes, len) = encode(&GattPermitRead::new(ConnHandle::new(1).into()));
         assert_eq!(bytes[..len], [0x27, 0xFD, 2, 1, 0]);
     }
 
@@ -806,8 +831,8 @@ mod tests {
     #[test]
     fn enhanced_bearers_report_their_mtu_from_1_23_0() {
         let bearer =
-            GattEattBearerEvent::from_hci_bytes_complete(&[0x00, 0xEA, 1, 0, 0x40, 0]).unwrap();
-        assert_eq!(bearer.connection_handle.raw(), 0xEA00);
+            GattEattBearerEvent::from_hci_bytes_complete(&[0x01, 0x08, 1, 0, 0x40, 0]).unwrap();
+        assert_eq!(bearer.connection_handle.raw(), 0x0801);
         assert_eq!(
             (bearer.channel_index, bearer.eab_state, bearer.mtu),
             (1, 0, 64)
@@ -822,5 +847,34 @@ mod tests {
             (bearer.channel_index, bearer.eab_state, bearer.status),
             (1, 0, 0x12)
         );
+    }
+
+    #[cfg(feature = "stack-full-extended")]
+    #[test]
+    fn client_procedures_run_on_enhanced_bearers() {
+        let bearer = AttBearer::enhanced(5).unwrap();
+        let (bytes, len) = encode(&GattReadCharValue::new(bearer, 0x0012));
+        assert_eq!(bytes[3..len], [0x05, 0xEA, 0x12, 0x00]);
+        let (bytes, len) = encode(&GattReadCharValue::new(
+            ConnHandle::new(0x0801).into(),
+            0x0012,
+        ));
+        assert_eq!(bytes[3..len], [0x01, 0x08, 0x12, 0x00]);
+
+        let response = GattProcCompleteEvent::from_hci_bytes_complete(&[0x05, 0xEA, 0]).unwrap();
+        assert_eq!(response.connection_handle.channel_index(), Some(5));
+        // Past the last channel of every release.
+        assert!(GattProcCompleteEvent::from_hci_bytes_complete(&[0x40, 0xEA, 0]).is_err());
+    }
+
+    /// The server side takes enhanced bearers from 1.16.0 only.
+    #[cfg(all(feature = "stack-full-extended", feature = "fw_1_15_0"))]
+    #[test]
+    fn server_notifications_use_connections_in_1_15_0() {
+        let event = GattNotificationEvent::from_hci_bytes_complete(&[0x01, 0x08, 0x12, 0, 1, 0xAA])
+            .unwrap();
+        let handle: ConnHandle = event.connection_handle;
+        assert_eq!(handle.raw(), 0x0801);
+        let _ = GattConfirmIndication::new(ConnHandle::new(1));
     }
 }
