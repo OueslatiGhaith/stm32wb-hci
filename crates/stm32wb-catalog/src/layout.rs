@@ -9,11 +9,14 @@
 //! Local_Name: [u8; Local_Name_Length] (capacity 242)
 //! Adv_Set: [Adv_Set_t; Number_of_Sets] (capacity 63)
 //! Service_UUID: union(Service_UUID_Type) { 1 => 2, 2 => 16 }
+//! fw_src_add: u32 (optional)
 //! ```
 //!
 //! A counted field's element count is the value of the named earlier field.
 //! A union's width is selected by the value of the named earlier field; `_`
-//! marks the width used for every other selector value.
+//! marks the width used for every other selector value. Optional members end
+//! the layout: each is sent only if every earlier one is, so the parameters
+//! stop at the first one omitted.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -126,6 +129,8 @@ pub enum FieldType {
         selector: String,
         variants: Vec<UnionVariant>,
     },
+    /// An integer the sender may omit, together with every later member.
+    Optional(Scalar),
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -168,6 +173,7 @@ impl fmt::Display for Field {
                 }
                 f.write_str(" }")
             }
+            FieldType::Optional(scalar) => write!(f, "{} (optional)", scalar.name()),
         }
     }
 }
@@ -298,7 +304,16 @@ fn envelope(fields: &[Field], structs: &Structs) -> Result<Envelope, Error> {
     let mut min = 0usize;
     let mut max = 0usize;
     let mut earlier: BTreeMap<&str, &FieldType> = BTreeMap::new();
+    let mut optional: Option<&str> = None;
     for field in fields {
+        if let Some(optional) = optional
+            && !matches!(field.ty, FieldType::Optional(_))
+        {
+            return Err(Error::invalid(format!(
+                "{} follows the optional member {optional}, so it must be optional",
+                field.name
+            )));
+        }
         let (field_min, field_max) = match &field.ty {
             FieldType::Scalar(scalar) => (scalar.width().into(), scalar.width().into()),
             FieldType::Struct(name) => {
@@ -325,6 +340,10 @@ fn envelope(fields: &[Field], structs: &Structs) -> Result<Envelope, Error> {
                 }
                 let widths = variants.iter().map(|variant| usize::from(variant.width));
                 (widths.clone().min().unwrap_or(0), widths.max().unwrap_or(0))
+            }
+            FieldType::Optional(scalar) => {
+                optional = Some(&field.name);
+                (0, scalar.width().into())
             }
         };
         if earlier.insert(&field.name, &field.ty).is_some() {
@@ -473,6 +492,11 @@ impl<'a> Parser<'a> {
             FieldType::Union { selector, variants }
         } else {
             match self.element()? {
+                Element::Scalar(scalar) if self.eat("(") => {
+                    self.expect("optional")?;
+                    self.expect(")")?;
+                    FieldType::Optional(scalar)
+                }
                 Element::Scalar(scalar) => FieldType::Scalar(scalar),
                 Element::Struct(name) => FieldType::Struct(name),
             }
@@ -509,6 +533,10 @@ mod tests {
         field("Adv_Set: [Adv_Set_t; Number_of_Sets] (capacity 63)");
         field("Service_UUID: union(Service_UUID_Type) { 1 => 2, 2 => 16 }");
         field("Include_UUID: union(Include_UUID_Type) { 2 => 16, _ => 2 }");
+        assert_eq!(
+            field("fw_src_add: u32 (optional)").ty,
+            FieldType::Optional(Scalar::U32)
+        );
     }
 
     #[test]
@@ -520,6 +548,8 @@ mod tests {
             "Data: [u8; Len] (capacity x)",
             "1st: u8",
             "Uuid: union(Type) { }",
+            "Entry: Adv_Set_t (optional)",
+            "Address: u32 (capacity 4)",
         ] {
             assert!(source.parse::<Field>().is_err(), "{source}");
         }
@@ -548,6 +578,24 @@ mod tests {
         assert!(dangling.envelope(&structs).is_err());
         let undefined = Layout::Fields(vec![field("Entry: Missing_t")]);
         assert!(undefined.envelope(&structs).is_err());
+        let optional = Layout::Fields(vec![
+            field("Mode: u8"),
+            field("Source: u32 (optional)"),
+            field("Destination: u32 (optional)"),
+        ]);
+        assert_eq!(
+            optional.envelope(&structs).unwrap(),
+            Some(Envelope { min: 1, max: 9 })
+        );
+        let required_after_optional =
+            Layout::Fields(vec![field("Source: u32 (optional)"), field("Mode: u8")]);
+        assert!(required_after_optional.envelope(&structs).is_err());
+        let counted_by_optional = Layout::Fields(vec![
+            field("Len: u8 (optional)"),
+            field("Data: [u8; Len] (capacity 4)"),
+        ]);
+        assert!(counted_by_optional.envelope(&structs).is_err());
+
         assert_eq!(
             Layout::Unresolved("pointer field".into())
                 .envelope(&structs)

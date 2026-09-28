@@ -79,6 +79,11 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// catalog's, such as `Uuid`, and the selector is written from the value's
 /// alternative.
 ///
+/// An optional parameter, which the catalog allows only at the end, is
+/// declared `Option<T>` and written only if `Some`. The parameters stop at
+/// the first one omitted, so with several of them the command is built with
+/// `try_new`, which rejects one supplied after an omitted one.
+///
 /// A field the catalog adds in a later release is marked with
 /// `#[wire(since = "<release>")]`, the first release that has it, and a field
 /// it removes with `#[wire(before = "<release>")]`, the first release without

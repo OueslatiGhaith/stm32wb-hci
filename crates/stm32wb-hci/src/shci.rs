@@ -11,8 +11,7 @@
 //! packet, which starts with the sub-event code.
 //!
 //! The catalog rules out the commands and events for Thread, Zigbee,
-//! 802.15.4, and the LLD test binaries, and the firmware upgrade command,
-//! which omits its addresses when they are zero.
+//! 802.15.4, and the LLD test binaries.
 
 use stm32wb_hci_macros::{system_command, system_event, system_events};
 
@@ -21,6 +20,16 @@ system_command! {
     /// starts it if the wireless stack is running.
     SHCI_C2_FUS_GetState => FusGetState {} -> FusState {
         error_code: u8,
+    }
+}
+
+system_command! {
+    /// Install the CPU2 firmware image at `fw_src_add` to `fw_dest_add`.
+    /// Either address may be omitted, but the destination is sent only after
+    /// the source.
+    SHCI_C2_FUS_FwUpgrade => FusFwUpgrade {
+        fw_src_add: Option<u32>,
+        fw_dest_add: Option<u32>,
     }
 }
 
@@ -366,6 +375,30 @@ mod tests {
 
         let (bytes, len) = encode(&RadioAllowLowPower::new(1, 0));
         assert_eq!(bytes[..len], [1, 0]);
+    }
+
+    #[test]
+    fn firmware_upgrades_send_their_addresses_up_to_the_first_omitted() {
+        assert_eq!(FusFwUpgrade::OPCODE, 0xFC54);
+        assert_eq!(encode(&FusFwUpgrade::try_new(None, None).unwrap()).1, 0);
+
+        let (bytes, len) = encode(&FusFwUpgrade::try_new(Some(0x0808_0000), None).unwrap());
+        assert_eq!(bytes[..len], [0x00, 0x00, 0x08, 0x08]);
+
+        let command = FusFwUpgrade::try_new(Some(0x0808_0000), Some(0x080C_0000)).unwrap();
+        let (bytes, len) = encode(&command);
+        assert_eq!(
+            bytes[..len],
+            [0x00, 0x00, 0x08, 0x08, 0x00, 0x00, 0x0C, 0x08]
+        );
+
+        assert_eq!(
+            FusFwUpgrade::try_new(None, Some(0x080C_0000)),
+            Err(crate::wire::OmittedBefore {
+                field: "fw_dest_add",
+                omitted: "fw_src_add",
+            })
+        );
     }
 
     #[test]

@@ -324,6 +324,29 @@ impl fmt::Display for TooLong {
 
 impl core::error::Error for TooLong {}
 
+/// An optional parameter supplied after an omitted one, which the command
+/// cannot send: its parameters stop at the first one omitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OmittedBefore {
+    /// The Rust name of the supplied field.
+    pub field: &'static str,
+    /// The Rust name of the omitted field before it.
+    pub omitted: &'static str,
+}
+
+impl fmt::Display for OmittedBefore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} cannot be sent without {}, which comes before it",
+            self.field, self.omitted
+        )
+    }
+}
+
+impl core::error::Error for OmittedBefore {}
+
 /// Up to `MAX_LEN` elements of a variable-length field, owned so the value
 /// containing it can be `Copy`.
 #[derive(Clone, Copy)]

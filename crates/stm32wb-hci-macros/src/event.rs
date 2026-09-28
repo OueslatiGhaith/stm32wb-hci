@@ -295,7 +295,8 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
             }
         }
         Slot::Selector { .. }
-        | Slot::Union { .. } => unreachable!("plan rejects these in events"),
+        | Slot::Union { .. }
+        | Slot::Optional { .. } => unreachable!("plan rejects these in events"),
     });
     let names = event.fields.fields.iter().map(|field| &field.name);
     let types = event.fields.fields.iter().map(|field| &field.ty);

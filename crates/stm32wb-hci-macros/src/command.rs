@@ -475,7 +475,9 @@ fn return_struct(
                 };
             }
         }
-        Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
+        Slot::Selector { .. } | Slot::Union { .. } | Slot::Optional { .. } => {
+            unreachable!("plan rejects unions and optional members in return parameters")
+        },
     });
     let max_lens = slots.iter().map(|slot| {
         let len = match slot {
@@ -484,8 +486,8 @@ fn return_struct(
             Slot::Elements {
                 capacity, element, ..
             } => usize::from(*capacity) * usize::from(element.width()),
-            Slot::Selector { .. } | Slot::Union { .. } => {
-                unreachable!("plan rejects unions in return parameters")
+            Slot::Selector { .. } | Slot::Union { .. } | Slot::Optional { .. } => {
+                unreachable!("plan rejects unions and optional members in return parameters")
             }
         };
         quote!(#len)
@@ -510,7 +512,9 @@ fn return_struct(
                         let width = usize::from(element.width());
                         (quote!(usize::from(#count) * #width), None)
                     }
-                    Slot::Selector { .. } | Slot::Union { .. } => unreachable!("plan rejects unions in return parameters"),
+                    Slot::Selector { .. } | Slot::Union { .. } | Slot::Optional { .. } => {
+            unreachable!("plan rejects unions and optional members in return parameters")
+        },
                 };
                 let count = count.map(|(count, scalar)| {
                     quote! {
@@ -617,6 +621,10 @@ fn encoded_command(
             let width = usize::from(scalar.width());
             quote!(#width)
         }
+        Slot::Optional { field, value, .. } => {
+            let field = &field.name;
+            quote!(self.#field.as_ref().map_or(0, <#value as ::bt_hci::WriteHci>::size))
+        }
         Slot::Elements {
             field,
             element: ElementType::Byte,
@@ -645,6 +653,14 @@ fn encoded_command(
             .map(move |slot| match slot {
                 Slot::Fixed { field, .. } | Slot::Union { field, .. } => {
                     field_write(field, asynchronous)
+                }
+                Slot::Optional { field, value, .. } => {
+                    let field = &field.name;
+                    quote! {
+                        if let Some(value) = &self.#field {
+                            <#value as ::bt_hci::WriteHci>::#write_hci(value, &mut writer)#wait?;
+                        }
+                    }
                 }
                 Slot::Count { counted, scalar } => {
                     let (counted, scalar) = (&counted.name, format_ident!("{}", scalar.name()));
@@ -723,7 +739,51 @@ fn encoded_command(
             }
         }
     });
-    let constructor = if checks.is_empty() {
+    // Optional members are sent in order up to the first one omitted, so a
+    // later one supplied without an earlier one cannot be sent.
+    let optional = slots
+        .iter()
+        .filter_map(|slot| match slot {
+            Slot::Optional { field, .. } => Some(&field.name),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let gaps = optional
+        .windows(2)
+        .map(|pair| {
+            let (omitted, field) = (pair[0], pair[1]);
+            let (omitted_label, field_label) = (omitted.to_string(), field.to_string());
+            quote! {
+                if #field.is_some() && #omitted.is_none() {
+                    return Err(::stm32wb_hci::wire::OmittedBefore {
+                        field: #field_label,
+                        omitted: #omitted_label,
+                    });
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    if !checks.is_empty() && !gaps.is_empty() {
+        return Err(syn::Error::new(
+            name.span(),
+            "variable-length and several optional parameters in one command are not \
+             supported yet",
+        ));
+    }
+    let constructor = if !gaps.is_empty() {
+        quote! {
+            /// Build the command, rejecting an optional parameter supplied
+            /// after an omitted one: the parameters stop at the first one
+            /// omitted.
+            #[allow(clippy::too_many_arguments)]
+            pub fn try_new(
+                #(#names: #types),*
+            ) -> Result<Self, ::stm32wb_hci::wire::OmittedBefore> {
+                #(#gaps)*
+                Ok(Self::from(#params_name { #(#names),* }))
+            }
+        }
+    } else if checks.is_empty() {
         quote! {
             /// Create a new instance of the command.
             #[allow(clippy::too_many_arguments)]
@@ -745,13 +805,18 @@ fn encoded_command(
             }
         }
     };
-    // Fields are public unless the constructor enforces a capacity on them.
-    let visibility = if checks.is_empty() {
+    // Fields are public unless the constructor checks them.
+    let visibility = if checks.is_empty() && gaps.is_empty() {
         quote!(pub)
     } else {
         quote!()
     };
-    let params_doc = if checks.is_empty() {
+    let params_doc = if !gaps.is_empty() {
+        format!(
+            "Parameters of [`{name}`], built by [`{name}::try_new`] without an optional \
+             parameter after an omitted one."
+        )
+    } else if checks.is_empty() {
         format!("Parameters of [`{name}`], built by [`{name}::new`].")
     } else {
         format!(
@@ -905,6 +970,21 @@ fn array_element(ty: &Type) -> Option<&Type> {
     }
 }
 
+/// The value type of an `Option<T>` type.
+fn option_value(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    match (segment.ident == "Option", arguments.args.first()) {
+        (true, Some(syn::GenericArgument::Type(value))) if arguments.args.len() == 1 => Some(value),
+        _ => None,
+    }
+}
+
 /// The element type (`None` for bytes) and literal capacity of a
 /// `BoundedBytes<N>` or `BoundedArray<T, N>` type.
 fn bounded_array(ty: &Type) -> Option<(Option<&Type>, u64)> {
@@ -1019,6 +1099,25 @@ pub(crate) fn width_assertions<'a>(
                     #message
                 );
                 #identity
+            })
+        }
+        Slot::Optional {
+            field,
+            member,
+            value,
+            width,
+        } => {
+            let width = usize::from(*width);
+            let message = format!(
+                "{owner}.{}: the catalog encodes {} in {width} bytes",
+                field.name, member.name
+            );
+            Some(quote_spanned! {value.span()=>
+                #cfg
+                const _: () = ::core::assert!(
+                    <#value as ::stm32wb_hci::wire::HciWireType>::WIDTH == #width,
+                    #message
+                );
             })
         }
         Slot::Elements {
@@ -1620,6 +1719,13 @@ pub(crate) enum Slot<'a> {
         variants: &'a [UnionVariant],
         selector: &'a Field,
     },
+    /// A declared `Option<T>` of an optional member, written only if `Some`.
+    Optional {
+        field: &'a InputField,
+        member: &'a Field,
+        value: &'a Type,
+        width: u16,
+    },
 }
 
 /// The elements of a variable-length field.
@@ -1875,6 +1981,23 @@ pub(crate) fn plan<'a>(
                 FieldType::Counted { .. } => return unsupported("a variable-length array"),
                 FieldType::Union { .. } if side != Side::Params => {
                     return unsupported("a union");
+                }
+                FieldType::Optional(_) if side != Side::Params => {
+                    return unsupported("optional");
+                }
+                FieldType::Optional(scalar) => {
+                    let Some(value) = option_value(&field.ty) else {
+                        return Err(syn::Error::new(
+                            field.ty.span(),
+                            format!("`{member}` may be omitted; declare it as `Option<T>`"),
+                        ));
+                    };
+                    return Ok(Slot::Optional {
+                        field,
+                        member,
+                        value,
+                        width: scalar.width(),
+                    });
                 }
                 FieldType::Union { selector, variants } => {
                     return Ok(Slot::Union {
@@ -2560,6 +2683,44 @@ mod tests {
         assert!(error.contains("is not an ST system command"), "{error}");
         let error = expand_str("SHCI_C2_Reinit => Reinit {}").unwrap_err();
         assert!(error.contains("is not an ST vendor command"), "{error}");
+    }
+
+    #[test]
+    fn optional_members_are_options_sent_up_to_the_first_omitted() {
+        let tokens = expand_system(
+            "SHCI_C2_FUS_FwUpgrade => FusFwUpgrade {
+                 fw_src_add: Option<u32>,
+                 fw_dest_add: Option<u32>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("if let Some (value) = & self . fw_dest_add"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("if fw_dest_add . is_some () && fw_src_add . is_none ()"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("< u32 as :: stm32wb_hci :: wire :: HciWireType > :: WIDTH == 4usize"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("OmittedBefore"), "{tokens}");
+        assert!(!tokens.contains("pub fn new"), "{tokens}");
+
+        let error = expand_system(
+            "SHCI_C2_FUS_FwUpgrade => FusFwUpgrade {
+                 fw_src_add: u32,
+                 fw_dest_add: Option<u32>,
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .contains("`fw_src_add: u32 (optional)` may be omitted; declare it as `Option<T>`"),
+            "{error}"
+        );
     }
 
     #[test]
