@@ -8,6 +8,7 @@ mod command;
 mod complete;
 mod dispatch;
 mod event;
+mod standard;
 mod structs;
 
 use proc_macro::TokenStream;
@@ -251,6 +252,30 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
         Ok(tokens) => tokens.into(),
         Err(message) => error(&format!("the bundled catalog is invalid: {message}")),
     }
+}
+
+/// Check bt-hci's types for the Bluetooth Core commands against the catalog,
+/// and mark each `Supported` on the targets whose binary implements it.
+///
+/// Each entry names a catalog command, by any name it had, and the bt-hci
+/// type sending it, by its path in `bt_hci::cmd`. On every target the command exists on, the type's opcode
+/// must be the catalog's, it must be a `SyncCmd` for a Command Complete
+/// command or an `AsyncCmd` for a Command Status one, and its parameters and
+/// return parameters after the status must be `FixedSizeValue`s of the
+/// catalog's width wherever the catalog's width is fixed.
+///
+/// ```ignore
+/// standard_commands! {
+///     hci_reset => controller_baseband::Reset,
+///     hci_le_set_extended_advertising_data => le::LeSetExtAdvData<'a>,
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_commands(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as standard::Input);
+    standard::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// The last enhanced ATT bearer the selected release documents, as

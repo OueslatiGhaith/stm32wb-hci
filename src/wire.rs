@@ -550,6 +550,48 @@ impl<'a, T: HciWireType + FromHciBytes<'a> + defmt::Format> defmt::Format for El
     }
 }
 
+/// A bt-hci command that completes with Command Complete, as the catalog
+/// lists a standard command to.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the catalog completes `{Self}` with Command Complete, but it is not a bt-hci SyncCmd"
+)]
+pub trait CompletesWithCommandComplete: bt_hci::cmd::SyncCmd {}
+
+impl<T: bt_hci::cmd::SyncCmd> CompletesWithCommandComplete for T {}
+
+/// A bt-hci command that completes with Command Status, as the catalog lists
+/// a standard command to.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the catalog completes `{Self}` with Command Status, but it is not a bt-hci AsyncCmd"
+)]
+pub trait CompletesWithCommandStatus: bt_hci::cmd::AsyncCmd {}
+
+impl<T: bt_hci::cmd::AsyncCmd> CompletesWithCommandStatus for T {}
+
+/// A bt-hci value whose encoding is its packed layout, so its size is its
+/// wire width.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the catalog encodes `{Self}` in a fixed width, but it is not a bt-hci FixedSizeValue"
+)]
+pub trait FixedWidth: bt_hci::FixedSizeValue {}
+
+impl<T: bt_hci::FixedSizeValue> FixedWidth for T {}
+
+#[doc(hidden)]
+pub const fn completes_with_command_complete<T: CompletesWithCommandComplete>() {}
+
+#[doc(hidden)]
+pub const fn completes_with_command_status<T: CompletesWithCommandStatus>() {}
+
+/// The wire width of a bt-hci fixed-size value.
+#[doc(hidden)]
+pub const fn fixed_width<T: FixedWidth>() -> usize {
+    core::mem::size_of::<T>()
+}
+
 /// An ST system (SHCI) command, sent on the CPU2 system channel.
 ///
 /// System opcodes share OGF 0x3F with the ACI commands, and some share their

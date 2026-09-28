@@ -82,7 +82,7 @@ impl Parse for Variant {
 
 /// `ty` with every lifetime replaced by `'static`, for the compile-time
 /// checks, which have no lifetime in scope.
-fn with_static_lifetimes(ty: &Type) -> Type {
+pub(crate) fn with_static_lifetimes(ty: &Type) -> Type {
     fn visit(ty: &mut Type) {
         match ty {
             Type::Reference(reference) => {

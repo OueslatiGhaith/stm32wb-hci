@@ -369,6 +369,9 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
                     #returns_tokens
                 }
             }
+
+            #cfg
+            impl ::stm32wb_hci::catalog::Supported for #name {}
         }
     } else {
         encoded_command(
@@ -743,6 +746,9 @@ fn encoded_command(
                     #returns
                 }
             }
+
+            #cfg
+            impl #generics ::stm32wb_hci::catalog::Supported for #name #generics {}
         },
         Declares::System {
             opcode,
