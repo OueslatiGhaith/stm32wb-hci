@@ -938,7 +938,7 @@ fn distinct_targets_cover_every_interface_once() {
 }
 
 #[test]
-fn stm32wb_items_follow_the_mcu_conditions() {
+fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
     let domain = |kind, items: &[&str]| Domain {
         kind,
         items: items.iter().map(|item| item.parse().unwrap()).collect(),
@@ -958,11 +958,33 @@ fn stm32wb_items_follow_the_mcu_conditions() {
         ],
     );
     assert_eq!(
-        values.stm32wb_ranges().unwrap(),
+        values.stm32wb_ranges(Profile::Light).unwrap(),
         [(0, 0), (3, 3), (4, 0x5DC0)]
     );
-    let error = domain(DomainKind::Values, &["0x00..=0x25: for BO variant"])
-        .stm32wb_ranges()
+    assert_eq!(
+        values.stm32wb_ranges(Profile::Full).unwrap(),
+        [
+            (0, 0),
+            (3, 3),
+            (4, 0x5DC0),
+            (0x5DC1, 0x5DC1),
+            (0x5DC2, 0x5DC2)
+        ]
+    );
+    let variant = domain(
+        DomainKind::Values,
+        &["0x00..=0x25: for BO variant", "0x00..=0xFF: otherwise"],
+    );
+    assert_eq!(
+        variant.stm32wb_ranges(Profile::HciAdvScan).unwrap(),
+        [(0, 0x25)]
+    );
+    assert_eq!(
+        variant.stm32wb_ranges(Profile::HciLayer).unwrap(),
+        [(0, 0xFF)]
+    );
+    let error = domain(DomainKind::Values, &["0x00..=0x25: for XY variant"])
+        .stm32wb_ranges(Profile::Full)
         .unwrap_err();
     assert!(error.contains("cannot interpret"), "{error}");
     let flags = domain(
@@ -976,12 +998,22 @@ fn stm32wb_items_follow_the_mcu_conditions() {
             "0x10: Peripheral",
         ],
     );
-    assert_eq!(flags.stm32wb_bits().unwrap(), 0x11);
-    assert!(flags.stm32wb_ranges().unwrap_err().contains("bits"));
-    assert!(values.stm32wb_bits().unwrap_err().contains("values"));
+    assert_eq!(flags.stm32wb_bits(Profile::Full).unwrap(), 0x11);
+    assert!(
+        flags
+            .stm32wb_ranges(Profile::Full)
+            .unwrap_err()
+            .contains("bits")
+    );
+    assert!(
+        values
+            .stm32wb_bits(Profile::Full)
+            .unwrap_err()
+            .contains("values")
+    );
     assert_eq!(
         domain(DomainKind::Values, &["0x01: Resolving (not supported)"])
-            .stm32wb_ranges()
+            .stm32wb_ranges(Profile::Full)
             .unwrap(),
         []
     );
@@ -1003,7 +1035,10 @@ fn stm32wb_lengths_end_the_labels() {
         .collect(),
         unit_us: None,
     };
-    assert_eq!(offsets.stm32wb_lengths().unwrap(), [(0x00, 6), (0xB0, 1)]);
+    assert_eq!(
+        offsets.stm32wb_lengths(Profile::Light).unwrap(),
+        [(0x00, 6), (0xB0, 1)]
+    );
     let item: DomainItem = "0xD1: Max data length (bytes #0-1: \"tx\"); 8 bytes"
         .parse()
         .unwrap();
@@ -1012,5 +1047,10 @@ fn stm32wb_lengths_end_the_labels() {
         kind: DomainKind::Flags,
         ..offsets
     };
-    assert!(flags.stm32wb_lengths().unwrap_err().contains("bits"));
+    assert!(
+        flags
+            .stm32wb_lengths(Profile::Light)
+            .unwrap_err()
+            .contains("bits")
+    );
 }

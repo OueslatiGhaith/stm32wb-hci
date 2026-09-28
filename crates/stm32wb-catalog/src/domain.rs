@@ -28,7 +28,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{Element, Error, Field, FieldType, Layout, ReleaseRange, Scalar};
+use crate::{Element, Error, Field, FieldType, Layout, Profile, ReleaseRange, Scalar};
 
 /// One documented value, or an inclusive range of them, with its label.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -349,77 +349,108 @@ fn mcu_after(label: &str, phrase: &str) -> Option<Mcu> {
         .then_some(mcu)
 }
 
+/// The profiles a phrase of an item's label restricts it to, if it names
+/// one: the full stack is the `BLE_Stack_full` binaries, and the BO variant
+/// the Beacon Only one.
+fn profiles_named(label: &str) -> Option<&'static [Profile]> {
+    if ["only for full stack", "only for STM32WB full stack"]
+        .iter()
+        .any(|phrase| label.contains(phrase))
+    {
+        Some(&[Profile::FullExtended, Profile::Full])
+    } else if label.contains("for BO variant") {
+        Some(&[Profile::HciAdvScan])
+    } else {
+        None
+    }
+}
+
 impl Domain {
-    /// The items an STM32WB binary accepts: every item, except those whose
-    /// label says they are not supported, not supported on STM32WB, only on
-    /// STM32WBA, or only for the full stack, which not every profile is. A
-    /// label naming any other condition, such as a stack variant, is an
-    /// error rather than a guess.
-    fn stm32wb_items(&self) -> Result<Vec<&DomainItem>, String> {
+    /// The items an STM32WB binary of `profile` accepts: every item, except
+    /// those whose label says they are not supported, not supported on
+    /// STM32WB, only on STM32WBA, or only for profiles other than `profile`,
+    /// such as the full stack or the BO variant. An item labelled
+    /// `otherwise` is accepted when no item restricted to some profiles is.
+    /// A label naming any other condition is an error rather than a guess.
+    fn stm32wb_items(&self, profile: Profile) -> Result<Vec<&DomainItem>, String> {
         let mut items = Vec::new();
+        let mut otherwise = Vec::new();
+        let mut restricted = false;
         for item in &self.items {
             let label = item.label.as_deref().unwrap_or_default();
             let mcu = mcu_after(label, "not supported on")
                 .map(|mcu| (mcu, false))
                 .or_else(|| mcu_after(label, "only for").map(|mcu| (mcu, true)))
                 .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)));
-            let full_stack_only = ["only for full stack", "only for STM32WB full stack"]
-                .iter()
-                .any(|phrase| label.contains(phrase));
-            let applies = match mcu {
-                Some((mcu, only)) => (mcu == Mcu::Stm32wb) == only,
-                None if full_stack_only => false,
-                None if label.contains("STM32WB") || label.contains("variant") => {
+            let applies = match (mcu, profiles_named(label)) {
+                (Some((mcu, only)), _) => (mcu == Mcu::Stm32wb) == only,
+                (None, Some(profiles)) => {
+                    let applies = profiles.contains(&profile);
+                    restricted |= applies;
+                    applies
+                }
+                (None, None) if label == "otherwise" => {
+                    otherwise.push(item);
+                    false
+                }
+                (None, None) if label.contains("STM32WB") || label.contains("variant") => {
                     return Err(format!(
                         "{item} names a condition the catalog cannot interpret"
                     ));
                 }
-                None => !label.ends_with("(not supported)") && !label.ends_with("[not supported]"),
+                (None, None) => {
+                    !label.ends_with("(not supported)") && !label.ends_with("[not supported]")
+                }
             };
             if applies {
                 items.push(item);
             }
         }
+        if !restricted {
+            items.extend(otherwise);
+            items.sort();
+        }
         Ok(items)
     }
 
-    /// The inclusive ranges of values an STM32WB binary accepts, as
-    /// [`stm32wb_items`](Self::stm32wb_items) selects them. Flags, which
-    /// document bits rather than values, are an error.
-    pub fn stm32wb_ranges(&self) -> Result<Vec<(i64, i64)>, String> {
+    /// The inclusive ranges of values an STM32WB binary of `profile`
+    /// accepts, leaving out the items their labels restrict to other MCUs or
+    /// profiles, or say are not supported. Flags, which document bits rather
+    /// than values, are an error.
+    pub fn stm32wb_ranges(&self, profile: Profile) -> Result<Vec<(i64, i64)>, String> {
         if self.kind == DomainKind::Flags {
             return Err("its documentation lists bits rather than values".to_owned());
         }
         Ok(self
-            .stm32wb_items()?
+            .stm32wb_items(profile)?
             .into_iter()
             .map(|item| (item.first, item.last))
             .collect())
     }
 
-    /// The length each single value an STM32WB binary accepts documents for
-    /// its data, as [`stm32wb_items`](Self::stm32wb_items) selects them.
-    /// Flags are an error, as for [`stm32wb_ranges`](Self::stm32wb_ranges).
-    pub fn stm32wb_lengths(&self) -> Result<Vec<(i64, u16)>, String> {
-        self.stm32wb_ranges()?;
+    /// The length each single value an STM32WB binary of `profile` accepts
+    /// documents for its data, the values being those
+    /// [`stm32wb_ranges`](Self::stm32wb_ranges) gives. Flags are an error.
+    pub fn stm32wb_lengths(&self, profile: Profile) -> Result<Vec<(i64, u16)>, String> {
+        self.stm32wb_ranges(profile)?;
         Ok(self
-            .stm32wb_items()?
+            .stm32wb_items(profile)?
             .into_iter()
             .filter(|item| item.first == item.last)
             .filter_map(|item| Some((item.first, item.length()?)))
             .collect())
     }
 
-    /// The union of the flags an STM32WB binary accepts, as
-    /// [`stm32wb_items`](Self::stm32wb_items) selects them. Values, which
-    /// the bits of a flag type could combine into undocumented ones, are an
-    /// error.
-    pub fn stm32wb_bits(&self) -> Result<u64, String> {
+    /// The union of the flags an STM32WB binary of `profile` accepts, the
+    /// items being selected as for [`stm32wb_ranges`](Self::stm32wb_ranges).
+    /// Values, which the bits of a flag type could combine into undocumented
+    /// ones, are an error.
+    pub fn stm32wb_bits(&self, profile: Profile) -> Result<u64, String> {
         if self.kind == DomainKind::Values {
             return Err("its documentation lists values rather than bits".to_owned());
         }
         Ok(self
-            .stm32wb_items()?
+            .stm32wb_items(profile)?
             .into_iter()
             .fold(0, |bits, item| bits | item.first as u64))
     }

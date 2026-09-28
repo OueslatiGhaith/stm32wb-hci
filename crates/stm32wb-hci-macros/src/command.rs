@@ -1,7 +1,7 @@
 //! `vendor_command!`: an ST vendor command whose identity, availability, and
 //! wire layout come from the catalog.
 
-use std::ptr;
+use std::{ptr, slice};
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -1360,6 +1360,7 @@ pub(crate) type Documents = Vec<Documented>;
 /// documented values of a member by name.
 pub(crate) fn documents<'a>(
     members: &[Field],
+    profile: Profile,
     domain: impl Fn(&str) -> Option<&'a Domain>,
 ) -> Documents {
     members
@@ -1369,15 +1370,41 @@ pub(crate) fn documents<'a>(
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
-                DomainKind::Values => domain.stm32wb_ranges().and_then(|ranges| {
-                    let lengths = domain.stm32wb_lengths()?;
+                DomainKind::Values => domain.stm32wb_ranges(profile).and_then(|ranges| {
+                    let lengths = domain.stm32wb_lengths(profile)?;
                     Ok(Documented::Values(ranges, domain.unit_us, lengths))
                 }),
-                DomainKind::Flags => domain.stm32wb_bits().map(Documented::Flags),
+                DomainKind::Flags => domain.stm32wb_bits(profile).map(Documented::Flags),
             };
             documented.unwrap_or_else(Documented::Unreadable)
         })
         .collect()
+}
+
+/// What `documents` gives for each of `profiles` in `release`, with the
+/// target giving it: one target for all of them when they agree, which is
+/// usual, or one per profile otherwise.
+pub(crate) fn profile_documents<T: PartialEq>(
+    release: Version,
+    profiles: &[Profile],
+    documents: impl Fn(Profile) -> T,
+) -> Vec<(T, (ReleaseRange, &[Profile]))> {
+    let releases = ReleaseRange::single(release);
+    let each = profiles
+        .iter()
+        .map(|profile| documents(*profile))
+        .collect::<Vec<_>>();
+    if each.windows(2).all(|pair| pair[0] == pair[1]) {
+        each.into_iter()
+            .take(1)
+            .map(|documents| (documents, (releases, profiles)))
+            .collect()
+    } else {
+        each.into_iter()
+            .zip(profiles)
+            .map(|(documents, profile)| (documents, (releases, slice::from_ref(profile))))
+            .collect()
+    }
 }
 
 /// Add one release's documents to the groups of a declaration.
@@ -1403,10 +1430,11 @@ pub(crate) fn documented_groups(
     catalog: &Catalog,
     groups: Vec<(Documents, Targets<'_>)>,
 ) -> Vec<DocumentedGroup> {
+    let all_profiles = profile_set(groups.iter().flat_map(|(_, targets)| targets));
     groups
         .into_iter()
         .map(|(documents, targets)| {
-            let releases = release_runs(catalog, targets.iter().map(|(releases, _)| *releases));
+            let releases = profile_runs(catalog, &targets, &all_profiles);
             DocumentedGroup {
                 documents,
                 cfg: cfg::targets(catalog, targets),
@@ -1414,6 +1442,52 @@ pub(crate) fn documented_groups(
             }
         })
         .collect()
+}
+
+/// The profiles `targets` cover, in the catalog's order.
+fn profile_set<'t, 'a: 't>(
+    targets: impl IntoIterator<Item = &'t (ReleaseRange, &'a [Profile])>,
+) -> Vec<Profile> {
+    let mut profiles = targets
+        .into_iter()
+        .flat_map(|(_, profiles)| profiles.iter().copied())
+        .collect::<Vec<_>>();
+    profiles.sort();
+    profiles.dedup();
+    profiles
+}
+
+/// The releases `targets` cover, as for [`release_runs`], naming the
+/// profiles of each run unless it covers every one of `all_profiles`, as in
+/// `1.21.0..=1.24.0 on full-extended, full`.
+fn profile_runs(catalog: &Catalog, targets: &Targets<'_>, all_profiles: &[Profile]) -> String {
+    let mut runs: Vec<(Vec<Profile>, Vec<ReleaseRange>)> = Vec::new();
+    for release in catalog.versions() {
+        let profiles = profile_set(
+            targets
+                .iter()
+                .filter(|(releases, _)| releases.contains(release)),
+        );
+        if profiles.is_empty() {
+            continue;
+        }
+        match runs.iter_mut().find(|(other, _)| *other == profiles) {
+            Some((_, releases)) => releases.push(ReleaseRange::single(release)),
+            None => runs.push((profiles, vec![ReleaseRange::single(release)])),
+        }
+    }
+    runs.into_iter()
+        .map(|(profiles, releases)| {
+            let releases = release_runs(catalog, releases.into_iter());
+            if profiles == all_profiles {
+                releases
+            } else {
+                let names = profiles.iter().map(|profile| profile.name());
+                format!("{releases} on {}", names.collect::<Vec<_>>().join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// The releases `ranges` cover, as consecutive runs such as
@@ -1831,16 +1905,17 @@ impl<'a> Command<'a> {
                 .catalog
                 .versions()
                 .filter(|release| releases.contains(*release))
-                .map(|release| {
-                    (
-                        documents(params, |member| {
-                            active.command.domain(member, false, release)
-                        }),
-                        documents(after_status, |member| {
-                            active.command.domain(member, true, release)
-                        }),
-                        (ReleaseRange::single(release), segment.profiles),
-                    )
+                .flat_map(|release| {
+                    profile_documents(release, segment.profiles, |profile| {
+                        (
+                            documents(params, profile, |member| {
+                                active.command.domain(member, false, release)
+                            }),
+                            documents(after_status, profile, |member| {
+                                active.command.domain(member, true, release)
+                            }),
+                        )
+                    })
                 })
                 .collect::<Vec<_>>();
             let Some((_, variant, targets, groups, documented, return_documented)) =
@@ -1880,7 +1955,7 @@ impl<'a> Command<'a> {
                 let target = (releases, segment.profiles);
                 let mut documented = Vec::new();
                 let mut return_documented = Vec::new();
-                for (documents, return_documents, target) in documents {
+                for ((documents, return_documents), target) in documents {
                     add_documents(&mut documented, documents, target);
                     add_documents(&mut return_documented, return_documents, target);
                 }
@@ -1909,7 +1984,7 @@ impl<'a> Command<'a> {
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
             add_bearers(groups, bearers, (releases, segment.profiles));
-            for (documents, return_documents, target) in documents {
+            for ((documents, return_documents), target) in documents {
                 add_documents(documented, documents, target);
                 add_documents(return_documented, return_documents, target);
             }

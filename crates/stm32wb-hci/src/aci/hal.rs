@@ -9,7 +9,12 @@
 use bt_hci::param::BdAddr;
 use stm32wb_hci_macros::{vendor_command, vendor_event};
 
-use crate::aci::flags::{HalEventMask, RadioActivityMask};
+#[allow(
+    unused_imports,
+    reason = "only some profiles can set the HAL event mask"
+)]
+use crate::aci::flags::HalEventMask;
+use crate::aci::flags::RadioActivityMask;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no warning event"

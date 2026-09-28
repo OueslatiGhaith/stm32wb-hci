@@ -12,7 +12,8 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
     reason = "the HCI-layer profiles have no GATT commands"
 )]
 use crate::aci::flags::{
-    AccessPermissions, CharProperties, GattEventMask, SecurityPermissions, UpdateType,
+    AccessPermissions, CharProperties, GattDescEventMask, GattEventMask, SecurityPermissions,
+    UpdateType,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GATT events")]
 use crate::aci::values::EattBearerState;
@@ -80,7 +81,7 @@ vendor_command! {
         char_desc_value: &'a [u8],
         security_permissions: SecurityPermissions,
         access_permissions: AccessPermissions,
-        gatt_evt_mask: GattEventMask,
+        gatt_evt_mask: GattDescEventMask,
         enc_key_size: u8,
         is_variable: bool,
     } -> GattCharDesc {
@@ -745,7 +746,7 @@ mod tests {
             b"hi",
             SecurityPermissions::empty(),
             AccessPermissions::READ,
-            GattEventMask::empty(),
+            GattDescEventMask::empty(),
             7,
             true,
         )

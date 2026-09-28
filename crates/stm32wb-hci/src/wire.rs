@@ -615,13 +615,40 @@ macro_rules! wire_values {
 ///     }
 /// }
 /// ```
+///
+/// A flag only some releases or profiles document is marked with the
+/// `#[cfg]` selecting them, after its documentation, and exists only there:
+///
+/// ```ignore
+/// wire_flags! {
+///     /// Who may read an attribute.
+///     pub struct SecurityPermissions: u8 {
+///         /// Authenticated read.
+///         const AUTHENTICATED_READ = 0x01;
+///         /// Secure Connections read, from 1.24.0.
+///         #[cfg(feature = "fw_1_24_0")]
+///         const SC_READ = 0x40;
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! wire_flags {
+    (@bit [$repr:ty] #[cfg($cfg:meta)] $value:expr) => {{
+        #[cfg($cfg)]
+        const BIT: $repr = $value;
+        #[cfg(not($cfg))]
+        const BIT: $repr = 0;
+        BIT
+    }};
+    (@bit [$repr:ty] $value:expr) => {
+        $value
+    };
     (
         $(#[$attr:meta])*
         $vis:vis struct $name:ident: $repr:ident {
             $(
-                $(#[$flag_attr:meta])*
+                $(#[doc = $doc:expr])*
+                $(#[cfg($cfg:meta)])?
                 const $flag:ident = $value:expr;
             )+
         }
@@ -633,7 +660,8 @@ macro_rules! wire_flags {
 
         impl $name {
             $(
-                $(#[$flag_attr])*
+                $(#[doc = $doc])*
+                $(#[cfg($cfg)])?
                 pub const $flag: Self = Self($value);
             )+
 
@@ -644,7 +672,7 @@ macro_rules! wire_flags {
 
             /// Every flag.
             pub const fn all() -> Self {
-                Self(0 $(| $value)+)
+                Self(0 $(| $crate::wire_flags!(@bit [$repr] $(#[cfg($cfg)])? $value))+)
             }
 
             /// The encoded bits.
@@ -716,6 +744,7 @@ macro_rules! wire_flags {
                 f.write_str("(")?;
                 let mut first = true;
                 $(
+                    $(#[cfg($cfg)])?
                     if self.contains(Self::$flag) {
                         if !first {
                             f.write_str(" | ")?;

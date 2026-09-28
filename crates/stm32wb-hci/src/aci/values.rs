@@ -324,12 +324,7 @@ wire_values! {
 wire_values! {
     /// Where a value of the configuration data starts, with its length.
     /// Every command using one also checks the length is the one the catalog
-    /// documents. `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET` (0xC1, from 1.16.0),
-    /// `CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET` and
-    /// `CONFIG_DATA_SC_KEY_TYPE_OFFSET` (0x34 and 0x35, from 1.17.0),
-    /// `CONFIG_DATA_LL_RPA_MODE_OFFSET` (0xC3, from 1.21.0), and
-    /// `CONFIG_DATA_LL_MAX_DATA_EXT_OFFSET` (0xD1, only for the full stack)
-    /// are left out.
+    /// documents.
     pub enum ConfigDataOffset: u8 {
         /// `CONFIG_DATA_PUBLIC_ADDRESS_OFFSET`: the public address.
         PublicAddress = 0x00 => [u8; 6],
@@ -339,11 +334,73 @@ wire_values! {
         IdentityRoot = 0x18 => [u8; 16],
         /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
         StaticRandomAddress = 0x2E => [u8; 6],
+        /// `CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET`: the number of additional
+        /// records of the GAP service, from 1.22.0. Earlier releases
+        /// document the offset without its length.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0"
+        )))]
+        GapAdditionalRecordNumber = 0x34 => [u8; 1],
+        /// `CONFIG_DATA_SC_KEY_TYPE_OFFSET`: whether Secure Connections uses
+        /// the normal or the debug keys, from 1.17.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0"
+        )))]
+        ScKeyType = 0x35 => [u8; 1],
         /// `CONFIG_DATA_SMP_MODE_OFFSET`: the SMP mode.
         SmpMode = 0xB0 => [u8; 1],
         /// `CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET`: the channels scanning uses,
         /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap).
         ScanChannelMap = 0xC0 => [u8; 1],
+        /// `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET`: whether background scanning
+        /// is enabled, from 1.16.0.
+        #[cfg(not(feature = "fw_1_15_0"))]
+        BackgroundScanMode = 0xC1 => [u8; 1],
+        /// `CONFIG_DATA_LL_RPA_MODE_OFFSET`: how the link layer updates
+        /// resolvable private addresses, from 1.21.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0"
+        )))]
+        RpaMode = 0xC3 => [u8; 1],
+        /// `CONFIG_DATA_LL_MAX_DATA_EXT_OFFSET`: the largest data length
+        /// extension, as the supported maximum TX octets, TX time, RX octets
+        /// and RX time, each a `u16`, from 1.21.0 on the full stack.
+        #[cfg(all(
+            not(any(
+                feature = "fw_1_15_0",
+                feature = "fw_1_16_0",
+                feature = "fw_1_17_0",
+                feature = "fw_1_17_1",
+                feature = "fw_1_17_2",
+                feature = "fw_1_17_3",
+                feature = "fw_1_18_0",
+                feature = "fw_1_19_0",
+                feature = "fw_1_19_1",
+                feature = "fw_1_20_0"
+            )),
+            any(feature = "stack-full-extended", feature = "stack-full")
+        ))]
+        MaxDataLengthExtension = 0xD1 => [u8; 8],
     }
 }
 
@@ -470,6 +527,24 @@ mod tests {
             OrUnknown::Unknown(0x02),
             "mode 2 is gone"
         );
+        assert_eq!(ConfigDataOffset::RpaMode.length(), 1);
+        assert_eq!(
+            ConfigDataOffset::try_from(0x34),
+            Ok(ConfigDataOffset::GapAdditionalRecordNumber)
+        );
+    }
+
+    #[cfg(all(feature = "fw_1_24_0", feature = "stack-full-extended"))]
+    #[test]
+    fn the_full_stack_has_the_offsets_only_it_documents() {
+        assert_eq!(ConfigDataOffset::MaxDataLengthExtension.length(), 8);
+    }
+
+    #[cfg(all(feature = "fw_1_24_0", feature = "stack-light"))]
+    #[test]
+    fn other_profiles_lack_the_offsets_only_the_full_stack_documents() {
+        assert!(ConfigDataOffset::try_from(0xD1).is_err());
+        assert!(ConfigDataOffset::try_from(0xC3).is_ok());
     }
 
     #[cfg(feature = "fw_1_16_0")]
@@ -493,6 +568,10 @@ mod tests {
         );
         assert!(values_documented::<SecurityMode>(&[(1, 2)]));
         assert!(!values_documented::<SecurityMode>(&[(1, 1)]));
+        assert_eq!(ConfigDataOffset::BackgroundScanMode.length(), 1);
+        for offset in [0x34, 0x35, 0xC3, 0xD1] {
+            assert!(ConfigDataOffset::try_from(offset).is_err(), "{offset:#x}");
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! Each is declared with [`wire_flags!`](crate::wire_flags), and every
 //! command using one checks at compile time, on every target, that each of
 //! its flags is a bit the catalog documents for that parameter on STM32WB. A
-//! bit only some releases document is left out, and its type says so.
+//! flag only some releases document exists only in them.
 
 use crate::wire_flags;
 
@@ -23,8 +23,7 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// The GAP events the host receives. `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`
-    /// (0x0010) is left out: releases from 1.22.0 no longer document it.
+    /// The GAP events the host receives.
     pub struct GapEventMask: u16 {
         /// `ACI_GAP_LIMITED_DISCOVERABLE_EVENT`.
         const LIMITED_DISCOVERABLE = 0x0001;
@@ -34,6 +33,21 @@ wire_flags! {
         const PASS_KEY_REQUEST = 0x0004;
         /// `ACI_GAP_AUTHORIZATION_REQ_EVENT`.
         const AUTHORIZATION_REQUEST = 0x0008;
+        /// `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`, before 1.22.0.
+        #[cfg(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0"
+        ))]
+        const PERIPHERAL_SECURITY_INITIATED = 0x0010;
         /// `ACI_GAP_BOND_LOST_EVENT`.
         const BOND_LOST = 0x0020;
         /// `ACI_GAP_PROC_COMPLETE_EVENT`.
@@ -133,9 +147,7 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// What reading or writing an attribute requires. `SC_READ` and
-    /// `SC_WRITE` (Secure Connections) are left out: only 1.24.0 documents
-    /// them.
+    /// What reading or writing an attribute requires.
     pub struct SecurityPermissions: u8 {
         /// `AUTHEN_READ`.
         const AUTHENTICATED_READ = 0x01;
@@ -149,6 +161,13 @@ wire_flags! {
         const AUTHORIZED_WRITE = 0x10;
         /// `ENCRY_WRITE`.
         const ENCRYPTED_WRITE = 0x20;
+        /// `SC_READ`: reading requires a Secure Connections link, from 1.24.0.
+        #[cfg(feature = "fw_1_24_0")]
+        const SECURE_CONNECTIONS_READ = 0x40;
+        /// `SC_WRITE`: writing requires a Secure Connections link, from
+        /// 1.24.0.
+        #[cfg(feature = "fw_1_24_0")]
+        const SECURE_CONNECTIONS_WRITE = 0x80;
     }
 }
 
@@ -167,10 +186,24 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// The GATT events an attribute raises.
-    /// `GATT_NOTIFY_NOTIFICATION_COMPLETION` (0x08) is left out: descriptors,
-    /// and characteristics before 1.17.0, do not document it.
+    /// The GATT events a characteristic raises.
     pub struct GattEventMask: u8 {
+        /// `GATT_NOTIFY_ATTRIBUTE_WRITE`.
+        const ATTRIBUTE_WRITE = 0x01;
+        /// `GATT_NOTIFY_WRITE_REQ_AND_WAIT_FOR_APPL_RESP`.
+        const WRITE_REQUEST_AND_WAIT_FOR_RESPONSE = 0x02;
+        /// `GATT_NOTIFY_READ_REQ_AND_WAIT_FOR_APPL_RESP`.
+        const READ_REQUEST_AND_WAIT_FOR_RESPONSE = 0x04;
+        /// `GATT_NOTIFY_NOTIFICATION_COMPLETION`, from 1.17.0.
+        #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]
+        const NOTIFICATION_COMPLETION = 0x08;
+    }
+}
+
+wire_flags! {
+    /// The GATT events a characteristic descriptor raises. Unlike a
+    /// characteristic, it cannot report that a notification completed.
+    pub struct GattDescEventMask: u8 {
         /// `GATT_NOTIFY_ATTRIBUTE_WRITE`.
         const ATTRIBUTE_WRITE = 0x01;
         /// `GATT_NOTIFY_WRITE_REQ_AND_WAIT_FOR_APPL_RESP`.
@@ -289,5 +322,29 @@ mod tests {
         );
         assert!(!is_opaque::<Role>());
         assert!(flags_documented::<u8>(0), "integers stand for no flags");
+    }
+
+    #[cfg(feature = "fw_1_24_0")]
+    #[test]
+    fn later_releases_have_the_flags_they_add() {
+        let permissions = SecurityPermissions::SECURE_CONNECTIONS_READ;
+        assert_eq!(SecurityPermissions::all().bits(), 0xFF);
+        assert_eq!(GattEventMask::all().bits(), 0x0F);
+        assert_eq!(GapEventMask::all().bits(), 0x0FAF);
+        assert_eq!(GapEventMask::from_bits(0x0010), None);
+        assert_eq!(
+            format!("{permissions:?}").as_str(),
+            "SecurityPermissions(SECURE_CONNECTIONS_READ)"
+        );
+    }
+
+    #[cfg(feature = "fw_1_16_0")]
+    #[test]
+    fn earlier_releases_lack_the_flags_added_later() {
+        assert_eq!(SecurityPermissions::all().bits(), 0x3F);
+        assert_eq!(GattEventMask::all().bits(), 0x07);
+        assert_eq!(GapEventMask::all().bits(), 0x0FBF);
+        assert_eq!(GattEventMask::from_bits(0x08), None);
+        assert!(!flags_documented::<GapEventMask>(0x0FAF));
     }
 }

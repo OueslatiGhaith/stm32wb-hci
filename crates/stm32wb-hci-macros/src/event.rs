@@ -11,8 +11,8 @@ use crate::command::{
     BearerGroup, Channel, DocumentedGroup, Documents, ElementType, Fields, InputField, Side, Slot,
     Targets, add_bearers, add_documents, bearer_assertions, bearer_groups, bearer_positions,
     check_bounds, documented_groups, documents, elements_lifetime_and_element, fields_in, plan,
-    record_history_names, record_names, same_layout, slice_lifetime_and_element, value_assertions,
-    width_assertions,
+    profile_documents, record_history_names, record_names, same_layout, slice_lifetime_and_element,
+    value_assertions, width_assertions,
 };
 use crate::{cfg, complete};
 
@@ -175,11 +175,12 @@ impl<'a> Event<'a> {
                 .catalog
                 .versions()
                 .filter(|release| releases.contains(*release))
-                .map(|release| {
-                    (
-                        documents(payload, |member| active.event.domain(member, release)),
-                        (ReleaseRange::single(release), segment.profiles),
-                    )
+                .flat_map(|release| {
+                    profile_documents(release, segment.profiles, |profile| {
+                        documents(payload, profile, |member| {
+                            active.event.domain(member, release)
+                        })
+                    })
                 })
                 .collect::<Vec<_>>();
             let Some((_, variant, targets, groups, documented)) =
