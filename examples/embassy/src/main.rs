@@ -4,6 +4,8 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
+use bt_hci::cmd::controller_baseband::Reset;
+use bt_hci::controller::{Controller, ControllerCmdSync};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -13,10 +15,8 @@ use embassy_stm32::{
     rcc::WPAN_DEFAULT,
 };
 use stm32wb_hci::{
-    BdAddr,
-    host::{HostHci, uart::UartHci},
+    aci::{gap::GapInit, gatt::GattInit, hal::HalWriteConfigData},
     shci::{BleInit, BleInitParams},
-    vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -80,41 +80,36 @@ async fn main(spawner: Spawner) {
     join(
         async {
             loop {
-                let pkt = ble.read_packet().await;
+                let mut buf = ();
+                let pkt = ble.read(&mut buf).await;
 
                 defmt::info!("pkt: {}", pkt);
             }
         },
         async {
             defmt::info!("hci: reset");
-            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
-            let response = ble.reset().await;
-            defmt::info!("{}", response);
+            // From this point `ble` executes the bt-hci commands the selected target's
+            // wireless binary implements: Core ones from bt-hci, vendor ones from `aci`.
+            let response = ble.exec(&Reset::new()).await;
+            defmt::info!("{}", response.is_ok());
 
             defmt::info!("hci: write config data");
-            let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let response = ble
-                .write_config_data(
-                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
-                        .build(),
-                )
-                .await;
+            // Offset 0x00 holds the public address, least significant byte first.
+            let public_address = [0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1];
+            let response = match HalWriteConfigData::try_new(0x00, &public_address) {
+                Ok(command) => ble.exec(&command).await.is_ok(),
+                Err(_) => false,
+            };
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gatt");
-            let response = ble.init_gatt().await;
-            defmt::info!("{}", response);
+            let response = ble.exec(&GattInit::new()).await;
+            defmt::info!("{}", response.is_ok());
 
             defmt::info!("hci: init gap");
-            let response = ble
-                .init_gap(
-                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-                    false,
-                    8,
-                )
-                .await;
-            defmt::info!("{}", response);
+            // Peripheral role, without privacy, with an 8-byte device name.
+            let response = ble.exec(&GapInit::new(0x01, 0, 8)).await;
+            defmt::info!("{}", response.is_ok());
 
             info!("BLE HCI ready");
         },

@@ -485,9 +485,12 @@ impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
     }
 }
 
+// Only the commands the selected target's wireless binary implements, as the
+// catalog describes them: any other fails to compile rather than being
+// answered with Unknown HCI Command.
 impl<'d, C> bt_hci::controller::ControllerCmdSync<C> for ControllerAdapter<'d>
 where
-    C: bt_hci::cmd::SyncCmd,
+    C: bt_hci::cmd::SyncCmd + stm32wb_hci::catalog::Supported,
 {
     async fn exec(&self, cmd: &C) -> Result<C::Return, bt_hci::cmd::Error<Self::Error>> {
         use bt_hci::cmd;
@@ -506,7 +509,7 @@ where
 
 impl<'d, C> bt_hci::controller::ControllerCmdAsync<C> for ControllerAdapter<'d>
 where
-    C: bt_hci::cmd::AsyncCmd,
+    C: bt_hci::cmd::AsyncCmd + stm32wb_hci::catalog::Supported,
 {
     async fn exec(&self, cmd: &C) -> Result<(), bt_hci::cmd::Error<Self::Error>> {
         debug!("Executing async command with opcode {:x}", C::OPCODE.0);
