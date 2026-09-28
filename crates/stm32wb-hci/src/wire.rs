@@ -9,8 +9,8 @@
 //! value whose width a selector member decides, the identity of the Rust
 //! types standing for the catalog's C structures, an owned buffer for
 //! variable-length data in return parameters that must be `Copy`, a borrowed
-//! list of structures in events, and the vendor event code identifying each
-//! ST event.
+//! list of structures in events, a fallback keeping decoded values a type
+//! does not stand for, and the vendor event code identifying each ST event.
 
 use core::fmt;
 use core::marker::PhantomData;
@@ -67,6 +67,12 @@ pub trait HciWireType {
     /// the length the catalog documents for the value.
     #[doc(hidden)]
     const LENGTHS: Option<&'static [(i64, usize)]> = None;
+
+    /// Whether decoding the type keeps a value it does not stand for, as
+    /// [`OrUnknown`] does, rather than failing. Declarations check that a
+    /// decoded type standing for some values does.
+    #[doc(hidden)]
+    const FALLBACK: bool = false;
 }
 
 macro_rules! wire_width {
@@ -222,10 +228,105 @@ pub const fn is_opaque<T: HciWireType>() -> bool {
         && T::LENGTHS.is_none()
 }
 
+/// Whether decoding `T` keeps every value the binary may send, as a return or
+/// event parameter requires: a type standing for some values or flags must
+/// fall back to the others, and any other type always does.
+#[doc(hidden)]
+pub const fn decodes_any<T: HciWireType>() -> bool {
+    T::FALLBACK || (T::VALUES.is_none() && T::BITS.is_none() && T::RANGES.is_none())
+}
+
+/// A type standing for some values of an integer member, which
+/// [`OrUnknown`] decodes with a fallback to the others.
+pub trait WireValue: HciWireType + Copy {
+    /// The integer the value is encoded as.
+    type Raw: Copy + fmt::Debug + Eq + core::hash::Hash + for<'de> FromHciBytes<'de>;
+
+    /// The value `raw` encodes, if the type stands for it.
+    fn from_raw(raw: Self::Raw) -> Option<Self>;
+
+    /// The integer encoding the value.
+    fn to_raw(self) -> Self::Raw;
+}
+
+/// A decoded value of type `T`, or the integer the binary sent if `T` does
+/// not stand for it, such as a value a later release or a peer adds.
+///
+/// Return and event parameters standing for some documented values are
+/// declared with it, so decoding never fails on a value the catalog does not
+/// document. It is never a command parameter, which sends only documented
+/// values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OrUnknown<T: WireValue> {
+    /// A value `T` stands for.
+    Known(T),
+    /// A value `T` does not stand for; decoding never gives one it does.
+    Unknown(T::Raw),
+}
+
+impl<T: WireValue> OrUnknown<T> {
+    /// The value, if `T` stands for it.
+    pub fn known(self) -> Option<T> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::Unknown(_) => None,
+        }
+    }
+
+    /// The integer encoding the value.
+    pub fn to_raw(self) -> T::Raw {
+        match self {
+            Self::Known(value) => value.to_raw(),
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
+
+impl<T: WireValue> From<T> for OrUnknown<T> {
+    fn from(value: T) -> Self {
+        Self::Known(value)
+    }
+}
+
+impl<T: WireValue> HciWireType for OrUnknown<T> {
+    const WIDTH: usize = T::WIDTH;
+    const VALUES: Option<&'static [i64]> = T::VALUES;
+    const BITS: Option<u64> = T::BITS;
+    const RANGES: Option<&'static [(i64, i64)]> = T::RANGES;
+    const UNIT_US: Option<u32> = T::UNIT_US;
+    const LENGTHS: Option<&'static [(i64, usize)]> = T::LENGTHS;
+    const FALLBACK: bool = true;
+}
+
+impl<'de, T: WireValue> FromHciBytes<'de> for OrUnknown<T> {
+    fn from_hci_bytes(data: &'de [u8]) -> Result<(Self, &'de [u8]), FromHciBytesError> {
+        let (raw, rest) = T::Raw::from_hci_bytes(data)?;
+        let value = match T::from_raw(raw) {
+            Some(value) => Self::Known(value),
+            None => Self::Unknown(raw),
+        };
+        Ok((value, rest))
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<T: WireValue + defmt::Format> defmt::Format for OrUnknown<T>
+where
+    T::Raw: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter) {
+        match self {
+            Self::Known(value) => defmt::write!(f, "Known({})", value),
+            Self::Unknown(raw) => defmt::write!(f, "Unknown({})", raw),
+        }
+    }
+}
+
 /// Declare an enum standing for some documented values of an integer member,
 /// encoded as its `repr` integer. Every declaration using it for a member
 /// checks at compile time that each of its values is one the catalog
-/// documents for that member, on every target.
+/// documents for that member, on every target. A return or event parameter
+/// declares it as [`OrUnknown`]`<T>`, which keeps any other value.
 ///
 /// ```ignore
 /// wire_values! {
@@ -353,6 +454,18 @@ macro_rules! wire_values {
                     }
                 )+
                 ::core::result::Result::Err(::bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+
+        impl $crate::wire::WireValue for $name {
+            type Raw = $repr;
+
+            fn from_raw(raw: $repr) -> ::core::option::Option<Self> {
+                <$name as ::core::convert::TryFrom<$repr>>::try_from(raw).ok()
+            }
+
+            fn to_raw(self) -> $repr {
+                self as $repr
             }
         }
 
@@ -759,6 +872,7 @@ impl<T: HciWireType + ?Sized> HciWireType for &T {
     const RANGES: Option<&'static [(i64, i64)]> = T::RANGES;
     const UNIT_US: Option<u32> = T::UNIT_US;
     const LENGTHS: Option<&'static [(i64, usize)]> = T::LENGTHS;
+    const FALLBACK: bool = T::FALLBACK;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member

@@ -16,10 +16,10 @@ use crate::aci::flags::{
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
     AddressType, AdvertisingType, ConnectableOwnAddressType, IoCapability,
-    NonConnectableAdvertisingType, OwnAddressType, Privacy, ScanType,
+    NonConnectableAdvertisingType, OwnAddressType, Privacy, ScanType, SecurityLevel, SecurityMode,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
-use crate::wire::BoundedArray;
+use crate::wire::{BoundedArray, OrUnknown};
 
 vendor_command! {
     /// Stop advertising.
@@ -177,8 +177,8 @@ vendor_command! {
     aci_gap_get_security_level => GapGetSecurityLevel {
         connection_handle: ConnHandle,
     } -> GapSecurityLevel {
-        security_mode: u8,
-        security_level: u8,
+        security_mode: OrUnknown<SecurityMode>,
+        security_level: OrUnknown<SecurityLevel>,
     }
 }
 
@@ -431,7 +431,7 @@ vendor_command! {
     aci_gap_get_oob_data => GapGetOobData {
         oob_data_type: u8,
     } -> GapOobData {
-        address_type: u8,
+        address_type: OrUnknown<AddressType>,
         address: BdAddr,
         oob_data_type: u8,
         oob_data_len: u8,
@@ -893,6 +893,15 @@ mod tests {
             ),
             (1, 2, 3)
         );
+    }
+
+    #[test]
+    fn security_levels_keep_undocumented_modes() {
+        let level =
+            <GapGetSecurityLevel as SyncCmd>::Return::from_hci_bytes_complete(&[0x02, 0x04])
+                .unwrap();
+        assert_eq!(level.security_mode, OrUnknown::Unknown(0x02));
+        assert_eq!(level.security_level.known(), Some(SecurityLevel::Level4));
     }
 
     #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]

@@ -103,7 +103,10 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// that unit or an integer, and no other member takes a duration. Offsets
 /// `wire_values!` declares with lengths, such as those of the configuration
 /// data, are also checked against the length each of their values documents.
-/// Integers stand for no values and are not checked.
+/// A return parameter is checked the same way, but a type standing for some
+/// values must be declared `OrUnknown<T>`, so decoding keeps a value the
+/// catalog does not document rather than failing. Integers stand for no
+/// values and are not checked.
 ///
 /// A `u16` member the catalog documents as addressing an ATT bearer is
 /// declared `AttBearer`, and no other member is; its enhanced range must be

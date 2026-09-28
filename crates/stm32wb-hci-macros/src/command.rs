@@ -343,14 +343,23 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
             &params,
             facts.params,
             &command.documented,
+            Side::Params,
         ))
         .chain(returned.iter().flat_map(|(returns, slots)| {
-            width_assertions(&cfg, &returns.name, slots).chain(bearer_assertions(
-                &returns.name,
-                slots,
-                facts.returns,
-                &no_bearers,
-            ))
+            width_assertions(&cfg, &returns.name, slots)
+                .chain(bearer_assertions(
+                    &returns.name,
+                    slots,
+                    facts.returns,
+                    &no_bearers,
+                ))
+                .chain(value_assertions(
+                    &returns.name,
+                    slots,
+                    &facts.returns[1..],
+                    &command.return_documented,
+                    Side::Returns,
+                ))
         }));
     let return_struct = returned
         .iter()
@@ -1348,16 +1357,18 @@ pub(crate) enum Documented {
 /// What the catalog documents for each member of one release, by position.
 pub(crate) type Documents = Vec<Documented>;
 
-/// What the catalog documents for each parameter of `command` in `release`.
+/// What the catalog documents for each parameter of `command` in `release`,
+/// or each return parameter if `returned`.
 pub(crate) fn documents(
     command: &CatalogCommand,
     members: &[Field],
+    returned: bool,
     release: Version,
 ) -> Documents {
     members
         .iter()
         .map(|member| {
-            let Some(domain) = command.domain(&member.name, false, release) else {
+            let Some(domain) = command.domain(&member.name, returned, release) else {
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
@@ -1443,12 +1454,14 @@ fn is_integer(ty: &Type) -> bool {
 }
 
 /// Assert at compile time that each value or flag a declared type stands for
-/// is one the catalog documents for its member, in each group of releases.
+/// is one the catalog documents for its member, in each group of releases,
+/// and that a decoded type keeps the values it does not stand for.
 pub(crate) fn value_assertions(
     owner: &Ident,
     slots: &[Slot<'_>],
     members: &[Field],
     groups: &[DocumentedGroup],
+    side: Side,
 ) -> Vec<TokenStream> {
     let mut assertions = Vec::new();
     for slot in slots {
@@ -1474,6 +1487,22 @@ pub(crate) fn value_assertions(
                 .cfg
                 .as_ref()
                 .map(|predicate| quote!(#[cfg(#predicate)]));
+            if side != Side::Params {
+                let message = format!(
+                    "{owner}.{}: a {} may hold values the catalog does not document for {} on STM32WB in {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
+                    field.name,
+                    side.what(),
+                    member.name,
+                    group.releases
+                );
+                assertions.push(quote_spanned! {ty.span()=>
+                    #cfg
+                    const _: () = ::core::assert!(
+                        ::stm32wb_hci::wire::decodes_any::<#ty>(),
+                        #message
+                    );
+                });
+            }
             if let Documented::Values(_, _, lengths) = &group.documents[position] {
                 let pairs = lengths
                     .iter()
@@ -1671,6 +1700,9 @@ struct Command<'a> {
     bearers: Vec<BearerGroup>,
     /// What the catalog documents for each parameter, by group of releases.
     documented: Vec<DocumentedGroup>,
+    /// What the catalog documents for each return parameter after the
+    /// status, by group of releases.
+    return_documented: Vec<DocumentedGroup>,
 }
 
 /// Releases and the profiles supporting a command in them.
@@ -1753,6 +1785,7 @@ impl<'a> Command<'a> {
             Targets<'a>,
             Vec<(Vec<(usize, u16)>, Targets<'a>)>,
             Vec<(Documents, Targets<'a>)>,
+            Vec<(Documents, Targets<'a>)>,
         )> = Vec::new();
         for segment in &segments {
             let active = &segment.entry;
@@ -1796,18 +1829,20 @@ impl<'a> Command<'a> {
                 .map(|field| field.exists_in(releases))
                 .collect::<Vec<_>>();
             let bearers = bearer_positions(params, &active.definition.bearers);
+            let after_status = returns.get(1..).unwrap_or_default();
             let documents = bundled
                 .catalog
                 .versions()
                 .filter(|release| releases.contains(*release))
                 .map(|release| {
                     (
-                        documents(active.command, params, release),
+                        documents(active.command, params, false, release),
+                        documents(active.command, after_status, true, release),
                         (ReleaseRange::single(release), segment.profiles),
                     )
                 })
                 .collect::<Vec<_>>();
-            let Some((_, variant, targets, groups, documented)) =
+            let Some((_, variant, targets, groups, documented, return_documented)) =
                 variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 // A release without any of the declared return fields, which
@@ -1837,13 +1872,16 @@ impl<'a> Command<'a> {
                     cfg: None,
                     bearers: Vec::new(),
                     documented: Vec::new(),
+                    return_documented: Vec::new(),
                 };
                 record_names(&mut variant.param_names, params);
                 record_names(&mut variant.return_names, returns);
                 let target = (releases, segment.profiles);
                 let mut documented = Vec::new();
-                for (documents, target) in documents {
+                let mut return_documented = Vec::new();
+                for (documents, return_documents, target) in documents {
                     add_documents(&mut documented, documents, target);
+                    add_documents(&mut return_documented, return_documents, target);
                 }
                 variants.push((
                     key,
@@ -1851,6 +1889,7 @@ impl<'a> Command<'a> {
                     vec![target],
                     vec![(bearers, vec![target])],
                     documented,
+                    return_documented,
                 ));
                 continue;
             };
@@ -1869,23 +1908,36 @@ impl<'a> Command<'a> {
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
             add_bearers(groups, bearers, (releases, segment.profiles));
-            for (documents, target) in documents {
+            for (documents, return_documents, target) in documents {
                 add_documents(documented, documents, target);
+                add_documents(return_documented, return_documents, target);
             }
         }
 
         Ok(variants
             .into_iter()
-            .map(|(_, mut variant, targets, groups, documented)| {
-                for (params, returns) in &history {
-                    record_history_names(&mut variant.param_names, variant.facts.params, params);
-                    record_history_names(&mut variant.return_names, variant.facts.returns, returns);
-                }
-                variant.cfg = cfg::targets(&bundled.catalog, targets);
-                variant.bearers = bearer_groups(&bundled.catalog, groups);
-                variant.documented = documented_groups(&bundled.catalog, documented);
-                variant
-            })
+            .map(
+                |(_, mut variant, targets, groups, documented, return_documented)| {
+                    for (params, returns) in &history {
+                        record_history_names(
+                            &mut variant.param_names,
+                            variant.facts.params,
+                            params,
+                        );
+                        record_history_names(
+                            &mut variant.return_names,
+                            variant.facts.returns,
+                            returns,
+                        );
+                    }
+                    variant.cfg = cfg::targets(&bundled.catalog, targets);
+                    variant.bearers = bearer_groups(&bundled.catalog, groups);
+                    variant.documented = documented_groups(&bundled.catalog, documented);
+                    variant.return_documented =
+                        documented_groups(&bundled.catalog, return_documented);
+                    variant
+                },
+            )
             .collect())
     }
 }
@@ -3145,6 +3197,46 @@ mod tests {
             tokens.contains("the catalog documents no lengths"),
             "{tokens}"
         );
+    }
+
+    #[test]
+    fn return_parameters_keep_undocumented_values() {
+        let tokens = expand_str(
+            "aci_gap_get_security_level => GapGetSecurityLevel {
+                 connection_handle: ConnHandle,
+             } -> GapSecurityLevel {
+                 security_mode: OrUnknown<SecurityMode>,
+                 security_level: u8,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("decodes_any :: < OrUnknown < SecurityMode > > ()"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("GapSecurityLevel.security_mode: a return parameter may hold values"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "values_documented :: < OrUnknown < SecurityMode > > (& [(1i64 , 1i64) , (2i64 , 2i64)])"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "values_documented :: < OrUnknown < SecurityMode > > (& [(1i64 , 1i64)])"
+            ),
+            "from 1.17.0: {tokens}"
+        );
+        assert!(!tokens.contains("decodes_any :: < u8 >"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_gap_set_io_capability => GapSetIoCapability { io_capability: IoCapability }",
+        )
+        .unwrap();
+        assert!(!tokens.contains("decodes_any"), "parameters: {tokens}");
     }
 
     #[test]

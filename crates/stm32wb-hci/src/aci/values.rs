@@ -1,12 +1,14 @@
 //! Types standing for the values the vendor commands document for their
-//! parameters.
+//! parameters and return parameters.
 //!
 //! Each is declared with [`wire_values!`](crate::wire_values), and every
 //! command using one checks at compile time, on every target, that each of
 //! its values is one the catalog documents for that parameter on STM32WB. A
 //! parameter documenting fewer values takes a narrower type, such as
 //! [`ConnectableOwnAddressType`]. A value only some releases or profiles
-//! document is left out, and its type says so.
+//! document is left out, and its type says so. A return parameter is
+//! declared as [`OrUnknown`](crate::wire::OrUnknown), which keeps the
+//! values left out.
 
 use crate::wire_values;
 
@@ -106,6 +108,29 @@ wire_values! {
 }
 
 wire_values! {
+    /// The security mode of a connection. Mode 2, which releases before
+    /// 1.17.0 also document, is left out.
+    pub enum SecurityMode: u8 {
+        /// Security mode 1: encryption.
+        Mode1 = 0x01,
+    }
+}
+
+wire_values! {
+    /// The security level of a connection in security mode 1.
+    pub enum SecurityLevel: u8 {
+        /// No security.
+        Level1 = 0x01,
+        /// Unauthenticated pairing with encryption.
+        Level2 = 0x02,
+        /// Authenticated pairing with encryption.
+        Level3 = 0x03,
+        /// Authenticated LE Secure Connections pairing with encryption.
+        Level4 = 0x04,
+    }
+}
+
+wire_values! {
     /// Where a value of the configuration data starts, with its length.
     /// Every command using one also checks the length is the one the catalog
     /// documents. `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET` (0xC1, from 1.16.0),
@@ -152,7 +177,8 @@ mod tests {
 
     use super::*;
     use crate::wire::{
-        HciWireType, flags_documented, is_opaque, lengths_documented, values_documented,
+        HciWireType, OrUnknown, decodes_any, flags_documented, is_opaque, lengths_documented,
+        values_documented,
     };
 
     #[test]
@@ -184,6 +210,35 @@ mod tests {
         assert!(!is_opaque::<Privacy>(), "undocumented member");
         assert!(values_documented::<u8>(&[]), "integers stand for no values");
         assert!(is_opaque::<u8>());
+    }
+
+    #[test]
+    fn decoded_values_keep_the_undocumented_ones() {
+        assert_eq!(
+            OrUnknown::<SecurityLevel>::from_hci_bytes_complete(&[0x03]).unwrap(),
+            OrUnknown::Known(SecurityLevel::Level3)
+        );
+        let mode = OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[0x02]).unwrap();
+        assert_eq!(mode, OrUnknown::Unknown(0x02), "left out");
+        assert_eq!(mode.known(), None);
+        assert_eq!(mode.to_raw(), 0x02);
+        assert_eq!(OrUnknown::from(SecurityMode::Mode1).to_raw(), 0x01);
+        assert_eq!(
+            OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[]),
+            Err(FromHciBytesError::InvalidSize)
+        );
+
+        assert!(decodes_any::<OrUnknown<SecurityLevel>>());
+        assert!(!decodes_any::<SecurityLevel>(), "decoding fails on 0x05");
+        assert!(!decodes_any::<bool>());
+        assert!(decodes_any::<u8>());
+        assert!(decodes_any::<[u8; 16]>(), "stands for no values");
+        assert!(
+            values_documented::<OrUnknown<SecurityLevel>>(&[(1, 4)]),
+            "its values are those of the type"
+        );
+        assert!(!values_documented::<OrUnknown<SecurityLevel>>(&[(1, 3)]));
+        assert_eq!(<OrUnknown<SecurityLevel> as HciWireType>::WIDTH, 1);
     }
 
     #[test]
