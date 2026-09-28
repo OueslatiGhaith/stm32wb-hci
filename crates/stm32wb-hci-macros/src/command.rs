@@ -1335,8 +1335,9 @@ pub(crate) fn bearer_assertions(
 pub(crate) enum Documented {
     /// No values.
     Nothing,
-    /// The inclusive ranges of values an STM32WB binary accepts.
-    Values(Vec<(i64, i64)>),
+    /// The inclusive ranges of values an STM32WB binary accepts, and the
+    /// duration of one unit in microseconds for a time member.
+    Values(Vec<(i64, i64)>, Option<u32>),
     /// The union of the flags an STM32WB binary accepts.
     Flags(u64),
     /// Values or flags that cannot be checked, and why.
@@ -1359,7 +1360,9 @@ pub(crate) fn documents(
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
-                DomainKind::Values => domain.stm32wb_ranges().map(Documented::Values),
+                DomainKind::Values => domain
+                    .stm32wb_ranges()
+                    .map(|ranges| Documented::Values(ranges, domain.unit_us)),
                 DomainKind::Flags => domain.stm32wb_bits().map(Documented::Flags),
             };
             documented.unwrap_or_else(Documented::Unreadable)
@@ -1469,8 +1472,33 @@ pub(crate) fn value_assertions(
                 .cfg
                 .as_ref()
                 .map(|predicate| quote!(#[cfg(#predicate)]));
+            if let Documented::Values(_, unit) = &group.documents[position] {
+                let (documented, message) = match unit {
+                    Some(unit) => (
+                        quote!(::core::option::Option::Some(#unit)),
+                        format!(
+                            "{owner}.{}: the catalog documents {} in units of {unit} µs on STM32WB in {}; the declared type must count in them",
+                            field.name, member.name, group.releases
+                        ),
+                    ),
+                    None => (
+                        quote!(::core::option::Option::None),
+                        format!(
+                            "{owner}.{}: the catalog documents {} in no unit of time on STM32WB in {}; the declared type must not count time",
+                            field.name, member.name, group.releases
+                        ),
+                    ),
+                };
+                assertions.push(quote_spanned! {ty.span()=>
+                    #cfg
+                    const _: () = ::core::assert!(
+                        ::stm32wb_hci::wire::unit_documented::<#ty>(#documented),
+                        #message
+                    );
+                });
+            }
             let (check, message) = match &group.documents[position] {
-                Documented::Values(ranges) => {
+                Documented::Values(ranges, _) => {
                     let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
                     let listed = ranges
                         .iter()
@@ -2998,6 +3026,55 @@ mod tests {
         );
         // Integers stand for no values, so they are not checked.
         assert!(!tokens.contains(":: < u8 >"), "{tokens}");
+    }
+
+    #[test]
+    fn durations_are_checked_against_the_documented_unit() {
+        let tokens = expand_str(
+            "aci_gap_start_connection_update => GapStartConnectionUpdate {
+                 connection_handle: ConnHandle,
+                 conn_interval_min: ConnInterval,
+                 conn_interval_max: ConnInterval,
+                 conn_latency: u16,
+                 supervision_timeout: SupervisionTimeout,
+                 minimum_ce_length: CeLength,
+                 maximum_ce_length: CeLength,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "unit_documented :: < ConnInterval > (:: core :: option :: Option :: Some (1250u32))"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "documents Conn_Interval_Min in units of 1250 µs on STM32WB in 1.15.0..=1.24.0"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("values_documented :: < SupervisionTimeout > (& [(10i64 , 3200i64)])"),
+            "{tokens}"
+        );
+        // A member documenting no unit takes no duration.
+        let tokens = expand_str(
+            "aci_gap_init => GapInit {
+                 role: Role,
+                 privacy_enabled: Privacy,
+                 device_name_char_len: u8,
+             } -> GapService {
+                 service_handle: u16,
+                 dev_name_char_handle: u16,
+                 appearance_char_handle: u16,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("unit_documented :: < Privacy > (:: core :: option :: Option :: None)"),
+            "{tokens}"
+        );
     }
 
     #[test]

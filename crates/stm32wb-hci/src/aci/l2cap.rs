@@ -12,6 +12,11 @@ use stm32wb_hci_macros::{vendor_command, vendor_event};
     unused_imports,
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
+use crate::aci::durations::{CeLength, ConnInterval};
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no L2CAP commands"
+)]
 use crate::wire::BoundedBytes;
 
 vendor_command! {
@@ -20,8 +25,8 @@ vendor_command! {
     /// The latency was named `Slave_latency` before 1.17.0.
     aci_l2cap_connection_parameter_update_req => L2capConnectionParameterUpdateReq {
         connection_handle: ConnHandle,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
         latency: u16,
         timeout_multiplier: u16,
     }
@@ -32,12 +37,12 @@ vendor_command! {
     /// echoing its parameters and `identifier`.
     aci_l2cap_connection_parameter_update_resp => L2capConnectionParameterUpdateResp {
         connection_handle: ConnHandle,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
         latency: u16,
         timeout_multiplier: u16,
-        minimum_ce_length: u16,
-        maximum_ce_length: u16,
+        minimum_ce_length: CeLength,
+        maximum_ce_length: CeLength,
         identifier: u8,
         accept: bool,
     }
@@ -245,8 +250,10 @@ mod tests {
 
     #[test]
     fn renamed_members_encode_in_every_release() {
+        let min = ConnInterval::MIN;
+        let max = ConnInterval::from_millis(15).unwrap();
         let command =
-            L2capConnectionParameterUpdateReq::new(ConnHandle::new(0x0801), 6, 12, 1, 400);
+            L2capConnectionParameterUpdateReq::new(ConnHandle::new(0x0801), min, max, 1, 400);
         let (bytes, len) = encode(&command);
         assert_eq!(
             bytes[..len],
@@ -255,12 +262,12 @@ mod tests {
 
         let command = L2capConnectionParameterUpdateResp::new(
             ConnHandle::new(0x0801),
-            6,
-            12,
+            min,
+            max,
             1,
             400,
-            2,
-            4,
+            CeLength::from_units(2).unwrap(),
+            CeLength::from_units(4).unwrap(),
             7,
             true,
         );

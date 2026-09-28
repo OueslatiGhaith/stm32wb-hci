@@ -46,6 +46,20 @@ pub trait HciWireType {
     /// documents for the member.
     #[doc(hidden)]
     const BITS: Option<u64> = None;
+
+    /// The inclusive ranges of values the type encodes, for a type standing
+    /// for a range of values of an integer member, such as those
+    /// [`wire_duration!`] declares; `None` for any other type. Declarations
+    /// check each value is one the catalog documents for the member.
+    #[doc(hidden)]
+    const RANGES: Option<&'static [(i64, i64)]> = None;
+
+    /// The duration of one unit in microseconds, for a type counting time,
+    /// such as those [`wire_duration!`] declares; `None` for any other type.
+    /// Declarations check it is the unit the catalog documents for the
+    /// member.
+    #[doc(hidden)]
+    const UNIT_US: Option<u32> = None;
 }
 
 macro_rules! wire_width {
@@ -75,6 +89,30 @@ impl HciWireType for bool {
     const VALUES: Option<&'static [i64]> = Some(&[0, 1]);
 }
 
+/// Whether `first..=last` lies within the union of the `documented` ranges.
+const fn covered(first: i64, last: i64, documented: &[(i64, i64)]) -> bool {
+    let mut next = first;
+    loop {
+        let mut end = None;
+        let mut item = 0;
+        while item < documented.len() {
+            let (from, to) = documented[item];
+            if from <= next && next <= to {
+                end = match end {
+                    Some(end) if end >= to => Some(end),
+                    _ => Some(to),
+                };
+            }
+            item += 1;
+        }
+        match end {
+            None => return false,
+            Some(end) if end >= last => return true,
+            Some(end) => next = end + 1,
+        }
+    }
+}
+
 /// Whether every value `T` encodes is one the catalog documents for a
 /// member listing values, each documented item being an inclusive range. A
 /// flags type, whose combinations the list does not name, never is; a type
@@ -84,32 +122,48 @@ pub const fn values_documented<T: HciWireType>(documented: &[(i64, i64)]) -> boo
     if T::BITS.is_some() {
         return false;
     }
-    let Some(values) = T::VALUES else {
-        return true;
-    };
-    let mut index = 0;
-    while index < values.len() {
-        let value = values[index];
-        let mut found = false;
-        let mut item = 0;
-        while item < documented.len() {
-            found |= documented[item].0 <= value && value <= documented[item].1;
-            item += 1;
+    if let Some(values) = T::VALUES {
+        let mut index = 0;
+        while index < values.len() {
+            if !covered(values[index], values[index], documented) {
+                return false;
+            }
+            index += 1;
         }
-        if !found {
-            return false;
+    }
+    if let Some(ranges) = T::RANGES {
+        let mut index = 0;
+        while index < ranges.len() {
+            if !covered(ranges[index].0, ranges[index].1, documented) {
+                return false;
+            }
+            index += 1;
         }
-        index += 1;
     }
     true
 }
 
+/// Whether `T` counts in the unit the catalog documents for a member listing
+/// values, in microseconds: a type counting time only for a time member,
+/// and only in its unit.
+#[doc(hidden)]
+pub const fn unit_documented<T: HciWireType>(documented: Option<u32>) -> bool {
+    match (T::UNIT_US, documented) {
+        (Some(unit), Some(documented)) => unit == documented,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 /// Whether every bit `T` may set is one the catalog documents for a member
 /// listing flags, `documented` being their union. A value type is checked
-/// as the bits of each of its values; a type standing for no particular
-/// values or flags always is.
+/// as the bits of each of its values; a range of values never is; a type
+/// standing for no particular values or flags always is.
 #[doc(hidden)]
 pub const fn flags_documented<T: HciWireType>(documented: u64) -> bool {
+    if T::RANGES.is_some() {
+        return false;
+    }
     if let Some(bits) = T::BITS {
         return bits & !documented == 0;
     }
@@ -130,7 +184,7 @@ pub const fn flags_documented<T: HciWireType>(documented: u64) -> bool {
 /// catalog documents no checkable values for requires.
 #[doc(hidden)]
 pub const fn is_opaque<T: HciWireType>() -> bool {
-    T::VALUES.is_none() && T::BITS.is_none()
+    T::VALUES.is_none() && T::BITS.is_none() && T::RANGES.is_none() && T::UNIT_US.is_none()
 }
 
 /// Declare an enum standing for some documented values of an integer member,
@@ -404,6 +458,189 @@ macro_rules! wire_flags {
     };
 }
 
+/// Declare a duration counted in units of an integer member, standing for
+/// a documented range of its values and some special ones, encoded as its
+/// `repr` integer. Every declaration using it for a member checks at compile
+/// time that the catalog documents the member in the same unit, and each
+/// value of the range and each special value, on every target.
+///
+/// ```ignore
+/// wire_duration! {
+///     /// How long to scan.
+///     pub struct ScanDuration: u16 {
+///         unit_us = 10_000;
+///         units = 0x0001..=0xFFFF;
+///         /// Scan until scanning is disabled.
+///         const CONTINUOUS = 0x0000;
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! wire_duration {
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $name:ident: $repr:ident {
+            unit_us = $unit:expr;
+            units = $min:literal..=$max:literal;
+            $(
+                $(#[$special_attr:meta])*
+                const $special:ident = $value:expr;
+            )*
+        }
+    ) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        $vis struct $name($repr);
+
+        #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
+        const _: () = {
+            ::core::assert!($min <= $max, "the range is empty");
+            $(
+                ::core::assert!(
+                    !($min <= $value && $value <= $max),
+                    "a special value is in the range"
+                );
+            )*
+        };
+
+        impl $name {
+            /// The duration of one unit, in microseconds.
+            pub const UNIT_US: u32 = $unit;
+            /// The shortest duration.
+            pub const MIN: Self = Self($min);
+            /// The longest duration.
+            pub const MAX: Self = Self($max);
+            $(
+                $(#[$special_attr])*
+                pub const $special: Self = Self($value);
+            )*
+
+            /// `units` units, or `None` outside [`MIN`](Self::MIN)..=[`MAX`](Self::MAX).
+            #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
+            pub const fn from_units(units: $repr) -> ::core::option::Option<Self> {
+                if $min <= units && units <= $max {
+                    ::core::option::Option::Some(Self(units))
+                } else {
+                    ::core::option::Option::None
+                }
+            }
+
+            /// `micros` microseconds, or `None` unless it is a whole number of
+            /// units within [`MIN`](Self::MIN)..=[`MAX`](Self::MAX).
+            pub const fn from_micros(micros: u64) -> ::core::option::Option<Self> {
+                let unit = Self::UNIT_US as u64;
+                if micros % unit != 0 || micros / unit > $max as u64 {
+                    return ::core::option::Option::None;
+                }
+                Self::from_units((micros / unit) as $repr)
+            }
+
+            /// `millis` milliseconds, or `None` unless it is a whole number of
+            /// units within [`MIN`](Self::MIN)..=[`MAX`](Self::MAX).
+            pub const fn from_millis(millis: u64) -> ::core::option::Option<Self> {
+                match millis.checked_mul(1000) {
+                    ::core::option::Option::Some(micros) => Self::from_micros(micros),
+                    ::core::option::Option::None => ::core::option::Option::None,
+                }
+            }
+
+            /// The encoded number of units.
+            pub const fn units(self) -> $repr {
+                self.0
+            }
+
+            /// The duration in microseconds, or `None` for a special value.
+            pub const fn as_micros(self) -> ::core::option::Option<u64> {
+                match Self::from_units(self.0) {
+                    ::core::option::Option::Some(_) => {
+                        ::core::option::Option::Some(self.0 as u64 * Self::UNIT_US as u64)
+                    }
+                    ::core::option::Option::None => ::core::option::Option::None,
+                }
+            }
+        }
+
+        impl ::core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                $(
+                    if *self == Self::$special {
+                        return f.write_str(::core::concat!(
+                            ::core::stringify!($name),
+                            "(",
+                            ::core::stringify!($special),
+                            ")"
+                        ));
+                    }
+                )*
+                match self.as_micros() {
+                    ::core::option::Option::Some(micros) => {
+                        ::core::write!(f, "{}({} µs)", ::core::stringify!($name), micros)
+                    }
+                    ::core::option::Option::None => {
+                        ::core::write!(f, "{}({:#x})", ::core::stringify!($name), self.0)
+                    }
+                }
+            }
+        }
+
+        impl $crate::wire::HciWireType for $name {
+            const WIDTH: usize = ::core::mem::size_of::<$repr>();
+            const RANGES: ::core::option::Option<&'static [(i64, i64)]> =
+                ::core::option::Option::Some(&[
+                    ($min as i64, $max as i64),
+                    $(($name::$special.0 as i64, $name::$special.0 as i64),)*
+                ]);
+            const UNIT_US: ::core::option::Option<u32> = ::core::option::Option::Some($unit);
+        }
+
+        impl ::core::convert::From<$name> for $repr {
+            fn from(value: $name) -> $repr {
+                value.0
+            }
+        }
+
+        impl ::core::convert::TryFrom<$repr> for $name {
+            type Error = ::bt_hci::FromHciBytesError;
+
+            fn try_from(units: $repr) -> ::core::result::Result<Self, Self::Error> {
+                $(
+                    if units == $name::$special.0 {
+                        return ::core::result::Result::Ok($name::$special);
+                    }
+                )*
+                $name::from_units(units).ok_or(::bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+
+        impl ::bt_hci::WriteHci for $name {
+            fn size(&self) -> usize {
+                ::core::mem::size_of::<$repr>()
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+                writer.write_all(&self.0.to_le_bytes())
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                writer.write_all(&self.0.to_le_bytes()).await
+            }
+        }
+
+        impl<'de> ::bt_hci::FromHciBytes<'de> for $name {
+            fn from_hci_bytes(
+                data: &'de [u8],
+            ) -> ::core::result::Result<(Self, &'de [u8]), ::bt_hci::FromHciBytesError> {
+                let (raw, rest) = <$repr as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(data)?;
+                ::core::result::Result::Ok((<$name as ::core::convert::TryFrom<$repr>>::try_from(raw)?, rest))
+            }
+        }
+    };
+}
+
 impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
     const WIDTH: usize = T::WIDTH * N;
 }
@@ -413,6 +650,8 @@ impl<T: HciWireType + ?Sized> HciWireType for &T {
     const LAST_ENHANCED_BEARER: u16 = T::LAST_ENHANCED_BEARER;
     const VALUES: Option<&'static [i64]> = T::VALUES;
     const BITS: Option<u64> = T::BITS;
+    const RANGES: Option<&'static [(i64, i64)]> = T::RANGES;
+    const UNIT_US: Option<u32> = T::UNIT_US;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member

@@ -5,6 +5,11 @@ use bt_hci::param::{BdAddr, ConnHandle};
 use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
+use crate::aci::durations::{
+    AdvInterval, CeLength, ConnInterval, ExtAdvInterval, ScanDuration, ScanInterval, ScanPeriod,
+    ScanWindow, SupervisionTimeout,
+};
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::flags::{
     AdvChannelMap, AdvEventProperties, AdvMode, GapEventMask, InitiatingPhys, Role, ScanningPhys,
 };
@@ -26,8 +31,8 @@ vendor_command! {
     /// local name and service UUIDs in the advertising data.
     aci_gap_set_limited_discoverable => GapSetLimitedDiscoverable {
         advertising_type: AdvertisingType,
-        advertising_interval_min: u16,
-        advertising_interval_max: u16,
+        advertising_interval_min: AdvInterval,
+        advertising_interval_max: AdvInterval,
         own_address_type: OwnAddressType,
         advertising_filter_policy: u8,
         local_name: &'a [u8],
@@ -42,8 +47,8 @@ vendor_command! {
     /// UUIDs in the advertising data.
     aci_gap_set_discoverable => GapSetDiscoverable {
         advertising_type: AdvertisingType,
-        advertising_interval_min: u16,
-        advertising_interval_max: u16,
+        advertising_interval_min: AdvInterval,
+        advertising_interval_max: AdvInterval,
         own_address_type: OwnAddressType,
         advertising_filter_policy: u8,
         local_name: &'a [u8],
@@ -137,8 +142,8 @@ vendor_command! {
 vendor_command! {
     /// Advertise connectable, undirected, without the discoverable flags.
     aci_gap_set_undirected_connectable => GapSetUndirectedConnectable {
-        advertising_interval_min: u16,
-        advertising_interval_max: u16,
+        advertising_interval_min: AdvInterval,
+        advertising_interval_max: AdvInterval,
         own_address_type: ConnectableOwnAddressType,
         adv_filter_policy: u8,
     }
@@ -213,8 +218,8 @@ vendor_command! {
 vendor_command! {
     /// Scan for devices in limited discoverable mode.
     aci_gap_start_limited_discovery_proc => GapStartLimitedDiscoveryProc {
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
     }
@@ -223,8 +228,8 @@ vendor_command! {
 vendor_command! {
     /// Scan for devices in general or limited discoverable mode.
     aci_gap_start_general_discovery_proc => GapStartGeneralDiscoveryProc {
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
     }
@@ -249,15 +254,15 @@ vendor_struct! {
 vendor_command! {
     /// Connect to any of the listed peers as soon as it advertises.
     aci_gap_start_auto_connection_establish_proc => GapStartAutoConnectionEstablishProc {
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         own_address_type: ConnectableOwnAddressType,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
         conn_latency: u16,
-        supervision_timeout: u16,
-        minimum_ce_length: u16,
-        maximum_ce_length: u16,
+        supervision_timeout: SupervisionTimeout,
+        minimum_ce_length: CeLength,
+        maximum_ce_length: CeLength,
         #[wire(before = "1.17.0")]
         whitelist_entry: &'a [WhitelistEntry],
         #[wire(since = "1.17.0")]
@@ -269,8 +274,8 @@ vendor_command! {
     /// Scan for connectable peers, reporting them for the host to select one.
     aci_gap_start_general_connection_establish_proc => GapStartGeneralConnectionEstablishProc {
         le_scan_type: ScanType,
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
         scanning_filter_policy: u8,
         filter_duplicates: bool,
@@ -281,8 +286,8 @@ vendor_command! {
     /// Scan for the listed peers and connect to the one the host selects.
     aci_gap_start_selective_connection_establish_proc => GapStartSelectiveConnectionEstablishProc {
         le_scan_type: ScanType,
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
         scanning_filter_policy: u8,
         filter_duplicates: bool,
@@ -296,17 +301,17 @@ vendor_command! {
 vendor_command! {
     /// Connect to a peer.
     aci_gap_create_connection => GapCreateConnection {
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         peer_address_type: AddressType,
         peer_address: BdAddr,
         own_address_type: ConnectableOwnAddressType,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
         conn_latency: u16,
-        supervision_timeout: u16,
-        minimum_ce_length: u16,
-        maximum_ce_length: u16,
+        supervision_timeout: SupervisionTimeout,
+        minimum_ce_length: CeLength,
+        maximum_ce_length: CeLength,
     }
 }
 
@@ -321,12 +326,12 @@ vendor_command! {
     /// Update the parameters of a connection, as central.
     aci_gap_start_connection_update => GapStartConnectionUpdate {
         connection_handle: ConnHandle,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
         conn_latency: u16,
-        supervision_timeout: u16,
-        minimum_ce_length: u16,
-        maximum_ce_length: u16,
+        supervision_timeout: SupervisionTimeout,
+        minimum_ce_length: CeLength,
+        maximum_ce_length: CeLength,
     }
 }
 
@@ -351,8 +356,8 @@ vendor_command! {
     /// Broadcast `adv_data` without accepting connections, answering scan
     /// requests only from the listed peers.
     aci_gap_set_broadcast_mode => GapSetBroadcastMode {
-        advertising_interval_min: u16,
-        advertising_interval_max: u16,
+        advertising_interval_min: AdvInterval,
+        advertising_interval_max: AdvInterval,
         advertising_type: NonConnectableAdvertisingType,
         own_address_type: OwnAddressType,
         adv_data: &'a [u8],
@@ -366,8 +371,8 @@ vendor_command! {
 vendor_command! {
     /// Scan and report every advertising packet, without GAP filtering.
     aci_gap_start_observation_proc => GapStartObservationProc {
-        le_scan_interval: u16,
-        le_scan_window: u16,
+        le_scan_interval: ScanInterval,
+        le_scan_window: ScanWindow,
         le_scan_type: ScanType,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
@@ -514,8 +519,8 @@ vendor_command! {
     /// Start an additional non-connectable beacon, alongside the advertising
     /// the other GAP commands control.
     aci_gap_additional_beacon_start => GapAdditionalBeaconStart {
-        adv_interval_min: u16,
-        adv_interval_max: u16,
+        adv_interval_min: AdvInterval,
+        adv_interval_max: AdvInterval,
         adv_channel_map: AdvChannelMap,
         own_address_type: AddressType,
         own_address: BdAddr,
@@ -541,8 +546,8 @@ vendor_command! {
         adv_mode: AdvMode,
         advertising_handle: u8,
         adv_event_properties: AdvEventProperties,
-        primary_adv_interval_min: u32,
-        primary_adv_interval_max: u32,
+        primary_adv_interval_min: ExtAdvInterval,
+        primary_adv_interval_max: ExtAdvInterval,
         primary_adv_channel_map: AdvChannelMap,
         own_address_type: OwnAddressType,
         peer_address_type: AddressType,
@@ -630,8 +635,8 @@ vendor_command! {
         procedure: u8,
         own_address_type: OwnAddressType,
         filter_duplicates: u8,
-        duration: u16,
-        period: u16,
+        duration: ScanDuration,
+        period: ScanPeriod,
         scanning_filter_policy: u8,
         scanning_phys: ScanningPhys,
         scan_param_phy: [ScanParamPhy; 2],
@@ -773,10 +778,12 @@ mod tests {
 
     #[test]
     fn two_names_fit_their_capacities_but_not_the_parameters_together() {
+        let min = AdvInterval::from_units(0x20).unwrap();
+        let max = AdvInterval::from_units(0x30).unwrap();
         let command = GapSetDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0x20,
-            0x30,
+            min,
+            max,
             OwnAddressType::Public,
             0,
             b"ab",
@@ -797,8 +804,8 @@ mod tests {
         let name = [0; 242];
         let error = GapSetDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
-            0x20,
-            0x30,
+            min,
+            max,
             OwnAddressType::Public,
             0,
             &name,
@@ -812,8 +819,8 @@ mod tests {
         assert!(
             GapSetDiscoverable::try_new(
                 AdvertisingType::ConnectableUndirected,
-                0x20,
-                0x30,
+                min,
+                max,
                 OwnAddressType::Public,
                 0,
                 &name,
@@ -845,8 +852,8 @@ mod tests {
             1,
             OwnAddressType::Public,
             0,
-            0,
-            0,
+            ScanDuration::CONTINUOUS,
+            ScanPeriod::CONTINUOUS,
             0,
             ScanningPhys::LE_1M,
             [phy(1, 0x10, 0x20), phy(0, 0x30, 0x40)],
@@ -1019,11 +1026,13 @@ mod tests {
 
     #[test]
     fn counted_structures_encode_element_by_element() {
+        let interval = ScanInterval::from_units(0x10).unwrap();
+        let window = ScanWindow::from_units(0x10).unwrap();
         let peers = peers();
         let command = GapStartSelectiveConnectionEstablishProc::try_new(
             ScanType::Active,
-            0x10,
-            0x10,
+            interval,
+            window,
             OwnAddressType::Public,
             0,
             true,
@@ -1045,8 +1054,8 @@ mod tests {
         assert!(
             GapStartSelectiveConnectionEstablishProc::try_new(
                 ScanType::Active,
-                0x10,
-                0x10,
+                interval,
+                window,
                 OwnAddressType::Public,
                 0,
                 true,
