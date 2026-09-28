@@ -13,11 +13,13 @@ use stm32wb_hci_macros::{vendor_command, vendor_event};
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
 use crate::aci::durations::{CeLength, ConnInterval};
+#[allow(unused_imports, reason = "the HCI-layer profiles have no L2CAP events")]
+use crate::aci::values::ConnectionUpdateResult;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
-use crate::wire::BoundedBytes;
+use crate::wire::{BoundedBytes, OrUnknown};
 
 vendor_command! {
     /// Ask the central to update the connection parameters, with intervals
@@ -122,7 +124,7 @@ vendor_event! {
     /// The peer answered a connection parameter update request.
     aci_l2cap_connection_update_resp_event => L2capConnectionUpdateRespEvent {
         connection_handle: ConnHandle,
-        result: u16,
+        result: OrUnknown<ConnectionUpdateResult>,
     }
 }
 

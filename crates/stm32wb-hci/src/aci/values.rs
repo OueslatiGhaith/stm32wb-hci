@@ -1,13 +1,13 @@
-//! Types standing for the values the vendor commands document for their
-//! parameters and return parameters.
+//! Types standing for the values the vendor commands and events document
+//! for their parameters and return parameters.
 //!
 //! Each is declared with [`wire_values!`](crate::wire_values), and every
 //! command using one checks at compile time, on every target, that each of
 //! its values is one the catalog documents for that parameter on STM32WB. A
 //! parameter documenting fewer values takes a narrower type, such as
 //! [`ConnectableOwnAddressType`]. A value only some releases or profiles
-//! document is left out, and its type says so. A return parameter is
-//! declared as [`OrUnknown`](crate::wire::OrUnknown), which keeps the
+//! document is left out, and its type says so. A return or event parameter
+//! is declared as [`OrUnknown`](crate::wire::OrUnknown), which keeps the
 //! values left out.
 
 use crate::wire_values;
@@ -131,6 +131,51 @@ wire_values! {
 }
 
 wire_values! {
+    /// A GAP procedure. Terminating a procedure also documents `0x00`, for
+    /// none, which is left out.
+    pub enum GapProcedure: u8 {
+        /// `GAP_LIMITED_DISCOVERY_PROC`.
+        LimitedDiscovery = 0x01,
+        /// `GAP_GENERAL_DISCOVERY_PROC`.
+        GeneralDiscovery = 0x02,
+        /// `GAP_AUTO_CONNECTION_ESTABLISHMENT_PROC`.
+        AutoConnectionEstablishment = 0x08,
+        /// `GAP_GENERAL_CONNECTION_ESTABLISHMENT_PROC`.
+        GeneralConnectionEstablishment = 0x10,
+        /// `GAP_SELECTIVE_CONNECTION_ESTABLISHMENT_PROC`.
+        SelectiveConnectionEstablishment = 0x20,
+        /// `GAP_DIRECT_CONNECTION_ESTABLISHMENT_PROC`.
+        DirectConnectionEstablishment = 0x40,
+        /// `GAP_OBSERVATION_PROC`.
+        Observation = 0x80,
+    }
+}
+
+wire_values! {
+    /// How pairing ended.
+    pub enum PairingStatus: u8 {
+        /// Pairing succeeded.
+        Success = 0x00,
+        /// The security manager timed out.
+        SmpTimeout = 0x01,
+        /// Pairing failed, for the reason given with it.
+        PairingFailed = 0x02,
+        /// Encrypting the link failed.
+        EncryptionFailed = 0x03,
+    }
+}
+
+wire_values! {
+    /// The central's answer to a connection parameter update request.
+    pub enum ConnectionUpdateResult: u16 {
+        /// The central accepted the parameters.
+        Accepted = 0x0000,
+        /// The central rejected the parameters.
+        Rejected = 0x0001,
+    }
+}
+
+wire_values! {
     /// Where a value of the configuration data starts, with its length.
     /// Every command using one also checks the length is the one the catalog
     /// documents. `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET` (0xC1, from 1.16.0),
@@ -239,6 +284,24 @@ mod tests {
         );
         assert!(!values_documented::<OrUnknown<SecurityLevel>>(&[(1, 3)]));
         assert_eq!(<OrUnknown<SecurityLevel> as HciWireType>::WIDTH, 1);
+
+        assert_eq!(
+            OrUnknown::<ConnectionUpdateResult>::from_hci_bytes_complete(&[0x01, 0x00]).unwrap(),
+            OrUnknown::Known(ConnectionUpdateResult::Rejected)
+        );
+        assert_eq!(
+            OrUnknown::<ConnectionUpdateResult>::from_hci_bytes_complete(&[0x00, 0x01]).unwrap(),
+            OrUnknown::Unknown(0x0100)
+        );
+        assert_eq!(
+            OrUnknown::<bool>::from_hci_bytes_complete(&[0x01]).unwrap(),
+            OrUnknown::Known(true)
+        );
+        assert_eq!(
+            OrUnknown::<bool>::from_hci_bytes_complete(&[0x02]).unwrap(),
+            OrUnknown::Unknown(0x02)
+        );
+        assert!(decodes_any::<OrUnknown<bool>>());
     }
 
     #[test]

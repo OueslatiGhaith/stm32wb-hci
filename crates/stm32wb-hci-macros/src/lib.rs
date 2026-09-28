@@ -214,6 +214,10 @@ pub fn vendor_struct(input: TokenStream) -> TokenStream {
 /// and decodes each element as it is read. The struct then takes that
 /// lifetime.
 ///
+/// Parameters are checked against the values the catalog documents for them
+/// as return parameters of [`vendor_command!`] are: a type standing for some
+/// values is declared `OrUnknown<T>`.
+///
 /// ```ignore
 /// vendor_event! {
 ///     /// A warning from the wireless stack, with data depending on its type.

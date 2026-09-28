@@ -7,9 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bearer, Bundled, Catalog, Command as CatalogCommand, CommandScope, Completion, DomainKind,
-    Element, EventScope, Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant,
-    Version, bundled,
+    Bearer, Bundled, Catalog, CommandScope, Completion, Domain, DomainKind, Element, EventScope,
+    Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -1357,18 +1356,16 @@ pub(crate) enum Documented {
 /// What the catalog documents for each member of one release, by position.
 pub(crate) type Documents = Vec<Documented>;
 
-/// What the catalog documents for each parameter of `command` in `release`,
-/// or each return parameter if `returned`.
-pub(crate) fn documents(
-    command: &CatalogCommand,
+/// What the catalog documents for each of `members`, `domain` giving the
+/// documented values of a member by name.
+pub(crate) fn documents<'a>(
     members: &[Field],
-    returned: bool,
-    release: Version,
+    domain: impl Fn(&str) -> Option<&'a Domain>,
 ) -> Documents {
     members
         .iter()
         .map(|member| {
-            let Some(domain) = command.domain(&member.name, returned, release) else {
+            let Some(domain) = domain(&member.name) else {
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
@@ -1489,9 +1486,9 @@ pub(crate) fn value_assertions(
                 .map(|predicate| quote!(#[cfg(#predicate)]));
             if side != Side::Params {
                 let message = format!(
-                    "{owner}.{}: a {} may hold values the catalog does not document for {} on STM32WB in {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
+                    "{owner}.{}: {} may hold values the catalog does not document for {} on STM32WB in {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
                     field.name,
-                    side.what(),
+                    side.a_what(),
                     member.name,
                     group.releases
                 );
@@ -1836,8 +1833,12 @@ impl<'a> Command<'a> {
                 .filter(|release| releases.contains(*release))
                 .map(|release| {
                     (
-                        documents(active.command, params, false, release),
-                        documents(active.command, after_status, true, release),
+                        documents(params, |member| {
+                            active.command.domain(member, false, release)
+                        }),
+                        documents(after_status, |member| {
+                            active.command.domain(member, true, release)
+                        }),
                         (ReleaseRange::single(release), segment.profiles),
                     )
                 })
@@ -2031,6 +2032,16 @@ impl Side {
             Side::Returns => "return parameter",
             Side::Struct => "field",
             Side::Event => "event parameter",
+        }
+    }
+
+    /// What a member of the layout is, with its indefinite article.
+    fn a_what(self) -> &'static str {
+        match self {
+            Side::Params => "a parameter",
+            Side::Returns => "a return parameter",
+            Side::Struct => "a field",
+            Side::Event => "an event parameter",
         }
     }
 }

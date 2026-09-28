@@ -8,10 +8,11 @@ use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
 use crate::command::{
-    BearerGroup, Channel, ElementType, Fields, InputField, Side, Slot, Targets, add_bearers,
-    bearer_assertions, bearer_groups, bearer_positions, check_bounds,
-    elements_lifetime_and_element, fields_in, plan, record_history_names, record_names,
-    same_layout, slice_lifetime_and_element, width_assertions,
+    BearerGroup, Channel, DocumentedGroup, Documents, ElementType, Fields, InputField, Side, Slot,
+    Targets, add_bearers, add_documents, bearer_assertions, bearer_groups, bearer_positions,
+    check_bounds, documented_groups, documents, elements_lifetime_and_element, fields_in, plan,
+    record_history_names, record_names, same_layout, slice_lifetime_and_element, value_assertions,
+    width_assertions,
 };
 use crate::{cfg, complete};
 
@@ -102,6 +103,8 @@ struct Event<'a> {
     latest: &'a str,
     /// The parameters addressing ATT bearers.
     bearers: Vec<BearerGroup>,
+    /// What the catalog documents for the parameters, by group of releases.
+    documented: Vec<DocumentedGroup>,
 }
 
 impl<'a> Event<'a> {
@@ -120,13 +123,15 @@ impl<'a> Event<'a> {
         check_bounds(bundled, &c_name, input.fields.fields.iter(), &ranges)?;
 
         // Each variant with its code and the fields it declares, which it is
-        // keyed by, and the targets it covers.
+        // keyed by, the targets it covers, and those its bearers and
+        // documented values are the same on.
         #[allow(clippy::type_complexity)]
         let mut variants: Vec<(
             (u16, Vec<bool>),
             Self,
             Targets<'a>,
             Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+            Vec<(Documents, Targets<'a>)>,
         )> = Vec::new();
         // Every release's layout, for the names renamed members had.
         let mut history: Vec<&'a [Field]> = Vec::new();
@@ -166,7 +171,18 @@ impl<'a> Event<'a> {
                     .collect::<Vec<_>>(),
             );
             let bearers = bearer_positions(payload, &active.definition.bearers);
-            let Some((_, variant, targets, groups)) =
+            let documents = bundled
+                .catalog
+                .versions()
+                .filter(|release| releases.contains(*release))
+                .map(|release| {
+                    (
+                        documents(payload, |member| active.event.domain(member, release)),
+                        (ReleaseRange::single(release), segment.profiles),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let Some((_, variant, targets, groups, documented)) =
                 variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 let mut variant = Self {
@@ -177,10 +193,21 @@ impl<'a> Event<'a> {
                     cfg: None,
                     latest: active.event.name(),
                     bearers: Vec::new(),
+                    documented: Vec::new(),
                 };
                 record_names(&mut variant.names, payload);
                 let target = (releases, segment.profiles);
-                variants.push((key, variant, vec![target], vec![(bearers, vec![target])]));
+                let mut documented = Vec::new();
+                for (documents, target) in documents {
+                    add_documents(&mut documented, documents, target);
+                }
+                variants.push((
+                    key,
+                    variant,
+                    vec![target],
+                    vec![(bearers, vec![target])],
+                    documented,
+                ));
                 continue;
             };
             if !variant.facts.same_wire(&current) {
@@ -197,16 +224,20 @@ impl<'a> Event<'a> {
             variant.releases.last = variant.releases.last.max(releases.last);
             targets.push((releases, segment.profiles));
             add_bearers(groups, bearers, (releases, segment.profiles));
+            for (documents, target) in documents {
+                add_documents(documented, documents, target);
+            }
         }
 
         Ok(variants
             .into_iter()
-            .map(|(_, mut variant, targets, groups)| {
+            .map(|(_, mut variant, targets, groups, documented)| {
                 for payload in &history {
                     record_history_names(&mut variant.names, variant.facts.payload, payload);
                 }
                 variant.cfg = cfg::targets(&bundled.catalog, targets);
                 variant.bearers = bearer_groups(&bundled.catalog, groups);
+                variant.documented = documented_groups(&bundled.catalog, documented);
                 variant
             })
             .collect())
@@ -301,12 +332,20 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
     let names = event.fields.fields.iter().map(|field| &field.name);
     let types = event.fields.fields.iter().map(|field| &field.ty);
     let field_names = names.clone();
-    let widths = width_assertions(&cfg, name, &slots).chain(bearer_assertions(
-        name,
-        &slots,
-        event.facts.payload,
-        &event.bearers,
-    ));
+    let widths = width_assertions(&cfg, name, &slots)
+        .chain(bearer_assertions(
+            name,
+            &slots,
+            event.facts.payload,
+            &event.bearers,
+        ))
+        .chain(value_assertions(
+            name,
+            &slots,
+            event.facts.payload,
+            &event.documented,
+            Side::Event,
+        ));
     let code = event.facts.code;
     let latest = event.latest;
     let doc = format!(
@@ -461,6 +500,46 @@ mod tests {
                 "declare it as `Elements<'a, T>` with T the type standing for Handle_Item_t"
             ),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn event_parameters_keep_undocumented_values() {
+        let tokens = expand_str(
+            "aci_gap_pairing_complete_event => GapPairingCompleteEvent {
+                 connection_handle: ConnHandle,
+                 status: OrUnknown<PairingStatus>,
+                 reason: u8,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("decodes_any :: < OrUnknown < PairingStatus > > ()"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "values_documented :: < OrUnknown < PairingStatus > > (& [(0i64 , 0i64) , (1i64 , 1i64) , (2i64 , 2i64) , (3i64 , 3i64)])"
+            ),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("decodes_any :: < u8 >"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_gap_pairing_request_event => GapPairingRequestEvent {
+                 connection_handle: ConnHandle,
+                 bonded: bool,
+                 auth_req: u8,
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("decodes_any :: < bool > ()"), "{tokens}");
+        assert!(
+            tokens.contains(
+                "GapPairingRequestEvent.bonded: an event parameter may hold values the catalog \
+                 does not document for Bonded on STM32WB in 1.21.0..=1.24.0"
+            ),
+            "{tokens}"
         );
     }
 

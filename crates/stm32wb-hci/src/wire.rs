@@ -249,6 +249,22 @@ pub trait WireValue: HciWireType + Copy {
     fn to_raw(self) -> Self::Raw;
 }
 
+impl WireValue for bool {
+    type Raw = u8;
+
+    fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
+    fn to_raw(self) -> u8 {
+        self.into()
+    }
+}
+
 /// A decoded value of type `T`, or the integer the binary sent if `T` does
 /// not stand for it, such as a value a later release or a peer adds.
 ///

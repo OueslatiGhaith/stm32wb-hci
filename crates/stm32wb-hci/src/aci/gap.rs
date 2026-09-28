@@ -15,8 +15,9 @@ use crate::aci::flags::{
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
-    AddressType, AdvertisingType, ConnectableOwnAddressType, IoCapability,
-    NonConnectableAdvertisingType, OwnAddressType, Privacy, ScanType, SecurityLevel, SecurityMode,
+    AddressType, AdvertisingType, ConnectableOwnAddressType, GapProcedure, IoCapability,
+    NonConnectableAdvertisingType, OwnAddressType, PairingStatus, Privacy, ScanType, SecurityLevel,
+    SecurityMode,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::{BoundedArray, OrUnknown};
@@ -318,7 +319,7 @@ vendor_command! {
 vendor_command! {
     /// Terminate the GAP procedure `procedure_code`.
     aci_gap_terminate_gap_proc => GapTerminateGapProc {
-        procedure_code: u8,
+        procedure_code: GapProcedure,
     }
 }
 
@@ -684,7 +685,7 @@ vendor_event! {
     /// timed out.
     aci_gap_pairing_complete_event => GapPairingCompleteEvent {
         connection_handle: ConnHandle,
-        status: u8,
+        status: OrUnknown<PairingStatus>,
         reason: u8,
     }
 }
@@ -721,7 +722,7 @@ vendor_event! {
 vendor_event! {
     /// A GAP procedure completed, with data depending on the procedure.
     aci_gap_proc_complete_event => GapProcCompleteEvent {
-        procedure_code: u8,
+        procedure_code: OrUnknown<GapProcedure>,
         status: u8,
         data: &'a [u8],
     }
@@ -755,7 +756,7 @@ vendor_event! {
     /// A peer asked to pair; answer with [`GapPairingRequestReply`].
     aci_gap_pairing_request_event => GapPairingRequestEvent {
         connection_handle: ConnHandle,
-        bonded: bool,
+        bonded: OrUnknown<bool>,
         auth_req: u8,
     }
 }
@@ -1109,7 +1110,11 @@ mod tests {
         assert_eq!(GapProcCompleteEvent::CODE, 0x0407);
         assert_eq!(
             (complete.procedure_code, complete.status, complete.data),
-            (0x02, 0x00, &[0xAA, 0xBB][..])
+            (
+                OrUnknown::Known(GapProcedure::GeneralDiscovery),
+                0x00,
+                &[0xAA, 0xBB][..]
+            )
         );
         assert!(
             GapProcCompleteEvent::from_vendor_params(&params[..6])
@@ -1118,6 +1123,22 @@ mod tests {
         );
         let limited = GapLimitedDiscoverableEvent::from_vendor_params(&[0x00, 0x04]).unwrap();
         assert_eq!(limited, Ok(GapLimitedDiscoverableEvent {}));
+    }
+
+    #[test]
+    fn gap_events_keep_undocumented_values() {
+        let complete = GapProcCompleteEvent::from_hci_bytes_complete(&[0x04, 0x00, 0x00]).unwrap();
+        assert_eq!(complete.procedure_code, OrUnknown::Unknown(0x04));
+        let pairing =
+            GapPairingCompleteEvent::from_hci_bytes_complete(&[0x01, 0x08, 0x02, 0x05]).unwrap();
+        assert_eq!(
+            pairing.status,
+            OrUnknown::Known(PairingStatus::PairingFailed)
+        );
+        assert_eq!(pairing.reason, 0x05);
+        let pairing =
+            GapPairingCompleteEvent::from_hci_bytes_complete(&[0x01, 0x08, 0x04, 0x00]).unwrap();
+        assert_eq!(pairing.status, OrUnknown::Unknown(0x04));
     }
 
     #[cfg(not(any(
@@ -1139,7 +1160,7 @@ mod tests {
         assert_eq!(lost.connection_handle, ConnHandle::new(0x0801));
         let pairing =
             GapPairingRequestEvent::from_hci_bytes_complete(&[0x01, 0x00, 1, 0x2D]).unwrap();
-        assert!(pairing.bonded);
+        assert_eq!(pairing.bonded, OrUnknown::Known(true));
         assert_eq!(pairing.auth_req, 0x2D);
     }
 

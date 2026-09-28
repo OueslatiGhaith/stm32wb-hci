@@ -288,6 +288,14 @@ impl Command {
 }
 
 impl Event {
+    /// The documented values of a parameter in `release`.
+    pub fn domain(&self, member: &str, release: Version) -> Option<&Domain> {
+        self.domains
+            .iter()
+            .find(|domain| domain.member == member && domain.releases.contains(release))
+            .map(|domain| &domain.domain)
+    }
+
     pub fn name(&self) -> &str {
         latest_name(&self.names)
     }
