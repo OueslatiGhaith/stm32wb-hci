@@ -7,9 +7,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
-    Bearer, Bundled, Catalog, Command as CatalogCommand, CommandScope, Completion, Domain, Element,
-    EventScope, Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version,
-    bundled,
+    Bearer, Bundled, Catalog, Command as CatalogCommand, CommandScope, Completion, DomainKind,
+    Element, EventScope, Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant,
+    Version, bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -1330,10 +1330,21 @@ pub(crate) fn bearer_assertions(
     assertions
 }
 
-/// What the catalog documents for each member of one release, by position:
-/// the ranges an STM32WB binary accepts, `None` for an undocumented member,
-/// or why its values cannot be checked.
-pub(crate) type Documents = Vec<Result<Option<Vec<(i64, i64)>>, String>>;
+/// What the catalog documents for one member in one release.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Documented {
+    /// No values.
+    Nothing,
+    /// The inclusive ranges of values an STM32WB binary accepts.
+    Values(Vec<(i64, i64)>),
+    /// The union of the flags an STM32WB binary accepts.
+    Flags(u64),
+    /// Values or flags that cannot be checked, and why.
+    Unreadable(String),
+}
+
+/// What the catalog documents for each member of one release, by position.
+pub(crate) type Documents = Vec<Documented>;
 
 /// What the catalog documents for each parameter of `command` in `release`.
 pub(crate) fn documents(
@@ -1344,10 +1355,14 @@ pub(crate) fn documents(
     members
         .iter()
         .map(|member| {
-            command
-                .domain(&member.name, false, release)
-                .map(Domain::stm32wb_ranges)
-                .transpose()
+            let Some(domain) = command.domain(&member.name, false, release) else {
+                return Documented::Nothing;
+            };
+            let documented = match domain.kind {
+                DomainKind::Values => domain.stm32wb_ranges().map(Documented::Values),
+                DomainKind::Flags => domain.stm32wb_bits().map(Documented::Flags),
+            };
+            documented.unwrap_or_else(Documented::Unreadable)
         })
         .collect()
 }
@@ -1422,8 +1437,8 @@ fn is_integer(ty: &Type) -> bool {
         }))
 }
 
-/// Assert at compile time that each value a declared type stands for is one
-/// the catalog documents for its member, in each group of releases.
+/// Assert at compile time that each value or flag a declared type stands for
+/// is one the catalog documents for its member, in each group of releases.
 pub(crate) fn value_assertions(
     owner: &Ident,
     slots: &[Slot<'_>],
@@ -1454,8 +1469,8 @@ pub(crate) fn value_assertions(
                 .cfg
                 .as_ref()
                 .map(|predicate| quote!(#[cfg(#predicate)]));
-            let (documented, message) = match &group.documents[position] {
-                Ok(Some(ranges)) => {
+            let (check, message) = match &group.documents[position] {
+                Documented::Values(ranges) => {
                     let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
                     let listed = ranges
                         .iter()
@@ -1469,22 +1484,37 @@ pub(crate) fn value_assertions(
                         .collect::<Vec<_>>()
                         .join(", ");
                     (
-                        quote!(::core::option::Option::Some(&[#(#pairs),*])),
+                        quote!(::stm32wb_hci::wire::values_documented::<#ty>(&[#(#pairs),*])),
                         format!(
                             "{owner}.{}: the catalog documents {} as one of {listed} on STM32WB in {}; every value of the declared type must be one of them",
                             field.name, member.name, group.releases
                         ),
                     )
                 }
-                Ok(None) => (
-                    quote!(::core::option::Option::None),
+                Documented::Flags(bits) => {
+                    let listed = (0..u64::BITS)
+                        .map(|bit| 1u64 << bit)
+                        .filter(|flag| bits & flag != 0)
+                        .map(|flag| format!("{flag:#x}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    (
+                        quote!(::stm32wb_hci::wire::flags_documented::<#ty>(#bits)),
+                        format!(
+                            "{owner}.{}: the catalog documents {} as the flags {listed} on STM32WB in {}; every flag of the declared type must be one of them",
+                            field.name, member.name, group.releases
+                        ),
+                    )
+                }
+                Documented::Nothing => (
+                    quote!(::stm32wb_hci::wire::is_opaque::<#ty>()),
                     format!(
                         "{owner}.{}: the catalog documents no values for {} in {}; declare it as an integer",
                         field.name, member.name, group.releases
                     ),
                 ),
-                Err(reason) => (
-                    quote!(::core::option::Option::None),
+                Documented::Unreadable(reason) => (
+                    quote!(::stm32wb_hci::wire::is_opaque::<#ty>()),
                     format!(
                         "{owner}.{}: the catalog's values for {} in {} cannot be checked: {reason}; declare it as an integer",
                         field.name, member.name, group.releases
@@ -1495,7 +1525,7 @@ pub(crate) fn value_assertions(
             assertions.push(quote_spanned! {ty.span()=>
                 #cfg
                 const _: () = ::core::assert!(
-                    ::stm32wb_hci::wire::values_documented::<#ty>(#documented),
+                    #check,
                     #message
                 );
             });
@@ -2937,7 +2967,7 @@ mod tests {
     fn value_types_are_checked_against_the_documented_values() {
         let tokens = expand_str(
             "aci_gap_init => GapInit {
-                 role: u8,
+                 role: Role,
                  privacy_enabled: Privacy,
                  device_name_char_len: u8,
              } -> GapService {
@@ -2948,10 +2978,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            tokens.contains(
-                "values_documented :: < Privacy > (:: core :: option :: Option :: Some (& \
-                 [(0i64 , 0i64) , (2i64 , 2i64)]))"
-            ),
+            tokens.contains("values_documented :: < Privacy > (& [(0i64 , 0i64) , (2i64 , 2i64)])"),
             "{tokens}"
         );
         assert!(
@@ -2959,8 +2986,18 @@ mod tests {
                 .contains("documents privacy_enabled as one of 0, 2 on STM32WB in 1.15.0..=1.24.0"),
             "{tokens}"
         );
+        assert!(
+            tokens.contains("flags_documented :: < Role > (15u64)"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "documents Role as the flags 0x1, 0x2, 0x4, 0x8 on STM32WB in 1.15.0..=1.24.0"
+            ),
+            "{tokens}"
+        );
         // Integers stand for no values, so they are not checked.
-        assert!(!tokens.contains("values_documented :: < u8 >"), "{tokens}");
+        assert!(!tokens.contains(":: < u8 >"), "{tokens}");
     }
 
     #[test]

@@ -109,7 +109,7 @@ mod tests {
     use bt_hci::{FromHciBytes, FromHciBytesError, WriteHci};
 
     use super::*;
-    use crate::wire::{HciWireType, values_documented};
+    use crate::wire::{HciWireType, is_opaque, values_documented};
 
     #[test]
     fn values_encode_as_their_documented_byte() {
@@ -130,19 +130,15 @@ mod tests {
 
     #[test]
     fn every_value_must_be_documented() {
-        let privacy = Some(&[(0, 0), (2, 2)][..]);
+        let privacy = &[(0, 0), (2, 2)][..];
         assert!(values_documented::<Privacy>(privacy));
         assert!(!values_documented::<bool>(privacy), "1 is undocumented");
-        assert!(values_documented::<bool>(Some(&[(0, 1)])));
-        assert!(values_documented::<OwnAddressType>(Some(&[(0, 3)])));
-        assert!(!values_documented::<OwnAddressType>(Some(&[(0, 2)])));
-        assert!(values_documented::<ConnectableOwnAddressType>(Some(&[(
-            0, 3
-        )])));
-        assert!(!values_documented::<Privacy>(None), "undocumented member");
-        assert!(
-            values_documented::<u8>(None),
-            "integers stand for no values"
-        );
+        assert!(values_documented::<bool>(&[(0, 1)]));
+        assert!(values_documented::<OwnAddressType>(&[(0, 3)]));
+        assert!(!values_documented::<OwnAddressType>(&[(0, 2)]));
+        assert!(values_documented::<ConnectableOwnAddressType>(&[(0, 3)]));
+        assert!(!is_opaque::<Privacy>(), "undocumented member");
+        assert!(values_documented::<u8>(&[]), "integers stand for no values");
+        assert!(is_opaque::<u8>());
     }
 }

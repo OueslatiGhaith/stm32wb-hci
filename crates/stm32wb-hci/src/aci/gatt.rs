@@ -11,6 +11,13 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
+use crate::aci::flags::{
+    AccessPermissions, CharProperties, GattEventMask, SecurityPermissions, UpdateType,
+};
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no GATT commands"
+)]
 use crate::wire::{AttBearer, BoundedBytes, Elements, Uuid};
 
 vendor_command! {
@@ -51,9 +58,9 @@ vendor_command! {
         service_handle: u16,
         char_uuid: Uuid,
         char_value_length: u16,
-        char_properties: u8,
-        security_permissions: u8,
-        gatt_evt_mask: u8,
+        char_properties: CharProperties,
+        security_permissions: SecurityPermissions,
+        gatt_evt_mask: GattEventMask,
         enc_key_size: u8,
         is_variable: bool,
     } -> GattChar {
@@ -69,9 +76,9 @@ vendor_command! {
         char_desc_uuid: Uuid,
         char_desc_value_max_len: u8,
         char_desc_value: &'a [u8],
-        security_permissions: u8,
-        access_permissions: u8,
-        gatt_evt_mask: u8,
+        security_permissions: SecurityPermissions,
+        access_permissions: AccessPermissions,
+        gatt_evt_mask: GattEventMask,
         enc_key_size: u8,
         is_variable: bool,
     } -> GattCharDesc {
@@ -351,7 +358,7 @@ vendor_command! {
     aci_gatt_set_security_permission => GattSetSecurityPermission {
         serv_handle: u16,
         attr_handle: u16,
-        security_permissions: u8,
+        security_permissions: SecurityPermissions,
     }
 }
 
@@ -391,7 +398,7 @@ vendor_command! {
         conn_handle_to_notify: AttBearer,
         service_handle: u16,
         char_handle: u16,
-        update_type: u8,
+        update_type: UpdateType,
         char_length: u16,
         value_offset: u16,
         value: &'a [u8],
@@ -411,7 +418,7 @@ vendor_command! {
     aci_gatt_set_access_permission => GattSetAccessPermission {
         serv_handle: u16,
         attr_handle: u16,
-        access_permissions: u8,
+        access_permissions: AccessPermissions,
     }
 }
 
@@ -734,9 +741,9 @@ mod tests {
             Uuid::from(0x2901u16),
             8,
             b"hi",
-            0,
-            1,
-            0,
+            SecurityPermissions::empty(),
+            AccessPermissions::READ,
+            GattEventMask::empty(),
             7,
             true,
         )

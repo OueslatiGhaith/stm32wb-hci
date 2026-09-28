@@ -6,6 +6,7 @@
 //! not compiled.
 
 pub mod att;
+pub mod flags;
 pub mod gap;
 pub mod gatt;
 pub mod general;

@@ -5,6 +5,10 @@ use bt_hci::param::{BdAddr, ConnHandle};
 use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
+use crate::aci::flags::{
+    AdvChannelMap, AdvEventProperties, AdvMode, GapEventMask, InitiatingPhys, Role, ScanningPhys,
+};
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
     AddressType, AdvertisingType, ConnectableOwnAddressType, IoCapability,
     NonConnectableAdvertisingType, OwnAddressType, Privacy, ScanType,
@@ -112,7 +116,7 @@ vendor_command! {
     /// Initialize GAP in the given roles, adding the GAP service and its
     /// characteristics.
     aci_gap_init => GapInit {
-        role: u8,
+        role: Role,
         privacy_enabled: Privacy,
         device_name_char_len: u8,
     } -> GapService {
@@ -176,7 +180,7 @@ vendor_command! {
 vendor_command! {
     /// Enable or disable the GAP events.
     aci_gap_set_event_mask => GapSetEventMask {
-        gap_evt_mask: u16,
+        gap_evt_mask: GapEventMask,
     }
 }
 
@@ -512,7 +516,7 @@ vendor_command! {
     aci_gap_additional_beacon_start => GapAdditionalBeaconStart {
         adv_interval_min: u16,
         adv_interval_max: u16,
-        adv_channel_map: u8,
+        adv_channel_map: AdvChannelMap,
         own_address_type: AddressType,
         own_address: BdAddr,
         pa_level: u8,
@@ -534,12 +538,12 @@ vendor_command! {
 vendor_command! {
     /// Configure the advertising set `advertising_handle`.
     aci_gap_adv_set_configuration => GapAdvSetConfiguration {
-        adv_mode: u8,
+        adv_mode: AdvMode,
         advertising_handle: u8,
-        adv_event_properties: u16,
+        adv_event_properties: AdvEventProperties,
         primary_adv_interval_min: u32,
         primary_adv_interval_max: u32,
-        primary_adv_channel_map: u8,
+        primary_adv_channel_map: AdvChannelMap,
         own_address_type: OwnAddressType,
         peer_address_type: AddressType,
         peer_address: BdAddr,
@@ -629,7 +633,7 @@ vendor_command! {
         duration: u16,
         period: u16,
         scanning_filter_policy: u8,
-        scanning_phys: u8,
+        scanning_phys: ScanningPhys,
         scan_param_phy: [ScanParamPhy; 2],
     }
 }
@@ -660,7 +664,7 @@ vendor_command! {
         advertising_handle: u8,
         subevent: u8,
         initiator_filter_policy: u8,
-        initiating_phys: u8,
+        initiating_phys: InitiatingPhys,
         init_param_phy: [InitParamPhy; 3],
     }
 }
@@ -844,13 +848,13 @@ mod tests {
             0,
             0,
             0,
-            0b101,
+            ScanningPhys::LE_1M,
             [phy(1, 0x10, 0x20), phy(0, 0x30, 0x40)],
         );
         assert_eq!(GapExtStartScan::OPCODE.to_raw(), 0xFCD0);
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..3], [0xD0, 0xFC, 10 + 10]);
-        assert_eq!(bytes[3..13], [0, 1, 0, 0, 0, 0, 0, 0, 0, 0b101]);
+        assert_eq!(bytes[3..13], [0, 1, 0, 0, 0, 0, 0, 0, 0, 0x01]);
         assert_eq!(bytes[13..len], [1, 0x10, 0, 0x20, 0, 0, 0x30, 0, 0x40, 0]);
     }
 
@@ -868,7 +872,7 @@ mod tests {
 
     #[test]
     fn init_returns_the_gap_service_handles() {
-        let (bytes, len) = encode(&GapInit::new(0x01, Privacy::Disabled, 7));
+        let (bytes, len) = encode(&GapInit::new(Role::PERIPHERAL, Privacy::Disabled, 7));
         assert_eq!(bytes[..len], [0x8A, 0xFC, 3, 0x01, 0, 7]);
         let service = <GapInit as SyncCmd>::Return::from_hci_bytes_complete(&[
             0x01, 0x00, 0x02, 0x00, 0x03, 0x00,
@@ -974,12 +978,12 @@ mod tests {
             0xFF,
             0xFF,
             0,
-            0b111,
+            InitiatingPhys::LE_1M | InitiatingPhys::LE_2M,
             [phy(1), phy(2), phy(3)],
         );
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..3], [0xD1, 0xFC, 14 + 3 * 16]);
-        assert_eq!(bytes[16], 0b111);
+        assert_eq!(bytes[16], 0b011);
         assert_eq!(bytes[17..19], [1, 0]);
         assert_eq!(bytes[33..35], [2, 0]);
         assert_eq!(bytes[len - 2..len], [3, 0]);

@@ -11,6 +11,12 @@ use stm32wb_hci_macros::vendor_command;
     unused_imports,
     reason = "releases before 1.23.0 have no general commands"
 )]
+use crate::aci::flags::ResetOptions;
+
+#[allow(
+    unused_imports,
+    reason = "releases before 1.23.0 have no general commands"
+)]
 use crate::wire::BoundedBytes;
 
 vendor_command! {
@@ -18,7 +24,7 @@ vendor_command! {
     /// `options`.
     aci_reset => AciReset {
         mode: u8,
-        options: u32,
+        options: ResetOptions,
     }
 }
 
@@ -59,11 +65,11 @@ mod tests {
         assert_eq!(AciReset::OPCODE.to_raw(), 0xFF00);
         let mut buffer = [0; 16];
         let mut writer = &mut buffer[..];
-        AciReset::new(1, 0x0403_0201)
+        AciReset::new(1, ResetOptions::LL_ONLY | ResetOptions::ENHANCED_ATT)
             .write_hci(&mut writer)
             .unwrap();
         let len = 16 - writer.len();
-        assert_eq!(buffer[..len], [0x00, 0xFF, 5, 1, 1, 2, 3, 4]);
+        assert_eq!(buffer[..len], [0x00, 0xFF, 5, 1, 0x01, 0x02, 0, 0]);
 
         let mut bytes = [0; 24];
         for (index, byte) in bytes.iter_mut().enumerate() {

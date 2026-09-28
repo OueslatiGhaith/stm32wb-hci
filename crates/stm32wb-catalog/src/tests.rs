@@ -938,7 +938,7 @@ fn distinct_targets_cover_every_interface_once() {
 }
 
 #[test]
-fn stm32wb_ranges_follow_the_mcu_conditions() {
+fn stm32wb_items_follow_the_mcu_conditions() {
     let domain = |kind, items: &[&str]| Domain {
         kind,
         items: items.iter().map(|item| item.parse().unwrap()).collect(),
@@ -968,6 +968,24 @@ fn stm32wb_ranges_follow_the_mcu_conditions() {
             .unwrap_err();
         assert!(error.contains("cannot interpret"), "{error}");
     }
-    let flags = domain(DomainKind::Flags, &["0x01: Peripheral"]);
+    let flags = domain(
+        DomainKind::Flags,
+        &[
+            "0x00: No events",
+            "0x01: Scan request report (only for STM32WB)",
+            "0x02: Sync (only for STM32WBA)",
+            "0x04: Coded PHY [not supported on STM32WB]",
+            "0x08: Decision filter bit (not supported)",
+            "0x10: Peripheral",
+        ],
+    );
+    assert_eq!(flags.stm32wb_bits().unwrap(), 0x11);
     assert!(flags.stm32wb_ranges().unwrap_err().contains("bits"));
+    assert!(values.stm32wb_bits().unwrap_err().contains("values"));
+    assert_eq!(
+        domain(DomainKind::Values, &["0x01: Resolving (not supported)"])
+            .stm32wb_ranges()
+            .unwrap(),
+        []
+    );
 }

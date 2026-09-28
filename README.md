@@ -39,7 +39,9 @@ below, for commands to complete:
 ```rust
 use bt_hci::cmd::controller_baseband::Reset;
 use bt_hci::controller::{Controller, ControllerCmdSync};
-use stm32wb_hci::aci::{gap::GapInit, gatt::GattInit, hal::HalWriteConfigData, values::Privacy};
+use stm32wb_hci::aci::{
+    flags::Role, gap::GapInit, gatt::GattInit, hal::HalWriteConfigData, values::Privacy,
+};
 
 join(
     async {
@@ -63,7 +65,9 @@ join(
         defmt::info!("init gatt: {}", response.is_ok());
 
         // Peripheral role, without privacy, with an 8-byte device name.
-        let response = ble.exec(&GapInit::new(0x01, Privacy::Disabled, 8)).await;
+        let response = ble
+            .exec(&GapInit::new(Role::PERIPHERAL, Privacy::Disabled, 8))
+            .await;
         defmt::info!("init gap: {}", response.is_ok());
     },
 )

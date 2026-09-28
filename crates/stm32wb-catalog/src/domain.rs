@@ -339,16 +339,12 @@ fn mcu_after(label: &str, phrase: &str) -> Option<Mcu> {
 }
 
 impl Domain {
-    /// The inclusive ranges of values an STM32WB binary accepts: every item,
-    /// except those whose label says they are not supported on STM32WB or
-    /// only on STM32WBA. A label naming any other condition, such as a stack
-    /// variant, is an error rather than a guess, and so are flags, which
-    /// document bits rather than values.
-    pub fn stm32wb_ranges(&self) -> Result<Vec<(i64, i64)>, String> {
-        if self.kind == DomainKind::Flags {
-            return Err("its documentation lists bits rather than values".to_owned());
-        }
-        let mut ranges = Vec::new();
+    /// The items an STM32WB binary accepts: every item, except those whose
+    /// label says they are not supported, not supported on STM32WB, or only
+    /// on STM32WBA. A label naming any other condition, such as a stack
+    /// variant, is an error rather than a guess.
+    fn stm32wb_items(&self) -> Result<Vec<&DomainItem>, String> {
+        let mut items = Vec::new();
         for item in &self.items {
             let label = item.label.as_deref().unwrap_or_default();
             let mcu = mcu_after(label, "not supported on")
@@ -362,12 +358,40 @@ impl Domain {
                         "{item} names a condition the catalog cannot interpret"
                     ));
                 }
-                None => true,
+                None => !label.ends_with("(not supported)") && !label.ends_with("[not supported]"),
             };
             if applies {
-                ranges.push((item.first, item.last));
+                items.push(item);
             }
         }
-        Ok(ranges)
+        Ok(items)
+    }
+
+    /// The inclusive ranges of values an STM32WB binary accepts, as
+    /// [`stm32wb_items`](Self::stm32wb_items) selects them. Flags, which
+    /// document bits rather than values, are an error.
+    pub fn stm32wb_ranges(&self) -> Result<Vec<(i64, i64)>, String> {
+        if self.kind == DomainKind::Flags {
+            return Err("its documentation lists bits rather than values".to_owned());
+        }
+        Ok(self
+            .stm32wb_items()?
+            .into_iter()
+            .map(|item| (item.first, item.last))
+            .collect())
+    }
+
+    /// The union of the flags an STM32WB binary accepts, as
+    /// [`stm32wb_items`](Self::stm32wb_items) selects them. Values, which
+    /// the bits of a flag type could combine into undocumented ones, are an
+    /// error.
+    pub fn stm32wb_bits(&self) -> Result<u64, String> {
+        if self.kind == DomainKind::Values {
+            return Err("its documentation lists values rather than bits".to_owned());
+        }
+        Ok(self
+            .stm32wb_items()?
+            .into_iter()
+            .fold(0, |bits, item| bits | item.first as u64))
     }
 }

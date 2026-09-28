@@ -9,6 +9,7 @@
 use bt_hci::param::BdAddr;
 use stm32wb_hci_macros::{vendor_command, vendor_event};
 
+use crate::aci::flags::{HalEventMask, RadioActivityMask};
 use crate::wire::BoundedBytes;
 
 vendor_command! {
@@ -74,7 +75,7 @@ vendor_command! {
 vendor_command! {
     /// Select the radio activities reported by the radio activity event.
     aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
-        radio_activity_mask: u16,
+        radio_activity_mask: RadioActivityMask,
     }
 }
 
@@ -89,7 +90,7 @@ vendor_command! {
 vendor_command! {
     /// Enable or disable the HAL events.
     aci_hal_set_event_mask => HalSetEventMask {
-        event_mask: u32,
+        event_mask: HalEventMask,
     }
 }
 
@@ -229,8 +230,10 @@ mod tests {
     fn parameters_encode_in_catalog_order() {
         let (bytes, len) = encode(&HalToneStart::new(39, 2));
         assert_eq!(bytes[..len], [0x15, 0xFC, 2, 39, 2]);
-        let (bytes, len) = encode(&HalSetRadioActivityMask::new(0x0102));
-        assert_eq!(bytes[..len], [0x18, 0xFC, 2, 0x02, 0x01]);
+        let (bytes, len) = encode(&HalSetRadioActivityMask::new(
+            RadioActivityMask::ADVERTISING | RadioActivityMask::CENTRAL_CONNECTION,
+        ));
+        assert_eq!(bytes[..len], [0x18, 0xFC, 2, 0x22, 0x00]);
         let (bytes, len) = encode(&HalToneStop::new());
         assert_eq!(bytes[..len], [0x16, 0xFC, 0]);
     }
@@ -238,8 +241,8 @@ mod tests {
     #[cfg(feature = "stack-full-extended")]
     #[test]
     fn profile_specific_commands_follow_the_catalog() {
-        let (bytes, len) = encode(&HalSetEventMask::new(0x0403_0201));
-        assert_eq!(bytes[..len], [0x1A, 0xFC, 4, 1, 2, 3, 4]);
+        let (bytes, len) = encode(&HalSetEventMask::new(HalEventMask::SCAN_REQUEST_REPORT));
+        assert_eq!(bytes[..len], [0x1A, 0xFC, 4, 1, 0, 0, 0]);
         let (bytes, len) = encode(&HalWriteRadioReg::new(0x12, 0x34));
         assert_eq!(bytes[..len], [0x31, 0xFC, 2, 0x12, 0x34]);
         let (bytes, len) = encode(&HalRxStart::new(19));

@@ -39,6 +39,13 @@ pub trait HciWireType {
     /// documents for the member.
     #[doc(hidden)]
     const VALUES: Option<&'static [i64]> = None;
+
+    /// Every bit the type may set, for a type standing for some flags of an
+    /// integer member, such as those [`wire_flags!`] declares; `None` for
+    /// any other type. Declarations check each bit is one the catalog
+    /// documents for the member.
+    #[doc(hidden)]
+    const BITS: Option<u64> = None;
 }
 
 macro_rules! wire_width {
@@ -68,17 +75,17 @@ impl HciWireType for bool {
     const VALUES: Option<&'static [i64]> = Some(&[0, 1]);
 }
 
-/// Whether every value `T` encodes is one the catalog documents, each
-/// documented item being an inclusive range; `None` when the catalog
-/// documents no values for the member. A type encoding no fixed set of
-/// values is always accepted.
+/// Whether every value `T` encodes is one the catalog documents for a
+/// member listing values, each documented item being an inclusive range. A
+/// flags type, whose combinations the list does not name, never is; a type
+/// standing for no particular values always is.
 #[doc(hidden)]
-pub const fn values_documented<T: HciWireType>(documented: Option<&[(i64, i64)]>) -> bool {
+pub const fn values_documented<T: HciWireType>(documented: &[(i64, i64)]) -> bool {
+    if T::BITS.is_some() {
+        return false;
+    }
     let Some(values) = T::VALUES else {
         return true;
-    };
-    let Some(documented) = documented else {
-        return false;
     };
     let mut index = 0;
     while index < values.len() {
@@ -95,6 +102,35 @@ pub const fn values_documented<T: HciWireType>(documented: Option<&[(i64, i64)]>
         index += 1;
     }
     true
+}
+
+/// Whether every bit `T` may set is one the catalog documents for a member
+/// listing flags, `documented` being their union. A value type is checked
+/// as the bits of each of its values; a type standing for no particular
+/// values or flags always is.
+#[doc(hidden)]
+pub const fn flags_documented<T: HciWireType>(documented: u64) -> bool {
+    if let Some(bits) = T::BITS {
+        return bits & !documented == 0;
+    }
+    let Some(values) = T::VALUES else {
+        return true;
+    };
+    let mut index = 0;
+    while index < values.len() {
+        if values[index] < 0 || values[index] as u64 & !documented != 0 {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// Whether `T` stands for no particular values or flags, as a member the
+/// catalog documents no checkable values for requires.
+#[doc(hidden)]
+pub const fn is_opaque<T: HciWireType>() -> bool {
+    T::VALUES.is_none() && T::BITS.is_none()
 }
 
 /// Declare an enum standing for some documented values of an integer member,
@@ -188,6 +224,186 @@ macro_rules! wire_values {
     };
 }
 
+/// Declare a set of flags standing for some documented bits of an integer
+/// member, encoded as its `repr` integer. Every declaration using it for a
+/// member checks at compile time that each of its flags is a bit the catalog
+/// documents for that member, on every target.
+///
+/// ```ignore
+/// wire_flags! {
+///     /// The advertising channels to use.
+///     pub struct AdvChannelMap: u8 {
+///         /// Channel 37.
+///         const CHANNEL_37 = 0x01;
+///         /// Channel 38.
+///         const CHANNEL_38 = 0x02;
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! wire_flags {
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $name:ident: $repr:ident {
+            $(
+                $(#[$flag_attr:meta])*
+                const $flag:ident = $value:expr;
+            )+
+        }
+    ) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        $vis struct $name($repr);
+
+        impl $name {
+            $(
+                $(#[$flag_attr])*
+                pub const $flag: Self = Self($value);
+            )+
+
+            /// No flags.
+            pub const fn empty() -> Self {
+                Self(0)
+            }
+
+            /// Every flag.
+            pub const fn all() -> Self {
+                Self(0 $(| $value)+)
+            }
+
+            /// The encoded bits.
+            pub const fn bits(self) -> $repr {
+                self.0
+            }
+
+            /// The flags `bits` encodes, or `None` if it sets any other bit.
+            pub const fn from_bits(bits: $repr) -> ::core::option::Option<Self> {
+                if bits & !Self::all().0 == 0 {
+                    ::core::option::Option::Some(Self(bits))
+                } else {
+                    ::core::option::Option::None
+                }
+            }
+
+            /// Whether no flag is set.
+            pub const fn is_empty(self) -> bool {
+                self.0 == 0
+            }
+
+            /// Whether every flag of `other` is set.
+            pub const fn contains(self, other: Self) -> bool {
+                self.0 & other.0 == other.0
+            }
+
+            /// The flags set in either.
+            pub const fn union(self, other: Self) -> Self {
+                Self(self.0 | other.0)
+            }
+
+            /// The flags set in both.
+            pub const fn intersection(self, other: Self) -> Self {
+                Self(self.0 & other.0)
+            }
+        }
+
+        impl ::core::ops::BitOr for $name {
+            type Output = Self;
+
+            fn bitor(self, other: Self) -> Self {
+                self.union(other)
+            }
+        }
+
+        impl ::core::ops::BitOrAssign for $name {
+            fn bitor_assign(&mut self, other: Self) {
+                *self = self.union(other);
+            }
+        }
+
+        impl ::core::ops::BitAnd for $name {
+            type Output = Self;
+
+            fn bitand(self, other: Self) -> Self {
+                self.intersection(other)
+            }
+        }
+
+        impl ::core::ops::BitAndAssign for $name {
+            fn bitand_assign(&mut self, other: Self) {
+                *self = self.intersection(other);
+            }
+        }
+
+        impl ::core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(::core::stringify!($name))?;
+                f.write_str("(")?;
+                let mut first = true;
+                $(
+                    if self.contains(Self::$flag) {
+                        if !first {
+                            f.write_str(" | ")?;
+                        }
+                        f.write_str(::core::stringify!($flag))?;
+                        first = false;
+                    }
+                )+
+                if first {
+                    f.write_str("empty")?;
+                }
+                f.write_str(")")
+            }
+        }
+
+        impl $crate::wire::HciWireType for $name {
+            const WIDTH: usize = ::core::mem::size_of::<$repr>();
+            const BITS: ::core::option::Option<u64> =
+                ::core::option::Option::Some($name::all().0 as u64);
+        }
+
+        impl ::core::convert::From<$name> for $repr {
+            fn from(value: $name) -> $repr {
+                value.0
+            }
+        }
+
+        impl ::core::convert::TryFrom<$repr> for $name {
+            type Error = ::bt_hci::FromHciBytesError;
+
+            fn try_from(bits: $repr) -> ::core::result::Result<Self, Self::Error> {
+                $name::from_bits(bits).ok_or(::bt_hci::FromHciBytesError::InvalidValue)
+            }
+        }
+
+        impl ::bt_hci::WriteHci for $name {
+            fn size(&self) -> usize {
+                ::core::mem::size_of::<$repr>()
+            }
+
+            fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+                writer.write_all(&self.0.to_le_bytes())
+            }
+
+            async fn write_hci_async<W: ::embedded_io_async::Write>(
+                &self,
+                mut writer: W,
+            ) -> Result<(), W::Error> {
+                writer.write_all(&self.0.to_le_bytes()).await
+            }
+        }
+
+        impl<'de> ::bt_hci::FromHciBytes<'de> for $name {
+            fn from_hci_bytes(
+                data: &'de [u8],
+            ) -> ::core::result::Result<(Self, &'de [u8]), ::bt_hci::FromHciBytesError> {
+                let (raw, rest) = <$repr as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(data)?;
+                ::core::result::Result::Ok((<$name as ::core::convert::TryFrom<$repr>>::try_from(raw)?, rest))
+            }
+        }
+    };
+}
+
 impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
     const WIDTH: usize = T::WIDTH * N;
 }
@@ -196,6 +412,7 @@ impl<T: HciWireType + ?Sized> HciWireType for &T {
     const WIDTH: usize = T::WIDTH;
     const LAST_ENHANCED_BEARER: u16 = T::LAST_ENHANCED_BEARER;
     const VALUES: Option<&'static [i64]> = T::VALUES;
+    const BITS: Option<u64> = T::BITS;
 }
 
 /// A value encoded as one of several alternatives, which an earlier member

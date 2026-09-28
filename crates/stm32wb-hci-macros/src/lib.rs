@@ -94,7 +94,10 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// `wire_values!` declares, is checked against the values the catalog
 /// documents for its member on STM32WB, in every release: each value of the
 /// type must be documented, and a member documenting no values takes an
-/// integer. Integers stand for no values and are not checked.
+/// integer. A parameter whose type is a set of flags `wire_flags!` declares
+/// is checked the same way against the bits its member documents, and may
+/// not stand for a member documenting values, whose lists name no
+/// combinations. Integers stand for no values and are not checked.
 ///
 /// A `u16` member the catalog documents as addressing an ATT bearer is
 /// declared `AttBearer`, and no other member is; its enhanced range must be

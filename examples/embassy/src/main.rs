@@ -15,7 +15,7 @@ use embassy_stm32::{
     rcc::WPAN_DEFAULT,
 };
 use stm32wb_hci::{
-    aci::{gap::GapInit, gatt::GattInit, hal::HalWriteConfigData, values::Privacy},
+    aci::{flags::Role, gap::GapInit, gatt::GattInit, hal::HalWriteConfigData, values::Privacy},
     shci::{BleInit, BleInitParams},
 };
 
@@ -108,7 +108,9 @@ async fn main(spawner: Spawner) {
 
             defmt::info!("hci: init gap");
             // Peripheral role, without privacy, with an 8-byte device name.
-            let response = ble.exec(&GapInit::new(0x01, Privacy::Disabled, 8)).await;
+            let response = ble
+                .exec(&GapInit::new(Role::PERIPHERAL, Privacy::Disabled, 8))
+                .await;
             defmt::info!("{}", response.is_ok());
 
             info!("BLE HCI ready");
