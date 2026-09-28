@@ -16,8 +16,8 @@ use crate::aci::flags::{
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
     AddressType, AdvertisingType, ConnectableOwnAddressType, GapProcedure, IoCapability,
-    NonConnectableAdvertisingType, OwnAddressType, PairingStatus, Privacy, ScanType, SecurityLevel,
-    SecurityMode,
+    NonConnectableAdvertisingType, OwnAddressType, PairingFailureReason, PairingStatus, Privacy,
+    ScanType, SecurityLevel, SecurityMode,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::{BoundedArray, OrUnknown};
@@ -686,7 +686,7 @@ vendor_event! {
     aci_gap_pairing_complete_event => GapPairingCompleteEvent {
         connection_handle: ConnHandle,
         status: OrUnknown<PairingStatus>,
-        reason: u8,
+        reason: OrUnknown<PairingFailureReason>,
     }
 }
 
@@ -899,9 +899,9 @@ mod tests {
     #[test]
     fn security_levels_keep_undocumented_modes() {
         let level =
-            <GapGetSecurityLevel as SyncCmd>::Return::from_hci_bytes_complete(&[0x02, 0x04])
+            <GapGetSecurityLevel as SyncCmd>::Return::from_hci_bytes_complete(&[0x03, 0x04])
                 .unwrap();
-        assert_eq!(level.security_mode, OrUnknown::Unknown(0x02));
+        assert_eq!(level.security_mode, OrUnknown::Unknown(0x03));
         assert_eq!(level.security_level.known(), Some(SecurityLevel::Level4));
     }
 
@@ -1135,7 +1135,10 @@ mod tests {
             pairing.status,
             OrUnknown::Known(PairingStatus::PairingFailed)
         );
-        assert_eq!(pairing.reason, 0x05);
+        assert_eq!(
+            pairing.reason,
+            OrUnknown::Known(PairingFailureReason::PairingNotSupported)
+        );
         let pairing =
             GapPairingCompleteEvent::from_hci_bytes_complete(&[0x01, 0x08, 0x04, 0x00]).unwrap();
         assert_eq!(pairing.status, OrUnknown::Unknown(0x04));

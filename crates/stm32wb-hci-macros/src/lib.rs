@@ -94,10 +94,12 @@ pub fn check_target(input: TokenStream) -> TokenStream {
 /// `wire_values!` declares, is checked against the values the catalog
 /// documents for its member on STM32WB, in every release: each value of the
 /// type must be documented, and a member documenting no values takes an
-/// integer. A parameter whose type is a set of flags `wire_flags!` declares
-/// is checked the same way against the bits its member documents, and may
-/// not stand for a member documenting values, whose lists name no
-/// combinations. A duration `wire_duration!` declares is checked against
+/// integer. A value only some releases document is declared with the
+/// `#[cfg]` selecting them, so each release checks the values it has. A
+/// parameter whose type is a set of flags `wire_flags!` declares is checked
+/// the same way against the bits its member documents, and may not stand
+/// for a member documenting values, whose lists name no combinations. A
+/// duration `wire_duration!` declares is checked against
 /// the unit its member documents, and its range and special values against
 /// the documented values. A member documenting a unit takes a duration in
 /// that unit or an integer, and no other member takes a duration. Offsets

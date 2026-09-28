@@ -10,8 +10,18 @@ use bt_hci::param::BdAddr;
 use stm32wb_hci_macros::{vendor_command, vendor_event};
 
 use crate::aci::flags::{HalEventMask, RadioActivityMask};
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no warning event"
+)]
+use crate::aci::values::WarningType;
 use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
 use crate::wire::BoundedBytes;
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no warning event"
+)]
+use crate::wire::OrUnknown;
 
 vendor_command! {
     /// Read the build number of the wireless stack.
@@ -213,7 +223,7 @@ vendor_event! {
     /// A warning from the wireless stack, with data depending on its type.
     /// Named `aci_hal_fw_error_event` before 1.22.0.
     aci_warning_event => HalWarningEvent {
-        warning_type: u8,
+        warning_type: OrUnknown<WarningType>,
         data: &'a [u8],
     }
 }
@@ -512,11 +522,14 @@ mod tests {
     ))]
     #[test]
     fn counted_event_data_borrows_the_event() {
-        let params = [0x06, 0x00, 7, 3, 0xAA, 0xBB, 0xCC];
+        let params = [0x06, 0x00, 0x03, 3, 0xAA, 0xBB, 0xCC];
         let warning = HalWarningEvent::from_vendor_params(&params)
             .unwrap()
             .unwrap();
-        assert_eq!(warning.warning_type, 7);
+        assert_eq!(
+            warning.warning_type,
+            OrUnknown::Known(WarningType::NvmAlmostFull)
+        );
         assert_eq!(warning.data, [0xAA, 0xBB, 0xCC]);
         assert!(
             HalWarningEvent::from_vendor_params(&params[..6])

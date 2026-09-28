@@ -236,6 +236,37 @@ pub const fn decodes_any<T: HciWireType>() -> bool {
     T::FALLBACK || (T::VALUES.is_none() && T::BITS.is_none() && T::RANGES.is_none())
 }
 
+/// How many of `all` are present, for [`wire_values!`], whose variants a
+/// release or profile may leave out.
+#[doc(hidden)]
+pub const fn present_count<T: Copy>(all: &[Option<T>]) -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < all.len() {
+        if all[index].is_some() {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+/// The first `N` present items of `all`, in order, for [`wire_values!`].
+#[doc(hidden)]
+pub const fn present<T: Copy, const N: usize>(all: &[Option<T>], zero: T) -> [T; N] {
+    let mut items = [zero; N];
+    let mut count = 0;
+    let mut index = 0;
+    while index < all.len() && count < N {
+        if let Some(item) = all[index] {
+            items[count] = item;
+            count += 1;
+        }
+        index += 1;
+    }
+    items
+}
+
 /// A type standing for some values of an integer member, which
 /// [`OrUnknown`] decodes with a fallback to the others.
 pub trait WireValue: HciWireType + Copy {
@@ -356,6 +387,22 @@ where
 /// }
 /// ```
 ///
+/// A variant only some releases or profiles document is marked with the
+/// `#[cfg]` selecting them, after its documentation, and exists only there:
+///
+/// ```ignore
+/// wire_values! {
+///     /// The security mode of a connection.
+///     pub enum SecurityMode: u8 {
+///         /// Security mode 1.
+///         Mode1 = 0x01,
+///         /// Security mode 2, before 1.17.0.
+///         #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0"))]
+///         Mode2 = 0x02,
+///     }
+/// }
+/// ```
+///
 /// Values standing for offsets into some data may each give the length of
 /// the data there, which the declarations check against the length the
 /// catalog documents for the value, and `length` returns:
@@ -375,7 +422,8 @@ macro_rules! wire_values {
         $(#[$attr:meta])*
         $vis:vis enum $name:ident: $repr:ident {
             $(
-                $(#[$variant_attr:meta])*
+                $(#[doc = $doc:expr])*
+                $(#[cfg($cfg:meta)])?
                 $variant:ident = $value:expr
             ),+ $(,)?
         }
@@ -385,7 +433,8 @@ macro_rules! wire_values {
             $(#[$attr])*
             $vis enum $name: $repr {
                 $(
-                    $(#[$variant_attr])*
+                    $(#[doc = $doc])*
+                    $(#[cfg($cfg)])?
                     $variant = $value
                 ),+
             }
@@ -396,7 +445,8 @@ macro_rules! wire_values {
         $(#[$attr:meta])*
         $vis:vis enum $name:ident: $repr:ident {
             $(
-                $(#[$variant_attr:meta])*
+                $(#[doc = $doc:expr])*
+                $(#[cfg($cfg:meta)])?
                 $variant:ident = $value:expr => [u8; $length:literal]
             ),+ $(,)?
         }
@@ -406,13 +456,24 @@ macro_rules! wire_values {
             $(#[$attr])*
             $vis enum $name: $repr {
                 $(
-                    $(#[$variant_attr])*
+                    $(#[doc = $doc])*
+                    $(#[cfg($cfg)])?
                     $variant = $value
                 ),+
             }
             {
                 const LENGTHS: ::core::option::Option<&'static [(i64, usize)]> =
-                    ::core::option::Option::Some(&[$(($name::$variant as $repr as i64, $length)),+]);
+                    ::core::option::Option::Some({
+                        const ALL: &[::core::option::Option<(i64, usize)>] = &[$(
+                            $crate::wire_values!(
+                                @present [(i64, usize)] $(#[cfg($cfg)])?
+                                ($name::$variant as $repr as i64, $length)
+                            )
+                        ),+];
+                        const LENGTHS: [(i64, usize); $crate::wire::present_count(ALL)] =
+                            $crate::wire::present(ALL, (0, 0));
+                        &LENGTHS
+                    });
             }
         }
 
@@ -420,17 +481,31 @@ macro_rules! wire_values {
             /// The length in bytes of the data at this offset.
             pub const fn length(self) -> usize {
                 match self {
-                    $($name::$variant => $length,)+
+                    $(
+                        $(#[cfg($cfg)])?
+                        $name::$variant => $length,
+                    )+
                 }
             }
         }
+    };
+    (@present [$ty:ty] #[cfg($cfg:meta)] $item:expr) => {{
+        #[cfg($cfg)]
+        const ITEM: ::core::option::Option<$ty> = ::core::option::Option::Some($item);
+        #[cfg(not($cfg))]
+        const ITEM: ::core::option::Option<$ty> = ::core::option::Option::None;
+        ITEM
+    }};
+    (@present [$ty:ty] $item:expr) => {
+        ::core::option::Option::Some($item)
     };
     (
         @declare
         $(#[$attr:meta])*
         $vis:vis enum $name:ident: $repr:ident {
             $(
-                $(#[$variant_attr:meta])*
+                $(#[doc = $doc:expr])*
+                $(#[cfg($cfg:meta)])?
                 $variant:ident = $value:expr
             ),+
         }
@@ -442,7 +517,8 @@ macro_rules! wire_values {
         #[repr($repr)]
         $vis enum $name {
             $(
-                $(#[$variant_attr])*
+                $(#[doc = $doc])*
+                $(#[cfg($cfg)])?
                 $variant = $value,
             )+
         }
@@ -450,7 +526,16 @@ macro_rules! wire_values {
         impl $crate::wire::HciWireType for $name {
             const WIDTH: usize = ::core::mem::size_of::<$repr>();
             const VALUES: ::core::option::Option<&'static [i64]> =
-                ::core::option::Option::Some(&[$($name::$variant as $repr as i64),+]);
+                ::core::option::Option::Some({
+                    const ALL: &[::core::option::Option<i64>] = &[$(
+                        $crate::wire_values!(
+                            @present [i64] $(#[cfg($cfg)])? $name::$variant as $repr as i64
+                        )
+                    ),+];
+                    const VALUES: [i64; $crate::wire::present_count(ALL)] =
+                        $crate::wire::present(ALL, 0);
+                    &VALUES
+                });
             $($lengths)*
         }
 
@@ -465,6 +550,7 @@ macro_rules! wire_values {
 
             fn try_from(value: $repr) -> ::core::result::Result<Self, Self::Error> {
                 $(
+                    $(#[cfg($cfg)])?
                     if value == $name::$variant as $repr {
                         return ::core::result::Result::Ok($name::$variant);
                     }

@@ -14,11 +14,13 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 use crate::aci::flags::{
     AccessPermissions, CharProperties, GattEventMask, SecurityPermissions, UpdateType,
 };
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GATT events")]
+use crate::aci::values::EattBearerState;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
-use crate::wire::{AttBearer, BoundedBytes, Elements, Uuid};
+use crate::wire::{AttBearer, BoundedBytes, Elements, OrUnknown, Uuid};
 
 vendor_command! {
     /// Initialize the GATT server, adding the GATT service and its service
@@ -612,7 +614,7 @@ vendor_event! {
         #[wire(since = "1.23.0")]
         connection_handle: ConnHandle,
         channel_index: u8,
-        eab_state: u8,
+        eab_state: OrUnknown<EattBearerState>,
         #[wire(before = "1.23.0")]
         status: u8,
         #[wire(since = "1.23.0")]
@@ -842,7 +844,7 @@ mod tests {
         assert_eq!(bearer.connection_handle.raw(), 0x0801);
         assert_eq!(
             (bearer.channel_index, bearer.eab_state, bearer.mtu),
-            (1, 0, 64)
+            (1, OrUnknown::Known(EattBearerState::Created), 64)
         );
     }
 
@@ -852,7 +854,7 @@ mod tests {
         let bearer = GattEattBearerEvent::from_hci_bytes_complete(&[1, 0, 0x12]).unwrap();
         assert_eq!(
             (bearer.channel_index, bearer.eab_state, bearer.status),
-            (1, 0, 0x12)
+            (1, OrUnknown::Known(EattBearerState::Created), 0x12)
         );
     }
 

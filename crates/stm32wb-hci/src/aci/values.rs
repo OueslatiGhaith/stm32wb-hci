@@ -5,8 +5,9 @@
 //! command using one checks at compile time, on every target, that each of
 //! its values is one the catalog documents for that parameter on STM32WB. A
 //! parameter documenting fewer values takes a narrower type, such as
-//! [`ConnectableOwnAddressType`]. A value only some releases or profiles
-//! document is left out, and its type says so. A return or event parameter
+//! [`ConnectableOwnAddressType`]. A value only some releases document may
+//! exist only in them, or, like one only some profiles document, be left
+//! out, as its type says. A return or event parameter
 //! is declared as [`OrUnknown`](crate::wire::OrUnknown), which keeps the
 //! values left out.
 
@@ -108,11 +109,13 @@ wire_values! {
 }
 
 wire_values! {
-    /// The security mode of a connection. Mode 2, which releases before
-    /// 1.17.0 also document, is left out.
+    /// The security mode of a connection.
     pub enum SecurityMode: u8 {
         /// Security mode 1: encryption.
         Mode1 = 0x01,
+        /// Security mode 2: data signing, before 1.17.0.
+        #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0"))]
+        Mode2 = 0x02,
     }
 }
 
@@ -162,6 +165,149 @@ wire_values! {
         PairingFailed = 0x02,
         /// Encrypting the link failed.
         EncryptionFailed = 0x03,
+    }
+}
+
+wire_values! {
+    /// Why pairing failed, as the security manager reports it.
+    pub enum PairingFailureReason: u8 {
+        /// The user cancelled or could not enter the passkey, from 1.17.1.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0"
+        )))]
+        PasskeyEntryFailed = 0x01,
+        /// The out-of-band data is not available.
+        OobNotAvailable = 0x02,
+        /// The devices cannot meet the authentication requirements.
+        AuthenticationRequirements = 0x03,
+        /// The confirm value does not match the one calculated.
+        ConfirmValueFailed = 0x04,
+        /// The device does not support pairing.
+        PairingNotSupported = 0x05,
+        /// The resulting key would be too short.
+        EncryptionKeySize = 0x06,
+        /// The device does not support the SMP command received.
+        CommandNotSupported = 0x07,
+        /// Pairing failed for another reason.
+        UnspecifiedReason = 0x08,
+        /// Pairing was attempted again too soon.
+        RepeatedAttempts = 0x09,
+        /// A command had invalid parameters.
+        InvalidParameters = 0x0A,
+        /// The DHKey check failed.
+        DhKeyCheckFailed = 0x0B,
+        /// The numeric comparison values do not match.
+        NumericComparisonFailed = 0x0C,
+        /// The key was rejected, from 1.17.1.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0"
+        )))]
+        KeyRejected = 0x0F,
+        /// The device is busy with another pairing, from 1.23.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0",
+            feature = "fw_1_22_0",
+            feature = "fw_1_22_1"
+        )))]
+        Busy = 0x10,
+    }
+}
+
+wire_values! {
+    /// A warning from the wireless stack.
+    pub enum WarningType: u8 {
+        /// Recombining an L2CAP packet failed.
+        L2capRecombinationFailure = 0x01,
+        /// A GATT message from the peer was unexpected.
+        GattUnexpectedPeerMessage = 0x02,
+        /// The non-volatile memory is almost full.
+        NvmAlmostFull = 0x03,
+        /// Data received on a connection-oriented channel was too long.
+        CocRxDataLengthTooLarge = 0x04,
+        /// A connection-oriented channel was given a DCID already assigned,
+        /// from 1.18.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3"
+        )))]
+        CocAlreadyAssignedDcid = 0x05,
+        /// The peer requested an LTK unexpectedly, from 1.22.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0"
+        )))]
+        SmpUnexpectedLtkRequest = 0x06,
+        /// No GATT bearer was allocated, from 1.23.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0",
+            feature = "fw_1_22_0",
+            feature = "fw_1_22_1"
+        )))]
+        GattBearerNotAllocated = 0x07,
+    }
+}
+
+wire_values! {
+    /// The state an enhanced ATT bearer changed to.
+    pub enum EattBearerState: u8 {
+        /// The bearer was created.
+        Created = 0x00,
+        /// The bearer was terminated.
+        Terminated = 0x01,
+        /// The bearer was reconfigured, from 1.23.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0",
+            feature = "fw_1_22_0",
+            feature = "fw_1_22_1"
+        )))]
+        Reconfigured = 0x02,
     }
 }
 
@@ -263,10 +409,10 @@ mod tests {
             OrUnknown::<SecurityLevel>::from_hci_bytes_complete(&[0x03]).unwrap(),
             OrUnknown::Known(SecurityLevel::Level3)
         );
-        let mode = OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[0x02]).unwrap();
-        assert_eq!(mode, OrUnknown::Unknown(0x02), "left out");
+        let mode = OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[0x03]).unwrap();
+        assert_eq!(mode, OrUnknown::Unknown(0x03), "undocumented");
         assert_eq!(mode.known(), None);
-        assert_eq!(mode.to_raw(), 0x02);
+        assert_eq!(mode.to_raw(), 0x03);
         assert_eq!(OrUnknown::from(SecurityMode::Mode1).to_raw(), 0x01);
         assert_eq!(
             OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[]),
@@ -302,6 +448,51 @@ mod tests {
             OrUnknown::Unknown(0x02)
         );
         assert!(decodes_any::<OrUnknown<bool>>());
+    }
+
+    #[cfg(feature = "fw_1_24_0")]
+    #[test]
+    fn later_releases_have_the_values_they_add() {
+        assert_eq!(
+            <WarningType as HciWireType>::VALUES,
+            Some(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07][..])
+        );
+        assert_eq!(
+            OrUnknown::<WarningType>::from_hci_bytes_complete(&[0x07]).unwrap(),
+            OrUnknown::Known(WarningType::GattBearerNotAllocated)
+        );
+        assert_eq!(
+            OrUnknown::<PairingFailureReason>::from_hci_bytes_complete(&[0x10]).unwrap(),
+            OrUnknown::Known(PairingFailureReason::Busy)
+        );
+        assert_eq!(
+            OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[0x02]).unwrap(),
+            OrUnknown::Unknown(0x02),
+            "mode 2 is gone"
+        );
+    }
+
+    #[cfg(feature = "fw_1_16_0")]
+    #[test]
+    fn earlier_releases_lack_the_values_added_later() {
+        assert_eq!(
+            <WarningType as HciWireType>::VALUES,
+            Some(&[0x01, 0x02, 0x03, 0x04][..])
+        );
+        assert_eq!(
+            OrUnknown::<WarningType>::from_hci_bytes_complete(&[0x05]).unwrap(),
+            OrUnknown::Unknown(0x05)
+        );
+        assert_eq!(
+            OrUnknown::<PairingFailureReason>::from_hci_bytes_complete(&[0x01]).unwrap(),
+            OrUnknown::Unknown(0x01)
+        );
+        assert_eq!(
+            OrUnknown::<SecurityMode>::from_hci_bytes_complete(&[0x02]).unwrap(),
+            OrUnknown::Known(SecurityMode::Mode2)
+        );
+        assert!(values_documented::<SecurityMode>(&[(1, 2)]));
+        assert!(!values_documented::<SecurityMode>(&[(1, 1)]));
     }
 
     #[test]
