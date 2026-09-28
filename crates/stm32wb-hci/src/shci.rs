@@ -11,8 +11,8 @@
 //! packet, which starts with the sub-event code.
 //!
 //! The catalog rules out the commands and events for Thread, Zigbee,
-//! 802.15.4, and the LLD test binaries, and the firmware upgrade and user key
-//! storage commands whose parameter length depends on their values.
+//! 802.15.4, and the LLD test binaries, and the firmware upgrade command,
+//! which omits its addresses when they are zero.
 
 use stm32wb_hci_macros::{system_command, system_event, system_events};
 
@@ -40,6 +40,71 @@ system_command! {
 system_command! {
     /// Lock the authentication key, which can then no longer be replaced.
     SHCI_C2_FUS_LockAuthKey => FusLockAuthKey {}
+}
+
+system_command! {
+    /// Store a user key of up to 32 bytes, returning the index the service
+    /// allocates to it. The key type, and an encrypted key's IV, follow the
+    /// key.
+    SHCI_C2_FUS_StoreUsrKey => FusStoreUsrKey {
+        key_data: &'a [u8],
+        #[wire(name = "IV")]
+        key_type: UserKeyType,
+    } -> FusUsrKeyIndex {
+        key_index: u8,
+    }
+}
+
+/// The type of a user key [`FusStoreUsrKey`] stores, written as its
+/// `KeyType`, with the IV an encrypted key is sent with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UserKeyType {
+    /// A plain key (`KEYTYPE_SIMPLE`).
+    Simple,
+    /// A master key (`KEYTYPE_MASTER`), which decrypts encrypted keys.
+    Master,
+    /// A key encrypted with the master key (`KEYTYPE_ENCRYPTED`), with its
+    /// 12-byte IV.
+    Encrypted { iv: [u8; 12] },
+}
+
+impl crate::wire::HciWireUnion for UserKeyType {
+    const VARIANTS: &'static [(u64, usize)] = &[(1, 0), (2, 0), (3, 12)];
+
+    fn selector(&self) -> u64 {
+        match self {
+            UserKeyType::Simple => 1,
+            UserKeyType::Master => 2,
+            UserKeyType::Encrypted { .. } => 3,
+        }
+    }
+}
+
+impl bt_hci::WriteHci for UserKeyType {
+    fn size(&self) -> usize {
+        match self {
+            UserKeyType::Simple | UserKeyType::Master => 0,
+            UserKeyType::Encrypted { iv } => iv.len(),
+        }
+    }
+
+    fn write_hci<W: embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+        match self {
+            UserKeyType::Simple | UserKeyType::Master => Ok(()),
+            UserKeyType::Encrypted { iv } => writer.write_all(iv),
+        }
+    }
+
+    async fn write_hci_async<W: embedded_io_async::Write>(
+        &self,
+        mut writer: W,
+    ) -> Result<(), W::Error> {
+        match self {
+            UserKeyType::Simple | UserKeyType::Master => Ok(()),
+            UserKeyType::Encrypted { iv } => writer.write_all(iv).await,
+        }
+    }
 }
 
 system_command! {
@@ -301,6 +366,27 @@ mod tests {
 
         let (bytes, len) = encode(&RadioAllowLowPower::new(1, 0));
         assert_eq!(bytes[..len], [1, 0]);
+    }
+
+    #[test]
+    fn user_keys_carry_their_type_size_and_iv() {
+        assert_eq!(FusStoreUsrKey::OPCODE, 0xFC58);
+        let (bytes, len) = encode(&FusStoreUsrKey::try_new(&[7; 16], UserKeyType::Simple).unwrap());
+        assert_eq!(bytes[..2], [1, 16]);
+        assert_eq!(bytes[2..len], [7; 16]);
+
+        let iv = [9; 12];
+        let command = FusStoreUsrKey::try_new(&[7; 32], UserKeyType::Encrypted { iv }).unwrap();
+        let (bytes, len) = encode(&command);
+        assert_eq!(len, 2 + 32 + 12);
+        assert_eq!(bytes[..2], [3, 32]);
+        assert_eq!(bytes[2..34], [7; 32]);
+        assert_eq!(bytes[34..len], iv);
+
+        assert!(FusStoreUsrKey::try_new(&[7; 33], UserKeyType::Master).is_err());
+        let index =
+            <FusStoreUsrKey as SystemCommand>::Return::from_hci_bytes_complete(&[2]).unwrap();
+        assert_eq!(index.key_index, 2);
     }
 
     #[test]

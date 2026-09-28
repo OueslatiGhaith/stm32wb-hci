@@ -105,8 +105,7 @@ source = "shci.h, SHCI_C2_BLE_LLD_Init: \"Starts the LLD tests BLE\""
 reason = "the LLD test binaries are outside this Bluetooth HCI crate"
 exclude = true
 
-# System commands whose parameter length depends on argument values, which a
-# catalog layout cannot state.
+# System commands whose parameter length depends on argument values.
 
 [[annotations]]
 command = "SHCI_C2_FUS_FwUpgrade"
@@ -116,6 +115,11 @@ exclude = true
 
 [[annotations]]
 command = "SHCI_C2_FUS_StoreUsrKey"
-source = "shci.c, SHCI_C2_FUS_StoreUsrKey: sends KeySize + 2 bytes, or KeySize + 14 when KeyType is KEYTYPE_ENCRYPTED, which appends a 12-byte IV"
-reason = "the key's length depends on its type; declare it once the layout notation can express it"
-exclude = true
+source = "shci.c, SHCI_C2_FUS_StoreUsrKey: sends KeySize + 2 bytes of SHCI_C2_FUS_StoreUsrKey_Cmd_Param_t, or KeySize + 14 when KeyType is KEYTYPE_ENCRYPTED (3), \"the 12 bytes IV Key is included in the payload\"; shci.h declares KeyData[32 + 12], so the IV follows the key and the key holds at most 32 bytes (1.24.0 adds KEYSIZE_64, which the structure cannot hold)"
+reason = "the generated C sends a run-time length; the key is counted by KeySize and the IV's presence is selected by KeyType"
+params = [
+    "KeyType: u8",
+    "KeySize: u8",
+    "KeyData: [u8; KeySize] (capacity 32)",
+    "IV: union(KeyType) { 3 => 12, _ => 0 }",
+]
