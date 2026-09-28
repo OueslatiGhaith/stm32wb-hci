@@ -227,6 +227,7 @@ pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
             quote!(declares_system_event),
             "system_event!",
         ),
+        Channel::Standard => unreachable!("Core events are bt-hci's"),
     };
     let decodes = variants.iter().map(|(variant, _, _, cfg)| {
         let cfg = cfg_attr(cfg);
@@ -311,6 +312,7 @@ pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
                 #decode_params
             }
         },
+        Channel::Standard => unreachable!("Core events are bt-hci's"),
     };
 
     Ok(quote! {

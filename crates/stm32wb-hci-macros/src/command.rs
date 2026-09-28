@@ -164,6 +164,10 @@ pub enum Channel {
     /// The system channel: an SHCI command is a `SystemCommand`, and an SHCI
     /// event a `SystemEvent`.
     System,
+    /// The BLE channel's Bluetooth Core commands bt-hci declares differently
+    /// from the catalog, or lacks: bt-hci commands. Core events are
+    /// bt-hci's own.
+    Standard,
 }
 
 impl Channel {
@@ -171,6 +175,7 @@ impl Channel {
         match self {
             Channel::Vendor => CommandScope::Vendor,
             Channel::System => CommandScope::System,
+            Channel::Standard => CommandScope::Standard,
         }
     }
 
@@ -178,6 +183,7 @@ impl Channel {
         match self {
             Channel::Vendor => "an ST vendor command",
             Channel::System => "an ST system command",
+            Channel::Standard => "a Bluetooth Core command",
         }
     }
 
@@ -185,6 +191,7 @@ impl Channel {
         match self {
             Channel::Vendor => EventScope::Vendor,
             Channel::System => EventScope::System,
+            Channel::Standard => unreachable!("Core events are bt-hci's"),
         }
     }
 
@@ -193,6 +200,7 @@ impl Channel {
         match self {
             Channel::Vendor => "vendor",
             Channel::System => "system",
+            Channel::Standard => unreachable!("Core events are bt-hci's"),
         }
     }
 }
@@ -359,12 +367,13 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
             },
         )?
     } else if input.params.fields.is_empty() {
+        let group = opcode_group(facts.opcode);
         let ocf = facts.opcode & 0x03FF;
         quote! {
             #cfg
             ::bt_hci::cmd::cmd! {
                 #(#attrs)*
-                #name(VENDOR_SPECIFIC, #ocf) {
+                #name(#group, #ocf) {
                     Params = ();
                     #returns_tokens
                 }
@@ -378,7 +387,8 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
             input,
             &params,
             &cfg,
-            Declares::Vendor {
+            Declares::Cmd {
+                group: opcode_group(facts.opcode),
                 ocf: facts.opcode & 0x03FF,
                 returns: &returns_tokens,
             },
@@ -389,6 +399,23 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
         #(#return_struct)*
         #(#widths)*
     })
+}
+
+/// bt-hci's name for the opcode group of `opcode`, which the catalog
+/// validates.
+fn opcode_group(opcode: u16) -> Ident {
+    let group = match opcode >> 10 {
+        0x01 => "LINK_CONTROL",
+        0x02 => "LINK_POLICY",
+        0x03 => "CONTROL_BASEBAND",
+        0x04 => "INFO_PARAMS",
+        0x05 => "STATUS_PARAMS",
+        0x06 => "TESTING",
+        0x08 => "LE",
+        0x3F => "VENDOR_SPECIFIC",
+        ogf => unreachable!("bt-hci names no opcode group 0x{ogf:02X}"),
+    };
+    Ident::new(group, Span::call_site())
 }
 
 /// The return parameters after the status, as a plain struct whose fields
@@ -736,12 +763,16 @@ fn encoded_command(
     let command = match declares {
         // The BASE arm declares the command without the `new(params)`
         // constructor, which the parameters' private fields make unusable.
-        Declares::Vendor { ocf, returns } => quote! {
+        Declares::Cmd {
+            group,
+            ocf,
+            returns,
+        } => quote! {
             #cfg
             ::bt_hci::cmd::cmd! {
                 BASE
                 #(#attrs)*
-                #name(VENDOR_SPECIFIC, #ocf) {
+                #name(#group, #ocf) {
                     Params #generics = #params_name #generics;
                     #returns
                 }
@@ -821,8 +852,13 @@ fn encoded_command(
 
 /// How `encoded_command` declares the command around its parameters.
 enum Declares<'t> {
-    /// A bt-hci vendor command, with its `Return = ...;` for `cmd!`.
-    Vendor { ocf: u16, returns: &'t TokenStream },
+    /// A bt-hci command, with its opcode group and its `Return = ...;` for
+    /// `cmd!`.
+    Cmd {
+        group: Ident,
+        ocf: u16,
+        returns: &'t TokenStream,
+    },
     /// A system command, with its return type.
     System {
         opcode: u16,
@@ -2629,5 +2665,36 @@ mod tests {
             tokens.contains("GattHandleValue.length: the catalog does not document"),
             "{tokens}"
         );
+    }
+
+    #[test]
+    fn standard_commands_use_their_opcode_group() {
+        let expand_standard = |source: &str| {
+            let input = syn::parse_str::<Input>(source).unwrap();
+            expand(input, Channel::Standard)
+                .map(|tokens| tokens.to_string())
+                .map_err(|error| error.to_string())
+        };
+        let tokens = expand_standard(
+            "hci_disconnect => Disconnect { connection_handle: ConnHandle, reason: u8 }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("Disconnect (LINK_CONTROL , 6u16)"),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("Return"), "{tokens}");
+        assert!(
+            tokens.contains("catalog :: Supported for Disconnect"),
+            "{tokens}"
+        );
+
+        let tokens = expand_standard("hci_le_read_local_p256_public_key => Key {}").unwrap();
+        assert!(tokens.contains("Key (LE , 37u16)"), "{tokens}");
+
+        let error = expand_standard("aci_hal_get_anchor_period => Anchor {}").unwrap_err();
+        assert!(error.contains("is not a Bluetooth Core command"), "{error}");
+        let error = expand_str("hci_le_transmitter_test => Test {}").unwrap_err();
+        assert!(error.contains("is not an ST vendor command"), "{error}");
     }
 }

@@ -1,5 +1,6 @@
-//! `catalog_complete!`: every vendor and system command and event the
-//! selected target's wireless binary implements has a declaration.
+//! `catalog_complete!`: every vendor, system, and Bluetooth Core command,
+//! and every vendor and system event, the selected target's wireless binary
+//! implements has a declaration.
 //!
 //! Each catalog entry gets a marker type. A declaration implements `Declared`
 //! for the markers of the entries it covers, on the targets it covers, and
@@ -79,7 +80,12 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
     let commands = catalog
         .commands
         .iter()
-        .filter(|command| matches!(command.scope, CommandScope::Vendor | CommandScope::System))
+        .filter(|command| {
+            matches!(
+                command.scope,
+                CommandScope::Vendor | CommandScope::System | CommandScope::Standard
+            )
+        })
         .map(|command| (Kind::Command, command.name()));
     let events = catalog
         .events
@@ -106,7 +112,10 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
             .map(|predicate| quote!(#[cfg(#predicate)]));
         let doc = match kind {
             Kind::Command => {
-                format!("Requires a `vendor_command!` or `system_command!` declaring `{entry}`.")
+                format!(
+                    "Requires a `vendor_command!`, `system_command!`, `standard_command!`, or \
+                     `standard_commands!` entry declaring `{entry}`."
+                )
             }
             Kind::Event => {
                 format!("Requires a `vendor_event!` or `system_event!` declaring `{entry}`.")
@@ -123,7 +132,7 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
         /// covers, on the targets it covers.
         #[diagnostic::on_unimplemented(
             message = "the catalog lists `{Self}` for the selected target, but nothing declares it",
-            label = "no vendor_command!, system_command!, vendor_event!, or system_event! declares `{Self}` for this target",
+            label = "no vendor_command!, system_command!, standard_command!, standard_commands! entry, vendor_event!, or system_event! declares `{Self}` for this target",
             note = "declare it in the module of its group, or check the since/before bounds of an existing declaration"
         )]
         pub trait Declared {}
@@ -168,6 +177,7 @@ mod tests {
     fn every_vendor_and_system_entry_is_required() {
         let tokens = expand(bundled().unwrap()).unwrap().to_string();
         assert!(tokens.contains("pub struct aci_reset ;"), "{tokens}");
+        assert!(tokens.contains("pub struct hci_reset ;"), "{tokens}");
         assert!(
             tokens.contains("pub struct aci_gatt_eatt_bearer_event ;"),
             "{tokens}"

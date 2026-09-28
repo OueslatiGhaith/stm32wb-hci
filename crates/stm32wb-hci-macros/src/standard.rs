@@ -12,9 +12,9 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{Ident, Lifetime, Token, Type};
 
-use crate::cfg;
 use crate::command::Targets;
 use crate::dispatch::with_static_lifetimes;
+use crate::{cfg, complete};
 
 /// Types are paths in `bt_hci::cmd`:
 ///
@@ -242,6 +242,10 @@ fn expand_entry(
             });
         }
     }
+    tokens.extend(
+        complete::declared(bundled, complete::Kind::Command, &c_name)
+            .map_err(|failure| error(failure.to_string()))?,
+    );
     Ok(tokens)
 }
 

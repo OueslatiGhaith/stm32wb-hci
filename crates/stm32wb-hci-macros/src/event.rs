@@ -315,6 +315,7 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
     let event_trait = match channel {
         Channel::Vendor => quote!(VendorEvent),
         Channel::System => quote!(SystemEvent),
+        Channel::Standard => unreachable!("Core events are bt-hci's"),
     };
     let attrs = &input.attrs;
     Ok(quote! {

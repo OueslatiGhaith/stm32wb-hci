@@ -254,6 +254,31 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Declare a Bluetooth Core command bt-hci declares differently from the
+/// catalog, or lacks, from its generated C name.
+///
+/// The declaration is checked and generated as for [`vendor_command!`], in
+/// the command's own opcode group, and implements `Supported` on the targets
+/// implementing the command. Every other Core command is listed in
+/// [`standard_commands!`] with bt-hci's type.
+///
+/// ```ignore
+/// standard_command! {
+///     /// Terminate a connection, completing with Command Status.
+///     hci_disconnect => Disconnect {
+///         connection_handle: ConnHandle,
+///         reason: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Check bt-hci's types for the Bluetooth Core commands against the catalog,
 /// and mark each `Supported` on the targets whose binary implements it.
 ///
