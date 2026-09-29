@@ -17,7 +17,7 @@ use clang::{Entity, EntityKind, EvaluationResult, Index, TranslationUnit, Type, 
 use stm32wb_catalog::{Bearer, Element, Field, FieldType, Scalar, Structs};
 use tempfile::TempDir;
 
-const SHIM_HEADERS: [(&str, &str); 5] = [
+const SHIM_HEADERS: [(&str, &str); 6] = [
     ("string.h", "/* freestanding shim: no protocol content */\n"),
     ("stdio.h", "/* freestanding shim: no protocol content */\n"),
     ("stdlib.h", "/* freestanding shim: no protocol content */\n"),
@@ -28,6 +28,13 @@ const SHIM_HEADERS: [(&str, &str); 5] = [
          #define PACKED__ __attribute__((packed))\n\
          #define PACKED_STRUCT struct PACKED__\n\
          #define ALIGN(n) __attribute__((aligned(n)))\n",
+    ),
+    (
+        CMSIS_PACKING,
+        "/* shim: the GCC branch of CMSIS's packing macros, which STM32WBA's BLE\n\
+         headers use without including */\n\
+         #define __PACKED_STRUCT struct __attribute__((packed))\n\
+         #define __PACKED_UNION union __attribute__((packed))\n",
     ),
     (
         "stm32wbxx.h",
@@ -42,6 +49,10 @@ const SHIM_HEADERS: [(&str, &str); 5] = [
          #define READ_BIT(REG, BIT) ((REG) & (BIT))\n",
     ),
 ];
+
+/// The shim header defining CMSIS's packing macros, force-included where
+/// headers use them without including CMSIS.
+pub const CMSIS_PACKING: &str = "cmsis_packing.h";
 
 /// Headers standing in for the hosted C library and CMSIS.
 pub struct Shim {
@@ -72,6 +83,17 @@ pub fn parse<'i>(
     shim: &Shim,
     include_dirs: &[PathBuf],
 ) -> Result<TranslationUnit<'i>, String> {
+    parse_with(index, source, shim, include_dirs, &[])
+}
+
+/// [`parse`], force-including the shim headers `prelude` first.
+pub fn parse_with<'i>(
+    index: &'i Index<'_>,
+    source: &Path,
+    shim: &Shim,
+    include_dirs: &[PathBuf],
+    prelude: &[&str],
+) -> Result<TranslationUnit<'i>, String> {
     let mut arguments = vec![
         "--target=thumbv7em-none-eabi".to_owned(),
         "-ffreestanding".to_owned(),
@@ -83,6 +105,10 @@ pub fn parse<'i>(
             .iter()
             .map(|directory| format!("-I{}", directory.display())),
     );
+    for header in prelude {
+        arguments.push("-include".to_owned());
+        arguments.push(shim.path().join(header).display().to_string());
+    }
     let unit = index
         .parser(source)
         .arguments(&arguments)

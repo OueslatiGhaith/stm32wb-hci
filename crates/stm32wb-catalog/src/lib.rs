@@ -53,6 +53,7 @@ pub use view::{ActiveCommand, ActiveEvent, Provenance, ResolvedLayout, Target, T
 #[serde(rename_all = "kebab-case")]
 pub enum Platform {
     Stm32wb,
+    Stm32wba,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -462,7 +463,13 @@ impl Catalog {
         let mut binaries = BTreeSet::new();
         for binary in &self.binaries {
             check_range(binary.releases, &|| format!("binary {}", binary.file))?;
-            if binary.file != binary.family.binary_file_name(binary.profile) {
+            if binary.profile.platform() != self.platform {
+                return Err(Error::invalid(format!(
+                    "binary {} is not a {:?} binary",
+                    binary.file, self.platform
+                )));
+            }
+            if Some(&binary.file) != binary.family.binary_file_name(binary.profile).as_ref() {
                 return Err(Error::invalid(format!(
                     "binary {} does not match its {} {} identity",
                     binary.file, binary.family, binary.profile
@@ -503,6 +510,7 @@ impl Catalog {
                 .map(|definition| definition.releases)
                 .collect::<Vec<_>>();
             validate_history(
+                self.platform,
                 &versions,
                 &definitions,
                 &command.names,
@@ -565,6 +573,7 @@ impl Catalog {
                 .map(|definition| definition.releases)
                 .collect::<Vec<_>>();
             validate_history(
+                self.platform,
                 &versions,
                 &definitions,
                 &event.names,
@@ -659,6 +668,7 @@ impl Catalog {
 /// Definitions, names, and availability must each partition exactly the same
 /// set of releases: an entry is named and documented wherever it is defined.
 fn validate_history(
+    platform: Platform,
     versions: &[Version],
     definitions: &[ReleaseRange],
     names: &[Named],
@@ -708,6 +718,16 @@ fn validate_history(
         return Err(Error::invalid(format!("{} has an empty name", label())));
     }
     for entry in availability {
+        if let Some(profile) = entry
+            .profiles
+            .iter()
+            .find(|profile| profile.platform() != platform)
+        {
+            return Err(Error::invalid(format!(
+                "{}: {profile} is not a {platform:?} profile",
+                label()
+            )));
+        }
         let mut profiles = entry.profiles.clone();
         profiles.sort();
         profiles.dedup();

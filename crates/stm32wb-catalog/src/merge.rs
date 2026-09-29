@@ -142,7 +142,11 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                     .map(move |(releases, ())| Binary {
                         family: binary.family,
                         profile: binary.profile,
-                        file: binary.family.binary_file_name(binary.profile),
+                        // A profile without binaries fails validation.
+                        file: binary
+                            .family
+                            .binary_file_name(binary.profile)
+                            .unwrap_or_default(),
                         releases,
                     })
             })

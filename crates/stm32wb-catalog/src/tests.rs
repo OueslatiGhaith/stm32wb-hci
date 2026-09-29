@@ -227,7 +227,7 @@ fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
             code: 0x9200,
             name: "SHCI_SUB_EVT_CODE_READY".into(),
             // Unsorted and duplicated on purpose: merging normalizes profiles.
-            profiles: [Profile::ALL.as_slice(), &[Profile::Full]].concat(),
+            profiles: [Platform::Stm32wb.profiles(), &[Profile::Full]].concat(),
             payload: Layout::Unresolved("field sysevt_ready_rsp is an enum".into()),
             structs: Structs::new(),
             bearers: Vec::new(),
@@ -469,6 +469,37 @@ fn domains_have_their_own_histories() {
         let error = merge_snapshots(Platform::Stm32wb, vec![snapshot("1.15.0", vec![command])])
             .unwrap_err();
         assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn array_domains_constrain_each_element() {
+    let layout = fields(&[
+        "Num_Subevents: u8",
+        "Subevent: [u8; Num_Subevents] (capacity 10)",
+        "Link_Status: [u8; 22]",
+    ]);
+    let documented = |member: &str, item: &str| {
+        let mut command = set_discoverable(&[Profile::FullExtended], layout.clone());
+        command.domains = vec![(
+            member.into(),
+            false,
+            Domain {
+                kind: DomainKind::Values,
+                items: vec![item.parse().unwrap()],
+                unit_us: None,
+            },
+        )];
+        vec![snapshot("1.15.0", vec![command])]
+    };
+    for member in ["Subevent", "Link_Status"] {
+        merge_snapshots(Platform::Stm32wb, documented(member, "0x00..=0x7F")).unwrap();
+        let error =
+            merge_snapshots(Platform::Stm32wb, documented(member, "0x100: Too wide")).unwrap_err();
+        assert!(
+            error.to_string().contains("which a u8 element cannot hold"),
+            "{error}"
+        );
     }
 }
 
@@ -1066,7 +1097,9 @@ fn distinct_targets_cover_every_interface_once() {
             profile: Profile::FullExtended
         }
     );
-    assert!(targets.len() < bundled.catalog.releases.len() * Profile::ALL.len());
+    assert!(
+        targets.len() < bundled.catalog.releases.len() * bundled.catalog.platform.profiles().len()
+    );
 }
 
 #[test]

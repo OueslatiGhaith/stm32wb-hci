@@ -168,7 +168,8 @@ fn list_kind(content: &str) -> Option<DomainKind> {
 }
 
 /// Add one line inside the list of `name` to its items: an item, a label
-/// continuation, or a blank line.
+/// continuation, or a blank line. A label continues on lines indented by
+/// `continuation_indent` or aligned with the label's first line.
 fn list_line(
     name: &str,
     items: &mut Vec<Item>,
@@ -182,10 +183,21 @@ fn list_line(
         Some(item) if indent == item_indent => {
             items.push(parse_item(item).map_err(|error| format!("{name}: {error}"))?)
         }
-        None if indent == continuation_indent => match items.last_mut() {
-            Some(item) => item.continue_label(content),
-            None => return Err(format!("{name} continues a label before any item")),
-        },
+        None if indent == continuation_indent && items.is_empty() => {
+            return Err(format!("{name} continues a label before any item"));
+        }
+        None if items.last().is_some_and(|item| {
+            indent == continuation_indent
+                || item
+                    .label_column
+                    .is_some_and(|column| indent == item_indent + "- ".len() + column)
+        }) =>
+        {
+            items
+                .last_mut()
+                .into_iter()
+                .for_each(|item| item.continue_label(content))
+        }
         _ => {
             return Err(format!(
                 "{name} has a line inside its list that is not an item: {content:?}"
@@ -207,6 +219,8 @@ struct Item {
     first: Value,
     last: Option<Value>,
     label: String,
+    /// Where the label starts in the item's text, if it has one.
+    label_column: Option<usize>,
 }
 
 /// A value as written, with its parenthesized duration or note.
@@ -240,12 +254,20 @@ fn parse_item(text: &str) -> Result<Item, String> {
         None => (None, rest),
     };
     let rest = rest.trim_start();
-    let label = match rest.strip_prefix(':') {
-        Some(label) => label.trim().to_owned(),
-        None if rest.is_empty() => String::new(),
+    let (label, label_column) = match rest.strip_prefix(':') {
+        Some(label) => {
+            let label = label.trim();
+            (label.to_owned(), Some(text.len() - label.len()))
+        }
+        None if rest.is_empty() => (String::new(), None),
         None => return Err(format!("unexpected {rest:?} in item {text:?}")),
     };
-    Ok(Item { first, last, label })
+    Ok(Item {
+        first,
+        last,
+        label,
+        label_column,
+    })
 }
 
 fn parse_value_and_note(text: &str) -> Result<(Value, &str), String> {

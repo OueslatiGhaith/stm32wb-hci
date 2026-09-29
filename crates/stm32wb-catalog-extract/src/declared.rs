@@ -9,8 +9,8 @@
 //! elements, by the unsigned integer member immediately before it.
 //!
 //! Event payloads rely on this rule on every platform. The STM32WBA sources
-//! ship no command code, so their command layouts will too; `snapshot.rs`
-//! checks the rule against every command layout the STM32WB code proves.
+//! ship no command or event code, so all their layouts do; `snapshot.rs`
+//! checks the rule against every layout the STM32WB code proves.
 //!
 //! A union has no selector without code, so a structure holding one is left
 //! unresolved.
@@ -36,7 +36,42 @@ pub fn command(
             Some(returns(name, records, &mut structs).unwrap_or_else(Layout::Unresolved))
         }
     };
+    let structs = referenced([Some(&params), returns.as_ref()], &structs);
     (params, returns, structs)
+}
+
+/// The payload of an event from its `_rp0` structure, or no parameters where
+/// the generator declares none, with the structures it references.
+pub fn event(name: &str, records: &BTreeMap<String, CRecord>) -> (Layout, Structs) {
+    let record_name = format!("{name}_rp0");
+    let mut structs = Structs::new();
+    let mut fields = Vec::new();
+    let payload = match records.get(&record_name) {
+        None => Layout::Fields(fields),
+        Some(record) => {
+            match record_fields(&record_name, record, records, &mut structs, &mut fields) {
+                Ok(()) => Layout::Fields(fields),
+                Err(reason) => Layout::Unresolved(reason),
+            }
+        }
+    };
+    let structs = referenced([Some(&payload)], &structs);
+    (payload, structs)
+}
+
+/// The structures resolved layouts reference, without those a layout left
+/// unresolved defined before failing.
+fn referenced<'a>(
+    layouts: impl IntoIterator<Item = Option<&'a Layout>>,
+    structs: &Structs,
+) -> Structs {
+    let mut referenced = Structs::new();
+    for layout in layouts.into_iter().flatten() {
+        if let Layout::Fields(fields) = layout {
+            crate::commands::collect_structs(fields, structs, &mut referenced);
+        }
+    }
+    referenced
 }
 
 fn params(

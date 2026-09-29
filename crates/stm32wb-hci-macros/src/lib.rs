@@ -15,7 +15,7 @@ mod structs;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use stm32wb_catalog::{Profile, bundled};
+use stm32wb_catalog::bundled;
 
 /// Require exactly one `fw_*` feature (a catalog release) and exactly one
 /// `stack-*` feature (a BLE stack profile).
@@ -33,7 +33,11 @@ pub fn check_target(input: TokenStream) -> TokenStream {
         Err(error) => return self::error(&format!("the bundled catalog is invalid: {error}")),
     };
     let releases = catalog.versions().map(|release| release.feature_name());
-    let profiles = Profile::ALL.map(Profile::feature_name);
+    let profiles = catalog
+        .platform
+        .profiles()
+        .iter()
+        .map(|profile| profile.feature_name());
     let release_message = format!(
         "enable exactly one fw_* feature, naming the STM32CubeWB release of the CPU2 wireless binary ({})",
         catalog
@@ -44,7 +48,13 @@ pub fn check_target(input: TokenStream) -> TokenStream {
     );
     let profile_message = format!(
         "enable exactly one stack-* feature, naming the BLE stack profile of the CPU2 wireless binary ({})",
-        Profile::ALL.map(Profile::name).join(", ")
+        catalog
+            .platform
+            .profiles()
+            .iter()
+            .map(|profile| profile.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     quote! {
         const _: () = {

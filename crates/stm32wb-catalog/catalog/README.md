@@ -1,9 +1,14 @@
-# STM32WB wireless-interface catalog
+# STM32WB and STM32WBA wireless-interface catalogs
 
 `stm32wb.toml` describes, for every supported STM32CubeWB release, what the
 CPU2 wireless binaries accept and emit. It is the single source of protocol
-facts for this repository. Both files are embedded in the `stm32wb-catalog`
-crate, so its dependents are rebuilt whenever the extractor rewrites them.
+facts for this repository. It and `annotations.toml` are embedded in the
+`stm32wb-catalog` crate, so its dependents are rebuilt whenever the extractor
+rewrites them.
+
+`stm32wba.toml` describes, in the same format, the commands and events of the
+BLE stack library of each supported STM32CubeWBA release; see
+[STM32WBA](#stm32wba).
 
 ## Layers
 
@@ -65,7 +70,9 @@ named zero. `unit_us` is the duration of one unit, derived from the
 durations the list writes next to its values and checked against every one
 of them. `returned = true` marks a return parameter. Items may overlap, since
 some lists depend on the stack profile or the MCU (`for BO variant`,
-`not supported on STM32WB`); their labels say so.
+`not supported on STM32WB`); their labels say so. A byte array of up to 8
+bytes, such as an event mask, takes the values of the little-endian integer
+it holds; any other array of integers takes those of each element.
 
 The fields of the structures commands and events carry list their values in
 `ble_types.h`, in the same notation. `struct_domains` records them by
@@ -106,6 +113,31 @@ name = "BLE_STATUS_FAILED"
 value = "0x91"
 ```
 
+## STM32WBA
+
+STM32CubeWBA ships its BLE stack as a prebuilt library: the generated headers
+declare the command functions, the event callbacks, and the packed structures,
+but no C fills or reads them. So its catalog takes:
+
+- commands, events, opcodes, codes, and profile availability (columns BP, BF,
+  PO, and LO; the full stack supports everything) from
+  `STM32WBA_BLE_Wireless_Interface.html`;
+- each command's completion from the "Events generated" list of its section,
+  a rule checked against the code of every STM32WB release; a command whose
+  section states none is left out and reported;
+- layouts from the `_cpN` and `_rp0` structures of `ble_types.h` alone, by
+  the rule every STM32WB layout the code proves is checked against. A union
+  has no selector without code, so a layout holding one is unresolved. An
+  event payload must be the members its `ble_events.h` callback receives, in
+  order;
+- values, bearers, and statuses as on STM32WB.
+
+A `Flags:` list whose items are not single bits (some CS events pack two
+4-bit fields under one) is dropped and reported, as are the bearers of an
+unresolved layout. The releases from v1.9.0 on pin
+`Middlewares/ST/STM32_WPAN` as a submodule, read at its pinned commit, so the
+clone needs `git submodule update --init Middlewares/ST/STM32_WPAN`.
+
 ## Workflow
 
 ```sh
@@ -121,8 +153,11 @@ cargo run -p stm32wb-catalog-extract -- check
 
 # List one feature set per distinct interface; CI tests stm32wb-hci with each.
 cargo run -p stm32wb-catalog-extract -- targets
+
+# The same commands maintain stm32wba.toml from ./STM32CubeWBA.
+cargo run -p stm32wb-catalog-extract -- check --platform stm32wba
 ```
 
-The extractor reads a local STM32CubeWB clone (default `./STM32CubeWB`) from
-Git objects only, so the clone's worktree is never touched. It needs a
-loadable libclang (for example `libclang-dev` on Debian or Ubuntu).
+The extractor reads a local STM32CubeWB or STM32CubeWBA clone (default
+`./STM32CubeWB` or `./STM32CubeWBA`) from Git objects only, so the clone's
+worktree is never touched. It needs a loadable libclang (for example `libclang-dev` on Debian or Ubuntu).

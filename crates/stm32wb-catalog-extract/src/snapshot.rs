@@ -5,19 +5,19 @@ use std::path::Path;
 
 use clang::Index;
 use stm32wb_catalog::{
-    CommandScope, Domain, EventScope, Layout, Profile, ReleaseSource, Snapshot, SnapshotCommand,
-    SnapshotEvent, Structs, Version,
+    CommandScope, Domain, DomainKind, EventScope, Layout, Platform, Profile, ReleaseSource,
+    Snapshot, SnapshotCommand, SnapshotEvent, Structs, Version,
 };
 
 use crate::c::{self, Shim};
 use crate::commands::{self, ExtractedCommand};
-use crate::cube::{BLE_CORE_DIR, CubeTag, SHCI_DIR};
+use crate::cube::{BLE_CORE_DIR, CubeTag, INTERFACE_DOCUMENT, SHCI_DIR};
 use crate::docs::{self, Key};
 use crate::events::{self, ExtractedEvent};
 use crate::{shci, statuses};
 
 /// HCI Command Complete and Command Status.
-const TRANSPORT_EVENTS: [(EventScope, u16); 2] =
+pub const TRANSPORT_EVENTS: [(EventScope, u16); 2] =
     [(EventScope::Standard, 0x0E), (EventScope::Standard, 0x0F)];
 
 /// Summary of one release's extraction.
@@ -26,8 +26,8 @@ pub struct Report {
     pub commands: usize,
     pub events: usize,
     pub proven_counts: usize,
-    /// Command layouts the code proves that the structures alone reproduce,
-    /// and `(command, reason)` for the commands they do not.
+    /// Layouts the code proves that the structures alone reproduce, and
+    /// `(entry, reason)` for the commands and events they do not.
     pub declared_agreements: usize,
     pub declared_differences: Vec<(String, String)>,
     /// Command completions the interface document states, all matching the
@@ -40,9 +40,111 @@ pub struct Report {
     /// dropped because its layout is unresolved.
     pub domains: usize,
     pub dropped_domains: Vec<(String, String)>,
+    /// `(entry, member)` for every `Flags:` list dropped because an item is
+    /// not a single bit, such as one listing packed subfields.
+    pub dropped_flags: Vec<(String, String)>,
     /// `(structure, field)` for every structure field list dropped because
     /// no resolved layout carries the structure.
     pub dropped_field_domains: Vec<(String, String)>,
+    /// `(entry, member)` for every bearer dropped because its layout is
+    /// unresolved.
+    pub dropped_bearers: Vec<(String, String)>,
+}
+
+impl Report {
+    pub fn new(version: Version) -> Self {
+        Self {
+            version,
+            commands: 0,
+            events: 0,
+            proven_counts: 0,
+            declared_agreements: 0,
+            declared_differences: Vec::new(),
+            documented_completions: 0,
+            unstated_completions: Vec::new(),
+            unresolved: Vec::new(),
+            domains: 0,
+            dropped_domains: Vec::new(),
+            dropped_flags: Vec::new(),
+            dropped_field_domains: Vec::new(),
+            dropped_bearers: Vec::new(),
+        }
+    }
+}
+
+/// The documented values of structure fields, gathered from every file
+/// parsed, which must agree.
+#[derive(Default)]
+pub struct FieldDomains(BTreeMap<(String, String), Domain>);
+
+impl FieldDomains {
+    pub fn add(
+        &mut self,
+        records: &BTreeMap<String, c::CRecord>,
+        context: &str,
+    ) -> Result<(), String> {
+        let documented = crate::domains::field_domains(records)
+            .map_err(|error| format!("{context}: {error}"))?;
+        for (structure, member, domain) in documented {
+            let key = (structure, member);
+            match self.0.get(&key) {
+                Some(other) if *other != domain => {
+                    return Err(format!(
+                        "{context}: {}.{} is documented differently elsewhere",
+                        key.0, key.1
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    self.0.insert(key, domain);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The lists of the structures a resolved layout carries, which belong
+    /// to the catalog; the others are reported.
+    pub fn carried(
+        self,
+        report: &mut Report,
+        commands: &[SnapshotCommand],
+        events: &[SnapshotEvent],
+    ) -> Vec<(String, String, Domain)> {
+        let carried = commands
+            .iter()
+            .map(|command| &command.structs)
+            .chain(events.iter().map(|event| &event.structs))
+            .flat_map(|structs| structs.keys())
+            .collect::<BTreeSet<_>>();
+        let mut struct_domains = Vec::new();
+        for ((structure, member), domain) in self.0 {
+            if carried.contains(&structure) {
+                report.domains += 1;
+                struct_domains.push((structure, member, domain));
+            } else {
+                report.dropped_field_domains.push((structure, member));
+            }
+        }
+        struct_domains
+    }
+}
+
+/// Command Complete or Command Status, which the HCI transport consumes
+/// rather than a generated process function.
+pub fn transport_event(scope: EventScope, code: u16, entry: &docs::Documented) -> SnapshotEvent {
+    SnapshotEvent {
+        scope,
+        code,
+        name: entry.name.to_ascii_lowercase(),
+        profiles: entry.profiles.clone(),
+        payload: Layout::Unresolved(
+            "consumed by the HCI transport layer, which declares no payload structure".to_owned(),
+        ),
+        structs: Default::default(),
+        bearers: Vec::new(),
+        domains: Vec::new(),
+    }
 }
 
 pub fn extract(
@@ -68,28 +170,10 @@ pub fn extract(
     }
 
     // Structure fields documented in every file parsed, which must agree.
-    let mut field_domains: BTreeMap<(String, String), Domain> = BTreeMap::new();
-    let mut document_fields =
-        |records: &BTreeMap<String, c::CRecord>, file: &str| -> Result<(), String> {
-            let documented = crate::domains::field_domains(records)
-                .map_err(|error| format!("{} {file}: {error}", tag.tag))?;
-            for (structure, member, domain) in documented {
-                let key = (structure, member);
-                match field_domains.get(&key) {
-                    Some(other) if *other != domain => {
-                        return Err(format!(
-                            "{} {file}: {}.{} is documented differently elsewhere",
-                            tag.tag, key.0, key.1
-                        ));
-                    }
-                    Some(_) => {}
-                    None => {
-                        field_domains.insert(key, domain);
-                    }
-                }
-            }
-            Ok(())
-        };
+    let mut field_domains = FieldDomains::default();
+    let mut document_fields = |records: &BTreeMap<String, c::CRecord>, file: &str| {
+        field_domains.add(records, &format!("{} {file}", tag.tag))
+    };
 
     let mut extracted_commands: Vec<ExtractedCommand> = Vec::new();
     let (mut declared_agreements, mut declared_differences) = (0, Vec::new());
@@ -120,6 +204,14 @@ pub fn extract(
     document_fields(&records, "ble_events.c")?;
     let mut extracted_events: Vec<ExtractedEvent> = events::extract(&unit, &records)
         .map_err(|error| format!("{} ble_events.c: {error}", tag.tag))?;
+    for event in &extracted_events {
+        match compare_declared_event(event, &records)
+            .map_err(|error| format!("{} ble_events.c: {error}", tag.tag))?
+        {
+            Ok(sides) => declared_agreements += sides,
+            Err(difference) => declared_differences.push((event.name.clone(), difference)),
+        }
+    }
 
     let shci_dir = tree.path().join(SHCI_DIR);
     let unit = c::parse(
@@ -163,8 +255,8 @@ pub fn extract(
         }
     }
 
-    let documented = docs::interface_availability(&tag)?;
-    let completions = docs::command_completions(&tag)?;
+    let documented = docs::interface_availability(&tag, INTERFACE_DOCUMENT, Platform::Stm32wb)?;
+    let completions = docs::command_completions(&tag, INTERFACE_DOCUMENT)?;
     let mut matched = BTreeSet::new();
     let mut availability = |key: Key, name: &str| -> Result<Vec<Profile>, String> {
         let entry = documented
@@ -181,25 +273,19 @@ pub fn extract(
     };
 
     let mut report = Report {
-        version,
         commands: extracted_commands.len(),
         events: extracted_events.len(),
         proven_counts,
         declared_agreements,
         declared_differences,
-        documented_completions: 0,
-        unstated_completions: Vec::new(),
-        unresolved: Vec::new(),
-        domains: 0,
-        dropped_domains: Vec::new(),
-        dropped_field_domains: Vec::new(),
+        ..Report::new(version)
     };
     let mut commands = Vec::new();
     for command in extracted_commands {
         let profiles = if command.scope == CommandScope::System {
             // Like the system events, the BLE interface document does not
             // list the system channel's commands.
-            Profile::ALL.to_vec()
+            Platform::Stm32wb.profiles().to_vec()
         } else {
             let key = Key::Command(command.scope, command.opcode);
             let profiles = availability(key.clone(), &command.name)?;
@@ -248,7 +334,7 @@ pub fn extract(
         let profiles = if event.scope == EventScope::System {
             // SHCI is the CPU2 system channel of every wireless binary; the
             // BLE interface document does not list it.
-            Profile::ALL.to_vec()
+            Platform::Stm32wb.profiles().to_vec()
         } else {
             availability(Key::Event(event.scope, event.code), &event.name)?
         };
@@ -278,19 +364,7 @@ pub fn extract(
             && TRANSPORT_EVENTS.contains(&(scope, code))
         {
             matched.insert(key.clone());
-            events.push(SnapshotEvent {
-                scope,
-                code,
-                name: entry.name.to_ascii_lowercase(),
-                profiles: entry.profiles.clone(),
-                payload: Layout::Unresolved(
-                    "consumed by the HCI transport layer, which declares no payload structure"
-                        .to_owned(),
-                ),
-                structs: Default::default(),
-                bearers: Vec::new(),
-                domains: Vec::new(),
-            });
+            events.push(transport_event(scope, code, entry));
         }
     }
     let undocumented = documented
@@ -306,23 +380,7 @@ pub fn extract(
         ));
     }
 
-    // A structure's field lists belong to the catalog where a resolved
-    // layout carries the structure; the others are reported.
-    let carried = commands
-        .iter()
-        .map(|command| &command.structs)
-        .chain(events.iter().map(|event| &event.structs))
-        .flat_map(|structs| structs.keys())
-        .collect::<BTreeSet<_>>();
-    let mut struct_domains = Vec::new();
-    for ((structure, member), domain) in field_domains {
-        if carried.contains(&structure) {
-            report.domains += 1;
-            struct_domains.push((structure, member, domain));
-        } else {
-            report.dropped_field_domains.push((structure, member));
-        }
-    }
+    let struct_domains = field_domains.carried(&mut report, &commands, &events);
 
     let snapshot = Snapshot {
         source: ReleaseSource {
@@ -333,7 +391,7 @@ pub fn extract(
         binaries: docs::binaries(&tag)?,
         commands,
         events,
-        statuses: statuses::extract(&tag)?,
+        statuses: statuses::extract(&tag, &format!("{BLE_CORE_DIR}/ble_defs.h"))?,
         struct_domains,
     };
     if snapshot.binaries.is_empty() {
@@ -345,7 +403,7 @@ pub fn extract(
 /// The documented lists whose side has a resolved layout; the others have no
 /// member to belong to and are reported. A list for a side the entry does not
 /// have is an error.
-fn resolved_domains<'a>(
+pub fn resolved_domains<'a>(
     report: &mut Report,
     name: &str,
     domains: Vec<crate::domains::Documented>,
@@ -353,7 +411,11 @@ fn resolved_domains<'a>(
 ) -> Vec<crate::domains::Documented> {
     domains
         .into_iter()
-        .filter(|(member, returned, _)| match layout(*returned) {
+        .filter(|(member, returned, domain)| match layout(*returned) {
+            Some(Layout::Fields(_)) if !single_bits(domain) => {
+                report.dropped_flags.push((name.to_owned(), member.clone()));
+                false
+            }
             Some(Layout::Fields(_)) => {
                 report.domains += 1;
                 true
@@ -366,6 +428,16 @@ fn resolved_domains<'a>(
             }
         })
         .collect()
+}
+
+/// Whether a `Flags:` list lists only single bits or a named zero, as values
+/// lists always do.
+fn single_bits(domain: &Domain) -> bool {
+    domain.kind != DomainKind::Flags
+        || domain
+            .items
+            .iter()
+            .all(|item| item.first == item.last && item.first & (item.first - 1) == 0)
 }
 
 /// Compare the layouts the code of a command proves with those its
@@ -428,7 +500,34 @@ pub fn compare_declared(
     Ok(Ok(sides))
 }
 
-fn note_unresolved(report: &mut Report, name: &str, what: &'static str, layout: &Layout) {
+/// Compare the payload the code of an event proves with the one its
+/// structure alone gives: 1 if they agree, 0 if neither resolves it. The rule
+/// resolving a payload the code decodes procedurally is an error, as it would
+/// misread that event where no code exists.
+pub fn compare_declared_event(
+    event: &ExtractedEvent,
+    records: &BTreeMap<String, c::CRecord>,
+) -> Result<Result<usize, String>, String> {
+    let (payload, structs) = crate::declared::event(&event.name, records);
+    match (&event.payload, &payload) {
+        (Layout::Fields(code), Layout::Fields(declared))
+            if code == declared && event.structs == structs =>
+        {
+            Ok(Ok(1))
+        }
+        (Layout::Unresolved(_), Layout::Unresolved(_)) => Ok(Ok(0)),
+        (Layout::Fields(_), Layout::Unresolved(reason)) => Ok(Err(format!(
+            "its structure leaves its payload unresolved: {reason}"
+        ))),
+        (code, declared) => Err(format!(
+            "{}: its payload contradicts the rule of ST's structures: code {code:?} with \
+             {:?}, structures {declared:?} with {structs:?}",
+            event.name, event.structs
+        )),
+    }
+}
+
+pub fn note_unresolved(report: &mut Report, name: &str, what: &'static str, layout: &Layout) {
     if let Layout::Unresolved(reason) = layout {
         report
             .unresolved

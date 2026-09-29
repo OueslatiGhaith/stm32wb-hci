@@ -155,7 +155,7 @@ impl Bundled {
         let mut seen = std::collections::BTreeSet::new();
         let mut representatives = Vec::new();
         for release in self.catalog.versions() {
-            for profile in Profile::ALL {
+            for &profile in self.catalog.platform.profiles() {
                 let target = Target { release, profile };
                 let view = self.view(target).expect("release comes from the catalog");
                 let annotation = |provenance: Provenance<'_>| match provenance {

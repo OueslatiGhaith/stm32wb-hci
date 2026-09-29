@@ -1,8 +1,10 @@
 //! Layer 2: facts from ST's tagged HTML documents.
 //!
-//! - `STM32WB_BLE_Wireless_Interface.html` lists every command and event with
-//!   one availability column per reduced stack profile (BF, PO, LO, LB, BO).
-//!   The full-extended profile supports the complete interface.
+//! - `STM32WB_BLE_Wireless_Interface.html` and
+//!   `STM32WBA_BLE_Wireless_Interface.html` list every command and event with
+//!   one availability column per reduced stack profile (BF, PO, LO, LB, BO on
+//!   STM32WB; BP, BF, PO, LO on STM32WBA). The platform's complete profile
+//!   supports the whole interface.
 //!   Each entry's section lists the events it generates, which name the
 //!   completion event of a command.
 //! - Each family's `Release_Notes.html` maps binary files to stack profiles.
@@ -11,9 +13,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use stm32wb_catalog::{CommandScope, Completion, EventScope, Family, Profile, SnapshotBinary};
+use stm32wb_catalog::{
+    CommandScope, Completion, EventScope, Family, Platform, Profile, SnapshotBinary,
+};
 
-use crate::cube::{BINARIES_DIR, CubeTag, INTERFACE_DOCUMENT};
+use crate::cube::{BINARIES_DIR, CubeTag};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Key {
@@ -35,12 +39,21 @@ enum TableKind {
     VendorEvents,
 }
 
-pub fn interface_availability(tag: &CubeTag<'_>) -> Result<BTreeMap<Key, Documented>, String> {
-    let source = tag.read_text(INTERFACE_DOCUMENT)?;
-    parse_interface_availability(&source).map_err(|error| format!("{INTERFACE_DOCUMENT}: {error}"))
+/// The entries the interface document at `path` lists, with the profiles of
+/// `platform` supporting each.
+pub fn interface_availability(
+    tag: &CubeTag,
+    path: &str,
+    platform: Platform,
+) -> Result<BTreeMap<Key, Documented>, String> {
+    let source = tag.read_text(path)?;
+    parse_interface_availability(&source, platform).map_err(|error| format!("{path}: {error}"))
 }
 
-fn parse_interface_availability(source: &str) -> Result<BTreeMap<Key, Documented>, String> {
+fn parse_interface_availability(
+    source: &str,
+    platform: Platform,
+) -> Result<BTreeMap<Key, Documented>, String> {
     let mut availability = BTreeMap::new();
     let mut recognized = 0usize;
     for table in parse_html_tables(source)? {
@@ -53,7 +66,8 @@ fn parse_interface_availability(source: &str) -> Result<BTreeMap<Key, Documented
         recognized += 1;
         let mut columns = Vec::new();
         for (index, heading) in header.iter().enumerate().skip(2) {
-            let profile = Profile::from_documentation_column(heading)
+            let profile = platform
+                .profile_for_column(heading)
                 .ok_or_else(|| format!("unknown availability column {heading:?}"))?;
             columns.push((index, profile));
         }
@@ -87,7 +101,7 @@ fn parse_interface_availability(source: &str) -> Result<BTreeMap<Key, Documented
                 TableKind::LeMetaEvents => Key::Event(EventScope::LeMeta, code),
                 TableKind::VendorEvents => Key::Event(EventScope::Vendor, code),
             };
-            let mut profiles = BTreeSet::from([Profile::FullExtended]);
+            let mut profiles = BTreeSet::from([platform.complete_profile()]);
             for (index, profile) in &columns {
                 match row[*index].as_str() {
                     "Y" => {
@@ -118,10 +132,11 @@ fn parse_interface_availability(source: &str) -> Result<BTreeMap<Key, Documented
 /// names, keyed by its documented name, or `None` where the list names
 /// neither.
 pub fn command_completions(
-    tag: &CubeTag<'_>,
+    tag: &CubeTag,
+    path: &str,
 ) -> Result<BTreeMap<String, Option<Completion>>, String> {
-    let source = tag.read_text(INTERFACE_DOCUMENT)?;
-    parse_command_completions(&source).map_err(|error| format!("{INTERFACE_DOCUMENT}: {error}"))
+    let source = tag.read_text(path)?;
+    parse_command_completions(&source).map_err(|error| format!("{path}: {error}"))
 }
 
 fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Completion>>, String> {
@@ -262,7 +277,7 @@ pub fn same_name(generated: &str, documented: &str) -> bool {
 
 /// Binaries each family's release notes map to a BLE stack profile, each
 /// verified to exist at the tag.
-pub fn binaries(tag: &CubeTag<'_>) -> Result<Vec<SnapshotBinary>, String> {
+pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>, String> {
     let mut binaries = Vec::new();
     for family in Family::ALL {
         let directory = format!("{BINARIES_DIR}/{}", family.directory());
@@ -274,8 +289,10 @@ pub fn binaries(tag: &CubeTag<'_>) -> Result<Vec<SnapshotBinary>, String> {
         let notes = tag.read_text(&notes_path)?;
         let mapping =
             parse_release_notes(&notes).map_err(|error| format!("{notes_path}: {error}"))?;
-        for profile in Profile::ALL {
-            let file = family.binary_file_name(profile);
+        for &profile in Platform::Stm32wb.profiles() {
+            let Some(file) = family.binary_file_name(profile) else {
+                continue;
+            };
             let Some(documented) = mapping.get(&file) else {
                 continue;
             };
@@ -322,7 +339,7 @@ fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>, String
                 row[1]
                     .split_whitespace()
                     .next()
-                    .and_then(Profile::from_documentation_column)
+                    .and_then(|column| Platform::Stm32wb.profile_for_column(column))
                     .ok_or_else(|| {
                         format!("{} has an unknown stack profile {:?}", row[0], row[1])
                     })?
@@ -427,7 +444,7 @@ mod tests {
             <tr><th>Event name</th><th>LE subevent code</th><th>BF</th></tr>
             <tr><td>ACI_WARNING_EVENT</td><td>0x0006</td><td>Y</td></tr>
         </table>"#;
-        let availability = parse_interface_availability(html).unwrap();
+        let availability = parse_interface_availability(html, Platform::Stm32wb).unwrap();
         let discoverable = &availability[&Key::Command(CommandScope::Vendor, 0xFC83)];
         assert_eq!(
             discoverable.profiles,
@@ -441,7 +458,20 @@ mod tests {
         assert!(availability.contains_key(&Key::Event(EventScope::Vendor, 0x0006)));
 
         let unknown = html.replace("<td>Y</td><td></td>", "<td>?</td><td></td>");
-        assert!(parse_interface_availability(&unknown).is_err());
+        assert!(parse_interface_availability(&unknown, Platform::Stm32wb).is_err());
+
+        // Columns name the profiles of the document's platform.
+        let wba = html.replace("<th>PO</th>", "<th>BP</th>");
+        assert!(parse_interface_availability(&wba, Platform::Stm32wb).is_err());
+        let availability = parse_interface_availability(&wba, Platform::Stm32wba).unwrap();
+        assert_eq!(
+            availability[&Key::Command(CommandScope::Standard, 0x0C03)].profiles,
+            [
+                Profile::WbaFull,
+                Profile::WbaBasicPlus,
+                Profile::WbaBasicFeatures
+            ]
+        );
     }
 
     #[test]

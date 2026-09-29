@@ -3,7 +3,7 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use stm32wb_catalog::{Profile, ReleaseRange, Version, bundled};
+use stm32wb_catalog::{ReleaseRange, Version, bundled};
 use syn::spanned::Spanned;
 
 use crate::cfg;
@@ -51,7 +51,7 @@ pub fn expand(ty: syn::Type) -> syn::Result<TokenStream> {
             catalog,
             releases
                 .iter()
-                .map(|release| (ReleaseRange::single(*release), Profile::ALL.as_slice())),
+                .map(|release| (ReleaseRange::single(*release), catalog.platform.profiles())),
         )
         .map(|predicate| quote!(#[cfg(#predicate)]));
         let values = values.iter().map(|value| i64::from(*value));

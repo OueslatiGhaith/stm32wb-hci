@@ -20,7 +20,7 @@ pub fn targets<'a>(
                 .flat_map(move |release| profiles.iter().map(move |profile| (release, *profile)))
         })
         .collect::<BTreeSet<_>>();
-    if covered.len() == catalog.releases.len() * Profile::ALL.len() {
+    if covered.len() == catalog.releases.len() * catalog.platform.profiles().len() {
         return None;
     }
     let alternatives = segments.iter().map(|(releases, profiles)| {

@@ -1,11 +1,11 @@
 //! The status codes the BLE stack returns besides the Bluetooth Core's,
 //! read from the `BLE_STATUS_*` definitions of `ble_defs.h`.
 
-use crate::cube::{BLE_CORE_DIR, CubeTag};
+use crate::cube::CubeTag;
 
-pub fn extract(tag: &CubeTag<'_>) -> Result<Vec<(String, u8)>, String> {
-    let path = format!("{BLE_CORE_DIR}/ble_defs.h");
-    parse(&tag.read_text(&path)?).map_err(|error| format!("{} {path}: {error}", tag.tag))
+/// The statuses the `ble_defs.h` at `path` defines.
+pub fn extract(tag: &CubeTag, path: &str) -> Result<Vec<(String, u8)>, String> {
+    parse(&tag.read_text(path)?).map_err(|error| format!("{} {path}: {error}", tag.tag))
 }
 
 /// Each `#define BLE_STATUS_<NAME> 0x<NN>U` of `header`, in order. Any other

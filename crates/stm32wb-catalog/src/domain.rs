@@ -317,7 +317,8 @@ fn scalar_range(scalar: Scalar) -> (i64, i64) {
     }
 }
 
-/// A domain belongs to an integer member of the layout, lists distinct items
+/// A domain belongs to an integer member of the layout, or to an array of
+/// integers whose every element it constrains, lists distinct items
 /// in ascending order, holds only values the member can encode, and, for
 /// flags, lists single bits or a named zero.
 pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<(), Error> {
@@ -353,6 +354,22 @@ pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<
             });
             let max = if *len == 3 { (1 << 24) - 1 } else { max };
             (min, max, format!("[u8; {len}]"))
+        }
+        // The values of any other array of integers are those of each element.
+        Some(Field {
+            ty:
+                FieldType::Array {
+                    element: Element::Scalar(scalar),
+                    ..
+                }
+                | FieldType::Counted {
+                    element: Element::Scalar(scalar),
+                    ..
+                },
+            ..
+        }) => {
+            let (min, max) = scalar_range(*scalar);
+            (min, max, format!("{} element", scalar.name()))
         }
         Some(_) => {
             return Err(Error::invalid(format!(

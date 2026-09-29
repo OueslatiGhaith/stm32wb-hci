@@ -5,9 +5,11 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Error;
+use crate::{Error, Platform};
 
-/// A BLE stack profile, i.e. which variant of the CPU2 wireless binary runs.
+/// A BLE stack profile, i.e. which variant of the BLE stack runs: on
+/// STM32WB, the CPU2 wireless binary; on STM32WBA, the configuration of the
+/// stack library linked into the application.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Profile {
@@ -23,16 +25,31 @@ pub enum Profile {
     HciLayer,
     /// Beacon Only (`BLE_HCI_AdvScan`), column BO.
     HciAdvScan,
+    /// STM32WBA's Full configuration: the complete interface.
+    WbaFull,
+    /// STM32WBA's Basic Plus configuration, column BP.
+    WbaBasicPlus,
+    /// STM32WBA's Basic Features configuration, column BF.
+    WbaBasicFeatures,
+    /// STM32WBA's Peripheral Only configuration, column PO.
+    WbaPeripheralOnly,
+    /// STM32WBA's Link Layer Only configuration, column LO.
+    WbaLinkLayerOnly,
 }
 
 impl Profile {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 11] = [
         Self::FullExtended,
         Self::Full,
         Self::Light,
         Self::HciLayerExtended,
         Self::HciLayer,
         Self::HciAdvScan,
+        Self::WbaFull,
+        Self::WbaBasicPlus,
+        Self::WbaBasicFeatures,
+        Self::WbaPeripheralOnly,
+        Self::WbaLinkLayerOnly,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -43,6 +60,27 @@ impl Profile {
             Self::HciLayerExtended => "hci-layer-extended",
             Self::HciLayer => "hci-layer",
             Self::HciAdvScan => "hci-adv-scan",
+            Self::WbaFull => "wba-full",
+            Self::WbaBasicPlus => "wba-basic-plus",
+            Self::WbaBasicFeatures => "wba-basic-features",
+            Self::WbaPeripheralOnly => "wba-peripheral-only",
+            Self::WbaLinkLayerOnly => "wba-link-layer-only",
+        }
+    }
+
+    pub const fn platform(self) -> Platform {
+        match self {
+            Self::FullExtended
+            | Self::Full
+            | Self::Light
+            | Self::HciLayerExtended
+            | Self::HciLayer
+            | Self::HciAdvScan => Platform::Stm32wb,
+            Self::WbaFull
+            | Self::WbaBasicPlus
+            | Self::WbaBasicFeatures
+            | Self::WbaPeripheralOnly
+            | Self::WbaLinkLayerOnly => Platform::Stm32wba,
         }
     }
 
@@ -55,36 +93,58 @@ impl Profile {
         feature.strip_prefix("stack-")?.parse().ok()
     }
 
-    /// The availability column heading used by
-    /// `STM32WB_BLE_Wireless_Interface.html`. The full-extended profile has no
-    /// column: it supports the complete interface.
+    /// The availability column heading of the platform's interface document
+    /// (`STM32WB_BLE_Wireless_Interface.html` or
+    /// `STM32WBA_BLE_Wireless_Interface.html`). The complete profile has no
+    /// column: it supports the whole interface.
     pub const fn documentation_column(self) -> Option<&'static str> {
         match self {
-            Self::FullExtended => None,
-            Self::Full => Some("BF"),
-            Self::Light => Some("PO"),
-            Self::HciLayerExtended => Some("LO"),
+            Self::FullExtended | Self::WbaFull => None,
+            Self::Full | Self::WbaBasicFeatures => Some("BF"),
+            Self::Light | Self::WbaPeripheralOnly => Some("PO"),
+            Self::HciLayerExtended | Self::WbaLinkLayerOnly => Some("LO"),
             Self::HciLayer => Some("LB"),
             Self::HciAdvScan => Some("BO"),
+            Self::WbaBasicPlus => Some("BP"),
         }
     }
 
-    pub fn from_documentation_column(column: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|profile| profile.documentation_column() == Some(column))
-    }
-
-    /// The binary name component STMicroelectronics uses for this profile.
-    pub const fn binary_stem(self) -> &'static str {
+    /// The STM32WB CPU2 binary name component for this profile; STM32WBA
+    /// ships no binaries.
+    pub const fn binary_stem(self) -> Option<&'static str> {
         match self {
-            Self::FullExtended => "BLE_Stack_full_extended",
-            Self::Full => "BLE_Stack_full",
-            Self::Light => "BLE_Stack_light",
-            Self::HciLayerExtended => "BLE_HCILayer_extended",
-            Self::HciLayer => "BLE_HCILayer",
-            Self::HciAdvScan => "BLE_HCI_AdvScan",
+            Self::FullExtended => Some("BLE_Stack_full_extended"),
+            Self::Full => Some("BLE_Stack_full"),
+            Self::Light => Some("BLE_Stack_light"),
+            Self::HciLayerExtended => Some("BLE_HCILayer_extended"),
+            Self::HciLayer => Some("BLE_HCILayer"),
+            Self::HciAdvScan => Some("BLE_HCI_AdvScan"),
+            _ => None,
         }
+    }
+}
+
+impl Platform {
+    /// The stack profiles of the platform, the complete one first.
+    pub fn profiles(self) -> &'static [Profile] {
+        match self {
+            Self::Stm32wb => &Profile::ALL[..6],
+            Self::Stm32wba => &Profile::ALL[6..],
+        }
+    }
+
+    /// The profile supporting the complete interface.
+    pub fn complete_profile(self) -> Profile {
+        self.profiles()[0]
+    }
+
+    /// The profile an availability column of the platform's interface
+    /// document names.
+    pub fn profile_for_column(self, column: &str) -> Option<Profile> {
+        self.profiles()
+            .iter()
+            .copied()
+            .find(|profile| profile.documentation_column() == Some(column))
     }
 }
 
@@ -143,9 +203,10 @@ impl Family {
         }
     }
 
-    /// The CPU2 binary file name for a profile.
-    pub fn binary_file_name(self, profile: Profile) -> String {
-        format!("{}_{}_fw.bin", self.file_prefix(), profile.binary_stem())
+    /// The CPU2 binary file name for a profile, if it has binaries.
+    pub fn binary_file_name(self, profile: Profile) -> Option<String> {
+        let stem = profile.binary_stem()?;
+        Some(format!("{}_{stem}_fw.bin", self.file_prefix()))
     }
 }
 
@@ -178,13 +239,28 @@ mod tests {
                 Profile::from_feature_name(&profile.feature_name()),
                 Some(profile)
             );
-            if let Some(column) = profile.documentation_column() {
-                assert_eq!(Profile::from_documentation_column(column), Some(profile));
+            let platform = profile.platform();
+            assert!(platform.profiles().contains(&profile));
+            match profile.documentation_column() {
+                Some(column) => assert_eq!(platform.profile_for_column(column), Some(profile)),
+                None => assert_eq!(platform.complete_profile(), profile),
             }
         }
         assert_eq!(
-            Family::Wb5x.binary_file_name(Profile::FullExtended),
-            "stm32wb5x_BLE_Stack_full_extended_fw.bin"
+            Platform::Stm32wb.profile_for_column("BF"),
+            Some(Profile::Full)
         );
+        assert_eq!(
+            Platform::Stm32wba.profile_for_column("BF"),
+            Some(Profile::WbaBasicFeatures)
+        );
+        assert_eq!(Platform::Stm32wb.profile_for_column("BP"), None);
+        assert_eq!(
+            Family::Wb5x
+                .binary_file_name(Profile::FullExtended)
+                .as_deref(),
+            Some("stm32wb5x_BLE_Stack_full_extended_fw.bin")
+        );
+        assert_eq!(Family::Wb5x.binary_file_name(Profile::WbaFull), None);
     }
 }

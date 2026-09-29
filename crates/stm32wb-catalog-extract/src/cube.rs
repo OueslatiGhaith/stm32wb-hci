@@ -1,4 +1,5 @@
-//! Read-only access to immutable tags of an STM32CubeWB Git repository.
+//! Read-only access to immutable tags of an STM32CubeWB or STM32CubeWBA Git
+//! repository, and of the submodules they pin.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -13,16 +14,17 @@ pub const INTERFACE_DOCUMENT: &str =
     "Middlewares/ST/STM32_WPAN/ble/core/doc/STM32WB_BLE_Wireless_Interface.html";
 pub const BINARIES_DIR: &str = "Projects/STM32WB_Copro_Wireless_Binaries";
 
-/// One tag of a local STM32CubeWB clone. Files are read from Git objects, so
-/// the clone's worktree is never consulted or modified.
-pub struct CubeTag<'a> {
-    repository: &'a Path,
+/// One tag of a local Cube clone, or the commit a tag pins a submodule at.
+/// Files are read from Git objects, so the clone's worktree is never
+/// consulted or modified.
+pub struct CubeTag {
+    repository: PathBuf,
     pub tag: String,
     pub commit: String,
 }
 
-impl<'a> CubeTag<'a> {
-    pub fn open(repository: &'a Path, version: Version) -> Result<Self, String> {
+impl CubeTag {
+    pub fn open(repository: &Path, version: Version) -> Result<Self, String> {
         let tag = version.cube_tag();
         let commit = git_text(
             repository,
@@ -47,17 +49,61 @@ impl<'a> CubeTag<'a> {
             ));
         }
         Ok(Self {
-            repository,
+            repository: repository.to_owned(),
             tag,
             commit,
         })
+    }
+
+    /// The directory `path` of this tag: `(tag, prefix)` to read it with,
+    /// the prefix ending in `/`. A directory the tag pins as a submodule is
+    /// read from the submodule's clone at `path` in the worktree, at the
+    /// pinned commit.
+    pub fn directory(&self, path: &str) -> Result<(Self, String), String> {
+        let entry = git_text(&self.repository, &["ls-tree", &self.commit, "--", path])?;
+        let fields = entry.split_whitespace().collect::<Vec<_>>();
+        match fields[..] {
+            ["040000", "tree", _, name] if name == path => Ok((
+                Self {
+                    repository: self.repository.clone(),
+                    tag: self.tag.clone(),
+                    commit: self.commit.clone(),
+                },
+                format!("{path}/"),
+            )),
+            ["160000", "commit", commit, name] if name == path => {
+                let repository = self.repository.join(path);
+                git_text(
+                    &repository,
+                    &["cat-file", "-e", &format!("{commit}^{{commit}}")],
+                )
+                .map_err(|error| {
+                    format!(
+                        "{} pins {path} at {commit}, which {} does not have; run \
+                         `git submodule update --init {path}` in {}: {error}",
+                        self.tag,
+                        repository.display(),
+                        self.repository.display()
+                    )
+                })?;
+                Ok((
+                    Self {
+                        repository,
+                        tag: format!("{} {path}", self.tag),
+                        commit: commit.to_owned(),
+                    },
+                    String::new(),
+                ))
+            }
+            _ => Err(format!("{} has no directory {path}: {entry:?}", self.tag)),
+        }
     }
 
     /// Read one file as bytes. The commit, not the tag name, is used so the
     /// result is stable even if a tag were moved during extraction.
     pub fn read(&self, path: &str) -> Result<Vec<u8>, String> {
         git_bytes(
-            self.repository,
+            &self.repository,
             &["show", &format!("{}:{path}", self.commit)],
         )
     }
@@ -76,7 +122,7 @@ impl<'a> CubeTag<'a> {
 
     pub fn list(&self, directory: &str) -> Result<Vec<String>, String> {
         let listing = git_text(
-            self.repository,
+            &self.repository,
             &[
                 "ls-tree",
                 "-r",

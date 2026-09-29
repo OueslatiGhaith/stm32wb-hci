@@ -37,9 +37,13 @@ fn profile_features_match_the_catalog() {
         .into_iter()
         .filter(|feature| feature.starts_with("stack-"))
         .collect::<BTreeSet<_>>();
-    let profiles = Profile::ALL
-        .map(Profile::feature_name)
-        .into_iter()
+    let profiles = bundled()
+        .unwrap()
+        .catalog
+        .platform
+        .profiles()
+        .iter()
+        .map(|profile| profile.feature_name())
         .collect::<BTreeSet<_>>();
     assert_eq!(declared, profiles);
 }

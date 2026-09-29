@@ -5,7 +5,7 @@ use std::fs;
 use std::sync::Mutex;
 
 use clang::{Clang, Index};
-use stm32wb_catalog::{CommandScope, Completion, EventScope, Layout};
+use stm32wb_catalog::{CommandScope, Completion, Domain, DomainKind, EventScope, Layout};
 
 use crate::c::{self, Shim};
 use crate::{commands, events, shci, snapshot};
@@ -732,7 +732,8 @@ fn domains_come_from_the_header_documentation() {
 }
 
 /// Written as the generated headers write them, from `aci_gap_set_discoverable`,
-/// `aci_gap_init`, and `hci_read_transmit_power_level`.
+/// `aci_gap_init`, STM32WBA's `aci_hal_pta_set_priority`, and
+/// `hci_read_transmit_power_level`.
 const DOMAIN_DOC: &str = "/**
  * @brief Documented values.
  *
@@ -750,6 +751,11 @@ const DOMAIN_DOC: &str = "/**
  *        Flags:
  *        - 0x01: Peripheral
  *        - 0x02: Broadcaster
+ * @param Priority_Mask Determines which priorities are in effect.
+ *        Flags:
+ *        - 0x00000001: Mode 0 to 7: PTA_FORCED_PRIORITY_HIGH_VALUE
+ *        - 0x00000004: Mode 0: PTA_GENERIC_PRIORITY_CONN_ADV;
+ *                      Mode 2 or 3: PTA_LINK_PRIORITY_CONFIG_LINK_LOSS_LIMIT
  * @param device_name_char_len Length of the device name characteristic
  * @param[out] Transmit_Power_Level Size: 1 Octet (signed integer)
  *        Units: dBm
@@ -785,8 +791,51 @@ fn domains_read_values_flags_units_and_notes() {
             "Conn_Interval_Min Values [0x0000: NaN, 0x0006..=0x0C80, 0xFFFF: No specific \
              minimum] Some(1250)",
             "Role Flags [0x01: Peripheral, 0x02: Broadcaster] None",
+            "Priority_Mask Flags [0x00000001: Mode 0 to 7: PTA_FORCED_PRIORITY_HIGH_VALUE, \
+             0x00000004: Mode 0: PTA_GENERIC_PRIORITY_CONN_ADV; Mode 2 or 3: \
+             PTA_LINK_PRIORITY_CONFIG_LINK_LOSS_LIMIT] None",
             "Transmit_Power_Level (out) Values [-30..=20] None",
         ]
+    );
+}
+
+#[test]
+fn flags_that_are_not_single_bits_are_dropped() {
+    // STM32WBA's CS events list two 4-bit reasons in one byte as `Flags:`.
+    let flags = |items: &[&str]| Domain {
+        kind: DomainKind::Flags,
+        items: items.iter().map(|item| item.parse().unwrap()).collect(),
+        unit_us: None,
+    };
+    let layout = Layout::Fields(Vec::new());
+    let mut report = snapshot::Report::new("1.10.0".parse().unwrap());
+    let kept = snapshot::resolved_domains(
+        &mut report,
+        "hci_le_cs_subevent_result_event",
+        vec![
+            (
+                "Role".into(),
+                false,
+                flags(&["0x00: None", "0x02: Broadcaster"]),
+            ),
+            (
+                "Abort_Reason".into(),
+                false,
+                flags(&["0x00: None", "0x03: Channel map"]),
+            ),
+        ],
+        |_| Some(&layout),
+    );
+    assert_eq!(
+        kept.iter().map(|(member, _, _)| member).collect::<Vec<_>>(),
+        ["Role"]
+    );
+    assert_eq!(
+        report.dropped_flags,
+        [(
+            "hci_le_cs_subevent_result_event".to_owned(),
+            "Abort_Reason".to_owned()
+        )]
     );
 }
 
