@@ -8,7 +8,7 @@ use clang::{Clang, Index};
 use stm32wb_catalog::{CommandScope, Completion, EventScope, Layout};
 
 use crate::c::{self, Shim};
-use crate::{commands, events, shci};
+use crate::{commands, events, shci, snapshot};
 
 /// libclang allows one `Clang` instance per process at a time.
 static CLANG: Mutex<()> = Mutex::new(());
@@ -230,6 +230,145 @@ tBleStatus aci_include(uint8_t Include_Type, const Uuid_t *Include)
     assert_eq!(
         fields(commands[1].returns.as_ref().unwrap()),
         ["Status: u8"]
+    );
+}
+
+/// What the structures alone give for each command of a fixture, compared
+/// with its code.
+fn declared_fixture(source: &str) -> Vec<Result<Result<usize, String>, String>> {
+    with_fixture(source, |unit| {
+        let records = c::records(unit);
+        commands::extract(unit, &records, CommandScope::Vendor)
+            .unwrap()
+            .iter()
+            .map(|command| snapshot::compare_declared(command, &records))
+            .collect()
+    })
+}
+
+#[test]
+fn structures_alone_reproduce_what_the_code_proves() {
+    // Parameters split at a variable buffer, and no return parameters.
+    assert_eq!(declared_fixture(SET_NAME), [Ok(Ok(1))]);
+
+    // Return parameters from `_rp0`, and a lone Status where there is none.
+    let source = r#"
+typedef __PACKED_STRUCT { uint8_t Offset; } aci_read_cp0;
+typedef __PACKED_STRUCT { uint8_t Status; uint16_t Handle; } aci_read_rp0;
+tBleStatus aci_read(uint8_t Offset, uint16_t *Handle)
+{
+  struct hci_request rq;
+  uint8_t cmd_buffer[BLE_CMD_MAX_PARAM_LEN];
+  aci_read_cp0 *cp0 = (aci_read_cp0*)(cmd_buffer);
+  aci_read_rp0 resp;
+  int index_input = 0;
+  cp0->Offset = Offset;
+  index_input += 1;
+  rq.ogf = 0x3f;
+  rq.ocf = 0x00d;
+  rq.rparam = &resp;
+  rq.rlen = sizeof(resp);
+  if (hci_send_req(&rq, 0) < 0)
+    return 0xFF;
+  *Handle = resp.Handle;
+  return 0;
+}
+
+tBleStatus aci_reset(void)
+{
+  struct hci_request rq;
+  tBleStatus status = 0;
+  rq.ogf = 0x3f;
+  rq.ocf = 0x00e;
+  rq.rparam = &status;
+  rq.rlen = 1;
+  if (hci_send_req(&rq, 0) < 0)
+    return 0xFF;
+  return status;
+}
+"#;
+    assert_eq!(declared_fixture(source), [Ok(Ok(2)), Ok(Ok(2))]);
+
+    // A union has no selector without code.
+    let source = r#"
+typedef __PACKED_UNION { uint16_t Uuid_16; uint8_t Uuid_128[16]; } Uuid_t;
+typedef __PACKED_STRUCT { uint8_t Uuid_Type; Uuid_t Uuid; } aci_find_cp0;
+tBleStatus aci_find(uint8_t Uuid_Type, const Uuid_t *Uuid)
+{
+  struct hci_request rq;
+  uint8_t cmd_buffer[BLE_CMD_MAX_PARAM_LEN];
+  aci_find_cp0 *cp0 = (aci_find_cp0*)(cmd_buffer);
+  tBleStatus status = 0;
+  int index_input = 0;
+  int uuid_size = (Uuid_Type == 2) ? 16 : 2;
+  cp0->Uuid_Type = Uuid_Type;
+  index_input += 1;
+  Osal_MemCpy((void*)&cp0->Uuid, (const void*)Uuid, uuid_size);
+  index_input += uuid_size;
+  rq.ogf = 0x3f;
+  rq.ocf = 0x00f;
+  rq.event = 0x0F;
+  rq.rparam = &status;
+  rq.rlen = 1;
+  if (hci_send_req(&rq, 0) < 0)
+    return 0xFF;
+  return status;
+}
+"#;
+    let [Ok(Err(reason))] = &declared_fixture(source)[..] else {
+        panic!("a union is reported");
+    };
+    assert!(
+        reason.contains("Uuid_t is a union without a selector"),
+        "{reason}"
+    );
+
+    // A wrapper counting in bytes what its structure declares in elements.
+    let source = r#"
+typedef __PACKED_STRUCT { uint8_t Handle; uint16_t Duration; } Entry_t;
+typedef __PACKED_STRUCT { uint8_t Count; Entry_t Entry[(BLE_CMD_MAX_PARAM_LEN - 1)/sizeof(Entry_t)]; } aci_sets_cp0;
+tBleStatus aci_sets(uint8_t Count, const Entry_t *Entry)
+{
+  struct hci_request rq;
+  uint8_t cmd_buffer[BLE_CMD_MAX_PARAM_LEN];
+  aci_sets_cp0 *cp0 = (aci_sets_cp0*)(cmd_buffer);
+  tBleStatus status = 0;
+  int index_input = 0;
+  cp0->Count = Count;
+  index_input += 1;
+  Osal_MemCpy((void*)&cp0->Entry, (const void*)Entry, Count);
+  index_input += Count;
+  rq.ogf = 0x3f;
+  rq.ocf = 0x00e;
+  rq.event = 0x0F;
+  rq.rparam = &status;
+  rq.rlen = 1;
+  if (hci_send_req(&rq, 0) < 0)
+    return 0xFF;
+  return status;
+}
+"#;
+    let [Ok(Err(reason))] = &declared_fixture(source)[..] else {
+        panic!("a byte count is reported");
+    };
+    assert!(reason.contains("counts Entry in bytes"), "{reason}");
+
+    // Any other disagreement means the rule misreads the structures.
+    let reordered = SET_NAME
+        .replace(
+            "uint8_t Mode; uint8_t Name_Length;",
+            "uint8_t Name_Length; uint8_t Mode;",
+        )
+        .replace(
+            "cp0->Mode = Mode;\n  index_input += 1;\n  cp0->Name_Length = Name_Length;\n  index_input += 1;",
+            "cp0->Name_Length = Name_Length;\n  index_input += 1;\n  cp0->Mode = Mode;\n  index_input += 1;",
+        );
+    let [Err(error)] = &declared_fixture(&reordered)[..] else {
+        panic!("a contradiction is an error");
+    };
+    assert!(
+        error.contains("aci_set_name: its params contradict the rule"),
+        "{error}"
     );
 }
 

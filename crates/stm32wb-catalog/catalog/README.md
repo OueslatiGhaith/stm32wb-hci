@@ -12,7 +12,11 @@ crate, so its dependents are rebuilt whenever the extractor rewrites them.
    `shci.h`, and `shci.c` with libclang, and the status codes from
    `ble_defs.h`. Relationships (which member counts a buffer,
    which member selects a union alternative) come from symbol references in
-   the wrapper code, not from member names.
+   the wrapper code, not from member names. Event payloads have no such code:
+   their buffers are counted by the member right before them, a rule of ST's
+   generator that every release's command code is checked against. Each
+   command layout the code proves must also follow from its `_cpN` and `_rp0`
+   structures alone, by the same rule, or be reported as not doing so.
 2. **ST documents.** Stack-profile availability comes from
    `STM32WB_BLE_Wireless_Interface.html`; which binaries exist for each MCU
    family comes from each family's `Release_Notes.html`, whose every binary

@@ -51,6 +51,8 @@ pub struct ExtractedCommand {
     /// Count relationships the code proves: (count member, buffer member,
     /// whether the count immediately precedes the buffer).
     pub proven_counts: Vec<(String, String, bool)>,
+    /// Buffers the code counts in bytes although C declares wider elements.
+    pub byte_counted: Vec<String>,
 }
 
 pub fn extract(
@@ -137,8 +139,16 @@ fn analyze(
 
     let mut structs = Structs::new();
     let mut proven_counts = Vec::new();
-    let params = params_layout(name, &nodes, records, &mut structs, &mut proven_counts)
-        .unwrap_or_else(Layout::Unresolved);
+    let mut byte_counted = Vec::new();
+    let params = params_layout(
+        name,
+        &nodes,
+        records,
+        &mut structs,
+        &mut proven_counts,
+        &mut byte_counted,
+    )
+    .unwrap_or_else(Layout::Unresolved);
     let returns = match (completion, return_variable.as_str()) {
         (Completion::CommandStatus, "status") => None,
         (Completion::CommandStatus, other) => {
@@ -149,7 +159,8 @@ fn analyze(
             FieldType::Scalar(Scalar::U8),
         )])),
         (Completion::CommandComplete, "resp") => Some(
-            returns_layout(name, &nodes, records, &mut structs).unwrap_or_else(Layout::Unresolved),
+            returns_layout(name, &nodes, records, &mut structs, &mut byte_counted)
+                .unwrap_or_else(Layout::Unresolved),
         ),
         (_, other) => return Err(format!("unexpected return variable {other}")),
     };
@@ -173,10 +184,11 @@ fn analyze(
         bearers: c::bearers(function)?,
         domains: crate::domains::domains(function)?,
         proven_counts,
+        byte_counted,
     })
 }
 
-fn collect_structs(fields: &[Field], all: &Structs, referenced: &mut Structs) {
+pub fn collect_structs(fields: &[Field], all: &Structs, referenced: &mut Structs) {
     for field in fields {
         let name = match &field.ty {
             FieldType::Struct(name)
@@ -271,6 +283,7 @@ fn params_layout(
     records: &BTreeMap<String, CRecord>,
     structs: &mut Structs,
     proven_counts: &mut Vec<(String, String, bool)>,
+    byte_counted: &mut Vec<String>,
 ) -> Result<Layout, String> {
     // The command buffer views, keyed by variable name, in `cpN` order.
     let mut views = Vec::new();
@@ -404,6 +417,7 @@ fn params_layout(
                 nodes,
                 fields.last().map(|field: &Field| field.name.as_str()),
                 proven_counts,
+                byte_counted,
             )
             .map_err(|error| format!("{variable}->{}: {error}", field.name))?;
             if let Write::Assign {
@@ -432,6 +446,7 @@ fn member_type(
     nodes: &[Entity<'_>],
     previous: Option<&str>,
     proven_counts: &mut Vec<(String, String, bool)>,
+    byte_counted: &mut Vec<String>,
 ) -> Result<FieldType, String> {
     let constant = |bytes: usize| Length {
         count: Count::Constant(i64::try_from(bytes).unwrap_or(i64::MAX)),
@@ -511,6 +526,7 @@ fn member_type(
                 (c::element_type(element, records, structs)?, *len)
             } else if unit == 1 {
                 // The count is in bytes even though C declares larger elements.
+                byte_counted.push(field.name.clone());
                 (Element::Scalar(Scalar::U8), width * len)
             } else {
                 return Err(format!("element size {unit} does not match {width}"));
@@ -677,6 +693,7 @@ fn returns_layout(
     nodes: &[Entity<'_>],
     records: &BTreeMap<String, CRecord>,
     structs: &mut Structs,
+    byte_counted: &mut Vec<String>,
 ) -> Result<Layout, String> {
     let record_name = format!("{name}_rp0");
     let record = records
@@ -755,6 +772,7 @@ fn returns_layout(
                 let (element, capacity) = if unit == width {
                     (c::element_type(element, records, structs)?, *len)
                 } else if unit == 1 {
+                    byte_counted.push(field.name.clone());
                     (Element::Scalar(Scalar::U8), width * len)
                 } else {
                     return Err(format!("element size {unit} does not match {width}"));

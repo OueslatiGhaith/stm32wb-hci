@@ -4,6 +4,7 @@
 mod c;
 mod commands;
 mod cube;
+mod declared;
 mod docs;
 mod domains;
 mod events;
@@ -198,6 +199,14 @@ fn extract(cube: &Path, releases: &[Version]) -> Result<Catalog, String> {
             report.proven_counts,
             report.unresolved.len()
         );
+        eprintln!(
+            "  {} command layouts reproduced from their structures alone, {} commands not",
+            report.declared_agreements,
+            report.declared_differences.len()
+        );
+        for (name, difference) in &report.declared_differences {
+            eprintln!("  {name} is not reproduced from its structures: {difference}");
+        }
         for (name, layout, reason) in &report.unresolved {
             eprintln!("  unresolved {name} {layout}: {reason}");
         }

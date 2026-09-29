@@ -218,6 +218,7 @@ pub fn commands(
             bearers: Vec::new(),
             domains: Vec::new(),
             proven_counts: Vec::new(),
+            byte_counted: Vec::new(),
         });
     }
     if commands.is_empty() {

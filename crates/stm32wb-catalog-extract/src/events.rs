@@ -9,17 +9,15 @@
 //! callback in `ble_events.h`, as for commands.
 //!
 //! Event payloads carry no code relating a variable buffer to its count, so
-//! one rule of ST's generator is applied: a buffer sized by
-//! `BLE_EVT_MAX_PARAM_LEN` is counted, in elements, by the unsigned integer
-//! member immediately before it. The command analysis checks this rule
-//! wherever command code proves a count relationship; see `snapshot.rs`.
+//! their structure is read by the rule of `declared.rs`: a buffer is counted,
+//! in elements, by the unsigned integer member immediately before it.
 
 use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit};
-use stm32wb_catalog::{Bearer, EventScope, Field, FieldType, Layout, Structs};
+use stm32wb_catalog::{Bearer, EventScope, Layout, Structs};
 
-use crate::c::{self, CRecord, CType, descendants, int_value, member, strip};
+use crate::c::{self, CRecord, descendants, int_value, member, strip};
 
 #[derive(Debug)]
 pub struct ExtractedEvent {
@@ -158,9 +156,6 @@ fn payload(
     let record = records
         .get(&record_name)
         .ok_or_else(|| format!("{record_name} is not declared"))?;
-    if record.union || !record.packed {
-        return Err(format!("{record_name} is not a packed structure"));
-    }
     let call = strip(call);
     let forwarded = call
         .get_arguments()
@@ -184,29 +179,7 @@ fn payload(
         ));
     }
 
-    let mut fields: Vec<Field> = Vec::new();
-    for field in &record.fields {
-        let ty = match &field.ty {
-            CType::Array {
-                element,
-                len,
-                capacity: true,
-            } => {
-                let count = fields
-                    .last()
-                    .filter(|previous| matches!(previous.ty, FieldType::Scalar(scalar) if !scalar.is_signed()))
-                    .ok_or_else(|| format!("{} is not preceded by an unsigned count", field.name))?
-                    .name
-                    .clone();
-                FieldType::Counted {
-                    element: c::element_type(element, records, structs)?,
-                    count,
-                    capacity: u16::try_from(*len).map_err(|_| "capacity overflows u16")?,
-                }
-            }
-            _ => c::fixed_field(field, records, structs)?,
-        };
-        fields.push(Field::new(field.name.clone(), ty));
-    }
+    let mut fields = Vec::new();
+    crate::declared::record_fields(&record_name, record, records, structs, &mut fields)?;
     Ok(Layout::Fields(fields))
 }

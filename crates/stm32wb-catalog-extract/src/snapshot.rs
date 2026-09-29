@@ -6,7 +6,7 @@ use std::path::Path;
 use clang::Index;
 use stm32wb_catalog::{
     CommandScope, Domain, EventScope, Layout, Profile, ReleaseSource, Snapshot, SnapshotCommand,
-    SnapshotEvent, Version,
+    SnapshotEvent, Structs, Version,
 };
 
 use crate::c::{self, Shim};
@@ -26,6 +26,10 @@ pub struct Report {
     pub commands: usize,
     pub events: usize,
     pub proven_counts: usize,
+    /// Command layouts the code proves that the structures alone reproduce,
+    /// and `(command, reason)` for the commands they do not.
+    pub declared_agreements: usize,
+    pub declared_differences: Vec<(String, String)>,
     /// `(entry, layout, reason)` for every layout left unresolved.
     pub unresolved: Vec<(String, &'static str, String)>,
     /// Documented values in total, and `(entry, member)` for every list
@@ -84,6 +88,7 @@ pub fn extract(
         };
 
     let mut extracted_commands: Vec<ExtractedCommand> = Vec::new();
+    let (mut declared_agreements, mut declared_differences) = (0, Vec::new());
     for file in &sources {
         let scope = if file == "ble_hci_le.c" {
             CommandScope::Standard
@@ -93,10 +98,17 @@ pub fn extract(
         let unit = c::parse(index, &core.join("auto").join(file), shim, &core_includes)?;
         let records = c::records(&unit);
         document_fields(&records, file)?;
-        extracted_commands.extend(
-            commands::extract(&unit, &records, scope)
-                .map_err(|error| format!("{} {file}: {error}", tag.tag))?,
-        );
+        let extracted = commands::extract(&unit, &records, scope)
+            .map_err(|error| format!("{} {file}: {error}", tag.tag))?;
+        for command in &extracted {
+            match compare_declared(command, &records)
+                .map_err(|error| format!("{} {file}: {error}", tag.tag))?
+            {
+                Ok(sides) => declared_agreements += sides,
+                Err(difference) => declared_differences.push((command.name.clone(), difference)),
+            }
+        }
+        extracted_commands.extend(extracted);
     }
 
     let unit = c::parse(index, &core.join("auto/ble_events.c"), shim, &core_includes)?;
@@ -168,6 +180,8 @@ pub fn extract(
         commands: extracted_commands.len(),
         events: extracted_events.len(),
         proven_counts,
+        declared_agreements,
+        declared_differences,
         unresolved: Vec::new(),
         domains: 0,
         dropped_domains: Vec::new(),
@@ -329,6 +343,66 @@ fn resolved_domains<'a>(
             }
         })
         .collect()
+}
+
+/// Compare the layouts the code of a command proves with those its
+/// structures alone give, returning how many sides agree, or why the
+/// structures do not reproduce them. A contradiction is an error: the rule of
+/// `declared.rs` would misread the commands of a platform without code.
+pub fn compare_declared(
+    command: &ExtractedCommand,
+    records: &BTreeMap<String, c::CRecord>,
+) -> Result<Result<usize, String>, String> {
+    let (params, returns, structs) =
+        crate::declared::command(&command.name, command.completion, records);
+    let contradiction = |what: &str, detail: String| {
+        if command.byte_counted.is_empty() {
+            Err(format!(
+                "{}: its {what} contradict the rule of ST's structures: {detail}",
+                command.name
+            ))
+        } else {
+            // The wrapper disagrees with its own structures, which place what
+            // follows as if the count were in elements.
+            Ok(Err(format!(
+                "its code counts {} in bytes where its structures declare wider elements",
+                command.byte_counted.join(", ")
+            )))
+        }
+    };
+    let mut sides = 0;
+    let (mut proven, mut derived) = (Structs::new(), Structs::new());
+    for (what, code, declared) in [
+        ("params", Some(&command.params), Some(&params)),
+        ("returns", command.returns.as_ref(), returns.as_ref()),
+    ] {
+        let Some(Layout::Fields(code)) = code else {
+            continue;
+        };
+        match declared {
+            Some(Layout::Fields(declared)) if declared == code => {
+                commands::collect_structs(code, &command.structs, &mut proven);
+                commands::collect_structs(declared, &structs, &mut derived);
+                sides += 1;
+            }
+            Some(Layout::Fields(declared)) => {
+                return contradiction(what, format!("code {code:?}, structures {declared:?}"));
+            }
+            Some(Layout::Unresolved(reason)) => {
+                return Ok(Err(format!(
+                    "its structures leave its {what} unresolved: {reason}"
+                )));
+            }
+            None => return contradiction(what, "the structures give none".to_owned()),
+        }
+    }
+    if proven != derived {
+        return contradiction(
+            "structures",
+            format!("code {proven:?}, structures {derived:?}"),
+        );
+    }
+    Ok(Ok(sides))
 }
 
 fn note_unresolved(report: &mut Report, name: &str, what: &'static str, layout: &Layout) {
