@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::{
     Availability, Bearer, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion,
     Domain, Error, Event, EventDefinition, EventScope, Family, Layout, MemberDomain, Named,
-    Platform, Profile, ReleaseRange, ReleaseSource, Structs, Version,
+    Platform, Profile, ReleaseRange, ReleaseSource, StatusCode, Structs, Version,
 };
 
 /// Everything extracted from one tagged release.
@@ -15,6 +15,8 @@ pub struct Snapshot {
     pub binaries: Vec<SnapshotBinary>,
     pub commands: Vec<SnapshotCommand>,
     pub events: Vec<SnapshotEvent>,
+    /// The `BLE_STATUS_*` codes, by name.
+    pub statuses: Vec<(String, u8)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -64,6 +66,7 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
     let mut commands: BTreeMap<(CommandScope, u16), Vec<(usize, SnapshotCommand)>> =
         BTreeMap::new();
     let mut events: BTreeMap<(EventScope, u16), Vec<(usize, SnapshotEvent)>> = BTreeMap::new();
+    let mut statuses: BTreeMap<(u8, String), Vec<(usize, ())>> = BTreeMap::new();
 
     for (index, snapshot) in snapshots.iter().enumerate() {
         for binary in &snapshot.binaries {
@@ -88,6 +91,12 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
             command.profiles.sort();
             command.profiles.dedup();
             entries.push((index, command));
+        }
+        for (name, value) in &snapshot.statuses {
+            statuses
+                .entry((*value, name.clone()))
+                .or_default()
+                .push((index, ()));
         }
         for event in &snapshot.events {
             let entries = events.entry((event.scope, event.code)).or_default();
@@ -191,6 +200,18 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                         .map(|(member, domain)| (member.clone(), false, domain.clone()))
                         .collect()
                 }),
+            })
+            .collect(),
+        statuses: statuses
+            .into_iter()
+            .flat_map(|((value, name), entries)| {
+                runs(&entries, &versions)
+                    .into_iter()
+                    .map(move |(releases, ())| StatusCode {
+                        releases,
+                        name: name.clone(),
+                        value,
+                    })
             })
             .collect(),
     };

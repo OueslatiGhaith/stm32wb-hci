@@ -17,19 +17,19 @@ use crate::aci::flags::ResetOptions;
     unused_imports,
     reason = "releases before 1.23.0 have no general commands"
 )]
-use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
+use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset, ResetMode};
 
 #[allow(
     unused_imports,
     reason = "releases before 1.23.0 have no general commands"
 )]
-use crate::wire::BoundedBytes;
+use crate::wire::{BoundedBytes, OrUnknown};
 
 vendor_command! {
     /// Reset the wireless binary in the given `mode`, with mode-specific
     /// `options`.
     aci_reset => AciReset {
-        mode: u8,
+        mode: ResetMode,
         options: ResetOptions,
     }
 }
@@ -39,7 +39,7 @@ vendor_command! {
     /// binary.
     aci_get_information => AciGetInformation {} -> AciInformation {
         version: [u32; 2],
-        options: u32,
+        options: OrUnknown<ResetOptions>,
         debug_info: [u32; 3],
     }
 }
@@ -86,9 +86,12 @@ mod tests {
         assert_eq!(AciReset::OPCODE.to_raw(), 0xFF00);
         let mut buffer = [0; 16];
         let mut writer = &mut buffer[..];
-        AciReset::new(1, ResetOptions::LL_ONLY | ResetOptions::ENHANCED_ATT)
-            .write_hci(&mut writer)
-            .unwrap();
+        AciReset::new(
+            ResetMode::ChangeOptions,
+            ResetOptions::LL_ONLY | ResetOptions::ENHANCED_ATT,
+        )
+        .write_hci(&mut writer)
+        .unwrap();
         let len = 16 - writer.len();
         assert_eq!(buffer[..len], [0x00, 0xFF, 5, 1, 0x01, 0x02, 0, 0]);
 
@@ -99,7 +102,7 @@ mod tests {
         let information =
             <AciGetInformation as SyncCmd>::Return::from_hci_bytes_complete(&bytes).unwrap();
         assert_eq!(information.version, [0x0302_0100, 0x0706_0504]);
-        assert_eq!(information.options, 0x0B0A_0908);
+        assert_eq!(information.options, OrUnknown::Unknown(0x0B0A_0908));
         assert_eq!(information.debug_info[2], 0x1716_1514);
     }
 }

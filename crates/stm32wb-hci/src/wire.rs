@@ -156,6 +156,32 @@ pub const fn values_documented<T: HciWireType>(documented: &[(i64, i64)]) -> boo
     true
 }
 
+/// Whether `T` stands for exactly the `documented` values: each of its
+/// values is documented, and each documented value is one of its values.
+#[doc(hidden)]
+pub const fn values_exactly<T: HciWireType>(documented: &[i64]) -> bool {
+    let Some(values) = T::VALUES else {
+        return false;
+    };
+    contains_all(values, documented) && contains_all(documented, values)
+}
+
+/// Whether every one of `items` is in `set`.
+const fn contains_all(set: &[i64], items: &[i64]) -> bool {
+    let mut index = 0;
+    while index < items.len() {
+        let mut item = 0;
+        while item < set.len() && set[item] != items[index] {
+            item += 1;
+        }
+        if item == set.len() {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// Whether `T` counts in the unit the catalog documents for a member listing
 /// values, in microseconds: a type counting time only for a time member,
 /// and only in its unit.
@@ -548,7 +574,7 @@ macro_rules! wire_values {
         impl ::core::convert::TryFrom<$repr> for $name {
             type Error = ::bt_hci::FromHciBytesError;
 
-            fn try_from(value: $repr) -> ::core::result::Result<Self, Self::Error> {
+            fn try_from(value: $repr) -> ::core::result::Result<Self, ::bt_hci::FromHciBytesError> {
                 $(
                     $(#[cfg($cfg)])?
                     if value == $name::$variant as $repr {

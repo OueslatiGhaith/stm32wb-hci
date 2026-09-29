@@ -233,7 +233,59 @@ fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
             bearers: Vec::new(),
             domains: Vec::new(),
         }],
+        statuses: Vec::new(),
     }
+}
+
+#[test]
+fn statuses_have_their_own_histories() {
+    let with = |version: &str, statuses: &[(&str, u8)]| {
+        let mut snapshot = snapshot(version, Vec::new());
+        snapshot.statuses = statuses
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), *value))
+            .collect();
+        snapshot
+    };
+    let failed = ("BLE_STATUS_FAILED", 0x91);
+    let full = ("BLE_STATUS_SEC_DB_FULL", 0x5D);
+    let merged = merge_snapshots(
+        Platform::Stm32wb,
+        vec![
+            with("1.15.0", &[failed, full]),
+            with("1.16.0", &[full, failed]),
+            with("1.17.0", &[failed]),
+        ],
+    )
+    .unwrap();
+    let rendered = merged
+        .statuses
+        .iter()
+        .map(|status| format!("{} {}=0x{:02X}", status.releases, status.name, status.value))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rendered,
+        [
+            "1.15.0..=1.16.0 BLE_STATUS_SEC_DB_FULL=0x5D",
+            "1.15.0..=1.17.0 BLE_STATUS_FAILED=0x91"
+        ]
+    );
+    let values = |release: &str| {
+        merged
+            .statuses_at(release.parse().unwrap())
+            .iter()
+            .map(|status| status.value)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(values("1.16.0"), [0x5D, 0x91]);
+    assert_eq!(values("1.17.0"), [0x91]);
+    assert!(Catalog::from_toml(&merged.to_toml().unwrap()).unwrap() == merged);
+
+    let twice = merge_snapshots(
+        Platform::Stm32wb,
+        vec![with("1.15.0", &[failed, ("BLE_STATUS_ERROR", 0x91)])],
+    );
+    assert!(twice.unwrap_err().to_string().contains("defined twice"));
 }
 
 #[test]

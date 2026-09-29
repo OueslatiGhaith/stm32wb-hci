@@ -14,6 +14,7 @@ pub mod general;
 pub mod hal;
 pub mod l2cap;
 pub mod ranges;
+pub mod status;
 pub mod values;
 
 stm32wb_hci_macros::vendor_events! {
@@ -119,6 +120,6 @@ mod tests {
         let params = [0x04, 0x00, 1, 2, 0x10, 0x20, 0x30, 0x40, 3, 4];
         let AciEvent::HalEndOfRadioActivity(activity) =
             AciEvent::from_vendor_params(&params).unwrap().unwrap();
-        assert_eq!(activity.last_state, 1);
+        assert_eq!(activity.last_state.to_raw(), 1);
     }
 }

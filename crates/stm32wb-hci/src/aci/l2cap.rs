@@ -17,7 +17,10 @@ use crate::aci::durations::{CeLength, ConnInterval};
     unused_imports,
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
-use crate::aci::ranges::{CocCredits, CocMps, CocMtu, ConnLatency, Spsm};
+use crate::aci::ranges::{
+    CocChannelCount, CocConnectResult, CocCredits, CocMaxChannelCount, CocMps, CocMtu,
+    CocReconfResult, ConnLatency, Spsm,
+};
 #[allow(unused_imports, reason = "the HCI-layer profiles have no L2CAP events")]
 use crate::aci::values::ConnectionUpdateResult;
 #[allow(
@@ -63,7 +66,7 @@ vendor_command! {
         mtu: CocMtu,
         mps: CocMps,
         initial_credits: u16,
-        channel_number: u8,
+        channel_number: CocChannelCount,
     }
 }
 
@@ -76,9 +79,9 @@ vendor_command! {
         mtu: CocMtu,
         mps: CocMps,
         initial_credits: u16,
-        result: u16,
+        result: CocConnectResult,
         #[wire(since = "1.23.0")]
-        max_channel_number: u8,
+        max_channel_number: CocMaxChannelCount,
     } -> L2capCocChannels {
         channel_index_list: BoundedBytes<250>,
     }
@@ -98,7 +101,7 @@ vendor_command! {
     /// Answer a peer's credit-based channel reconfiguration.
     aci_l2cap_coc_reconf_confirm => L2capCocReconfConfirm {
         connection_handle: ConnHandle,
-        result: u16,
+        result: CocReconfResult,
     }
 }
 
@@ -175,7 +178,7 @@ vendor_event! {
         mtu: OrUnknown<CocMtu>,
         mps: OrUnknown<CocMps>,
         initial_credits: u16,
-        channel_number: u8,
+        channel_number: OrUnknown<CocChannelCount>,
     }
 }
 
@@ -186,7 +189,7 @@ vendor_event! {
         mtu: OrUnknown<CocMtu>,
         mps: OrUnknown<CocMps>,
         initial_credits: u16,
-        result: u16,
+        result: OrUnknown<CocConnectResult>,
         channel_index_list: &'a [u8],
     }
 }
@@ -206,7 +209,7 @@ vendor_event! {
     /// The peer answered a request to reconfigure credit-based channels.
     aci_l2cap_coc_reconf_confirm_event => L2capCocReconfConfirmEvent {
         connection_handle: ConnHandle,
-        result: u16,
+        result: OrUnknown<CocReconfResult>,
     }
 }
 
@@ -296,7 +299,14 @@ mod tests {
     #[cfg(any(feature = "fw_1_23_0", feature = "fw_1_24_0"))]
     fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
         (
-            L2capCocConnectConfirm::new(ConnHandle::new(1), mtu(64), mps(32), 4, 0, 2),
+            L2capCocConnectConfirm::new(
+                ConnHandle::new(1),
+                mtu(64),
+                mps(32),
+                4,
+                CocConnectResult::MIN,
+                CocMaxChannelCount::new(2).unwrap(),
+            ),
             &[0x89, 0xFD, 11, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0, 2],
         )
     }
@@ -305,7 +315,13 @@ mod tests {
     #[cfg(not(any(feature = "fw_1_23_0", feature = "fw_1_24_0")))]
     fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
         (
-            L2capCocConnectConfirm::new(ConnHandle::new(1), mtu(64), mps(32), 4, 0),
+            L2capCocConnectConfirm::new(
+                ConnHandle::new(1),
+                mtu(64),
+                mps(32),
+                4,
+                CocConnectResult::MIN,
+            ),
             &[0x89, 0xFD, 10, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0],
         )
     }

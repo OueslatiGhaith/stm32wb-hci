@@ -9,6 +9,7 @@ mod domains;
 mod events;
 mod shci;
 mod snapshot;
+mod statuses;
 #[cfg(test)]
 mod tests;
 

@@ -9,6 +9,7 @@ mod complete;
 mod dispatch;
 mod event;
 mod standard;
+mod status;
 mod structs;
 
 use proc_macro::TokenStream;
@@ -419,6 +420,23 @@ pub fn vendor_events(input: TokenStream) -> TokenStream {
 pub fn system_events(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as dispatch::Input);
     dispatch::expand(input, command::Channel::System)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Check that a type stands for exactly the status codes the BLE stack
+/// defines besides success, `BLE_STATUS_*` in `ble_defs.h`, on every
+/// release: each of its values is one the release defines, and each code
+/// the release defines is one of its values. A code only some releases
+/// define is declared with the `#[cfg]` selecting them.
+///
+/// ```ignore
+/// check_statuses!(BleStatus);
+/// ```
+#[proc_macro]
+pub fn check_statuses(input: TokenStream) -> TokenStream {
+    let ty = syn::parse_macro_input!(input as syn::Type);
+    status::expand(ty)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

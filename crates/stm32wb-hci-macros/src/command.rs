@@ -1502,7 +1502,10 @@ fn profile_runs(catalog: &Catalog, targets: &Targets<'_>, all_profiles: &[Profil
 
 /// The releases `ranges` cover, as consecutive runs such as
 /// `1.15.0..=1.16.0, 1.18.0`.
-fn release_runs(catalog: &Catalog, ranges: impl Iterator<Item = ReleaseRange>) -> String {
+pub(crate) fn release_runs(
+    catalog: &Catalog,
+    ranges: impl Iterator<Item = ReleaseRange>,
+) -> String {
     let ranges = ranges.collect::<Vec<_>>();
     let mut runs: Vec<ReleaseRange> = Vec::new();
     let mut previous: Option<Version> = None;

@@ -7,11 +7,14 @@
 //! binary does not implement is not compiled.
 //!
 //! - [`aci`] declares the ST vendor commands and events, and [`AciEvent`]
-//!   decodes any vendor event.
+//!   decodes any vendor event. [`aci::status`] names the BLE stack's own
+//!   status codes, which bt-hci shows as unknown.
+//! - [`event`] decodes any event the BLE stack sends, Core or vendor.
 //! - [`standard`] checks bt-hci's Bluetooth Core commands and events against
 //!   the catalog, and declares the ones bt-hci gets wrong or lacks.
 //! - [`shci`] declares the system commands and events of the CPU2 system
 //!   channel.
+//! - [`adv_data`] builds advertising and scan response data.
 //! - [`wire`] holds the traits and buffers the declarations are built on.
 //!
 //! # Controller model
@@ -37,8 +40,10 @@ stm32wb_hci_macros::check_target!();
 mod fmt;
 
 pub mod aci;
+pub mod adv_data;
 #[doc(hidden)]
 pub mod catalog;
+pub mod event;
 pub mod shci;
 pub mod standard;
 pub mod wire;

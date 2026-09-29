@@ -9,7 +9,8 @@ crate, so its dependents are rebuilt whenever the extractor rewrites them.
 
 1. **Generated C.** Opcodes, completion kinds, and wire layouts are read from
    the tagged `ble_*_aci.c`, `ble_hci_le.c`, `ble_events.c`, `ble_types.h`,
-   `shci.h`, and `shci.c` with libclang. Relationships (which member counts a buffer,
+   `shci.h`, and `shci.c` with libclang, and the status codes from
+   `ble_defs.h`. Relationships (which member counts a buffer,
    which member selects a union alternative) come from symbol references in
    the wrapper code, not from member names.
 2. **ST documents.** Stack-profile availability comes from
@@ -68,6 +69,19 @@ whatever each wrapper passes to `shci_send`, and the returns are the bytes of
 the Command Complete payload it reads. A pointer in a system parameter
 structure is an address the wireless CPU reads, recorded as a `u32`: the
 wrappers are compiled for the Cortex-M4, whose AAPCS32 pointers are 4 bytes.
+
+## Status codes
+
+`statuses` lists the status codes the BLE stack returns besides the
+Bluetooth Core's, read from the `BLE_STATUS_*` definitions of
+`ble_defs.h`, each over the releases defining it with that value:
+
+```toml
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_FAILED"
+value = "0x91"
+```
 
 ## Workflow
 

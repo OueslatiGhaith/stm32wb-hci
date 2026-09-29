@@ -4,6 +4,7 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
+use bt_hci::ControllerToHostPacket;
 use bt_hci::cmd::controller_baseband::Reset;
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use defmt::{error, info};
@@ -16,12 +17,16 @@ use embassy_stm32::{
 };
 use stm32wb_hci::{
     aci::{
+        durations::{AdvInterval, PreferredConnInterval},
         flags::Role,
-        gap::GapInit,
+        gap::{GapInit, GapSetDiscoverable},
         gatt::GattInit,
         hal::HalWriteConfigData,
-        values::{ConfigDataOffset, Privacy},
+        status::StatusError,
+        values::{AdvertisingType, ConfigDataOffset, OwnAddressType, Privacy},
     },
+    adv_data::local_name_structure,
+    event::BleEvent,
     shci::{BleInit, BleInitParams},
 };
 
@@ -87,9 +92,18 @@ async fn main(spawner: Spawner) {
         async {
             loop {
                 let mut buf = ();
-                let pkt = ble.read(&mut buf).await;
-
-                defmt::info!("pkt: {}", pkt);
+                // Core events decode with bt-hci, vendor events with `AciEvent`.
+                match ble.read(&mut buf).await {
+                    Ok(ControllerToHostPacket::Event(packet)) => {
+                        match BleEvent::from_packet(packet) {
+                            Ok(BleEvent::Vendor(event)) => info!("vendor event: {}", event),
+                            Ok(BleEvent::Core(event)) => info!("core event: {}", event),
+                            Err(_) => error!("undecodable event"),
+                        }
+                    }
+                    Ok(packet) => info!("packet: {}", packet),
+                    Err(error) => error!("read failed: {}", error),
+                }
             }
         },
         async {
@@ -119,6 +133,31 @@ async fn main(spawner: Spawner) {
                 .exec(&GapInit::new(Role::PERIPHERAL, Privacy::Disabled, 8))
                 .await;
             defmt::info!("{}", response.is_ok());
+
+            defmt::info!("hci: advertise");
+            let name = local_name_structure::<32>(b"STM32WB", true).unwrap();
+            let interval = AdvInterval::from_millis(100).unwrap();
+            let command = GapSetDiscoverable::try_new(
+                AdvertisingType::ConnectableUndirected,
+                interval,
+                interval,
+                OwnAddressType::Public,
+                0,
+                &name,
+                &[],
+                PreferredConnInterval::OMITTED,
+                PreferredConnInterval::OMITTED,
+            )
+            .unwrap();
+            // A failure names the BLE stack's status codes, which bt-hci
+            // shows as unknown.
+            match ble.exec(&command).await {
+                Ok(_) => info!("advertising"),
+                Err(bt_hci::cmd::Error::Hci(error)) => {
+                    error!("advertising failed: {}", StatusError::from(error))
+                }
+                Err(bt_hci::cmd::Error::Io(error)) => error!("advertising failed: {}", error),
+            }
 
             info!("BLE HCI ready");
         },

@@ -44,7 +44,7 @@ standard_command! {
     /// a Disconnection Complete event follows.
     hci_disconnect => Disconnect {
         connection_handle: bt_hci::param::ConnHandle,
-        reason: u8,
+        reason: crate::aci::values::DisconnectReason,
     }
 }
 
@@ -52,8 +52,8 @@ standard_command! {
     /// Start transmitting test packets on `tx_frequency`.
     hci_le_transmitter_test => LeTransmitterTest {
         tx_frequency: crate::aci::ranges::RfChannel,
-        length_of_test_data: u8,
-        packet_payload: u8,
+        length_of_test_data: crate::aci::ranges::TestDataLength,
+        packet_payload: crate::aci::values::TestPayload,
     }
 }
 
@@ -74,7 +74,7 @@ standard_command! {
 standard_command! {
     /// Read the resolvable private address the peer uses.
     hci_le_read_peer_resolvable_address => LeReadPeerResolvableAddr {
-        peer_identity_address_type: u8,
+        peer_identity_address_type: crate::aci::values::AddressType,
         peer_identity_address: bt_hci::param::BdAddr,
     } -> LePeerResolvableAddr {
         peer_resolvable_address: bt_hci::param::BdAddr,
@@ -84,7 +84,7 @@ standard_command! {
 standard_command! {
     /// Read the resolvable private address the controller uses with a peer.
     hci_le_read_local_resolvable_address => LeReadLocalResolvableAddr {
-        peer_identity_address_type: u8,
+        peer_identity_address_type: crate::aci::values::AddressType,
         peer_identity_address: bt_hci::param::BdAddr,
     } -> LeLocalResolvableAddr {
         local_resolvable_address: bt_hci::param::BdAddr,
@@ -104,9 +104,9 @@ standard_command! {
     /// Set the extended scan parameters. The wrapper always writes two PHY
     /// parameter sets, whatever `scanning_phys` selects.
     hci_le_set_extended_scan_parameters => LeSetExtScanParams {
-        own_address_type: u8,
-        scanning_filter_policy: u8,
-        scanning_phys: u8,
+        own_address_type: crate::aci::values::HciOwnAddressType,
+        scanning_filter_policy: crate::aci::values::ScanningFilterPolicy,
+        scanning_phys: crate::aci::flags::ScanningPhys,
         scan_param_phy: [ScanParamPhy; 2],
     }
 }
@@ -129,11 +129,11 @@ standard_command! {
     /// Create a connection with extended advertising. The wrapper always
     /// writes three PHY parameter sets, whatever `initiating_phys` selects.
     hci_le_extended_create_connection => LeExtCreateConn {
-        initiator_filter_policy: u8,
-        own_address_type: u8,
-        peer_address_type: u8,
+        initiator_filter_policy: crate::aci::values::InitiatorFilterPolicy,
+        own_address_type: crate::aci::values::HciOwnAddressType,
+        peer_address_type: crate::aci::values::AddressType,
         peer_address: bt_hci::param::BdAddr,
-        initiating_phys: u8,
+        initiating_phys: crate::aci::flags::InitiatingPhys,
         init_param_phy: [InitParamPhy; 3],
     }
 }
@@ -143,7 +143,7 @@ standard_command! {
     /// key as `key_type` selects.
     hci_le_generate_dhkey_v2 => LeGenerateDhkeyV2 {
         remote_p256_public_key: [u8; 64],
-        key_type: u8,
+        key_type: crate::aci::values::DhkeyPrivateKey,
     }
 }
 
@@ -296,6 +296,45 @@ mod tests {
         assert!(LeDirectedAdvertisingReport::from_hci_bytes_complete(&params[..32]).is_err());
     }
 
+    /// ST's C reads each legacy advertising report whole, one after the
+    /// other: 9 bytes up to the data length, the data, then the RSSI. The
+    /// catalog leaves the layout unresolved, since its C has no structure
+    /// for it.
+    #[test]
+    fn advertising_reports_follow_each_other() {
+        use bt_hci::FromHciBytes;
+        use bt_hci::event::le::LeAdvertisingReport;
+        use bt_hci::param::BdAddr;
+
+        let params = [
+            2, // Num_Reports
+            0x00, 0x00, 1, 2, 3, 4, 5, 6, 3, 0x02, 0x01, 0x06, 0xC4, // ADV_IND, public
+            0x04, 0x01, 7, 8, 9, 10, 11, 12, 0, 0xB0, // SCAN_RSP, random, no data
+        ];
+        let event = LeAdvertisingReport::from_hci_bytes_complete(&params).unwrap();
+        let mut reports = event.reports.iter();
+        assert_eq!(reports.len(), 2);
+        let first = reports.next().unwrap().unwrap();
+        assert_eq!(first.addr, BdAddr::new([1, 2, 3, 4, 5, 6]));
+        assert_eq!(first.data, [0x02, 0x01, 0x06]);
+        assert_eq!(first.rssi, -60);
+        let second = reports.next().unwrap().unwrap();
+        assert_eq!(second.addr, BdAddr::new([7, 8, 9, 10, 11, 12]));
+        assert!(second.data.is_empty());
+        assert_eq!(second.rssi, -80);
+        assert!(reports.next().is_none());
+        assert!(
+            LeAdvertisingReport::from_hci_bytes_complete(&params[..params.len() - 1])
+                .unwrap()
+                .reports
+                .iter()
+                .nth(1)
+                .unwrap()
+                .is_err(),
+            "the second report lacks its RSSI"
+        );
+    }
+
     /// ST's layout is one extended advertising report with its data.
     #[cfg(any(feature = "stack-full-extended", feature = "stack-hci-layer-extended"))]
     #[test]
@@ -344,6 +383,7 @@ mod tests {
 
         use super::super::*;
         use super::supported;
+        use crate::aci::values::AddressType;
 
         fn encode(command: &impl WriteHci) -> ([u8; 128], usize) {
             let mut buffer = [0; 128];
@@ -364,11 +404,13 @@ mod tests {
         ))]
         #[test]
         fn disconnect_completes_with_command_status() {
+            use crate::aci::values::DisconnectReason;
+
             command_status::<Disconnect>();
             supported::<Disconnect>();
             let (bytes, len) = encode(&Disconnect::new(
                 bt_hci::param::ConnHandle::new(0x0801),
-                0x13,
+                DisconnectReason::RemoteUserTerminated,
             ));
             assert_eq!(bytes[..len], [0x06, 0x04, 3, 0x01, 0x08, 0x13]);
         }
@@ -393,7 +435,7 @@ mod tests {
             command_status::<LeReadLocalP256PublicKey>();
 
             let address = BdAddr::new([1, 2, 3, 4, 5, 6]);
-            let (bytes, len) = encode(&LeReadPeerResolvableAddr::new(0, address));
+            let (bytes, len) = encode(&LeReadPeerResolvableAddr::new(AddressType::Public, address));
             assert_eq!(bytes[..len], [0x2B, 0x20, 7, 0, 1, 2, 3, 4, 5, 6]);
             let returned =
                 <LeReadPeerResolvableAddr as SyncCmd>::Return::from_hci_bytes_complete(&[9; 6])
@@ -405,12 +447,22 @@ mod tests {
         #[cfg(any(feature = "stack-full-extended", feature = "stack-hci-layer-extended"))]
         #[test]
         fn extended_phy_commands_write_every_phy() {
+            use crate::aci::flags::{InitiatingPhys, ScanningPhys};
+            use crate::aci::values::{
+                HciOwnAddressType, InitiatorFilterPolicy, ScanningFilterPolicy,
+            };
+
             let phy = ScanParamPhy {
                 scan_type: 1,
                 scan_interval: 0x10,
                 scan_window: 0x08,
             };
-            let (bytes, len) = encode(&LeSetExtScanParams::new(0, 0, 0x01, [phy; 2]));
+            let (bytes, len) = encode(&LeSetExtScanParams::new(
+                HciOwnAddressType::Public,
+                ScanningFilterPolicy::BasicUnfiltered,
+                ScanningPhys::LE_1M,
+                [phy; 2],
+            ));
             assert_eq!(bytes[2], 13);
             assert_eq!(bytes[6..len], [1, 0x10, 0, 0x08, 0, 1, 0x10, 0, 0x08, 0]);
 
@@ -424,7 +476,14 @@ mod tests {
                 min_ce_length: 0,
                 max_ce_length: 0,
             };
-            let command = LeExtCreateConn::new(0, 0, 0, BdAddr::new([0; 6]), 0x01, [phy; 3]);
+            let command = LeExtCreateConn::new(
+                InitiatorFilterPolicy::PeerAddress,
+                HciOwnAddressType::Public,
+                AddressType::Public,
+                BdAddr::new([0; 6]),
+                InitiatingPhys::LE_1M,
+                [phy; 3],
+            );
             let (bytes, len) = encode(&command);
             assert_eq!(bytes[..3], [0x43, 0x20, 58]);
             assert_eq!(len, 61);

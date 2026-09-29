@@ -16757,3 +16757,138 @@ releases = "1.15.0..=1.24.0"
 
 [events.definitions.payload]
 unresolved = "shci.h documents no payload structure for SHCI_SUB_EVT_CODE_CONCURRENT_802154_EVT"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_SUCCESS"
+value = "0x00"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_DEV_IN_BLACKLIST"
+value = "0x59"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_CSRK_NOT_FOUND"
+value = "0x5A"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_IRK_NOT_FOUND"
+value = "0x5B"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_DEV_NOT_FOUND"
+value = "0x5C"
+
+[[statuses]]
+releases = "1.15.0..=1.17.0"
+name = "BLE_STATUS_SEC_DB_FULL"
+value = "0x5D"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_DEV_NOT_BONDED"
+value = "0x5E"
+
+[[statuses]]
+releases = "1.15.0..=1.17.0"
+name = "BLE_STATUS_INSUFFICIENT_ENC_KEYSIZE"
+value = "0x5F"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_INVALID_HANDLE"
+value = "0x60"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_OUT_OF_HANDLE"
+value = "0x61"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_INVALID_OPERATION"
+value = "0x62"
+
+[[statuses]]
+releases = "1.15.0..=1.17.0"
+name = "BLE_STATUS_CHARAC_ALREADY_EXISTS"
+value = "0x63"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_INSUFFICIENT_RESOURCES"
+value = "0x64"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_SEC_PERMISSION_ERROR"
+value = "0x65"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_ADDRESS_NOT_RESOLVED"
+value = "0x70"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_NO_VALID_SLOT"
+value = "0x82"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_SCAN_WINDOW_SHORT"
+value = "0x83"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_NEW_INTERVAL_FAILED"
+value = "0x84"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_INTERVAL_TOO_LARGE"
+value = "0x85"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_LENGTH_FAILED"
+value = "0x86"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_FAILED"
+value = "0x91"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_INVALID_PARAMS"
+value = "0x92"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_BUSY"
+value = "0x93"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_PENDING"
+value = "0x95"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_ERROR"
+value = "0x97"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_OUT_OF_MEMORY"
+value = "0x98"
+
+[[statuses]]
+releases = "1.15.0..=1.24.0"
+name = "BLE_STATUS_TIMEOUT"
+value = "0xFF"

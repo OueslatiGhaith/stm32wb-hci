@@ -88,12 +88,12 @@ pub fn init(
         (_mac_cmd_tx, _mac_evt_rx),
         (mm_release_tx, _traces_rx),
         (_ble_lld_tx, _ble_lld_rx),
-        (_, _),
+        (hci_acl_tx, _),
     ] = Ipcc::new(ipcc, irqs, config).split();
 
     (
         Sys::new(sys_cmd_tx, sys_evt_rx),
-        Ble::new(ble_cmd_tx, ble_evt_rx),
+        Ble::new(ble_cmd_tx, ble_evt_rx, AclChannel::new(hci_acl_tx)),
         MemoryManager::new(mm_release_tx),
     )
 }
@@ -169,10 +169,11 @@ impl<'a> Sys<'a> {
 pub struct Ble<'a> {
     cmd: IpccTxChannel<'a>,
     evt: IpccRxChannel<'a>,
+    acl: AclChannel<'a>,
 }
 
 impl<'a> Ble<'a> {
-    fn new(cmd: IpccTxChannel<'a>, evt: IpccRxChannel<'a>) -> Self {
+    fn new(cmd: IpccTxChannel<'a>, evt: IpccRxChannel<'a>, acl: AclChannel<'a>) -> Self {
         unsafe {
             LinkedListNode::init_head(EVT_QUEUE.as_mut_ptr());
             TL_BLE_TABLE.as_mut_ptr().write_volatile(BleTable {
@@ -183,7 +184,39 @@ impl<'a> Ble<'a> {
             });
         }
 
-        Self { cmd, evt }
+        Self { cmd, evt, acl }
+    }
+}
+
+/// The channel sending ACL data to CPU2, IPCC channel 6.
+///
+/// embassy-stm32 0.6's IPCC interrupt handlers serve channels 1 to 5 only:
+/// waiting for channel 6 through `IpccTxChannel` unmasks an interrupt no
+/// handler masks again, which then fires forever. This drives the channel's
+/// registers directly, leaving its interrupt masked, and polls for CPU2 to
+/// free it.
+struct AclChannel<'a> {
+    _channel: IpccTxChannel<'a>,
+}
+
+impl<'a> AclChannel<'a> {
+    /// Channel 6.
+    const INDEX: usize = 5;
+
+    fn new(channel: IpccTxChannel<'a>) -> Self {
+        Self { _channel: channel }
+    }
+
+    /// Wait for CPU2 to read the previous packet, let `write` fill the ACL
+    /// data buffer, then hand it to CPU2.
+    async fn send(&mut self, write: impl FnOnce()) {
+        let cpu1 = embassy_stm32::pac::IPCC.cpu(0);
+        while cpu1.sr().read().chf(Self::INDEX) {
+            embassy_futures::yield_now().await;
+        }
+        write();
+        compiler_fence(Ordering::Release);
+        cpu1.scr().write(|w| w.set_chs(Self::INDEX, true));
     }
 }
 
@@ -254,6 +287,7 @@ pub fn make_cc_with_cs<'a>(
 
 pub struct ControllerAdapter<'d> {
     hw_ipcc_ble_cmd_channel: Mutex<NoopRawMutex, IpccTxChannel<'d>>,
+    hw_ipcc_hci_acl_data_channel: Mutex<NoopRawMutex, AclChannel<'d>>,
     ipcc_ble_event_channel: Mutex<NoopRawMutex, IpccRxChannel<'d>>,
     slot: blocking_mutex::NoopMutex<RefCell<Option<bt_hci::cmd::Opcode>>>,
     signal: Signal<NoopRawMutex, Option<EvtBox<Ble<'d>>>>,
@@ -282,6 +316,7 @@ impl<'d> ControllerAdapter<'d> {
     pub fn new(controller: Ble<'d>) -> Self {
         Self {
             hw_ipcc_ble_cmd_channel: Mutex::new(controller.cmd),
+            hw_ipcc_hci_acl_data_channel: Mutex::new(controller.acl),
             ipcc_ble_event_channel: Mutex::new(controller.evt),
             slot: blocking_mutex::NoopMutex::const_new(NoopRawMutex::new(), RefCell::new(None)),
             signal: Signal::new(),
@@ -410,23 +445,34 @@ impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
 
     async fn write_acl_data(
         &self,
-        _packet: &bt_hci::data::AclPacket<'_>,
+        packet: &bt_hci::data::AclPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        let mut ret = Ok(());
+        self.hw_ipcc_hci_acl_data_channel
+            .lock()
+            .await
+            .send(|| unsafe {
+                ret = WithIndicator::new(packet).write_hci(AclDataPacket::writer(
+                    HCI_ACL_DATA_BUFFER.as_mut_ptr().cast(),
+                ));
+            })
+            .await;
+        ret
     }
 
+    // The BLE stack carries neither isochronous nor synchronous data.
     async fn write_iso_data(
         &self,
         _packet: &bt_hci::data::IsoPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        Err(embedded_io::ErrorKind::Unsupported)
     }
 
     async fn write_sync_data(
         &self,
         _packet: &bt_hci::data::SyncPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        Err(embedded_io::ErrorKind::Unsupported)
     }
 
     async fn read<'a>(
@@ -873,6 +919,17 @@ impl embedded_io::Write for VolatileWriter {
 struct AclDataPacket {
     header: LinkedListNode,
     acl_data_serial: AclDataSerial,
+}
+
+impl AclDataPacket {
+    /// Write the indicator, header and data of an ACL packet after the
+    /// buffer's list header, as far as the 251 data bytes the buffer holds.
+    unsafe fn writer(buf: *mut AclDataPacket) -> VolatileWriter {
+        VolatileWriter {
+            start: (buf as *mut u8).add(size_of::<LinkedListNode>()),
+            len: 5 + 251,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

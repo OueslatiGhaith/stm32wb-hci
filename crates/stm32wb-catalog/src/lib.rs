@@ -67,6 +67,21 @@ pub struct Catalog {
     pub commands: Vec<Command>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// The status codes ST's BLE stack returns besides the Bluetooth Core's,
+    /// by release.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statuses: Vec<StatusCode>,
+}
+
+/// A status code the BLE stack defines, `BLE_STATUS_*` in `ble_defs.h`, over
+/// the releases defining it with this value.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusCode {
+    pub releases: ReleaseRange,
+    pub name: String,
+    #[serde(with = "hex::byte")]
+    pub value: u8,
 }
 
 /// Where one release's facts were read from.
@@ -357,6 +372,17 @@ impl Catalog {
             .find(|event| event.scope == scope && event.code == code)
     }
 
+    /// The status codes `release` defines, by value.
+    pub fn statuses_at(&self, release: Version) -> Vec<&StatusCode> {
+        let mut statuses = self
+            .statuses
+            .iter()
+            .filter(|status| status.releases.contains(release))
+            .collect::<Vec<_>>();
+        statuses.sort_by_key(|status| status.value);
+        statuses
+    }
+
     /// Find a command by any name it has carried.
     pub fn command_named(&self, name: &str) -> Option<&Command> {
         self.commands
@@ -526,6 +552,26 @@ impl Catalog {
                     .find(|definition| definition.releases.contains(release))
                     .map(|definition| &definition.payload)
             })?;
+        }
+
+        for status in &self.statuses {
+            check_range(status.releases, &|| format!("status {}", status.name))?;
+        }
+        for release in &versions {
+            let statuses = self.statuses_at(*release);
+            let mut names = BTreeSet::new();
+            for (index, status) in statuses.iter().enumerate() {
+                if !names.insert(&status.name)
+                    || statuses[index + 1..]
+                        .iter()
+                        .any(|other| other.value == status.value)
+                {
+                    return Err(Error::invalid(format!(
+                        "{release}: status {} (0x{:02X}) is defined twice",
+                        status.name, status.value
+                    )));
+                }
+            }
         }
         Ok(())
     }

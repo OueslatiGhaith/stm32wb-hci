@@ -15,15 +15,22 @@ use stm32wb_hci_macros::{vendor_command, vendor_event};
 )]
 use crate::aci::flags::HalEventMask;
 use crate::aci::flags::RadioActivityMask;
-use crate::aci::ranges::{PaLevel, RfChannel, Rssi};
+use crate::aci::ranges::{PaLevel, RadioSlot, RfChannel, Rssi};
+#[allow(
+    unused_imports,
+    reason = "only some releases and profiles encrypt advertising data"
+)]
+use crate::aci::values::EadMode;
 #[allow(unused_imports, reason = "the BO variant cannot read the link status")]
 use crate::aci::values::LinkState;
+#[allow(unused_imports, reason = "some profiles do not report scan requests")]
+use crate::aci::values::PeerAddressType;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no warning event"
 )]
 use crate::aci::values::WarningType;
-use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
+use crate::aci::values::{ConfigDataOffset, RadioState, ReadableConfigDataOffset};
 use crate::wire::{BoundedBytes, OrUnknown};
 
 vendor_command! {
@@ -150,7 +157,7 @@ vendor_command! {
     /// Encrypt (`mode` 0) or decrypt (`mode` 1) data with the Encrypted
     /// Advertising Data scheme.
     aci_hal_ead_encrypt_decrypt => HalEadEncryptDecrypt {
-        mode: u8,
+        mode: EadMode,
         key: [u8; 16],
         iv: [u8; 8],
         in_data: &'a [u8],
@@ -204,11 +211,11 @@ vendor_event! {
     /// [`HalSetRadioActivityMask`]. `next_state_sys_time` is in units of
     /// 625/256 µs. The code is 0x1804 from 1.24.0.
     aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
-        last_state: u8,
-        next_state: u8,
+        last_state: OrUnknown<RadioState>,
+        next_state: OrUnknown<RadioState>,
         next_state_sys_time: u32,
-        last_state_slot: u8,
-        next_state_slot: u8,
+        last_state_slot: OrUnknown<RadioSlot>,
+        next_state_slot: OrUnknown<RadioSlot>,
     }
 }
 
@@ -217,7 +224,7 @@ vendor_event! {
     /// 0x1805 from 1.24.0.
     aci_hal_scan_req_report_event => HalScanReqReportEvent {
         rssi: OrUnknown<Rssi>,
-        peer_address_type: u8,
+        peer_address_type: OrUnknown<PeerAddressType>,
         peer_address: BdAddr,
     }
 }
@@ -298,13 +305,17 @@ mod tests {
     #[cfg(all(feature = "fw_1_24_0", feature = "stack-full-extended"))]
     #[test]
     fn two_byte_counts_encode_and_decode() {
-        let command = HalEadEncryptDecrypt::try_new(0, [0xAA; 16], [0xBB; 8], &[1, 2, 3]).unwrap();
+        let command =
+            HalEadEncryptDecrypt::try_new(EadMode::Encrypt, [0xAA; 16], [0xBB; 8], &[1, 2, 3])
+                .unwrap();
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..4], [0x2F, 0xFC, 30, 0]);
         assert_eq!(bytes[4..20], [0xAA; 16]);
         assert_eq!(bytes[20..28], [0xBB; 8]);
         assert_eq!(bytes[28..len], [3, 0, 1, 2, 3]);
-        assert!(HalEadEncryptDecrypt::try_new(0, [0; 16], [0; 8], &[0; 229]).is_err());
+        assert!(
+            HalEadEncryptDecrypt::try_new(EadMode::Encrypt, [0; 16], [0; 8], &[0; 229]).is_err()
+        );
 
         let data = decode::<HalEadEncryptDecrypt>(&[2, 0, 0xCC, 0xDD]);
         assert_eq!(data.out_data.as_slice(), [0xCC, 0xDD]);
@@ -491,18 +502,18 @@ mod tests {
         };
         assert_eq!(HalEndOfRadioActivityEvent::CODE, code);
         let [low, high] = code.to_le_bytes();
-        let params = [low, high, 1, 2, 0x10, 0x20, 0x30, 0x40, 3, 4];
+        let params = [low, high, 1, 4, 0x10, 0x20, 0x30, 0x40, 3, 0xFF];
         let event = HalEndOfRadioActivityEvent::from_vendor_params(&params)
             .unwrap()
             .unwrap();
         assert_eq!(
             event,
             HalEndOfRadioActivityEvent {
-                last_state: 1,
-                next_state: 2,
+                last_state: OrUnknown::Known(RadioState::Advertising),
+                next_state: OrUnknown::Unknown(4),
                 next_state_sys_time: 0x4030_2010,
-                last_state_slot: 3,
-                next_state_slot: 4,
+                last_state_slot: OrUnknown::Known(RadioSlot::new(3).unwrap()),
+                next_state_slot: OrUnknown::Known(RadioSlot::IDLE),
             }
         );
         assert!(HalEndOfRadioActivityEvent::from_vendor_params(&[low ^ 1, high, 0]).is_none());

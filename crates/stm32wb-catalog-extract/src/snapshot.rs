@@ -14,7 +14,7 @@ use crate::commands::{self, ExtractedCommand};
 use crate::cube::{BLE_CORE_DIR, CubeTag, SHCI_DIR};
 use crate::docs::{self, Key};
 use crate::events::{self, ExtractedEvent};
-use crate::shci;
+use crate::{shci, statuses};
 
 /// HCI Command Complete and Command Status.
 const TRANSPORT_EVENTS: [(EventScope, u16); 2] =
@@ -246,6 +246,7 @@ pub fn extract(
         binaries: docs::binaries(&tag)?,
         commands,
         events,
+        statuses: statuses::extract(&tag)?,
     };
     if snapshot.binaries.is_empty() {
         return Err(format!("{}: no BLE wireless binaries were found", tag.tag));

@@ -15,13 +15,20 @@ use crate::aci::flags::{
     AccessPermissions, CharProperties, GattDescEventMask, GattEventMask, SecurityPermissions,
     UpdateType,
 };
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GATT events")]
+use crate::aci::ranges::EattMtu;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
 )]
-use crate::aci::ranges::EncKeySize;
+use crate::aci::ranges::{AttAppError, EncKeySize};
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GATT events")]
-use crate::aci::values::EattBearerState;
+use crate::aci::values::{AttErrorCode, EattBearerState};
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no GATT commands"
+)]
+use crate::aci::values::{PermitStatus, ServiceType, SignedWriteMode, WriteMode};
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no GATT commands"
@@ -39,7 +46,7 @@ vendor_command! {
     /// attributes for its includes, characteristics, and descriptors.
     aci_gatt_add_service => GattAddService {
         service_uuid: Uuid,
-        service_type: u8,
+        service_type: ServiceType,
         max_attribute_records: u8,
     } -> GattService {
         service_handle: u16,
@@ -340,7 +347,7 @@ vendor_command! {
     aci_gatt_permit_write => GattPermitWrite {
         connection_handle: AttBearer,
         attr_handle: u16,
-        write_status: u8,
+        write_status: PermitStatus,
         error_code: u8,
         attribute_val: &'a [u8],
     }
@@ -353,9 +360,9 @@ vendor_command! {
     aci_gatt_permit_read => GattPermitRead {
         connection_handle: AttBearer,
         #[wire(since = "1.24.0")]
-        read_status: u8,
+        read_status: PermitStatus,
         #[wire(since = "1.24.0")]
-        error_code: u8,
+        error_code: AttAppError,
         #[wire(since = "1.24.0")]
         attr_handle: u16,
     }
@@ -417,7 +424,7 @@ vendor_command! {
     /// Reject a read the server asked the host to approve.
     aci_gatt_deny_read => GattDenyRead {
         connection_handle: AttBearer,
-        error_code: u8,
+        error_code: AttAppError,
     }
 }
 
@@ -458,7 +465,7 @@ vendor_command! {
     aci_gatt_write_without_resp_ext => GattWriteWithoutRespExt {
         connection_handle: ConnHandle,
         attr_handle: u16,
-        signed_mode: u8,
+        signed_mode: SignedWriteMode,
         data_length: u16,
         data_pointer: u32,
     }
@@ -471,7 +478,7 @@ vendor_command! {
     aci_gatt_write_with_resp_ext => GattWriteWithRespExt {
         connection_handle: ConnHandle,
         attr_handle: u16,
-        write_mode: u8,
+        write_mode: WriteMode,
         val_offset: u16,
         data_length: u16,
         data_pointer: u32,
@@ -535,7 +542,7 @@ vendor_event! {
         connection_handle: AttBearer,
         req_opcode: u8,
         attribute_handle: u16,
-        error_code: u8,
+        error_code: OrUnknown<AttErrorCode>,
     }
 }
 
@@ -624,7 +631,7 @@ vendor_event! {
         #[wire(before = "1.23.0")]
         status: u8,
         #[wire(since = "1.23.0")]
-        mtu: u16,
+        mtu: OrUnknown<EattMtu>,
     }
 }
 
@@ -702,11 +709,19 @@ mod tests {
     #[test]
     fn union_selectors_are_written_from_the_alternative() {
         assert_eq!(GattAddService::OPCODE.to_raw(), 0xFD02);
-        let (bytes, len) = encode(&GattAddService::new(Uuid::from(0x180Du16), 1, 4));
+        let (bytes, len) = encode(&GattAddService::new(
+            Uuid::from(0x180Du16),
+            ServiceType::Primary,
+            4,
+        ));
         assert_eq!(bytes[..len], [0x02, 0xFD, 5, 1, 0x0D, 0x18, 1, 4]);
 
         let uuid = core::array::from_fn(|index| index as u8);
-        let (bytes, len) = encode(&GattAddService::new(Uuid::Uuid128(uuid), 2, 8));
+        let (bytes, len) = encode(&GattAddService::new(
+            Uuid::Uuid128(uuid),
+            ServiceType::Secondary,
+            8,
+        ));
         assert_eq!(bytes[..3], [0x02, 0xFD, 19]);
         assert_eq!(bytes[3], 2);
         assert_eq!(bytes[4..20], uuid);
@@ -792,11 +807,11 @@ mod tests {
     fn read_permissions_answer_for_an_attribute_from_1_24_0() {
         let (bytes, len) = encode(&GattPermitRead::new(
             ConnHandle::new(1).into(),
-            1,
-            0x0E,
+            PermitStatus::Denied,
+            AttAppError::INSUFFICIENT_AUTHORIZATION,
             0x0020,
         ));
-        assert_eq!(bytes[..len], [0x27, 0xFD, 6, 1, 0, 1, 0x0E, 0x20, 0]);
+        assert_eq!(bytes[..len], [0x27, 0xFD, 6, 1, 0, 1, 0x08, 0x20, 0]);
     }
 
     #[cfg(not(feature = "fw_1_24_0"))]
@@ -808,7 +823,7 @@ mod tests {
 
     #[tokio::test]
     async fn asynchronous_encoding_matches_synchronous() {
-        let command = GattAddService::new(Uuid::Uuid128([7; 16]), 1, 3);
+        let command = GattAddService::new(Uuid::Uuid128([7; 16]), ServiceType::Primary, 3);
         let mut buffer = [0; 32];
         let mut writer = &mut buffer[..];
         command.write_hci_async(&mut writer).await.unwrap();
@@ -850,7 +865,11 @@ mod tests {
         assert_eq!(bearer.connection_handle.raw(), 0x0801);
         assert_eq!(
             (bearer.channel_index, bearer.eab_state, bearer.mtu),
-            (1, OrUnknown::Known(EattBearerState::Created), 64)
+            (
+                1,
+                OrUnknown::Known(EattBearerState::Created),
+                OrUnknown::Known(EattMtu::MIN)
+            )
         );
     }
 

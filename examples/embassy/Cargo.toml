@@ -18,6 +18,7 @@ embassy-stm32 = { version = "0.6.0", features = [
     "memory-x",
     "exti",
     "executor-thread",
+    "unstable-pac",
 ] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }

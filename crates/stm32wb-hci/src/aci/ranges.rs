@@ -22,6 +22,83 @@ const MAX_COC_MPS: u16 = 0xFFFD;
 #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0")))]
 const MAX_COC_MPS: u16 = 0x00F8;
 
+/// The highest result of a credit based connection: 1.23.0 documents
+/// three more.
+#[cfg(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "fw_1_22_0",
+    feature = "fw_1_22_1"
+))]
+const MAX_COC_CONNECT_RESULT: u16 = 0x000C;
+#[cfg(not(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "fw_1_22_0",
+    feature = "fw_1_22_1"
+)))]
+const MAX_COC_CONNECT_RESULT: u16 = 0x000F;
+
+/// The highest result of a credit based reconfiguration: 1.23.0 documents
+/// only those the specification defines.
+#[cfg(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "fw_1_22_0",
+    feature = "fw_1_22_1"
+))]
+const MAX_COC_RECONF_RESULT: u16 = 0x000C;
+#[cfg(not(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "fw_1_22_0",
+    feature = "fw_1_22_1"
+)))]
+const MAX_COC_RECONF_RESULT: u16 = 0x0004;
+
+/// The longest direct test packet payload: the BO variant sends at most 37
+/// bytes.
+#[cfg(feature = "stack-hci-adv-scan")]
+const MAX_TEST_DATA_LENGTH: u8 = 0x25;
+#[cfg(not(feature = "stack-hci-adv-scan"))]
+const MAX_TEST_DATA_LENGTH: u8 = 0xFF;
+
 wire_range! {
     /// How many connection events the peripheral may skip, from 0 to 499.
     pub struct ConnLatency: u16 {
@@ -126,6 +203,89 @@ wire_range! {
     /// How long a resolvable private address lasts, from 1 second to 1 hour.
     pub struct RpaTimeout: u16 {
         values = 0x0001..=0x0E10;
+    }
+}
+
+wire_range! {
+    /// The handle of an advertising set, from 0 to 0xEF, or none.
+    pub struct OptionalAdvHandle: u8 {
+        values = 0x00..=0xEF;
+        /// No advertising set.
+        const NONE = 0xFF;
+    }
+}
+
+wire_range! {
+    /// A subevent of periodic advertising with responses, from 0 to 0x7F, or
+    /// none.
+    pub struct Subevent: u8 {
+        values = 0x00..=0x7F;
+        /// No subevent.
+        const NONE = 0xFF;
+    }
+}
+
+wire_range! {
+    /// The error a host rejects a read or write with: an application error,
+    /// from 0x80 to 0x9F, or insufficient authorization.
+    pub struct AttAppError: u8 {
+        values = 0x80..=0x9F;
+        /// The peer lacks authorization.
+        const INSUFFICIENT_AUTHORIZATION = 0x08;
+    }
+}
+
+wire_range! {
+    /// The MTU of an enhanced ATT bearer, from 64 to 246 bytes.
+    pub struct EattMtu: u16 {
+        values = 0x0040..=0x00F6;
+    }
+}
+
+wire_range! {
+    /// The radio slot of an activity, from 0 to 7, or idle.
+    pub struct RadioSlot: u8 {
+        values = 0x00..=0x07;
+        /// No slot: the radio is idle.
+        const IDLE = 0xFF;
+    }
+}
+
+wire_range! {
+    /// How many credit based channels to open, from 0 to 5.
+    pub struct CocChannelCount: u8 {
+        values = 0..=5;
+    }
+}
+
+wire_range! {
+    /// The most credit based channels to accept, from 1 to 5.
+    pub struct CocMaxChannelCount: u8 {
+        values = 1..=5;
+    }
+}
+
+wire_range! {
+    /// The result of a credit based connection: 0 on success, up to 0x0C
+    /// before 1.23.0 and 0x0F from 1.23.0.
+    pub struct CocConnectResult: u16 {
+        values = 0x0000..=MAX_COC_CONNECT_RESULT;
+    }
+}
+
+wire_range! {
+    /// The result of a credit based reconfiguration: 0 on success, up to
+    /// 0x0C before 1.23.0 and 4 from 1.23.0.
+    pub struct CocReconfResult: u16 {
+        values = 0x0000..=MAX_COC_RECONF_RESULT;
+    }
+}
+
+wire_range! {
+    /// The payload length of direct test packets, up to 255 bytes, or 37 on
+    /// the BO variant.
+    pub struct TestDataLength: u8 {
+        values = 0x00..=MAX_TEST_DATA_LENGTH;
     }
 }
 

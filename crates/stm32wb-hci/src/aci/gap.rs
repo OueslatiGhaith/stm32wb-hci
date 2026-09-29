@@ -14,12 +14,18 @@ use crate::aci::flags::{
     AdvChannelMap, AdvEventProperties, AdvMode, GapEventMask, InitiatingPhys, Role, ScanningPhys,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
-use crate::aci::ranges::{AdvHandle, AdvSid, ConnLatency, PaLevel, Passkey, TxPower};
+use crate::aci::ranges::{
+    AdvHandle, AdvSid, ConnLatency, OptionalAdvHandle, PaLevel, Passkey, Subevent, TxPower,
+};
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
-    AddressType, AdvertisingType, ConnectableOwnAddressType, GapProcedure, IoCapability,
-    NonConnectableAdvertisingType, OwnAddressType, PairingFailureReason, PairingStatus, Privacy,
-    ScanType, SecurityLevel, SecurityMode,
+    AddDevicesMode, AddressType, AdvDataOperation, AdvFilterPolicy, AdvertisingType,
+    AuthorizationResponse, ConnectableOwnAddressType, ConnectionProcedure, DirectedAdvertisingType,
+    DisconnectReason, FilterDuplicates, FragmentPreference, GapProcedure, InitiatorFilterPolicy,
+    IoCapability, NonConnectableAdvertisingType, OobDataType, OobDevice, OwnAddressType,
+    PairingFailureReason, PairingStatus, PasskeyInputType, Privacy, ScSupport, ScanProcedure,
+    ScanRespDataOperation, ScanType, ScanningFilterPolicy, SecondaryAdvPhy, SecurityLevel,
+    SecurityMode, UndirectedAdvFilterPolicy, UseFixedPin,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::wire::{BoundedArray, OrUnknown};
@@ -65,7 +71,7 @@ vendor_command! {
     /// Advertise to a single peer with directed connectable advertising.
     aci_gap_set_direct_connectable => GapSetDirectConnectable {
         own_address_type: ConnectableOwnAddressType,
-        directed_advertising_type: u8,
+        directed_advertising_type: DirectedAdvertisingType,
         direct_address_type: AddressType,
         direct_address: BdAddr,
         advertising_interval_min: DirectAdvInterval,
@@ -86,11 +92,11 @@ vendor_command! {
     aci_gap_set_authentication_requirement => GapSetAuthenticationRequirement {
         bonding_mode: bool,
         mitm_mode: bool,
-        sc_support: u8,
+        sc_support: ScSupport,
         key_press_notification_support: bool,
         min_encryption_key_size: u8,
         max_encryption_key_size: u8,
-        use_fixed_pin: u8,
+        use_fixed_pin: UseFixedPin,
         fixed_pin: Passkey,
         identity_address_type: AddressType,
     }
@@ -116,7 +122,7 @@ vendor_command! {
     /// Answer an authorization request: 1 authorizes, 2 rejects.
     aci_gap_authorization_resp => GapAuthorizationResp {
         connection_handle: ConnHandle,
-        authorize: u8,
+        authorize: AuthorizationResponse,
     }
 }
 
@@ -148,7 +154,7 @@ vendor_command! {
         advertising_interval_min: AdvInterval,
         advertising_interval_max: AdvInterval,
         own_address_type: ConnectableOwnAddressType,
-        adv_filter_policy: u8,
+        adv_filter_policy: UndirectedAdvFilterPolicy,
     }
 }
 
@@ -202,7 +208,7 @@ vendor_command! {
     /// Terminate a connection.
     aci_gap_terminate => GapTerminate {
         connection_handle: ConnHandle,
-        reason: u8,
+        reason: DisconnectReason,
     }
 }
 
@@ -280,7 +286,7 @@ vendor_command! {
         le_scan_interval: ScanInterval,
         le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
-        scanning_filter_policy: u8,
+        scanning_filter_policy: ScanningFilterPolicy,
         filter_duplicates: bool,
     }
 }
@@ -292,7 +298,7 @@ vendor_command! {
         le_scan_interval: ScanInterval,
         le_scan_window: ScanWindow,
         own_address_type: OwnAddressType,
-        scanning_filter_policy: u8,
+        scanning_filter_policy: ScanningFilterPolicy,
         filter_duplicates: bool,
         #[wire(before = "1.17.0")]
         whitelist_entry: &'a [WhitelistEntry],
@@ -379,7 +385,7 @@ vendor_command! {
         le_scan_type: ScanType,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
-        scanning_filter_policy: u8,
+        scanning_filter_policy: ScanningFilterPolicy,
     }
 }
 
@@ -425,14 +431,14 @@ vendor_command! {
     /// Report a keypress while the user enters the passkey.
     aci_gap_passkey_input => GapPasskeyInput {
         connection_handle: ConnHandle,
-        input_type: u8,
+        input_type: PasskeyInputType,
     }
 }
 
 vendor_command! {
     /// Read the local out-of-band pairing data of the given type.
     aci_gap_get_oob_data => GapGetOobData {
-        oob_data_type: u8,
+        oob_data_type: OobDataType,
     } -> GapOobData {
         address_type: OrUnknown<AddressType>,
         address: BdAddr,
@@ -445,10 +451,10 @@ vendor_command! {
 vendor_command! {
     /// Set the local or remote out-of-band pairing data of the given type.
     aci_gap_set_oob_data => GapSetOobData {
-        device_type: u8,
+        device_type: OobDevice,
         address_type: AddressType,
         address: BdAddr,
-        oob_data_type: u8,
+        oob_data_type: OobDataType,
         oob_data_len: u8,
         oob_data: [u8; 16],
     }
@@ -506,7 +512,7 @@ vendor_command! {
         list_entry: &'a [u8],
         #[wire(since = "1.17.0")]
         list_entry: &'a [ListEntry],
-        mode: u8,
+        mode: AddDevicesMode,
     }
 }
 
@@ -555,10 +561,10 @@ vendor_command! {
         own_address_type: OwnAddressType,
         peer_address_type: AddressType,
         peer_address: BdAddr,
-        adv_filter_policy: u8,
+        adv_filter_policy: AdvFilterPolicy,
         adv_tx_power: TxPower,
         secondary_adv_max_skip: u8,
-        secondary_adv_phy: u8,
+        secondary_adv_phy: SecondaryAdvPhy,
         adv_sid: AdvSid,
         scan_req_notification_enable: bool,
     }
@@ -585,8 +591,8 @@ vendor_command! {
     /// Set the advertising data of an advertising set, or a fragment of it.
     aci_gap_adv_set_adv_data => GapAdvSetAdvData {
         advertising_handle: AdvHandle,
-        operation: u8,
-        fragment_preference: u8,
+        operation: AdvDataOperation,
+        fragment_preference: FragmentPreference,
         advertising_data: &'a [u8],
     }
 }
@@ -595,8 +601,8 @@ vendor_command! {
     /// Set the scan response data of an advertising set, or a fragment of it.
     aci_gap_adv_set_scan_resp_data => GapAdvSetScanRespData {
         advertising_handle: AdvHandle,
-        operation: u8,
-        fragment_preference: u8,
+        operation: ScanRespDataOperation,
+        fragment_preference: FragmentPreference,
         scan_response_data: &'a [u8],
     }
 }
@@ -635,12 +641,12 @@ vendor_command! {
     /// the LE 1M and LE Coded PHYs the `scanning_phys` bits select.
     aci_gap_ext_start_scan => GapExtStartScan {
         scan_mode: u8,
-        procedure: u8,
+        procedure: ScanProcedure,
         own_address_type: OwnAddressType,
-        filter_duplicates: u8,
+        filter_duplicates: FilterDuplicates,
         duration: ScanDuration,
         period: ScanPeriod,
-        scanning_filter_policy: u8,
+        scanning_filter_policy: ScanningFilterPolicy,
         scanning_phys: ScanningPhys,
         scan_param_phy: [ScanParamPhy; 2],
     }
@@ -665,13 +671,13 @@ vendor_command! {
     /// LE 1M, LE 2M, and LE Coded PHYs the `initiating_phys` bits select.
     aci_gap_ext_create_connection => GapExtCreateConnection {
         initiating_mode: u8,
-        procedure: u8,
+        procedure: ConnectionProcedure,
         own_address_type: ConnectableOwnAddressType,
         peer_address_type: AddressType,
         peer_address: BdAddr,
-        advertising_handle: u8,
-        subevent: u8,
-        initiator_filter_policy: u8,
+        advertising_handle: OptionalAdvHandle,
+        subevent: Subevent,
+        initiator_filter_policy: InitiatorFilterPolicy,
         initiating_phys: InitiatingPhys,
         init_param_phy: [InitParamPhy; 3],
     }
@@ -854,12 +860,12 @@ mod tests {
         };
         let command = GapExtStartScan::new(
             0,
-            1,
+            ScanProcedure::LimitedDiscovery,
             OwnAddressType::Public,
-            0,
+            FilterDuplicates::Disabled,
             ScanDuration::CONTINUOUS,
             ScanPeriod::CONTINUOUS,
-            0,
+            ScanningFilterPolicy::BasicUnfiltered,
             ScanningPhys::LE_1M,
             [phy(1, 0x10, 0x20), phy(0, 0x30, 0x40)],
         );
@@ -916,17 +922,29 @@ mod tests {
             address_type: 1,
             address: BdAddr::new([1, 2, 3, 4, 5, 6]),
         };
-        let (bytes, len) = encode(&GapAddDevicesToList::try_new(&[entry], 2).unwrap());
+        let (bytes, len) = encode(
+            &GapAddDevicesToList::try_new(&[entry], AddDevicesMode::AppendFilterAcceptList)
+                .unwrap(),
+        );
         assert_eq!(bytes[..len], [0xAB, 0xFC, 9, 1, 1, 1, 2, 3, 4, 5, 6, 2]);
-        assert!(GapAddDevicesToList::try_new(&[entry; 37], 2).is_err());
+        assert!(
+            GapAddDevicesToList::try_new(&[entry; 37], AddDevicesMode::AppendFilterAcceptList)
+                .is_err()
+        );
     }
 
     #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0"))]
     #[test]
     fn device_lists_hold_bytes() {
-        let (bytes, len) = encode(&GapAddDevicesToList::try_new(&[1, 2, 3], 2).unwrap());
+        let (bytes, len) = encode(
+            &GapAddDevicesToList::try_new(&[1, 2, 3], AddDevicesMode::AppendFilterAcceptList)
+                .unwrap(),
+        );
         assert_eq!(bytes[..len], [0xAB, 0xFC, 5, 3, 1, 2, 3, 2]);
-        assert!(GapAddDevicesToList::try_new(&[0; 253], 2).is_err());
+        assert!(
+            GapAddDevicesToList::try_new(&[0; 253], AddDevicesMode::AppendFilterAcceptList)
+                .is_err()
+        );
     }
 
     #[cfg(not(any(
@@ -992,13 +1010,13 @@ mod tests {
         };
         let command = GapExtCreateConnection::new(
             0,
-            0,
+            ConnectionProcedure::DirectConnectionEstablishment,
             ConnectableOwnAddressType::Public,
             AddressType::Public,
             BdAddr::new([1, 2, 3, 4, 5, 6]),
-            0xFF,
-            0xFF,
-            0,
+            OptionalAdvHandle::NONE,
+            Subevent::NONE,
+            InitiatorFilterPolicy::PeerAddress,
             InitiatingPhys::LE_1M | InitiatingPhys::LE_2M,
             [phy(1), phy(2), phy(3)],
         );
@@ -1048,7 +1066,7 @@ mod tests {
             interval,
             window,
             OwnAddressType::Public,
-            0,
+            ScanningFilterPolicy::BasicUnfiltered,
             true,
             &peers,
         )
@@ -1071,7 +1089,7 @@ mod tests {
                 interval,
                 window,
                 OwnAddressType::Public,
-                0,
+                ScanningFilterPolicy::BasicUnfiltered,
                 true,
                 &too_many,
             )

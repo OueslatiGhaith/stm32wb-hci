@@ -344,6 +344,474 @@ wire_values! {
 }
 
 wire_values! {
+    /// Why the host terminates a connection.
+    pub enum DisconnectReason: u8 {
+        /// Authentication failure.
+        AuthenticationFailure = 0x05,
+        /// The user terminated the connection.
+        RemoteUserTerminated = 0x13,
+        /// The device is low on resources.
+        RemoteLowResources = 0x14,
+        /// The device is powering off.
+        RemotePowerOff = 0x15,
+        /// The peer lacks a feature the connection needs.
+        UnsupportedRemoteFeature = 0x1A,
+        /// The connection parameters are unacceptable.
+        UnacceptableConnectionParameters = 0x3B,
+    }
+}
+
+wire_values! {
+    /// Which lists to add devices to, and whether to clear them first.
+    pub enum AddDevicesMode: u8 {
+        /// Append to the resolving list.
+        AppendResolvingList = 0x00,
+        /// Clear and set the resolving list.
+        SetResolvingList = 0x01,
+        /// Append to the Filter Accept List.
+        AppendFilterAcceptList = 0x02,
+        /// Clear and set the Filter Accept List.
+        SetFilterAcceptList = 0x03,
+        /// Append to both lists.
+        AppendBoth = 0x04,
+        /// Clear and set both lists.
+        SetBoth = 0x05,
+    }
+}
+
+wire_values! {
+    /// Whether the controller may fragment advertising or scan response
+    /// data.
+    pub enum FragmentPreference: u8 {
+        /// The controller may fragment the data.
+        MayFragment = 0x00,
+        /// The controller should not fragment the data, or fragment it as
+        /// little as it can.
+        Minimize = 0x01,
+    }
+}
+
+wire_values! {
+    /// Which part of the advertising data of an advertising set a command
+    /// carries.
+    pub enum AdvDataOperation: u8 {
+        /// An intermediate fragment.
+        Intermediate = 0x00,
+        /// The first fragment.
+        First = 0x01,
+        /// The last fragment.
+        Last = 0x02,
+        /// The complete data.
+        Complete = 0x03,
+        /// Unchanged data, only updating the advertising DID.
+        Unchanged = 0x04,
+    }
+}
+
+wire_values! {
+    /// Which part of the scan response data of an advertising set a command
+    /// carries.
+    pub enum ScanRespDataOperation: u8 {
+        /// An intermediate fragment.
+        Intermediate = 0x00,
+        /// The first fragment.
+        First = 0x01,
+        /// The last fragment.
+        Last = 0x02,
+        /// The complete data.
+        Complete = 0x03,
+    }
+}
+
+wire_values! {
+    /// Whose scan and connection requests an advertising set processes.
+    pub enum AdvFilterPolicy: u8 {
+        /// Every device's.
+        All = 0x00,
+        /// Every device's connection requests, and the scan requests of the
+        /// devices in the Filter Accept List.
+        FilterScanRequests = 0x01,
+        /// Every device's scan requests, and the connection requests of the
+        /// devices in the Filter Accept List.
+        FilterConnectionRequests = 0x02,
+        /// Only those of the devices in the Filter Accept List.
+        FilterAcceptList = 0x03,
+    }
+}
+
+wire_values! {
+    /// Whose scan and connection requests undirected connectable advertising
+    /// processes.
+    pub enum UndirectedAdvFilterPolicy: u8 {
+        /// Every device's.
+        All = 0x00,
+        /// Only those of the devices in the Filter Accept List.
+        FilterAcceptList = 0x03,
+    }
+}
+
+wire_values! {
+    /// The PHY of the secondary advertising channel. The LE Coded PHY is
+    /// not supported on STM32WB.
+    pub enum SecondaryAdvPhy: u8 {
+        /// LE 1M.
+        Le1M = 0x01,
+        /// LE 2M.
+        Le2M = 0x02,
+    }
+}
+
+wire_values! {
+    /// The host's answer to an authorization request.
+    pub enum AuthorizationResponse: u8 {
+        /// Authorize the peer.
+        Authorize = 0x01,
+        /// Reject the peer.
+        Reject = 0x02,
+    }
+}
+
+wire_values! {
+    /// The connection procedure of an extended connection.
+    pub enum ConnectionProcedure: u8 {
+        /// Connect to any device of the Filter Accept List.
+        AutoConnectionEstablishment = 0x08,
+        /// Connect to one device.
+        DirectConnectionEstablishment = 0x40,
+    }
+}
+
+wire_values! {
+    /// How the initiator selects the advertiser to connect to.
+    pub enum InitiatorFilterPolicy: u8 {
+        /// The given peer address.
+        PeerAddress = 0x00,
+        /// Any device of the Filter Accept List, ignoring the peer address.
+        FilterAcceptList = 0x01,
+    }
+}
+
+wire_values! {
+    /// Whether an extended scan reports each advertiser once.
+    pub enum FilterDuplicates: u8 {
+        /// Report every advertisement.
+        Disabled = 0x00,
+        /// Report each advertiser once.
+        Enabled = 0x01,
+        /// Report each advertiser once per scan period, from 1.22.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "fw_1_18_0",
+            feature = "fw_1_19_0",
+            feature = "fw_1_19_1",
+            feature = "fw_1_20_0",
+            feature = "fw_1_21_0"
+        )))]
+        EnabledPerPeriod = 0x02,
+    }
+}
+
+wire_values! {
+    /// The GAP procedure of an extended scan.
+    pub enum ScanProcedure: u8 {
+        /// Limited discovery.
+        LimitedDiscovery = 0x01,
+        /// General discovery.
+        GeneralDiscovery = 0x02,
+        /// General connection establishment.
+        GeneralConnectionEstablishment = 0x10,
+        /// Selective connection establishment.
+        SelectiveConnectionEstablishment = 0x20,
+        /// Observation.
+        Observation = 0x80,
+    }
+}
+
+wire_values! {
+    /// Which advertisements a scan accepts.
+    pub enum ScanningFilterPolicy: u8 {
+        /// Every advertisement, except directed advertising to another
+        /// device.
+        BasicUnfiltered = 0x00,
+        /// Only advertisements from the Filter Accept List.
+        BasicFiltered = 0x01,
+        /// As [`BasicUnfiltered`](Self::BasicUnfiltered), also accepting
+        /// directed advertising to a resolvable private address.
+        ExtendedUnfiltered = 0x02,
+        /// As [`BasicFiltered`](Self::BasicFiltered), also accepting
+        /// directed advertising to a resolvable private address.
+        ExtendedFiltered = 0x03,
+    }
+}
+
+wire_values! {
+    /// The kind of out-of-band pairing data.
+    pub enum OobDataType: u8 {
+        /// The temporary key of legacy pairing.
+        TemporaryKey = 0x00,
+        /// The random value of Secure Connections.
+        Random = 0x01,
+        /// The confirm value of Secure Connections.
+        Confirm = 0x02,
+    }
+}
+
+wire_values! {
+    /// Whose out-of-band pairing data is set.
+    pub enum OobDevice: u8 {
+        /// The local device's; the address is not used.
+        Local = 0x00,
+        /// The peer's.
+        Remote = 0x01,
+    }
+}
+
+wire_values! {
+    /// A keypress notification during passkey entry.
+    pub enum PasskeyInputType: u8 {
+        /// Passkey entry started.
+        EntryStarted = 0x00,
+        /// A digit was entered.
+        DigitEntered = 0x01,
+        /// A digit was erased.
+        DigitErased = 0x02,
+        /// The passkey was cleared.
+        Cleared = 0x03,
+        /// Passkey entry completed.
+        EntryCompleted = 0x04,
+    }
+}
+
+wire_values! {
+    /// Whether pairing uses Secure Connections.
+    pub enum ScSupport: u8 {
+        /// Secure Connections pairing is not supported.
+        NotSupported = 0x00,
+        /// Secure Connections pairing is supported but optional.
+        Optional = 0x01,
+        /// Only Secure Connections pairing is accepted.
+        Mandatory = 0x02,
+    }
+}
+
+wire_values! {
+    /// Whether pairing uses the fixed passkey. 1.24.0 deprecates it.
+    pub enum UseFixedPin: u8 {
+        /// Use the fixed passkey.
+        Yes = 0x00,
+        /// Ask the host for the passkey.
+        No = 0x01,
+    }
+}
+
+wire_values! {
+    /// The kind of directed connectable advertising.
+    pub enum DirectedAdvertisingType: u8 {
+        /// High duty cycle directed advertising.
+        HighDutyCycle = 0x01,
+        /// Low duty cycle directed advertising.
+        LowDutyCycle = 0x04,
+    }
+}
+
+wire_values! {
+    /// Whether a service is primary or secondary.
+    pub enum ServiceType: u8 {
+        /// A primary service.
+        Primary = 0x01,
+        /// A secondary service.
+        Secondary = 0x02,
+    }
+}
+
+wire_values! {
+    /// The error an ATT server answered a request with.
+    pub enum AttErrorCode: u8 {
+        /// The attribute handle is invalid.
+        InvalidHandle = 0x01,
+        /// The attribute cannot be read.
+        ReadNotPermitted = 0x02,
+        /// The attribute cannot be written.
+        WriteNotPermitted = 0x03,
+        /// The PDU is invalid.
+        InvalidPdu = 0x04,
+        /// The attribute requires authentication.
+        InsufficientAuthentication = 0x05,
+        /// The server does not support the request.
+        RequestNotSupported = 0x06,
+        /// The offset is past the end of the attribute.
+        InvalidOffset = 0x07,
+        /// The attribute requires authorization.
+        InsufficientAuthorization = 0x08,
+        /// The prepare queue is full.
+        PrepareQueueFull = 0x09,
+        /// No attribute is in the handle range.
+        AttributeNotFound = 0x0A,
+        /// The attribute cannot be read with a blob request.
+        AttributeNotLong = 0x0B,
+        /// The encryption key is too short.
+        InsufficientEncryptionKeySize = 0x0C,
+        /// The value has an invalid length.
+        InvalidAttributeValueLength = 0x0D,
+        /// The request failed unexpectedly.
+        UnlikelyError = 0x0E,
+        /// The attribute requires encryption.
+        InsufficientEncryption = 0x0F,
+        /// The grouping attribute type is not supported.
+        UnsupportedGroupType = 0x10,
+        /// The server lacks the resources to answer.
+        InsufficientResources = 0x11,
+        /// The client's view of the database is out of sync, from 1.16.0.
+        #[cfg(not(feature = "fw_1_15_0"))]
+        DatabaseOutOfSync = 0x12,
+        /// The value is not allowed, from 1.16.0.
+        #[cfg(not(feature = "fw_1_15_0"))]
+        ValueNotAllowed = 0x13,
+    }
+}
+
+wire_values! {
+    /// Whether the host allows a read or write the server asked it to
+    /// approve.
+    pub enum PermitStatus: u8 {
+        /// Allow the access.
+        Allowed = 0x00,
+        /// Deny the access.
+        Denied = 0x01,
+    }
+}
+
+wire_values! {
+    /// How a write with response is sent.
+    pub enum WriteMode: u8 {
+        /// Write a characteristic value or descriptor.
+        Write = 0x00,
+        /// Write a long characteristic value or descriptor.
+        WriteLong = 0x01,
+        /// Write a characteristic value reliably.
+        ReliableWrite = 0x02,
+    }
+}
+
+wire_values! {
+    /// Whether a write without response is signed.
+    pub enum SignedWriteMode: u8 {
+        /// An unsigned write.
+        Unsigned = 0x00,
+        /// A signed write.
+        Signed = 0x01,
+    }
+}
+
+wire_values! {
+    /// Whether to encrypt or decrypt Encrypted Advertising Data.
+    pub enum EadMode: u8 {
+        /// Encrypt.
+        Encrypt = 0x00,
+        /// Decrypt.
+        Decrypt = 0x01,
+    }
+}
+
+wire_values! {
+    /// A radio activity.
+    pub enum RadioState: u8 {
+        /// Idle.
+        Idle = 0x00,
+        /// Advertising.
+        Advertising = 0x01,
+        /// A connection event in the peripheral role.
+        PeripheralConnection = 0x02,
+        /// Scanning.
+        Scanning = 0x03,
+        /// A connection event in the central role.
+        CentralConnection = 0x05,
+        /// The direct transmit test.
+        TxTest = 0x06,
+        /// The direct receive test.
+        RxTest = 0x07,
+    }
+}
+
+wire_values! {
+    /// The address type of a peer, telling identity addresses resolved from
+    /// a resolvable private address apart.
+    pub enum PeerAddressType: u8 {
+        /// A public device address.
+        Public = 0x00,
+        /// A random device address.
+        Random = 0x01,
+        /// A public identity address.
+        PublicIdentity = 0x02,
+        /// A random (static) identity address.
+        RandomIdentity = 0x03,
+    }
+}
+
+wire_values! {
+    /// Whether a reset changes the stack options.
+    pub enum ResetMode: u8 {
+        /// Keep the stack options.
+        KeepOptions = 0x00,
+        /// Apply the given stack options.
+        ChangeOptions = 0x01,
+    }
+}
+
+wire_values! {
+    /// The address type the controller uses in a standard HCI command.
+    pub enum HciOwnAddressType: u8 {
+        /// The public device address.
+        Public = 0x00,
+        /// The random device address.
+        Random = 0x01,
+        /// A resolvable private address if the resolving list has one,
+        /// otherwise the public address.
+        ResolvableOrPublic = 0x02,
+        /// A resolvable private address if the resolving list has one,
+        /// otherwise the random address.
+        ResolvableOrRandom = 0x03,
+    }
+}
+
+wire_values! {
+    /// Which private key computes a Diffie-Hellman key.
+    pub enum DhkeyPrivateKey: u8 {
+        /// The generated private key.
+        Generated = 0x00,
+        /// The debug private key.
+        Debug = 0x01,
+    }
+}
+
+wire_values! {
+    /// The payload of direct transmit test packets.
+    pub enum TestPayload: u8 {
+        /// The PRBS9 sequence.
+        Prbs9 = 0x00,
+        /// Alternating nibbles, `11110000`.
+        Pattern11110000 = 0x01,
+        /// Alternating bits, `10101010`.
+        Pattern10101010 = 0x02,
+        /// The PRBS15 sequence.
+        Prbs15 = 0x03,
+        /// Every bit 1.
+        AllOnes = 0x04,
+        /// Every bit 0.
+        AllZeros = 0x05,
+        /// Alternating nibbles, `00001111`.
+        Pattern00001111 = 0x06,
+        /// Alternating bits, `0101`.
+        Pattern0101 = 0x07,
+    }
+}
+
+wire_values! {
     /// Where a value of the configuration data starts, with its length.
     /// Every command using one also checks the length is the one the catalog
     /// documents.
