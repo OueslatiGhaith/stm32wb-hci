@@ -5,8 +5,7 @@ forked from [bluetooth_hci](https://github.com/danielgallagher0/bluetooth-hci)
 [![Build Status](https://github.com/OueslatiGhaith/stm32wb-hci/actions/workflows/ci.yml/badge.svg)](https://github.com/OueslatiGhaith/stm32wb-hci/actions/workflows/ci.yml/badge.svg)
 
 This crate defines a pure Rust implementation of the [Bluetooth Host-Controller Interface](https://github.com/STMicroelectronics/STM32CubeWB/) for the STM32WB family of microcontrollers. It declares
-ST's vendor (ACI) and system (SHCI) commands and events, and checks [bt-hci](https://crates.io/crates/bt-hci)'s
-Bluetooth Core commands and events against the wireless binary, declaring the ones bt-hci gets wrong or lacks.
+ST's vendor (ACI) and system (SHCI) commands and events.
 
 ## Selecting the wireless binary
 
@@ -22,8 +21,10 @@ stm32wb-hci = { version = "0.19", default-features = false, features = ["fw_1_24
 - `stack-full-extended`, `stack-full`, `stack-light`, `stack-hci-layer-extended`,
   `stack-hci-layer`, `stack-hci-adv-scan`: its BLE stack profile.
 
-The defaults are `fw_1_24_0` and `stack-full-extended`. A command or event the selected binary does
-not implement is not compiled.
+The binaries combining BLE with Thread, Zigbee or the 802.15.4 MAC (`stm32wb5x_BLE_Thread_*`,
+`stm32wb5x_BLE_Zigbee_*`, `stm32wb5x_BLE_Mac_802_15_4_fw.bin`) carry the full BLE stack, as ST's
+release notes state: select `stack-full` for them. This crate covers only their BLE side and the
+system commands common to every binary, not the Thread, Zigbee or 802.15.4 commands.
 
 ## Usage
 
