@@ -38,27 +38,46 @@ toml = "1"
 default = ["fw_1_24_0", "stack-full-extended"]
 defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
 
-# The STM32CubeWB release of the CPU2 wireless binary; enable exactly one.
-fw_1_15_0 = []
-fw_1_16_0 = []
-fw_1_17_0 = []
-fw_1_17_1 = []
-fw_1_17_2 = []
-fw_1_17_3 = []
-fw_1_18_0 = []
-fw_1_19_0 = []
-fw_1_19_1 = []
-fw_1_20_0 = []
-fw_1_21_0 = []
-fw_1_22_0 = []
-fw_1_22_1 = []
-fw_1_23_0 = []
-fw_1_24_0 = []
+# Enable exactly one release and one stack profile, both of the same
+# platform: STM32WB, whose CPU2 wireless binary they name, or STM32WBA,
+# whose BLE stack library they name.
 
-# The BLE stack profile of the CPU2 wireless binary; enable exactly one.
-stack-full-extended = []
-stack-full = []
-stack-light = []
-stack-hci-layer-extended = []
-stack-hci-layer = []
-stack-hci-adv-scan = []
+# The STM32CubeWB release of the CPU2 wireless binary.
+fw_1_15_0 = ["_stm32wb"]
+fw_1_16_0 = ["_stm32wb"]
+fw_1_17_0 = ["_stm32wb"]
+fw_1_17_1 = ["_stm32wb"]
+fw_1_17_2 = ["_stm32wb"]
+fw_1_17_3 = ["_stm32wb"]
+fw_1_18_0 = ["_stm32wb"]
+fw_1_19_0 = ["_stm32wb"]
+fw_1_19_1 = ["_stm32wb"]
+fw_1_20_0 = ["_stm32wb"]
+fw_1_21_0 = ["_stm32wb"]
+fw_1_22_0 = ["_stm32wb"]
+fw_1_22_1 = ["_stm32wb"]
+fw_1_23_0 = ["_stm32wb"]
+fw_1_24_0 = ["_stm32wb"]
+
+# The BLE stack profile of the CPU2 wireless binary.
+stack-full-extended = ["_stm32wb"]
+stack-full = ["_stm32wb"]
+stack-light = ["_stm32wb"]
+stack-hci-layer-extended = ["_stm32wb"]
+stack-hci-layer = ["_stm32wb"]
+stack-hci-adv-scan = ["_stm32wb"]
+
+# The STM32CubeWBA release of the BLE stack library.
+wba_1_10_0 = ["_stm32wba"]
+
+# The configuration of the STM32WBA BLE stack library.
+stack-wba-full = ["_stm32wba"]
+stack-wba-basic-plus = ["_stm32wba"]
+stack-wba-basic-features = ["_stm32wba"]
+stack-wba-peripheral-only = ["_stm32wba"]
+stack-wba-link-layer-only = ["_stm32wba"]
+
+# The platform, which the release and stack profile features enable; not
+# meant to be enabled directly.
+_stm32wb = []
+_stm32wba = []

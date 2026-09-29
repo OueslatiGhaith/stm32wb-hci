@@ -26,6 +26,21 @@ The binaries combining BLE with Thread, Zigbee or the 802.15.4 MAC (`stm32wb5x_B
 release notes state: select `stack-full` for them. This crate covers only their BLE side and the
 system commands common to every binary, not the Thread, Zigbee or 802.15.4 commands.
 
+### STM32WBA
+
+The BLE stack library of STM32WBA is selected the same way, from ST's
+[STM32CubeWBA](https://github.com/STMicroelectronics/STM32CubeWBA) sources:
+
+```toml
+stm32wb-hci = { version = "0.19", default-features = false, features = ["wba_1_10_0", "stack-wba-full"] }
+```
+
+- `wba_1_10_0`: the STM32CubeWBA release of the library.
+- `stack-wba-full`, `stack-wba-basic-plus`, `stack-wba-basic-features`,
+  `stack-wba-peripheral-only`, `stack-wba-link-layer-only`: its configuration.
+
+No command or event is declared for STM32WBA yet: only `stm32wb_hci::wire` is compiled for it.
+
 ## Usage
 
 A transport implements bt-hci's `Controller`, `ControllerCmdSync` and `ControllerCmdAsync`. Bounding

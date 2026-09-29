@@ -33,7 +33,8 @@ jobs:
           toolchain: stable
       - name: Test every distinct release and stack profile
         run: |
-          targets=$(cargo run -q -p stm32wb-catalog-extract -- targets)
+          targets="$(cargo run -q -p stm32wb-catalog-extract -- targets)
+          $(cargo run -q -p stm32wb-catalog-extract -- targets --platform stm32wba)"
           for features in $targets; do
             echo "::group::$features"
             cargo test --lib --no-default-features --features "$features"

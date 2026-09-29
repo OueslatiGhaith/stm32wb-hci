@@ -6,6 +6,10 @@
 //! one `stack-*` feature, the BLE stack profile. A command or event that
 //! binary does not implement is not compiled.
 //!
+//! The STM32WBA BLE stack is selected the same way, by a `wba_*` release
+//! and one of its `stack-wba-*` profiles. No declaration is checked against
+//! its catalog yet, so only [`wire`] is compiled for it.
+//!
 //! - [`aci`] declares the ST vendor commands and events, and [`AciEvent`]
 //!   decodes any vendor event. [`aci::status`] names the BLE stack's own
 //!   status codes, which bt-hci shows as unknown.
@@ -39,11 +43,17 @@ stm32wb_hci_macros::check_target!();
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 
+#[cfg(feature = "_stm32wb")]
 pub mod aci;
+#[cfg(feature = "_stm32wb")]
 pub mod adv_data;
+#[cfg(feature = "_stm32wb")]
 #[doc(hidden)]
 pub mod catalog;
+#[cfg(feature = "_stm32wb")]
 pub mod event;
+#[cfg(feature = "_stm32wb")]
 pub mod shci;
+#[cfg(feature = "_stm32wb")]
 pub mod standard;
 pub mod wire;

@@ -125,6 +125,25 @@ impl Profile {
 }
 
 impl Platform {
+    pub const ALL: [Self; 2] = [Self::Stm32wb, Self::Stm32wba];
+
+    /// The Cargo feature every release and profile feature of the platform
+    /// enables, e.g. `_stm32wb`.
+    pub const fn feature(self) -> &'static str {
+        match self {
+            Self::Stm32wb => "_stm32wb",
+            Self::Stm32wba => "_stm32wba",
+        }
+    }
+
+    /// The name of the platform's software package, e.g. `STM32CubeWB`.
+    pub const fn package(self) -> &'static str {
+        match self {
+            Self::Stm32wb => "STM32CubeWB",
+            Self::Stm32wba => "STM32CubeWBA",
+        }
+    }
+
     /// The prefix of the Cargo features selecting the platform's releases:
     /// STM32WB names the release of its CPU2 wireless binary, and STM32WBA
     /// that of its BLE stack library.

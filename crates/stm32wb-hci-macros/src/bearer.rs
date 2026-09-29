@@ -1,4 +1,5 @@
-//! `att_bearer_range!`: the last enhanced ATT bearer each release documents.
+//! `att_bearer_range!`: the last enhanced ATT bearer each release of each
+//! platform documents.
 
 use std::collections::BTreeMap;
 
@@ -6,8 +7,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use stm32wb_catalog::{Bundled, ReleaseRange, Version};
 
-/// `LAST_ENHANCED` for each group of releases documenting the same range,
-/// which every bearer member of a release must share.
+/// `LAST_ENHANCED` for each group of the catalog's releases documenting the
+/// same range, which every bearer member of a release must share, compiled
+/// only for those releases.
 pub fn expand(bundled: &Bundled) -> Result<TokenStream, String> {
     let catalog = &bundled.catalog;
     let definitions = catalog
@@ -58,12 +60,15 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, String> {
     Ok(groups
         .into_iter()
         .map(|(last, releases)| {
-            let cfg = several.then(|| {
+            let cfg = if several {
                 let features = releases
                     .iter()
                     .map(|release| catalog.platform.release_feature(*release));
                 quote!(#[cfg(any(#(feature = #features),*))])
-            });
+            } else {
+                let platform = catalog.platform.feature();
+                quote!(#[cfg(feature = #platform)])
+            };
             let doc = format!(
                 "The last enhanced ATT bearer the selected release documents, 0x{last:04X}, \
                  as in releases {}.",
@@ -117,6 +122,23 @@ mod tests {
                 "# [cfg (any (feature = \"fw_1_15_0\" , feature = \"fw_1_16_0\"))] \
                  # [doc = \"The last enhanced ATT bearer the selected release documents, 0xEA1F"
             ),
+            "{tokens}"
+        );
+        assert!(tokens.contains("= 59967u16"), "{tokens}");
+    }
+
+    #[test]
+    fn one_range_is_selected_by_the_platform() {
+        let tokens = expand(bundled(Platform::Stm32wba).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(
+            tokens.starts_with("# [cfg (feature = \"_stm32wba\")]"),
+            "{tokens}"
+        );
+        assert_eq!(
+            tokens.matches("pub const LAST_ENHANCED").count(),
+            1,
             "{tokens}"
         );
         assert!(tokens.contains("= 59967u16"), "{tokens}");

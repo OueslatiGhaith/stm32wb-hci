@@ -13,60 +13,99 @@ mod status;
 mod structs;
 
 use proc_macro::TokenStream;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use stm32wb_catalog::{Platform, bundled};
+use stm32wb_catalog::{Catalog, Platform, Profile, bundled};
 
-/// Require exactly one `fw_*` feature (a catalog release) and exactly one
-/// `stack-*` feature (a BLE stack profile).
+/// Require exactly one release feature (`fw_*` for STM32WB, `wba_*` for
+/// STM32WBA) and exactly one `stack-*` feature (a BLE stack profile), both of
+/// the same platform.
 ///
 /// The features themselves are declared in `stm32wb-hci`'s manifest, which a
-/// test keeps in sync with the catalog; this macro only counts the enabled
-/// ones, so its lists always come from the catalog.
+/// test keeps in sync with the catalogs; each also enables its platform's
+/// feature. This macro only counts the enabled ones, so its lists always come
+/// from the catalogs.
 #[proc_macro]
 pub fn check_target(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("check_target! takes no arguments");
     }
-    let catalog = match bundled(Platform::Stm32wb) {
-        Ok(bundled) => &bundled.catalog,
-        Err(error) => return self::error(&format!("the bundled catalog is invalid: {error}")),
-    };
-    let releases = catalog
-        .versions()
-        .map(|release| catalog.platform.release_feature(release));
-    let profiles = catalog
-        .platform
-        .profiles()
+    let mut catalogs = Vec::new();
+    for platform in Platform::ALL {
+        match bundled(platform) {
+            Ok(bundled) => catalogs.push(&bundled.catalog),
+            Err(error) => return self::error(&format!("a bundled catalog is invalid: {error}")),
+        }
+    }
+    let releases = catalogs
         .iter()
-        .map(|profile| profile.feature_name());
-    let release_message = format!(
-        "enable exactly one fw_* feature, naming the STM32CubeWB release of the CPU2 wireless binary ({})",
-        catalog
-            .versions()
-            .map(|release| release.to_string())
+        .flat_map(|catalog| {
+            catalog
+                .versions()
+                .map(|release| catalog.platform.release_feature(release))
+        })
+        .collect::<Vec<_>>();
+    let profiles = Profile::ALL
+        .iter()
+        .map(|profile| profile.feature_name())
+        .collect::<Vec<_>>();
+    let platforms = Platform::ALL
+        .iter()
+        .map(|platform| platform.feature().to_owned())
+        .collect::<Vec<_>>();
+    let listed = |describe: &dyn Fn(&Catalog) -> String| {
+        catalogs
+            .iter()
+            .map(|catalog| describe(catalog))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("; ")
+    };
+    let release_message = format!(
+        "enable exactly one release feature, naming the release of the BLE stack ({})",
+        listed(&|catalog| format!(
+            "{}* for {}: {}",
+            catalog.platform.release_feature_prefix(),
+            catalog.platform.package(),
+            catalog
+                .versions()
+                .map(|release| release.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     );
     let profile_message = format!(
-        "enable exactly one stack-* feature, naming the BLE stack profile of the CPU2 wireless binary ({})",
-        catalog
-            .platform
-            .profiles()
-            .iter()
-            .map(|profile| profile.name())
-            .collect::<Vec<_>>()
-            .join(", ")
+        "enable exactly one stack-* feature, naming the BLE stack profile ({})",
+        listed(&|catalog| format!(
+            "for {}: {}",
+            catalog.platform.package(),
+            catalog
+                .platform
+                .profiles()
+                .iter()
+                .map(|profile| profile.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     );
+    let platform_message = "the release and stack-* features must name the same platform";
+    let release_error = exactly_one(&releases, &release_message);
+    let profile_error = exactly_one(&profiles, &profile_message);
+    let platform_error = exactly_one(&platforms, platform_message);
+    quote!(#release_error #profile_error #platform_error).into()
+}
+
+/// A `compile_error!` unless exactly one of `features` is enabled, raised
+/// while expanding, before any error the wrong features cause.
+fn exactly_one(features: &[String], message: &str) -> TokenStream2 {
+    let pairs = features.iter().enumerate().flat_map(|(index, first)| {
+        features[index + 1..]
+            .iter()
+            .map(move |second| quote!(all(feature = #first, feature = #second)))
+    });
     quote! {
-        const _: () = {
-            let releases = 0 #(+ cfg!(feature = #releases) as usize)*;
-            ::core::assert!(releases == 1, #release_message);
-            let profiles = 0 #(+ cfg!(feature = #profiles) as usize)*;
-            ::core::assert!(profiles == 1, #profile_message);
-        };
+        #[cfg(any(not(any(#(feature = #features),*)), #(#pairs),*))]
+        ::core::compile_error!(#message);
     }
-    .into()
 }
 
 /// Declare an ST vendor command from its generated C name.
@@ -373,7 +412,7 @@ pub fn standard_events(input: TokenStream) -> TokenStream {
 }
 
 /// The last enhanced ATT bearer the selected release documents, as
-/// `LAST_ENHANCED` constants.
+/// `LAST_ENHANCED` constants for the releases of every platform.
 ///
 /// Invoked once, in `stm32wb_hci::wire::AttBearer`'s `impl` block. Every
 /// parameter the catalog lists as addressing an ATT bearer must give the same
@@ -383,9 +422,14 @@ pub fn att_bearer_range(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("att_bearer_range! takes no arguments");
     }
-    match bundled(Platform::Stm32wb)
-        .map_err(|error| format!("the bundled catalog is invalid: {error}"))
-        .and_then(bearer::expand)
+    match Platform::ALL
+        .into_iter()
+        .map(|platform| {
+            bundled(platform)
+                .map_err(|error| format!("a bundled catalog is invalid: {error}"))
+                .and_then(bearer::expand)
+        })
+        .collect::<Result<TokenStream2, _>>()
     {
         Ok(tokens) => tokens.into(),
         Err(message) => error(&message),

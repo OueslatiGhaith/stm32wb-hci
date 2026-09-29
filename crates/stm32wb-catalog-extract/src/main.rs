@@ -83,10 +83,7 @@ impl PlatformArg {
 
     /// The STM32Cube package, which names the default clone.
     fn cube(self) -> &'static str {
-        match self {
-            Self::Stm32wb => "STM32CubeWB",
-            Self::Stm32wba => "STM32CubeWBA",
-        }
+        self.platform().package()
     }
 
     fn catalog(self) -> &'static str {
