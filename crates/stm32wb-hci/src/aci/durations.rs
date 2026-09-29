@@ -20,6 +20,18 @@ wire_duration! {
 }
 
 wire_duration! {
+    /// The interval between directed advertising events: low duty cycle,
+    /// from 20 ms to 10.24 s, or high duty cycle.
+    pub struct DirectAdvInterval: u16 {
+        unit_us = 625;
+        units = 0x0020..=0x4000;
+        /// High duty cycle directed advertising, at most 3.75 ms apart for
+        /// at most 1.28 s.
+        const HIGH_DUTY_CYCLE = 0x0006;
+    }
+}
+
+wire_duration! {
     /// The interval between the primary advertising events of an advertising
     /// set, from 20 ms to about 10486 s.
     pub struct ExtAdvInterval: u32 {
@@ -78,6 +90,20 @@ wire_duration! {
 }
 
 wire_duration! {
+    /// A bound of the connection intervals the peripheral prefers, advertised
+    /// in its advertising data, from 7.5 ms to 4 s.
+    pub struct PreferredConnInterval: u16 {
+        unit_us = 1250;
+        units = 0x0006..=0x0C80;
+        /// Advertise no preferred connection intervals; both bounds must be
+        /// omitted.
+        const OMITTED = 0x0000;
+        /// No specific minimum or maximum.
+        const UNSPECIFIED = 0xFFFF;
+    }
+}
+
+wire_duration! {
     /// How long a connection may go without a valid packet before it is
     /// lost, from 100 ms to 32 s.
     pub struct SupervisionTimeout: u16 {
@@ -121,6 +147,11 @@ mod tests {
         assert_eq!(ScanPeriod::from_millis(u64::MAX), None);
         assert_eq!(ScanDuration::CONTINUOUS.as_micros(), None);
         assert_eq!(ScanDuration::from_units(0), None, "a special value");
+        assert_eq!(
+            DirectAdvInterval::HIGH_DUTY_CYCLE.as_micros(),
+            None,
+            "the controller picks the interval"
+        );
 
         let mut buffer = [0u8; 4];
         interval.write_hci(&mut buffer[..2]).unwrap();
@@ -159,6 +190,11 @@ mod tests {
             !values_documented::<ScanDuration>(&[(1, 0xFFFF)]),
             "the special value is undocumented"
         );
+        assert!(values_documented::<PreferredConnInterval>(&[
+            (0, 0),
+            (6, 0xC80),
+            (0xFFFF, 0xFFFF)
+        ]));
         assert!(unit_documented::<AdvInterval>(Some(625)));
         assert!(!unit_documented::<AdvInterval>(Some(1250)), "another unit");
         assert!(!unit_documented::<AdvInterval>(None), "no time member");

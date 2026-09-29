@@ -15,6 +15,11 @@ use crate::aci::flags::{
     AccessPermissions, CharProperties, GattDescEventMask, GattEventMask, SecurityPermissions,
     UpdateType,
 };
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no GATT commands"
+)]
+use crate::aci::ranges::EncKeySize;
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GATT events")]
 use crate::aci::values::EattBearerState;
 #[allow(
@@ -64,7 +69,7 @@ vendor_command! {
         char_properties: CharProperties,
         security_permissions: SecurityPermissions,
         gatt_evt_mask: GattEventMask,
-        enc_key_size: u8,
+        enc_key_size: EncKeySize,
         is_variable: bool,
     } -> GattChar {
         char_handle: u16,
@@ -82,7 +87,7 @@ vendor_command! {
         security_permissions: SecurityPermissions,
         access_permissions: AccessPermissions,
         gatt_evt_mask: GattDescEventMask,
-        enc_key_size: u8,
+        enc_key_size: EncKeySize,
         is_variable: bool,
     } -> GattCharDesc {
         char_desc_handle: u16,
@@ -747,7 +752,7 @@ mod tests {
             SecurityPermissions::empty(),
             AccessPermissions::READ,
             GattDescEventMask::empty(),
-            7,
+            EncKeySize::MIN,
             true,
         )
         .unwrap();

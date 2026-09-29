@@ -6,13 +6,15 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::durations::{
-    AdvInterval, CeLength, ConnInterval, ExtAdvInterval, ScanDuration, ScanInterval, ScanPeriod,
-    ScanWindow, SupervisionTimeout,
+    AdvInterval, CeLength, ConnInterval, DirectAdvInterval, ExtAdvInterval, PreferredConnInterval,
+    ScanDuration, ScanInterval, ScanPeriod, ScanWindow, SupervisionTimeout,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::flags::{
     AdvChannelMap, AdvEventProperties, AdvMode, GapEventMask, InitiatingPhys, Role, ScanningPhys,
 };
+#[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
+use crate::aci::ranges::{AdvHandle, AdvSid, ConnLatency, PaLevel, Passkey, TxPower};
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::values::{
     AddressType, AdvertisingType, ConnectableOwnAddressType, GapProcedure, IoCapability,
@@ -38,8 +40,8 @@ vendor_command! {
         advertising_filter_policy: u8,
         local_name: &'a [u8],
         service_uuid_list: &'a [u8],
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: PreferredConnInterval,
+        conn_interval_max: PreferredConnInterval,
     }
 }
 
@@ -54,8 +56,8 @@ vendor_command! {
         advertising_filter_policy: u8,
         local_name: &'a [u8],
         service_uuid_list: &'a [u8],
-        conn_interval_min: u16,
-        conn_interval_max: u16,
+        conn_interval_min: PreferredConnInterval,
+        conn_interval_max: PreferredConnInterval,
     }
 }
 
@@ -66,8 +68,8 @@ vendor_command! {
         directed_advertising_type: u8,
         direct_address_type: AddressType,
         direct_address: BdAddr,
-        advertising_interval_min: u16,
-        advertising_interval_max: u16,
+        advertising_interval_min: DirectAdvInterval,
+        advertising_interval_max: DirectAdvInterval,
     }
 }
 
@@ -89,7 +91,7 @@ vendor_command! {
         min_encryption_key_size: u8,
         max_encryption_key_size: u8,
         use_fixed_pin: u8,
-        fixed_pin: u32,
+        fixed_pin: Passkey,
         identity_address_type: AddressType,
     }
 }
@@ -106,7 +108,7 @@ vendor_command! {
     /// Answer a passkey request with the passkey, 0 to 999999.
     aci_gap_pass_key_resp => GapPassKeyResp {
         connection_handle: ConnHandle,
-        pass_key: u32,
+        pass_key: Passkey,
     }
 }
 
@@ -260,7 +262,7 @@ vendor_command! {
         own_address_type: ConnectableOwnAddressType,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
-        conn_latency: u16,
+        conn_latency: ConnLatency,
         supervision_timeout: SupervisionTimeout,
         minimum_ce_length: CeLength,
         maximum_ce_length: CeLength,
@@ -309,7 +311,7 @@ vendor_command! {
         own_address_type: ConnectableOwnAddressType,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
-        conn_latency: u16,
+        conn_latency: ConnLatency,
         supervision_timeout: SupervisionTimeout,
         minimum_ce_length: CeLength,
         maximum_ce_length: CeLength,
@@ -329,7 +331,7 @@ vendor_command! {
         connection_handle: ConnHandle,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
-        conn_latency: u16,
+        conn_latency: ConnLatency,
         supervision_timeout: SupervisionTimeout,
         minimum_ce_length: CeLength,
         maximum_ce_length: CeLength,
@@ -525,7 +527,7 @@ vendor_command! {
         adv_channel_map: AdvChannelMap,
         own_address_type: AddressType,
         own_address: BdAddr,
-        pa_level: u8,
+        pa_level: PaLevel,
     }
 }
 
@@ -545,7 +547,7 @@ vendor_command! {
     /// Configure the advertising set `advertising_handle`.
     aci_gap_adv_set_configuration => GapAdvSetConfiguration {
         adv_mode: AdvMode,
-        advertising_handle: u8,
+        advertising_handle: AdvHandle,
         adv_event_properties: AdvEventProperties,
         primary_adv_interval_min: ExtAdvInterval,
         primary_adv_interval_max: ExtAdvInterval,
@@ -554,10 +556,10 @@ vendor_command! {
         peer_address_type: AddressType,
         peer_address: BdAddr,
         adv_filter_policy: u8,
-        adv_tx_power: i8,
+        adv_tx_power: TxPower,
         secondary_adv_max_skip: u8,
         secondary_adv_phy: u8,
-        adv_sid: u8,
+        adv_sid: AdvSid,
         scan_req_notification_enable: bool,
     }
 }
@@ -582,7 +584,7 @@ vendor_command! {
 vendor_command! {
     /// Set the advertising data of an advertising set, or a fragment of it.
     aci_gap_adv_set_adv_data => GapAdvSetAdvData {
-        advertising_handle: u8,
+        advertising_handle: AdvHandle,
         operation: u8,
         fragment_preference: u8,
         advertising_data: &'a [u8],
@@ -592,7 +594,7 @@ vendor_command! {
 vendor_command! {
     /// Set the scan response data of an advertising set, or a fragment of it.
     aci_gap_adv_set_scan_resp_data => GapAdvSetScanRespData {
-        advertising_handle: u8,
+        advertising_handle: AdvHandle,
         operation: u8,
         fragment_preference: u8,
         scan_response_data: &'a [u8],
@@ -602,7 +604,7 @@ vendor_command! {
 vendor_command! {
     /// Remove an advertising set.
     aci_gap_adv_remove_set => GapAdvRemoveSet {
-        advertising_handle: u8,
+        advertising_handle: AdvHandle,
     }
 }
 
@@ -614,7 +616,7 @@ vendor_command! {
 vendor_command! {
     /// Set the random address of an advertising set.
     aci_gap_adv_set_random_address => GapAdvSetRandomAddress {
-        advertising_handle: u8,
+        advertising_handle: AdvHandle,
         random_address: BdAddr,
     }
 }
@@ -781,6 +783,8 @@ mod tests {
     fn two_names_fit_their_capacities_but_not_the_parameters_together() {
         let min = AdvInterval::from_units(0x20).unwrap();
         let max = AdvInterval::from_units(0x30).unwrap();
+        let conn_min = PreferredConnInterval::from_units(6).unwrap();
+        let conn_max = PreferredConnInterval::from_units(7).unwrap();
         let command = GapSetDiscoverable::try_new(
             AdvertisingType::ConnectableUndirected,
             min,
@@ -789,8 +793,8 @@ mod tests {
             0,
             b"ab",
             &[0x02, 0x0A, 0x18],
-            6,
-            7,
+            conn_min,
+            conn_max,
         )
         .unwrap();
         assert_eq!(GapSetDiscoverable::OPCODE.to_raw(), 0xFC83);
@@ -811,8 +815,8 @@ mod tests {
             0,
             &name,
             &name[..10],
-            6,
-            7,
+            conn_min,
+            conn_max,
         )
         .unwrap_err();
         assert_eq!(error.field, "parameters");
@@ -826,8 +830,8 @@ mod tests {
                 0,
                 &name,
                 &[],
-                6,
-                7
+                conn_min,
+                conn_max
             )
             .is_ok()
         );

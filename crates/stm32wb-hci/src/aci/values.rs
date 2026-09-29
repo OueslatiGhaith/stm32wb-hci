@@ -312,6 +312,28 @@ wire_values! {
 }
 
 wire_values! {
+    /// What a link is doing. The reserved 0x04 is left out.
+    pub enum LinkState: u8 {
+        /// The link is idle.
+        Idle = 0x00,
+        /// Advertising.
+        Advertising = 0x01,
+        /// Connected in the peripheral role.
+        ConnectedPeripheral = 0x02,
+        /// Scanning.
+        Scanning = 0x03,
+        /// Connected in the central role.
+        ConnectedCentral = 0x05,
+        /// In the direct transmit test.
+        TxTest = 0x06,
+        /// In the direct receive test.
+        RxTest = 0x07,
+        /// Advertising with the additional beacon.
+        AdvertisingWithAdditionalBeacon = 0x81,
+    }
+}
+
+wire_values! {
     /// The central's answer to a connection parameter update request.
     pub enum ConnectionUpdateResult: u16 {
         /// The central accepted the parameters.

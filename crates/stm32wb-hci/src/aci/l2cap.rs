@@ -13,6 +13,11 @@ use stm32wb_hci_macros::{vendor_command, vendor_event};
     reason = "the HCI-layer profiles have no L2CAP commands"
 )]
 use crate::aci::durations::{CeLength, ConnInterval};
+#[allow(
+    unused_imports,
+    reason = "the HCI-layer profiles have no L2CAP commands"
+)]
+use crate::aci::ranges::{CocCredits, CocMps, CocMtu, ConnLatency, Spsm};
 #[allow(unused_imports, reason = "the HCI-layer profiles have no L2CAP events")]
 use crate::aci::values::ConnectionUpdateResult;
 #[allow(
@@ -29,7 +34,7 @@ vendor_command! {
         connection_handle: ConnHandle,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
-        latency: u16,
+        latency: ConnLatency,
         timeout_multiplier: u16,
     }
 }
@@ -41,7 +46,7 @@ vendor_command! {
         connection_handle: ConnHandle,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
-        latency: u16,
+        latency: ConnLatency,
         timeout_multiplier: u16,
         minimum_ce_length: CeLength,
         maximum_ce_length: CeLength,
@@ -54,9 +59,9 @@ vendor_command! {
     /// Open `channel_number` credit-based channels to the protocol `spsm`.
     aci_l2cap_coc_connect => L2capCocConnect {
         connection_handle: ConnHandle,
-        spsm: u16,
-        mtu: u16,
-        mps: u16,
+        spsm: Spsm,
+        mtu: CocMtu,
+        mps: CocMps,
         initial_credits: u16,
         channel_number: u8,
     }
@@ -68,8 +73,8 @@ vendor_command! {
     /// limits how many channels are accepted.
     aci_l2cap_coc_connect_confirm => L2capCocConnectConfirm {
         connection_handle: ConnHandle,
-        mtu: u16,
-        mps: u16,
+        mtu: CocMtu,
+        mps: CocMps,
         initial_credits: u16,
         result: u16,
         #[wire(since = "1.23.0")]
@@ -83,8 +88,8 @@ vendor_command! {
     /// Change the MTU and MPS of the listed credit-based channels.
     aci_l2cap_coc_reconf => L2capCocReconf {
         connection_handle: ConnHandle,
-        mtu: u16,
-        mps: u16,
+        mtu: CocMtu,
+        mps: CocMps,
         channel_index_list: &'a [u8],
     }
 }
@@ -108,7 +113,7 @@ vendor_command! {
     /// Give the peer `credits` more frames on a credit-based channel.
     aci_l2cap_coc_flow_control => L2capCocFlowControl {
         channel_index: u8,
-        credits: u16,
+        credits: CocCredits,
     }
 }
 
@@ -144,9 +149,9 @@ vendor_event! {
         identifier: u8,
         #[wire(name = "L2CAP_Length")]
         l2cap_length: u16,
-        interval_min: u16,
-        interval_max: u16,
-        latency: u16,
+        interval_min: OrUnknown<ConnInterval>,
+        interval_max: OrUnknown<ConnInterval>,
+        latency: OrUnknown<ConnLatency>,
         timeout_multiplier: u16,
     }
 }
@@ -166,9 +171,9 @@ vendor_event! {
     /// with [`L2capCocConnectConfirm`].
     aci_l2cap_coc_connect_event => L2capCocConnectEvent {
         connection_handle: ConnHandle,
-        spsm: u16,
-        mtu: u16,
-        mps: u16,
+        spsm: OrUnknown<Spsm>,
+        mtu: OrUnknown<CocMtu>,
+        mps: OrUnknown<CocMps>,
         initial_credits: u16,
         channel_number: u8,
     }
@@ -178,8 +183,8 @@ vendor_event! {
     /// The peer answered a request to open credit-based channels.
     aci_l2cap_coc_connect_confirm_event => L2capCocConnectConfirmEvent {
         connection_handle: ConnHandle,
-        mtu: u16,
-        mps: u16,
+        mtu: OrUnknown<CocMtu>,
+        mps: OrUnknown<CocMps>,
         initial_credits: u16,
         result: u16,
         channel_index_list: &'a [u8],
@@ -191,8 +196,8 @@ vendor_event! {
     /// [`L2capCocReconfConfirm`].
     aci_l2cap_coc_reconf_event => L2capCocReconfEvent {
         connection_handle: ConnHandle,
-        mtu: u16,
-        mps: u16,
+        mtu: OrUnknown<CocMtu>,
+        mps: OrUnknown<CocMps>,
         channel_index_list: &'a [u8],
     }
 }
@@ -216,7 +221,7 @@ vendor_event! {
     /// The peer granted credits on a credit-based channel.
     aci_l2cap_coc_flow_control_event => L2capCocFlowControlEvent {
         channel_index: u8,
-        credits: u16,
+        credits: OrUnknown<CocCredits>,
     }
 }
 
@@ -242,6 +247,14 @@ mod tests {
     use super::*;
     use crate::wire::VendorEvent;
 
+    fn mtu(bytes: u16) -> CocMtu {
+        CocMtu::new(bytes).unwrap()
+    }
+
+    fn mps(bytes: u16) -> CocMps {
+        CocMps::new(bytes).unwrap()
+    }
+
     fn encode(command: &impl WriteHci) -> ([u8; 300], usize) {
         let mut buffer = [0; 300];
         let mut writer = &mut buffer[..];
@@ -254,8 +267,9 @@ mod tests {
     fn renamed_members_encode_in_every_release() {
         let min = ConnInterval::MIN;
         let max = ConnInterval::from_millis(15).unwrap();
+        let latency = ConnLatency::new(1).unwrap();
         let command =
-            L2capConnectionParameterUpdateReq::new(ConnHandle::new(0x0801), min, max, 1, 400);
+            L2capConnectionParameterUpdateReq::new(ConnHandle::new(0x0801), min, max, latency, 400);
         let (bytes, len) = encode(&command);
         assert_eq!(
             bytes[..len],
@@ -266,7 +280,7 @@ mod tests {
             ConnHandle::new(0x0801),
             min,
             max,
-            1,
+            latency,
             400,
             CeLength::from_units(2).unwrap(),
             CeLength::from_units(4).unwrap(),
@@ -282,7 +296,7 @@ mod tests {
     #[cfg(any(feature = "fw_1_23_0", feature = "fw_1_24_0"))]
     fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
         (
-            L2capCocConnectConfirm::new(ConnHandle::new(1), 64, 32, 4, 0, 2),
+            L2capCocConnectConfirm::new(ConnHandle::new(1), mtu(64), mps(32), 4, 0, 2),
             &[0x89, 0xFD, 11, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0, 2],
         )
     }
@@ -291,7 +305,7 @@ mod tests {
     #[cfg(not(any(feature = "fw_1_23_0", feature = "fw_1_24_0")))]
     fn connect_confirm() -> (L2capCocConnectConfirm, &'static [u8]) {
         (
-            L2capCocConnectConfirm::new(ConnHandle::new(1), 64, 32, 4, 0),
+            L2capCocConnectConfirm::new(ConnHandle::new(1), mtu(64), mps(32), 4, 0),
             &[0x89, 0xFD, 10, 1, 0, 64, 0, 32, 0, 4, 0, 0, 0],
         )
     }
@@ -310,17 +324,18 @@ mod tests {
 
     #[test]
     fn credit_based_channels_encode_their_lists() {
-        let (bytes, len) =
-            encode(&L2capCocReconf::try_new(ConnHandle::new(1), 64, 32, &[0, 2]).unwrap());
+        let (bytes, len) = encode(
+            &L2capCocReconf::try_new(ConnHandle::new(1), mtu(64), mps(32), &[0, 2]).unwrap(),
+        );
         assert_eq!(bytes[..len], [0x8A, 0xFD, 9, 1, 0, 64, 0, 32, 0, 2, 0, 2]);
-        assert!(L2capCocReconf::try_new(ConnHandle::new(1), 64, 32, &[0; 249]).is_err());
+        assert!(L2capCocReconf::try_new(ConnHandle::new(1), mtu(64), mps(32), &[0; 249]).is_err());
 
         let (bytes, len) = encode(&L2capCocTxData::try_new(3, &[0xAB; 252]).unwrap());
         assert_eq!(bytes[..6], [0x8E, 0xFD, 255, 3, 252, 0]);
         assert_eq!(len, 3 + 255);
         assert!(L2capCocTxData::try_new(3, &[0; 253]).is_err());
 
-        let (bytes, len) = encode(&L2capCocFlowControl::new(3, 10));
+        let (bytes, len) = encode(&L2capCocFlowControl::new(3, CocCredits::new(10).unwrap()));
         assert_eq!(bytes[..len], [0x8D, 0xFD, 3, 3, 10, 0]);
         assert_eq!(L2capCocConnect::OPCODE.to_raw(), 0xFD88);
         assert_eq!(L2capCocReconfConfirm::OPCODE.to_raw(), 0xFD8B);
@@ -351,7 +366,7 @@ mod tests {
         assert_eq!(confirm.connection_handle, ConnHandle::new(1));
         assert_eq!(
             (confirm.mtu, confirm.mps, confirm.initial_credits),
-            (64, 32, 5)
+            (OrUnknown::Known(mtu(64)), OrUnknown::Known(mps(32)), 5)
         );
         assert_eq!(confirm.channel_index_list, [7, 8]);
     }
@@ -364,7 +379,21 @@ mod tests {
         .unwrap();
         assert_eq!(request.identifier, 9);
         assert_eq!(request.l2cap_length, 8);
-        assert_eq!((request.interval_min, request.interval_max), (6, 12));
-        assert_eq!((request.latency, request.timeout_multiplier), (1, 200));
+        assert_eq!(
+            (request.interval_min, request.interval_max),
+            (
+                OrUnknown::Known(ConnInterval::MIN),
+                OrUnknown::Known(ConnInterval::from_millis(15).unwrap())
+            )
+        );
+        assert_eq!(request.latency.to_raw(), 1);
+        assert_eq!(request.timeout_multiplier, 200);
+
+        let odd = L2capConnectionUpdateReqEvent::from_hci_bytes_complete(&[
+            0x01, 0x00, 9, 8, 0, 5, 0, 12, 0, 0xF4, 1, 0xC8, 0,
+        ])
+        .unwrap();
+        assert_eq!(odd.interval_min, OrUnknown::Unknown(5), "below 7.5 ms");
+        assert_eq!(odd.latency, OrUnknown::Unknown(500), "above 499");
     }
 }

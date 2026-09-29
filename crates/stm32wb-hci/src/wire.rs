@@ -780,6 +780,18 @@ macro_rules! wire_flags {
             }
         }
 
+        impl $crate::wire::WireValue for $name {
+            type Raw = $repr;
+
+            fn from_raw(raw: $repr) -> ::core::option::Option<Self> {
+                $name::from_bits(raw)
+            }
+
+            fn to_raw(self) -> $repr {
+                self.0
+            }
+        }
+
         impl ::bt_hci::WriteHci for $name {
             fn size(&self) -> usize {
                 ::core::mem::size_of::<$repr>()
@@ -944,6 +956,109 @@ macro_rules! wire_duration {
             const UNIT_US: ::core::option::Option<u32> = ::core::option::Option::Some($unit);
         }
 
+        $crate::wire_range!(@encoding $name: $repr [$($special)*]);
+    };
+}
+
+/// Declare a range of values of an integer member, and some special values
+/// outside it, encoded as its `repr` integer. Every declaration using it for
+/// a member checks at compile time that the catalog documents each value of
+/// the range and each special value, on every target. A return or event
+/// parameter declares it as [`OrUnknown`]`<T>`, which keeps any other value.
+///
+/// ```ignore
+/// wire_range! {
+///     /// How many connection events the peripheral may skip.
+///     pub struct ConnLatency: u16 {
+///         values = 0x0000..=0x01F3;
+///     }
+/// }
+/// ```
+///
+/// The upper bound may be a constant, for a range only some releases
+/// extend.
+#[macro_export]
+macro_rules! wire_range {
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $name:ident: $repr:ident {
+            values = $min:literal..=$max:expr;
+            $(
+                $(#[$special_attr:meta])*
+                const $special:ident = $value:expr;
+            )*
+        }
+    ) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        $vis struct $name($repr);
+
+        #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
+        const _: () = {
+            ::core::assert!($min <= $max, "the range is empty");
+            $(
+                ::core::assert!(
+                    !($min <= $value && $value <= $max),
+                    "a special value is in the range"
+                );
+            )*
+        };
+
+        impl $name {
+            /// The lowest value of the range.
+            pub const MIN: Self = Self($min);
+            /// The highest value of the range.
+            pub const MAX: Self = Self($max);
+            $(
+                $(#[$special_attr])*
+                pub const $special: Self = Self($value);
+            )*
+
+            /// `value`, or `None` outside [`MIN`](Self::MIN)..=[`MAX`](Self::MAX).
+            #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
+            pub const fn new(value: $repr) -> ::core::option::Option<Self> {
+                if $min <= value && value <= $max {
+                    ::core::option::Option::Some(Self(value))
+                } else {
+                    ::core::option::Option::None
+                }
+            }
+
+            /// The encoded value.
+            pub const fn get(self) -> $repr {
+                self.0
+            }
+        }
+
+        impl ::core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                $(
+                    if *self == Self::$special {
+                        return f.write_str(::core::concat!(
+                            ::core::stringify!($name),
+                            "(",
+                            ::core::stringify!($special),
+                            ")"
+                        ));
+                    }
+                )*
+                ::core::write!(f, "{}({})", ::core::stringify!($name), self.0)
+            }
+        }
+
+        impl $crate::wire::HciWireType for $name {
+            const WIDTH: usize = ::core::mem::size_of::<$repr>();
+            const RANGES: ::core::option::Option<&'static [(i64, i64)]> =
+                ::core::option::Option::Some(&[
+                    ($min as i64, $max as i64),
+                    $(($name::$special.0 as i64, $name::$special.0 as i64),)*
+                ]);
+        }
+
+        $crate::wire_range!(@encoding $name: $repr [$($special)*]);
+    };
+    (@encoding $name:ident: $repr:ident [$($special:ident)*]) => {
         impl ::core::convert::From<$name> for $repr {
             fn from(value: $name) -> $repr {
                 value.0
@@ -953,13 +1068,29 @@ macro_rules! wire_duration {
         impl ::core::convert::TryFrom<$repr> for $name {
             type Error = ::bt_hci::FromHciBytesError;
 
-            fn try_from(units: $repr) -> ::core::result::Result<Self, Self::Error> {
+            fn try_from(raw: $repr) -> ::core::result::Result<Self, Self::Error> {
                 $(
-                    if units == $name::$special.0 {
+                    if raw == $name::$special.0 {
                         return ::core::result::Result::Ok($name::$special);
                     }
                 )*
-                $name::from_units(units).ok_or(::bt_hci::FromHciBytesError::InvalidValue)
+                if ($name::MIN.0..=$name::MAX.0).contains(&raw) {
+                    ::core::result::Result::Ok($name(raw))
+                } else {
+                    ::core::result::Result::Err(::bt_hci::FromHciBytesError::InvalidValue)
+                }
+            }
+        }
+
+        impl $crate::wire::WireValue for $name {
+            type Raw = $repr;
+
+            fn from_raw(raw: $repr) -> ::core::option::Option<Self> {
+                <$name as ::core::convert::TryFrom<$repr>>::try_from(raw).ok()
+            }
+
+            fn to_raw(self) -> $repr {
+                self.0
             }
         }
 
@@ -991,8 +1122,48 @@ macro_rules! wire_duration {
     };
 }
 
+/// An array stands for the values or flags of each of its elements.
 impl<T: HciWireType, const N: usize> HciWireType for [T; N] {
     const WIDTH: usize = T::WIDTH * N;
+    const VALUES: Option<&'static [i64]> = T::VALUES;
+    const BITS: Option<u64> = T::BITS;
+    const RANGES: Option<&'static [(i64, i64)]> = T::RANGES;
+    const UNIT_US: Option<u32> = T::UNIT_US;
+    const LENGTHS: Option<&'static [(i64, usize)]> = T::LENGTHS;
+    const FALLBACK: bool = T::FALLBACK;
+}
+
+/// Decode an array one element at a time, as declarations decode their
+/// array fields: bt-hci decodes only arrays of values it can reinterpret
+/// in place, which excludes [`OrUnknown`].
+#[doc(hidden)]
+pub fn decode_array<'de, T: FromHciBytes<'de>, const N: usize>(
+    data: &'de [u8],
+) -> Result<([T; N], &'de [u8]), FromHciBytesError> {
+    let mut rest = data;
+    let mut error = None;
+    let elements: [Option<T>; N] = core::array::from_fn(|_| {
+        if error.is_some() {
+            return None;
+        }
+        match T::from_hci_bytes(rest) {
+            Ok((element, next)) => {
+                rest = next;
+                Some(element)
+            }
+            Err(failure) => {
+                error = Some(failure);
+                None
+            }
+        }
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok((
+        elements.map(|element| element.expect("every element decoded")),
+        rest,
+    ))
 }
 
 impl<T: HciWireType + ?Sized> HciWireType for &T {

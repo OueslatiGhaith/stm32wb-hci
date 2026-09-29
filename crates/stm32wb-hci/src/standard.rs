@@ -51,7 +51,7 @@ standard_command! {
 standard_command! {
     /// Start transmitting test packets on `tx_frequency`.
     hci_le_transmitter_test => LeTransmitterTest {
-        tx_frequency: u8,
+        tx_frequency: crate::aci::ranges::RfChannel,
         length_of_test_data: u8,
         packet_payload: u8,
     }
@@ -150,8 +150,8 @@ standard_command! {
 standard_command! {
     /// Bound the random timeout between resolvable private address changes.
     hci_le_set_resolvable_private_address_timeout_v2 => LeSetResolvablePrivateAddrTimeoutV2 {
-        rpa_timeout_min: u16,
-        rpa_timeout_max: u16,
+        rpa_timeout_min: crate::aci::ranges::RpaTimeout,
+        rpa_timeout_max: crate::aci::ranges::RpaTimeout,
     }
 }
 

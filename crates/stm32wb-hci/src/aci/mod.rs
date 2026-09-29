@@ -13,6 +13,7 @@ pub mod gatt;
 pub mod general;
 pub mod hal;
 pub mod l2cap;
+pub mod ranges;
 pub mod values;
 
 stm32wb_hci_macros::vendor_events! {

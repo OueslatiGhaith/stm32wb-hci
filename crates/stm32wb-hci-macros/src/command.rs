@@ -447,10 +447,7 @@ fn return_struct(
     let count_of = |counted: &InputField| format_ident!("__{}_count", counted.name);
 
     let decodes = slots.iter().map(|slot| match slot {
-        Slot::Fixed { field, .. } => {
-            let (field, ty) = (&field.name, &field.ty);
-            quote!(let (#field, rest) = <#ty as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;)
-        }
+        Slot::Fixed { field, .. } => fixed_decode(field, &quote!('de)),
         Slot::Count { counted, scalar } => {
             let (count, scalar) = (count_of(counted), format_ident!("{}", scalar.name()));
             quote!(let (#count, rest) = <#scalar as ::bt_hci::FromHciBytes<'de>>::from_hci_bytes(rest)?;)
@@ -974,6 +971,19 @@ pub(crate) fn field_write(field: &InputField, asynchronous: bool) -> TokenStream
         None => quote! {
             <#ty as ::bt_hci::WriteHci>::#write_hci(&self.#field, &mut writer)#wait?;
         },
+    }
+}
+
+/// Decode the fixed-width `field` from `rest`, an array one element at a
+/// time: bt-hci decodes only arrays of values it can reinterpret in place,
+/// which excludes an array of [`OrUnknown`](stm32wb_hci::wire::OrUnknown).
+pub(crate) fn fixed_decode(field: &InputField, de: &TokenStream) -> TokenStream {
+    let (name, ty) = (&field.name, &field.ty);
+    match array_element(ty) {
+        Some(_) => quote!(let (#name, rest): (#ty, _) = ::stm32wb_hci::wire::decode_array(rest)?;),
+        None => {
+            quote!(let (#name, rest) = <#ty as ::bt_hci::FromHciBytes<#de>>::from_hci_bytes(rest)?;)
+        }
     }
 }
 

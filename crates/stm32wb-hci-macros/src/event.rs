@@ -10,9 +10,9 @@ use syn::{Attribute, Ident, Lifetime, Token};
 use crate::command::{
     BearerGroup, Channel, DocumentedGroup, Documents, ElementType, Fields, InputField, Side, Slot,
     Targets, add_bearers, add_documents, bearer_assertions, bearer_groups, bearer_positions,
-    check_bounds, documented_groups, documents, elements_lifetime_and_element, fields_in, plan,
-    profile_documents, record_history_names, record_names, same_layout, slice_lifetime_and_element,
-    value_assertions, width_assertions,
+    check_bounds, documented_groups, documents, elements_lifetime_and_element, fields_in,
+    fixed_decode, plan, profile_documents, record_history_names, record_names, same_layout,
+    slice_lifetime_and_element, value_assertions, width_assertions,
 };
 use crate::{cfg, complete};
 
@@ -293,10 +293,7 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
     let impl_generics = quote!(<#de>);
     let count_of = |counted: &InputField| format_ident!("__{}_count", counted.name);
     let decodes = slots.iter().map(|slot| match slot {
-        Slot::Fixed { field, .. } => {
-            let (field, ty) = (&field.name, &field.ty);
-            quote!(let (#field, rest) = <#ty as ::bt_hci::FromHciBytes<#de>>::from_hci_bytes(rest)?;)
-        }
+        Slot::Fixed { field, .. } => fixed_decode(field, &de),
         Slot::Count { counted, scalar } => {
             let (count, scalar) = (count_of(counted), format_ident!("{}", scalar.name()));
             quote!(let (#count, rest) = <#scalar as ::bt_hci::FromHciBytes<#de>>::from_hci_bytes(rest)?;)

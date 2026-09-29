@@ -288,7 +288,7 @@ mod tests {
 
     use super::*;
     use crate::aci::values::{AddressType, Privacy};
-    use crate::wire::{HciWireType, flags_documented, is_opaque, values_documented};
+    use crate::wire::{HciWireType, OrUnknown, flags_documented, is_opaque, values_documented};
 
     #[test]
     fn flags_encode_as_their_bits() {
@@ -307,6 +307,11 @@ mod tests {
         assert!(role.contains(Role::CENTRAL) && !role.contains(Role::OBSERVER));
         assert_eq!(format!("{role:?}").as_str(), "Role(PERIPHERAL | CENTRAL)");
         assert_eq!(format!("{:?}", Role::empty()).as_str(), "Role(empty)");
+        assert_eq!(
+            OrUnknown::<Role>::from_hci_bytes_complete(&[0x15]).unwrap(),
+            OrUnknown::Unknown(0x15),
+            "a fallback keeps undocumented bits"
+        );
     }
 
     #[test]

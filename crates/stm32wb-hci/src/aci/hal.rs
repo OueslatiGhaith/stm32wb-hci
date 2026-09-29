@@ -15,18 +15,16 @@ use stm32wb_hci_macros::{vendor_command, vendor_event};
 )]
 use crate::aci::flags::HalEventMask;
 use crate::aci::flags::RadioActivityMask;
+use crate::aci::ranges::{PaLevel, RfChannel, Rssi};
+#[allow(unused_imports, reason = "the BO variant cannot read the link status")]
+use crate::aci::values::LinkState;
 #[allow(
     unused_imports,
     reason = "the HCI-layer profiles have no warning event"
 )]
 use crate::aci::values::WarningType;
 use crate::aci::values::{ConfigDataOffset, ReadableConfigDataOffset};
-use crate::wire::BoundedBytes;
-#[allow(
-    unused_imports,
-    reason = "the HCI-layer profiles have no warning event"
-)]
-use crate::wire::OrUnknown;
+use crate::wire::{BoundedBytes, OrUnknown};
 
 vendor_command! {
     /// Read the build number of the wireless stack.
@@ -69,7 +67,7 @@ vendor_command! {
     /// until the next call or a reset; `en_high_power` is ignored on STM32WB.
     aci_hal_set_tx_power_level => HalSetTxPowerLevel {
         en_high_power: bool,
-        pa_level: u8,
+        pa_level: PaLevel,
     }
 }
 
@@ -84,7 +82,7 @@ vendor_command! {
     /// Start transmitting a continuous tone on an RF channel (0 to 39), for
     /// debugging while no other radio activity is ongoing.
     aci_hal_tone_start => HalToneStart {
-        rf_channel: u8,
+        rf_channel: RfChannel,
         freq_offset: u8,
     }
 }
@@ -97,7 +95,7 @@ vendor_command! {
 vendor_command! {
     /// Read the state of each link and the connection handle it serves.
     aci_hal_get_link_status => HalGetLinkStatus {} -> HalLinkStatus {
-        link_status: [u8; 8],
+        link_status: [OrUnknown<LinkState>; 8],
         link_connection_handle: [u16; 8],
     }
 }
@@ -144,7 +142,7 @@ vendor_command! {
 vendor_command! {
     /// Read the RSSI of the last received packet, in dBm.
     aci_hal_read_rssi => HalReadRssi {} -> HalRssi {
-        rssi: i8,
+        rssi: OrUnknown<Rssi>,
     }
 }
 
@@ -187,7 +185,7 @@ vendor_command! {
 vendor_command! {
     /// Start receiving on an RF channel (0 to 39) until [`HalRxStop`].
     aci_hal_rx_start => HalRxStart {
-        rf_channel: u8,
+        rf_channel: RfChannel,
     }
 }
 
@@ -218,7 +216,7 @@ vendor_event! {
     /// A peer sent a scan request, reported with its RSSI in dBm. The code is
     /// 0x1805 from 1.24.0.
     aci_hal_scan_req_report_event => HalScanReqReportEvent {
-        rssi: i8,
+        rssi: OrUnknown<Rssi>,
         peer_address_type: u8,
         peer_address: BdAddr,
     }
@@ -258,7 +256,7 @@ mod tests {
 
     #[test]
     fn parameters_encode_in_catalog_order() {
-        let (bytes, len) = encode(&HalToneStart::new(39, 2));
+        let (bytes, len) = encode(&HalToneStart::new(RfChannel::MAX, 2));
         assert_eq!(bytes[..len], [0x15, 0xFC, 2, 39, 2]);
         let (bytes, len) = encode(&HalSetRadioActivityMask::new(
             RadioActivityMask::ADVERTISING | RadioActivityMask::CENTRAL_CONNECTION,
@@ -275,7 +273,7 @@ mod tests {
         assert_eq!(bytes[..len], [0x1A, 0xFC, 4, 1, 0, 0, 0]);
         let (bytes, len) = encode(&HalWriteRadioReg::new(0x12, 0x34));
         assert_eq!(bytes[..len], [0x31, 0xFC, 2, 0x12, 0x34]);
-        let (bytes, len) = encode(&HalRxStart::new(19));
+        let (bytes, len) = encode(&HalRxStart::new(RfChannel::new(19).unwrap()));
         assert_eq!(bytes[..len], [0x33, 0xFC, 1, 19]);
         assert_eq!(HalRxStop::OPCODE.to_raw(), 0xFC34);
         assert_eq!(decode::<HalReadRadioReg>(&[0x5A]).register_value, 0x5A);
@@ -284,7 +282,7 @@ mod tests {
 
     #[test]
     fn flags_encode_as_one_byte() {
-        let (bytes, len) = encode(&HalSetTxPowerLevel::new(true, 0x19));
+        let (bytes, len) = encode(&HalSetTxPowerLevel::new(true, PaLevel::new(0x19).unwrap()));
         assert_eq!(bytes[..len], [0x0F, 0xFC, 2, 1, 0x19]);
     }
 
@@ -360,7 +358,15 @@ mod tests {
         assert_eq!(period.anchor_period, 10_000);
         assert_eq!(period.max_free_slot, 1_000);
 
-        assert_eq!(decode::<HalReadRssi>(&[0xC4]).rssi, -60);
+        assert_eq!(
+            decode::<HalReadRssi>(&[0xC4]).rssi,
+            OrUnknown::Known(Rssi::new(-60).unwrap())
+        );
+        assert_eq!(
+            decode::<HalReadRssi>(&[0x7F]).rssi,
+            OrUnknown::Known(Rssi::UNAVAILABLE)
+        );
+        assert_eq!(decode::<HalReadRssi>(&[0x15]).rssi, OrUnknown::Unknown(21));
 
         assert!(<HalGetAnchorPeriod as SyncCmd>::Return::from_hci_bytes_complete(&[0; 7]).is_err());
     }
@@ -369,10 +375,18 @@ mod tests {
     #[test]
     fn array_return_parameters_decode_element_wise() {
         let mut bytes = [0; 24];
-        bytes[..8].copy_from_slice(&[1, 2, 0, 0, 0, 0, 0, 0]);
+        bytes[..8].copy_from_slice(&[1, 2, 0x81, 4, 0, 0, 0, 0]);
         bytes[8..12].copy_from_slice(&[0x01, 0x08, 0x02, 0x08]);
         let links = decode::<HalGetLinkStatus>(&bytes);
-        assert_eq!(links.link_status[..2], [1, 2]);
+        assert_eq!(
+            links.link_status[..4],
+            [
+                OrUnknown::Known(LinkState::Advertising),
+                OrUnknown::Known(LinkState::ConnectedPeripheral),
+                OrUnknown::Known(LinkState::AdvertisingWithAdditionalBeacon),
+                OrUnknown::Unknown(4),
+            ]
+        );
         assert_eq!(links.link_connection_handle[..2], [0x0801, 0x0802]);
     }
 
@@ -548,7 +562,7 @@ mod tests {
     fn scan_requests_report_the_peer() {
         let report =
             HalScanReqReportEvent::from_hci_bytes_complete(&[0xC4, 1, 1, 2, 3, 4, 5, 6]).unwrap();
-        assert_eq!(report.rssi, -60);
+        assert_eq!(report.rssi.known(), Rssi::new(-60));
         assert_eq!(report.peer_address, BdAddr::new([1, 2, 3, 4, 5, 6]));
     }
 }
