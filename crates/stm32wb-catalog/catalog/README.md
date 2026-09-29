@@ -18,9 +18,10 @@ crate, so its dependents are rebuilt whenever the extractor rewrites them.
    command layout the code proves must also follow from its `_cpN` and `_rp0`
    structures alone, by the same rule, or be reported as not doing so.
 2. **ST documents.** Stack-profile availability comes from
-   `STM32WB_BLE_Wireless_Interface.html`; which binaries exist for each MCU
-   family comes from each family's `Release_Notes.html`, whose every binary
-   row must name a known stack profile.
+   `STM32WB_BLE_Wireless_Interface.html`, whose "Events generated" lists
+   must name the completion event every wrapper waits for; which binaries
+   exist for each MCU family comes from each family's `Release_Notes.html`,
+   whose every binary row must name a known stack profile.
 3. **Annotations.** `annotations.toml` holds curated facts no ST artifact
    states in a machine-readable form. Each cites its source, and the audit
    rejects annotations that are dangling, stale, overlapping, or that

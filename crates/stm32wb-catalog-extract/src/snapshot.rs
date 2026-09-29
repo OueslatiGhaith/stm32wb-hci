@@ -30,6 +30,10 @@ pub struct Report {
     /// and `(command, reason)` for the commands they do not.
     pub declared_agreements: usize,
     pub declared_differences: Vec<(String, String)>,
+    /// Command completions the interface document states, all matching the
+    /// code, and the commands whose completion it does not state.
+    pub documented_completions: usize,
+    pub unstated_completions: Vec<String>,
     /// `(entry, layout, reason)` for every layout left unresolved.
     pub unresolved: Vec<(String, &'static str, String)>,
     /// Documented values in total, and `(entry, member)` for every list
@@ -160,6 +164,7 @@ pub fn extract(
     }
 
     let documented = docs::interface_availability(&tag)?;
+    let completions = docs::command_completions(&tag)?;
     let mut matched = BTreeSet::new();
     let mut availability = |key: Key, name: &str| -> Result<Vec<Profile>, String> {
         let entry = documented
@@ -182,6 +187,8 @@ pub fn extract(
         proven_counts,
         declared_agreements,
         declared_differences,
+        documented_completions: 0,
+        unstated_completions: Vec::new(),
         unresolved: Vec::new(),
         domains: 0,
         dropped_domains: Vec::new(),
@@ -194,7 +201,23 @@ pub fn extract(
             // list the system channel's commands.
             Profile::ALL.to_vec()
         } else {
-            availability(Key::Command(command.scope, command.opcode), &command.name)?
+            let key = Key::Command(command.scope, command.opcode);
+            let profiles = availability(key.clone(), &command.name)?;
+            // The document states the completion STM32WBA's commands must
+            // take from it, so it must agree with every STM32WB wrapper.
+            match completions.get(&documented[&key].name) {
+                Some(Some(completion)) if *completion == command.completion => {
+                    report.documented_completions += 1;
+                }
+                Some(Some(completion)) => {
+                    return Err(format!(
+                        "{}: {} completes with {:?} but its documentation lists {completion:?}",
+                        tag.tag, command.name, command.completion
+                    ));
+                }
+                Some(None) | None => report.unstated_completions.push(command.name.clone()),
+            }
+            profiles
         };
         note_unresolved(&mut report, &command.name, "params", &command.params);
         if let Some(returns) = &command.returns {

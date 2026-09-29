@@ -3,13 +3,15 @@
 //! - `STM32WB_BLE_Wireless_Interface.html` lists every command and event with
 //!   one availability column per reduced stack profile (BF, PO, LO, LB, BO).
 //!   The full-extended profile supports the complete interface.
+//!   Each entry's section lists the events it generates, which name the
+//!   completion event of a command.
 //! - Each family's `Release_Notes.html` maps binary files to stack profiles.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use stm32wb_catalog::{CommandScope, EventScope, Family, Profile, SnapshotBinary};
+use stm32wb_catalog::{CommandScope, Completion, EventScope, Family, Profile, SnapshotBinary};
 
 use crate::cube::{BINARIES_DIR, CubeTag, INTERFACE_DOCUMENT};
 
@@ -110,6 +112,122 @@ fn parse_interface_availability(source: &str) -> Result<BTreeMap<Key, Documented
         return Err("no availability tables were found".to_owned());
     }
     Ok(availability)
+}
+
+/// The completion event each documented command's "Events generated" list
+/// names, keyed by its documented name, or `None` where the list names
+/// neither.
+pub fn command_completions(
+    tag: &CubeTag<'_>,
+) -> Result<BTreeMap<String, Option<Completion>>, String> {
+    let source = tag.read_text(INTERFACE_DOCUMENT)?;
+    parse_command_completions(&source).map_err(|error| format!("{INTERFACE_DOCUMENT}: {error}"))
+}
+
+fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Completion>>, String> {
+    let mut completions = BTreeMap::new();
+    for (name, events) in generated_events(source)? {
+        let status = events
+            .iter()
+            .any(|event| event == "HCI_COMMAND_STATUS_EVENT");
+        let complete = events
+            .iter()
+            .any(|event| event == "HCI_COMMAND_COMPLETE_EVENT");
+        let completion = match (status, complete) {
+            (true, true) => {
+                return Err(format!(
+                    "{name} generates both Command Status and Command Complete"
+                ));
+            }
+            (true, false) => Some(Completion::CommandStatus),
+            (false, true) => Some(Completion::CommandComplete),
+            (false, false) => None,
+        };
+        if completions.insert(name.clone(), completion).is_some() {
+            return Err(format!("{name} lists the events it generates twice"));
+        }
+    }
+    Ok(completions)
+}
+
+/// `(section, items)` for every `<h2>` section with an "Events generated"
+/// `<h3>` subsection, whose `<li>` items name the events.
+fn generated_events(source: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+    let mut reader = Reader::from_str(source);
+    reader.config_mut().check_end_names = false;
+    reader.config_mut().allow_unmatched_ends = true;
+
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    let mut section: Option<String> = None;
+    let mut listing = false;
+    // The text of the heading or item being read.
+    let mut text: Option<String> = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(tag)) => match tag.local_name().as_ref() {
+                b"h1" | b"h2" | b"h3" => {
+                    listing = false;
+                    text = Some(String::new());
+                }
+                b"li" if listing => text = Some(String::new()),
+                _ => {}
+            },
+            Ok(Event::Text(content)) => {
+                if let Some(text) = text.as_mut() {
+                    text.push_str(
+                        &content
+                            .html_content()
+                            .map_err(|error| format!("could not decode HTML text: {error}"))?,
+                    );
+                }
+            }
+            Ok(Event::End(tag)) => {
+                let finished = || {
+                    text.as_deref()
+                        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+                };
+                match tag.local_name().as_ref() {
+                    b"h1" => {
+                        section = None;
+                        text = None;
+                    }
+                    b"h2" => {
+                        section = finished();
+                        text = None;
+                    }
+                    b"h3" => {
+                        if finished().as_deref() == Some("Events generated") {
+                            let name = section
+                                .clone()
+                                .ok_or("an \"Events generated\" list belongs to no section")?;
+                            sections.push((name, Vec::new()));
+                            listing = true;
+                        }
+                        text = None;
+                    }
+                    b"li" if listing => {
+                        if let (Some(item), Some((_, items))) = (finished(), sections.last_mut()) {
+                            items.push(item);
+                        }
+                        text = None;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "invalid HTML near byte {}: {error}",
+                    reader.error_position()
+                ));
+            }
+        }
+    }
+    if sections.is_empty() {
+        return Err("no \"Events generated\" lists were found".to_owned());
+    }
+    Ok(sections)
 }
 
 fn table_kind(header: &[String]) -> Option<TableKind> {
@@ -324,6 +442,41 @@ mod tests {
 
         let unknown = html.replace("<td>Y</td><td></td>", "<td>?</td><td></td>");
         assert!(parse_interface_availability(&unknown).is_err());
+    }
+
+    #[test]
+    fn completions_come_from_the_events_generated() {
+        let html = r##"<h2><a name="HCI_DISCONNECT_anchor">HCI_DISCONNECT</a></h2>
+            <h3>Description</h3><p>Ends a connection with <li>HCI_COMMAND_COMPLETE_EVENT</li></p>
+            <h3>Events generated</h3>
+            <li><a href="#x">HCI_COMMAND_STATUS_EVENT</a></li>
+            <li><a href="#y">HCI_DISCONNECTION_COMPLETE_EVENT</a></li>
+            <h2><a name="HCI_RESET_anchor">HCI_RESET</a></h2>
+            <h3>Events generated</h3><li><a href="#z">HCI_COMMAND_COMPLETE_EVENT</a></li>
+            <h2><a name="HCI_HOST_NUMBER_OF_COMPLETED_PACKETS_anchor">HCI_HOST_NUMBER_OF_COMPLETED_PACKETS</a></h2>
+            <h3>Events generated</h3><p>Normally, no event is generated.</p>
+            <h2><a name="HCI_NO_LIST_anchor">HCI_NO_LIST</a></h2>
+            <h3>Description</h3><p>No list.</p>
+            <h1>Revision history</h1><li>HCI_COMMAND_STATUS_EVENT</li>"##;
+        let completions = parse_command_completions(html).unwrap();
+        assert_eq!(
+            completions,
+            BTreeMap::from([
+                ("HCI_DISCONNECT".to_owned(), Some(Completion::CommandStatus)),
+                ("HCI_HOST_NUMBER_OF_COMPLETED_PACKETS".to_owned(), None),
+                ("HCI_RESET".to_owned(), Some(Completion::CommandComplete)),
+            ])
+        );
+
+        let both = html.replace(
+            "HCI_DISCONNECTION_COMPLETE_EVENT",
+            "HCI_COMMAND_COMPLETE_EVENT",
+        );
+        let error = parse_command_completions(&both).unwrap_err();
+        assert!(error.contains("both"), "{error}");
+        let twice = html.replace("HCI_RESET", "HCI_DISCONNECT");
+        let error = parse_command_completions(&twice).unwrap_err();
+        assert!(error.contains("twice"), "{error}");
     }
 
     #[test]

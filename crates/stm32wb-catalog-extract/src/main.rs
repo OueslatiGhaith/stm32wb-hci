@@ -207,6 +207,13 @@ fn extract(cube: &Path, releases: &[Version]) -> Result<Catalog, String> {
         for (name, difference) in &report.declared_differences {
             eprintln!("  {name} is not reproduced from its structures: {difference}");
         }
+        eprintln!(
+            "  {} command completions stated by the interface document, as the code has them",
+            report.documented_completions
+        );
+        for name in &report.unstated_completions {
+            eprintln!("  the interface document does not state how {name} completes");
+        }
         for (name, layout, reason) in &report.unresolved {
             eprintln!("  unresolved {name} {layout}: {reason}");
         }
