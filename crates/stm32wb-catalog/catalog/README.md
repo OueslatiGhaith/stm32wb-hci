@@ -8,7 +8,8 @@ rewrites them.
 
 `stm32wba.toml` describes, in the same format, the commands and events of the
 BLE stack library of each supported STM32CubeWBA release; see
-[STM32WBA](#stm32wba).
+[STM32WBA](#stm32wba). It and `stm32wba-annotations.toml` are embedded the
+same way.
 
 ## Layers
 
@@ -130,13 +131,18 @@ but no C fills or reads them. So its catalog takes:
   has no selector without code, so a layout holding one is unresolved. An
   event payload must be the members its `ble_events.h` callback receives, in
   order;
-- values, bearers, and statuses as on STM32WB.
+- values, bearers, and statuses as on STM32WB. A value labelled for one
+  platform, such as `(only for STM32WB)` or `[not supported on STM32WBA]`,
+  applies only to that platform's profiles.
 
 A `Flags:` list whose items are not single bits (some CS events pack two
 4-bit fields under one) is dropped and reported, as are the bearers of an
 unresolved layout. The releases from v1.9.0 on pin
 `Middlewares/ST/STM32_WPAN` as a submodule, read at its pinned commit, so the
 clone needs `git submodule update --init Middlewares/ST/STM32_WPAN`.
+
+A release is selected by the Cargo feature `wba_<major>_<minor>_<patch>`,
+such as `wba_1_10_0`, where STM32WB's are `fw_*`.
 
 ## Workflow
 

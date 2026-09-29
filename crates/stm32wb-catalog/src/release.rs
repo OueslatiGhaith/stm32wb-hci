@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Error;
 
-/// One STM32CubeWB release, such as `1.17.1`.
+/// One STM32CubeWB or STM32CubeWBA release, such as `1.17.1`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Version {
     pub major: u16,
@@ -29,14 +29,15 @@ impl Version {
         format!("v{self}")
     }
 
-    /// The Cargo feature selecting this release, e.g. `fw_1_17_1`.
-    pub fn feature_name(self) -> String {
-        format!("fw_{}_{}_{}", self.major, self.minor, self.patch)
+    /// The Cargo feature selecting this release after `prefix`, e.g.
+    /// `fw_1_17_1`.
+    pub(crate) fn feature_name(self, prefix: &str) -> String {
+        format!("{prefix}{}_{}_{}", self.major, self.minor, self.patch)
     }
 
-    /// Parse a `fw_<major>_<minor>_<patch>` Cargo feature name.
-    pub fn from_feature_name(feature: &str) -> Option<Self> {
-        let mut parts = feature.strip_prefix("fw_")?.split('_');
+    /// Parse a `<prefix><major>_<minor>_<patch>` Cargo feature name.
+    pub(crate) fn from_feature_name(feature: &str, prefix: &str) -> Option<Self> {
+        let mut parts = feature.strip_prefix(prefix)?.split('_');
         let version = Self::new(
             parts.next()?.parse().ok()?,
             parts.next()?.parse().ok()?,
@@ -162,9 +163,12 @@ mod tests {
         let version: Version = "v1.17.1".parse().unwrap();
         assert_eq!(version, Version::new(1, 17, 1));
         assert_eq!(version.cube_tag(), "v1.17.1");
-        assert_eq!(version.feature_name(), "fw_1_17_1");
-        assert_eq!(Version::from_feature_name("fw_1_17_1"), Some(version));
-        assert_eq!(Version::from_feature_name("fw_1_17"), None);
+        assert_eq!(version.feature_name("fw_"), "fw_1_17_1");
+        assert_eq!(
+            Version::from_feature_name("fw_1_17_1", "fw_"),
+            Some(version)
+        );
+        assert_eq!(Version::from_feature_name("fw_1_17", "fw_"), None);
         assert!("1.17".parse::<Version>().is_err());
         assert!(Version::new(1, 9, 0) < Version::new(1, 17, 0));
     }

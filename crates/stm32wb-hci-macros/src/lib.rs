@@ -15,7 +15,7 @@ mod structs;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use stm32wb_catalog::bundled;
+use stm32wb_catalog::{Platform, bundled};
 
 /// Require exactly one `fw_*` feature (a catalog release) and exactly one
 /// `stack-*` feature (a BLE stack profile).
@@ -28,11 +28,13 @@ pub fn check_target(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("check_target! takes no arguments");
     }
-    let catalog = match bundled() {
+    let catalog = match bundled(Platform::Stm32wb) {
         Ok(bundled) => &bundled.catalog,
         Err(error) => return self::error(&format!("the bundled catalog is invalid: {error}")),
     };
-    let releases = catalog.versions().map(|release| release.feature_name());
+    let releases = catalog
+        .versions()
+        .map(|release| catalog.platform.release_feature(release));
     let profiles = catalog
         .platform
         .profiles()
@@ -290,7 +292,7 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("catalog_complete! takes no arguments");
     }
-    match bundled()
+    match bundled(Platform::Stm32wb)
         .map_err(|error| error.to_string())
         .and_then(|bundled| complete::expand(bundled).map_err(|error| error.to_string()))
     {
@@ -381,7 +383,7 @@ pub fn att_bearer_range(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("att_bearer_range! takes no arguments");
     }
-    match bundled()
+    match bundled(Platform::Stm32wb)
         .map_err(|error| format!("the bundled catalog is invalid: {error}"))
         .and_then(bearer::expand)
     {

@@ -24,7 +24,8 @@ pub fn targets<'a>(
         return None;
     }
     let alternatives = segments.iter().map(|(releases, profiles)| {
-        let releases = releases_in(catalog, *releases).map(Version::feature_name);
+        let releases = releases_in(catalog, *releases)
+            .map(|release| catalog.platform.release_feature(release));
         let profiles = profiles.iter().map(|profile| profile.feature_name());
         quote! {
             all(

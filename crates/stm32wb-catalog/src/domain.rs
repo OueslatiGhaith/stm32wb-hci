@@ -28,7 +28,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{Element, Error, Field, FieldType, Layout, Profile, ReleaseRange, Scalar};
+use crate::{Element, Error, Field, FieldType, Layout, Platform, Profile, ReleaseRange, Scalar};
 
 /// One documented value, or an inclusive range of them, with its label.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -420,26 +420,19 @@ pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<
     Ok(())
 }
 
-/// How an item's label restricts it to one MCU of the documented family.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Mcu {
-    Stm32wb,
-    Stm32wba,
-}
-
-/// The MCU a phrase such as `only for STM32WB` names, if it ends right after
-/// the name, as in `(only for STM32WB)` or `with STM32WBA`.
-fn mcu_after(label: &str, phrase: &str) -> Option<Mcu> {
+/// The platform a phrase such as `only for STM32WB` names, if it ends right
+/// after the name, as in `(only for STM32WB)` or `with STM32WBA`.
+fn platform_after(label: &str, phrase: &str) -> Option<Platform> {
     let rest = &label[label.find(phrase)? + phrase.len()..];
     let rest = rest.strip_prefix(" STM32WB")?;
-    let (mcu, rest) = match rest.strip_prefix('A') {
-        Some(rest) => (Mcu::Stm32wba, rest),
-        None => (Mcu::Stm32wb, rest),
+    let (platform, rest) = match rest.strip_prefix('A') {
+        Some(rest) => (Platform::Stm32wba, rest),
+        None => (Platform::Stm32wb, rest),
     };
     rest.chars()
         .next()
         .is_none_or(|next| !next.is_ascii_alphanumeric() && next != ' ')
-        .then_some(mcu)
+        .then_some(platform)
 }
 
 /// The profiles a phrase of an item's label restricts it to, if it names
@@ -459,31 +452,32 @@ fn profiles_named(label: &str) -> Option<&'static [Profile]> {
 }
 
 impl Domain {
-    /// The items an STM32WB binary of `profile` accepts: every item, except
-    /// those whose label says they are not supported, not supported on
-    /// STM32WB, only on STM32WBA (or is just `STM32WBA`), or only for
-    /// profiles other than `profile`,
+    /// The items the BLE stack of `profile` accepts: every item, except
+    /// those whose label says they are not supported, not supported on the
+    /// profile's platform, only on the other platform (or is just its name,
+    /// `STM32WB` or `STM32WBA`), or only for profiles other than `profile`,
     /// such as the full stack or the BO variant. An item labelled
     /// `otherwise` is accepted when no item restricted to some profiles is.
     /// A label naming any other condition is an error rather than a guess.
-    fn stm32wb_items(&self, profile: Profile) -> Result<Vec<&DomainItem>, String> {
+    fn items(&self, profile: Profile) -> Result<Vec<&DomainItem>, String> {
         let mut items = Vec::new();
         let mut otherwise = Vec::new();
         let mut restricted = false;
         for item in &self.items {
             let label = item.label.as_deref().unwrap_or_default();
-            // Some structure fields label each MCU's range with its bare name.
-            let mcu = mcu_after(label, "not supported on")
-                .map(|mcu| (mcu, false))
-                .or_else(|| mcu_after(label, "only for").map(|mcu| (mcu, true)))
-                .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)))
+            // Some structure fields label each platform's range with its bare
+            // name.
+            let platform = platform_after(label, "not supported on")
+                .map(|platform| (platform, false))
+                .or_else(|| platform_after(label, "only for").map(|platform| (platform, true)))
+                .or_else(|| platform_after(label, "with").map(|platform| (platform, true)))
                 .or(match label {
-                    "STM32WB" => Some((Mcu::Stm32wb, true)),
-                    "STM32WBA" => Some((Mcu::Stm32wba, true)),
+                    "STM32WB" => Some((Platform::Stm32wb, true)),
+                    "STM32WBA" => Some((Platform::Stm32wba, true)),
                     _ => None,
                 });
-            let applies = match (mcu, profiles_named(label)) {
-                (Some((mcu, only)), _) => (mcu == Mcu::Stm32wb) == only,
+            let applies = match (platform, profiles_named(label)) {
+                (Some((platform, only)), _) => (platform == profile.platform()) == only,
                 (None, Some(profiles)) => {
                     let applies = profiles.contains(&profile);
                     restricted |= applies;
@@ -513,44 +507,44 @@ impl Domain {
         Ok(items)
     }
 
-    /// The inclusive ranges of values an STM32WB binary of `profile`
-    /// accepts, leaving out the items their labels restrict to other MCUs or
-    /// profiles, or say are not supported. Flags, which document bits rather
-    /// than values, are an error.
-    pub fn stm32wb_ranges(&self, profile: Profile) -> Result<Vec<(i64, i64)>, String> {
+    /// The inclusive ranges of values the BLE stack of `profile` accepts,
+    /// leaving out the items their labels restrict to the other platform or
+    /// other profiles, or say are not supported. Flags, which document bits
+    /// rather than values, are an error.
+    pub fn ranges(&self, profile: Profile) -> Result<Vec<(i64, i64)>, String> {
         if self.kind == DomainKind::Flags {
             return Err("its documentation lists bits rather than values".to_owned());
         }
         Ok(self
-            .stm32wb_items(profile)?
+            .items(profile)?
             .into_iter()
             .map(|item| (item.first, item.last))
             .collect())
     }
 
-    /// The length each single value an STM32WB binary of `profile` accepts
+    /// The length each single value the BLE stack of `profile` accepts
     /// documents for its data, the values being those
-    /// [`stm32wb_ranges`](Self::stm32wb_ranges) gives. Flags are an error.
-    pub fn stm32wb_lengths(&self, profile: Profile) -> Result<Vec<(i64, u16)>, String> {
-        self.stm32wb_ranges(profile)?;
+    /// [`ranges`](Self::ranges) gives. Flags are an error.
+    pub fn lengths(&self, profile: Profile) -> Result<Vec<(i64, u16)>, String> {
+        self.ranges(profile)?;
         Ok(self
-            .stm32wb_items(profile)?
+            .items(profile)?
             .into_iter()
             .filter(|item| item.first == item.last)
             .filter_map(|item| Some((item.first, item.length()?)))
             .collect())
     }
 
-    /// The union of the flags an STM32WB binary of `profile` accepts, the
-    /// items being selected as for [`stm32wb_ranges`](Self::stm32wb_ranges).
+    /// The union of the flags the BLE stack of `profile` accepts, the items
+    /// being selected as for [`ranges`](Self::ranges).
     /// Values, which the bits of a flag type could combine into undocumented
     /// ones, are an error.
-    pub fn stm32wb_bits(&self, profile: Profile) -> Result<u64, String> {
+    pub fn bits(&self, profile: Profile) -> Result<u64, String> {
         if self.kind == DomainKind::Values {
             return Err("its documentation lists values rather than bits".to_owned());
         }
         Ok(self
-            .stm32wb_items(profile)?
+            .items(profile)?
             .into_iter()
             .fold(0, |bits, item| bits | item.first as u64))
     }

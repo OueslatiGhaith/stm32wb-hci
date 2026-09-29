@@ -157,13 +157,13 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
 
 #[cfg(test)]
 mod tests {
-    use stm32wb_catalog::bundled;
+    use stm32wb_catalog::{Platform, bundled};
 
     use super::*;
 
     #[test]
     fn declarations_mark_their_entries_by_latest_name() {
-        let bundled = bundled().unwrap();
+        let bundled = bundled(Platform::Stm32wb).unwrap();
         let tokens = declared(bundled, Kind::Command, "aci_hal_set_slave_latency")
             .unwrap()
             .to_string();
@@ -182,7 +182,9 @@ mod tests {
 
     #[test]
     fn every_vendor_and_system_entry_is_required() {
-        let tokens = expand(bundled().unwrap()).unwrap().to_string();
+        let tokens = expand(bundled(Platform::Stm32wb).unwrap())
+            .unwrap()
+            .to_string();
         assert!(tokens.contains("pub struct aci_reset ;"), "{tokens}");
         assert!(tokens.contains("pub struct hci_reset ;"), "{tokens}");
         assert!(

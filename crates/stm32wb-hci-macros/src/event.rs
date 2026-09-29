@@ -3,7 +3,7 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use stm32wb_catalog::{Bundled, Field, ReleaseRange, Structs, bundled};
+use stm32wb_catalog::{Bundled, Field, Platform, ReleaseRange, Structs, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
@@ -44,7 +44,7 @@ impl Parse for Input {
 }
 
 pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),

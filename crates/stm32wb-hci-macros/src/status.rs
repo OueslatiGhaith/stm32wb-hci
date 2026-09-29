@@ -3,14 +3,14 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use stm32wb_catalog::{ReleaseRange, Version, bundled};
+use stm32wb_catalog::{Platform, ReleaseRange, Version, bundled};
 use syn::spanned::Spanned;
 
 use crate::cfg;
 use crate::command::release_runs;
 
 pub fn expand(ty: syn::Type) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),

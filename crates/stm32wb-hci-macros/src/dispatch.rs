@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use stm32wb_catalog::bundled;
+use stm32wb_catalog::{Platform, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -128,7 +128,7 @@ fn borrows(ty: &Type, lifetime: &Lifetime) -> bool {
 }
 
 pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),

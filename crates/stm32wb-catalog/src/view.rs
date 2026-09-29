@@ -18,7 +18,7 @@ impl Target {
     pub fn features(self) -> String {
         format!(
             "{},{}",
-            self.release.feature_name(),
+            self.profile.platform().release_feature(self.release),
             self.profile.feature_name()
         )
     }

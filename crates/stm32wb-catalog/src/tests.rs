@@ -790,7 +790,7 @@ fn bundled_catalog_is_valid_and_audited() {
     let Bundled {
         catalog,
         annotations,
-    } = bundled().unwrap();
+    } = bundled(Platform::Stm32wb).unwrap();
     assert_eq!(catalog.platform, Platform::Stm32wb);
     assert_eq!(
         catalog.releases.first().unwrap().version,
@@ -798,12 +798,63 @@ fn bundled_catalog_is_valid_and_audited() {
     );
     assert!(catalog.command_named("aci_gap_set_discoverable").is_some());
     assert!(!annotations.annotations.is_empty());
-    assert!(std::ptr::eq(catalog, &bundled().unwrap().catalog));
+    assert!(std::ptr::eq(
+        catalog,
+        &bundled(Platform::Stm32wb).unwrap().catalog
+    ));
+}
+
+#[test]
+fn bundled_wba_catalog_is_valid_and_audited() {
+    let wba = bundled(Platform::Stm32wba).unwrap();
+    assert_eq!(wba.catalog.platform, Platform::Stm32wba);
+    assert!(
+        wba.catalog
+            .versions()
+            .any(|release| release == Version::new(1, 10, 0))
+    );
+    assert!(
+        wba.catalog
+            .command_named("aci_gap_set_discoverable")
+            .is_some()
+    );
+    assert!(std::ptr::eq(wba, bundled(Platform::Stm32wba).unwrap()));
+    assert!(!std::ptr::eq(wba, bundled(Platform::Stm32wb).unwrap()));
+    let targets = wba
+        .distinct_targets()
+        .into_iter()
+        .map(Target::features)
+        .collect::<Vec<_>>();
+    assert_eq!(targets[0], "wba_1_10_0,stack-wba-full");
+}
+
+/// Every label of both bundled catalogs names only conditions the catalog
+/// interprets, for every profile of its platform.
+#[test]
+fn bundled_labels_name_only_known_conditions() {
+    for platform in [Platform::Stm32wb, Platform::Stm32wba] {
+        let catalog = &bundled(platform).unwrap().catalog;
+        let commands = catalog.commands.iter().flat_map(|command| &command.domains);
+        let events = catalog.events.iter().flat_map(|event| &event.domains);
+        let members = commands.chain(events).map(|domain| &domain.domain);
+        let fields = catalog.struct_domains.iter().map(|domain| &domain.domain);
+        for domain in members.chain(fields) {
+            for &profile in platform.profiles() {
+                let read = match domain.kind {
+                    DomainKind::Values => domain.ranges(profile).map(drop),
+                    DomainKind::Flags => domain.bits(profile).map(drop),
+                };
+                if let Err(error) = read {
+                    panic!("{platform:?} {profile}: {error}");
+                }
+            }
+        }
+    }
 }
 
 #[test]
 fn bundled_system_commands_keep_their_history() {
-    let bundled = bundled().unwrap();
+    let bundled = bundled(Platform::Stm32wb).unwrap();
     let init = bundled
         .catalog
         .command(CommandScope::System, 0xFC66)
@@ -888,7 +939,7 @@ fn validation_checks_bearer_members() {
 /// 1.17.0; the server side confirms and notifies on them from 1.16.0.
 #[test]
 fn bundled_bearers_follow_the_documentation() {
-    let catalog = &bundled().unwrap().catalog;
+    let catalog = &bundled(Platform::Stm32wb).unwrap().catalog;
     let bearers = |name: &str, release: Version| {
         catalog
             .command_named(name)
@@ -1051,7 +1102,7 @@ fn segments_follow_names_across_gaps_renames_and_moves() {
 
 #[test]
 fn bundled_segments_cover_moved_codes() {
-    let bundled = bundled().unwrap();
+    let bundled = bundled(Platform::Stm32wb).unwrap();
     let segments = bundled
         .event_segments("aci_hal_end_of_radio_activity_event")
         .unwrap();
@@ -1087,7 +1138,7 @@ fn distinct_targets_cover_every_interface_once() {
         ]
     );
 
-    let bundled = bundled().unwrap();
+    let bundled = bundled(Platform::Stm32wb).unwrap();
     let targets = bundled.distinct_targets();
     let oldest = bundled.catalog.versions().next().unwrap();
     assert_eq!(
@@ -1103,7 +1154,7 @@ fn distinct_targets_cover_every_interface_once() {
 }
 
 #[test]
-fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
+fn items_follow_the_platform_and_profile_conditions() {
     let domain = |kind, items: &[&str]| Domain {
         kind,
         items: items.iter().map(|item| item.parse().unwrap()).collect(),
@@ -1123,11 +1174,11 @@ fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
         ],
     );
     assert_eq!(
-        values.stm32wb_ranges(Profile::Light).unwrap(),
+        values.ranges(Profile::Light).unwrap(),
         [(0, 0), (3, 3), (4, 0x5DC0)]
     );
     assert_eq!(
-        values.stm32wb_ranges(Profile::Full).unwrap(),
+        values.ranges(Profile::Full).unwrap(),
         [
             (0, 0),
             (3, 3),
@@ -1136,29 +1187,31 @@ fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
             (0x5DC2, 0x5DC2)
         ]
     );
+    assert_eq!(
+        values.ranges(Profile::WbaFull).unwrap(),
+        [(0, 0), (1, 1), (2, 2), (4, 0xFFFF)]
+    );
     let variant = domain(
         DomainKind::Values,
         &["0x00..=0x25: for BO variant", "0x00..=0xFF: otherwise"],
     );
-    assert_eq!(
-        variant.stm32wb_ranges(Profile::HciAdvScan).unwrap(),
-        [(0, 0x25)]
-    );
-    assert_eq!(
-        variant.stm32wb_ranges(Profile::HciLayer).unwrap(),
-        [(0, 0xFF)]
-    );
+    assert_eq!(variant.ranges(Profile::HciAdvScan).unwrap(), [(0, 0x25)]);
+    assert_eq!(variant.ranges(Profile::HciLayer).unwrap(), [(0, 0xFF)]);
     let named = domain(
         DomainKind::Values,
         &["0x0004..=0x5DC0: STM32WB", "0x0004..=0xFFFF: STM32WBA"],
     );
-    assert_eq!(named.stm32wb_ranges(Profile::Full).unwrap(), [(4, 0x5DC0)]);
+    assert_eq!(named.ranges(Profile::Full).unwrap(), [(4, 0x5DC0)]);
+    assert_eq!(
+        named.ranges(Profile::WbaLinkLayerOnly).unwrap(),
+        [(4, 0xFFFF)]
+    );
     let error = domain(DomainKind::Values, &["0x0004..=0x5DC0: STM32WBx"])
-        .stm32wb_ranges(Profile::Full)
+        .ranges(Profile::Full)
         .unwrap_err();
     assert!(error.contains("cannot interpret"), "{error}");
     let error = domain(DomainKind::Values, &["0x00..=0x25: for XY variant"])
-        .stm32wb_ranges(Profile::Full)
+        .ranges(Profile::Full)
         .unwrap_err();
     assert!(error.contains("cannot interpret"), "{error}");
     let flags = domain(
@@ -1172,29 +1225,20 @@ fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
             "0x10: Peripheral",
         ],
     );
-    assert_eq!(flags.stm32wb_bits(Profile::Full).unwrap(), 0x11);
-    assert!(
-        flags
-            .stm32wb_ranges(Profile::Full)
-            .unwrap_err()
-            .contains("bits")
-    );
-    assert!(
-        values
-            .stm32wb_bits(Profile::Full)
-            .unwrap_err()
-            .contains("values")
-    );
+    assert_eq!(flags.bits(Profile::Full).unwrap(), 0x11);
+    assert_eq!(flags.bits(Profile::WbaFull).unwrap(), 0x16);
+    assert!(flags.ranges(Profile::Full).unwrap_err().contains("bits"));
+    assert!(values.bits(Profile::Full).unwrap_err().contains("values"));
     assert_eq!(
         domain(DomainKind::Values, &["0x01: Resolving (not supported)"])
-            .stm32wb_ranges(Profile::Full)
+            .ranges(Profile::Full)
             .unwrap(),
         []
     );
 }
 
 #[test]
-fn stm32wb_lengths_end_the_labels() {
+fn lengths_end_the_labels() {
     let offsets = Domain {
         kind: DomainKind::Values,
         items: [
@@ -1210,7 +1254,7 @@ fn stm32wb_lengths_end_the_labels() {
         unit_us: None,
     };
     assert_eq!(
-        offsets.stm32wb_lengths(Profile::Light).unwrap(),
+        offsets.lengths(Profile::Light).unwrap(),
         [(0x00, 6), (0xB0, 1)]
     );
     let item: DomainItem = "0xD1: Max data length (bytes #0-1: \"tx\"); 8 bytes"
@@ -1221,10 +1265,5 @@ fn stm32wb_lengths_end_the_labels() {
         kind: DomainKind::Flags,
         ..offsets
     };
-    assert!(
-        flags
-            .stm32wb_lengths(Profile::Light)
-            .unwrap_err()
-            .contains("bits")
-    );
+    assert!(flags.lengths(Profile::Light).unwrap_err().contains("bits"));
 }

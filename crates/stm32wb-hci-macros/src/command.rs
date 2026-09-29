@@ -8,7 +8,8 @@ use quote::{format_ident, quote, quote_spanned};
 use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
     Bearer, Bundled, Catalog, CommandScope, Completion, Domain, DomainKind, Element, EventScope,
-    Field, FieldType, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version, bundled,
+    Field, FieldType, Platform, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version,
+    bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -206,7 +207,7 @@ impl Channel {
 }
 
 pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),
@@ -1382,11 +1383,11 @@ pub(crate) fn documents<'a>(
                 return Documented::Nothing;
             };
             let documented = match domain.kind {
-                DomainKind::Values => domain.stm32wb_ranges(profile).and_then(|ranges| {
-                    let lengths = domain.stm32wb_lengths(profile)?;
+                DomainKind::Values => domain.ranges(profile).and_then(|ranges| {
+                    let lengths = domain.lengths(profile)?;
                     Ok(Documented::Values(ranges, domain.unit_us, lengths))
                 }),
-                DomainKind::Flags => domain.stm32wb_bits(profile).map(Documented::Flags),
+                DomainKind::Flags => domain.bits(profile).map(Documented::Flags),
             };
             documented.unwrap_or_else(Documented::Unreadable)
         })

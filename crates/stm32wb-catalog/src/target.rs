@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Platform};
+use crate::{Error, Platform, Version};
 
 /// A BLE stack profile, i.e. which variant of the BLE stack runs: on
 /// STM32WB, the CPU2 wireless binary; on STM32WBA, the configuration of the
@@ -125,6 +125,27 @@ impl Profile {
 }
 
 impl Platform {
+    /// The prefix of the Cargo features selecting the platform's releases:
+    /// STM32WB names the release of its CPU2 wireless binary, and STM32WBA
+    /// that of its BLE stack library.
+    pub const fn release_feature_prefix(self) -> &'static str {
+        match self {
+            Self::Stm32wb => "fw_",
+            Self::Stm32wba => "wba_",
+        }
+    }
+
+    /// The Cargo feature selecting a release of the platform, e.g.
+    /// `fw_1_24_0` or `wba_1_10_0`.
+    pub fn release_feature(self, release: Version) -> String {
+        release.feature_name(self.release_feature_prefix())
+    }
+
+    /// The release a Cargo feature of the platform selects.
+    pub fn release_from_feature(self, feature: &str) -> Option<Version> {
+        Version::from_feature_name(feature, self.release_feature_prefix())
+    }
+
     /// The stack profiles of the platform, the complete one first.
     pub fn profiles(self) -> &'static [Profile] {
         match self {
@@ -255,6 +276,13 @@ mod tests {
             Some(Profile::WbaBasicFeatures)
         );
         assert_eq!(Platform::Stm32wb.profile_for_column("BP"), None);
+        let release = Version::new(1, 10, 0);
+        assert_eq!(Platform::Stm32wba.release_feature(release), "wba_1_10_0");
+        assert_eq!(
+            Platform::Stm32wba.release_from_feature("wba_1_10_0"),
+            Some(release)
+        );
+        assert_eq!(Platform::Stm32wb.release_from_feature("wba_1_10_0"), None);
         assert_eq!(
             Family::Wb5x
                 .binary_file_name(Profile::FullExtended)

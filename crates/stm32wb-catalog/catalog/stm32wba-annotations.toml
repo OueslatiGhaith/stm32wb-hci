@@ -1,0 +1,7 @@
+# The STM32WBA wireless-interface catalog, layer 3: curated facts.
+#
+# Each annotation refines one entry of stm32wba.toml and must cite the
+# evidence it rests on, as in annotations.toml, which documents the format.
+# `stm32wb-catalog-extract audit --platform stm32wba` rejects annotations
+# whose target disappeared, that fill a layout the extractor now derives
+# (stale), or that contradict an extracted layout without `override = true`.

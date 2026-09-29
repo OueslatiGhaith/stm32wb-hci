@@ -59,7 +59,9 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, String> {
         .into_iter()
         .map(|(last, releases)| {
             let cfg = several.then(|| {
-                let features = releases.iter().map(|release| release.feature_name());
+                let features = releases
+                    .iter()
+                    .map(|release| catalog.platform.release_feature(*release));
                 quote!(#[cfg(any(#(feature = #features),*))])
             });
             let doc = format!(
@@ -96,13 +98,15 @@ fn describe(all: &[Version], releases: &[Version]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use stm32wb_catalog::bundled;
+    use stm32wb_catalog::{Platform, bundled};
 
     use super::*;
 
     #[test]
     fn releases_share_one_range_each() {
-        let tokens = expand(bundled().unwrap()).unwrap().to_string();
+        let tokens = expand(bundled(Platform::Stm32wb).unwrap())
+            .unwrap()
+            .to_string();
         assert_eq!(
             tokens.matches("pub const LAST_ENHANCED").count(),
             2,

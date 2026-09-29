@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use stm32wb_catalog::{Bundled, CommandScope, Completion, EventScope, bundled};
+use stm32wb_catalog::{Bundled, CommandScope, Completion, EventScope, Platform, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -98,7 +98,7 @@ struct Facts {
 }
 
 pub fn expand(input: Input) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),
@@ -113,7 +113,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
 }
 
 pub fn expand_events(input: Input) -> syn::Result<TokenStream> {
-    let bundled = bundled().map_err(|error| {
+    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
         syn::Error::new(
             Span::call_site(),
             format!("the bundled catalog is invalid: {error}"),
