@@ -15,7 +15,8 @@ crate, so its dependents are rebuilt whenever the extractor rewrites them.
    the wrapper code, not from member names.
 2. **ST documents.** Stack-profile availability comes from
    `STM32WB_BLE_Wireless_Interface.html`; which binaries exist for each MCU
-   family comes from each family's `Release_Notes.html`.
+   family comes from each family's `Release_Notes.html`, whose every binary
+   row must name a known stack profile.
 3. **Annotations.** `annotations.toml` holds curated facts no ST artifact
    states in a machine-readable form. Each cites its source, and the audit
    rejects annotations that are dangling, stale, overlapping, or that
@@ -60,6 +61,23 @@ durations the list writes next to its values and checked against every one
 of them. `returned = true` marks a return parameter. Items may overlap, since
 some lists depend on the stack profile or the MCU (`for BO variant`,
 `not supported on STM32WB`); their labels say so.
+
+The fields of the structures commands and events carry list their values in
+`ble_types.h`, in the same notation. `struct_domains` records them by
+structure, over the releases documenting them:
+
+```toml
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Adv_Set_t"
+member = "Duration"
+values = ["0x0000: No advertising duration.", "0x0001..=0xFFFF: Advertising duration"]
+unit_us = 10000
+```
+
+Every list the headers write is either recorded or reported by `extract`
+and `check`, as for a list whose member's layout, or whose structure's, is
+unresolved. A list header anywhere else than its place is an error.
 
 Command returns include the leading status byte. Capacities are the element
 capacities the generated C buffers declare.

@@ -94,9 +94,9 @@ standard_command! {
 vendor_struct! {
     /// Scan parameters for one PHY.
     Scan_Param_Phy_t => ScanParamPhy {
-        scan_type: u8,
-        scan_interval: u16,
-        scan_window: u16,
+        scan_type: crate::aci::values::ScanType,
+        scan_interval: crate::aci::durations::ExtScanInterval,
+        scan_window: crate::aci::durations::ExtScanWindow,
     }
 }
 
@@ -114,14 +114,14 @@ standard_command! {
 vendor_struct! {
     /// Connection parameters for one PHY.
     Init_Param_Phy_t => InitParamPhy {
-        scan_interval: u16,
-        scan_window: u16,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
-        conn_latency: u16,
-        supervision_timeout: u16,
-        min_ce_length: u16,
-        max_ce_length: u16,
+        scan_interval: crate::aci::durations::ExtScanInterval,
+        scan_window: crate::aci::durations::ExtScanWindow,
+        conn_interval_min: crate::aci::durations::ConnInterval,
+        conn_interval_max: crate::aci::durations::ConnInterval,
+        conn_latency: crate::aci::ranges::ConnLatency,
+        supervision_timeout: crate::aci::durations::SupervisionTimeout,
+        min_ce_length: crate::aci::durations::CeLength,
+        max_ce_length: crate::aci::durations::CeLength,
     }
 }
 
@@ -447,15 +447,19 @@ mod tests {
         #[cfg(any(feature = "stack-full-extended", feature = "stack-hci-layer-extended"))]
         #[test]
         fn extended_phy_commands_write_every_phy() {
+            use crate::aci::durations::{
+                CeLength, ConnInterval, ExtScanInterval, ExtScanWindow, SupervisionTimeout,
+            };
             use crate::aci::flags::{InitiatingPhys, ScanningPhys};
+            use crate::aci::ranges::ConnLatency;
             use crate::aci::values::{
-                HciOwnAddressType, InitiatorFilterPolicy, ScanningFilterPolicy,
+                HciOwnAddressType, InitiatorFilterPolicy, ScanType, ScanningFilterPolicy,
             };
 
             let phy = ScanParamPhy {
-                scan_type: 1,
-                scan_interval: 0x10,
-                scan_window: 0x08,
+                scan_type: ScanType::Active,
+                scan_interval: ExtScanInterval::from_units(0x10).unwrap(),
+                scan_window: ExtScanWindow::from_units(0x08).unwrap(),
             };
             let (bytes, len) = encode(&LeSetExtScanParams::new(
                 HciOwnAddressType::Public,
@@ -467,14 +471,14 @@ mod tests {
             assert_eq!(bytes[6..len], [1, 0x10, 0, 0x08, 0, 1, 0x10, 0, 0x08, 0]);
 
             let phy = InitParamPhy {
-                scan_interval: 0x10,
-                scan_window: 0x10,
-                conn_interval_min: 6,
-                conn_interval_max: 6,
-                conn_latency: 0,
-                supervision_timeout: 100,
-                min_ce_length: 0,
-                max_ce_length: 0,
+                scan_interval: ExtScanInterval::from_units(0x10).unwrap(),
+                scan_window: ExtScanWindow::from_units(0x10).unwrap(),
+                conn_interval_min: ConnInterval::MIN,
+                conn_interval_max: ConnInterval::MIN,
+                conn_latency: ConnLatency::MIN,
+                supervision_timeout: SupervisionTimeout::from_millis(1000).unwrap(),
+                min_ce_length: CeLength::MIN,
+                max_ce_length: CeLength::MIN,
             };
             let command = LeExtCreateConn::new(
                 InitiatorFilterPolicy::PeerAddress,

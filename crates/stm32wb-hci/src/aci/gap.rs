@@ -6,8 +6,9 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::durations::{
-    AdvInterval, CeLength, ConnInterval, DirectAdvInterval, ExtAdvInterval, PreferredConnInterval,
-    ScanDuration, ScanInterval, ScanPeriod, ScanWindow, SupervisionTimeout,
+    AdvDuration, AdvInterval, CeLength, ConnInterval, DirectAdvInterval, ExtAdvInterval,
+    ExtScanInterval, ExtScanWindow, PreferredConnInterval, ScanDuration, ScanInterval, ScanPeriod,
+    ScanWindow, SupervisionTimeout,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::flags::{
@@ -247,7 +248,7 @@ vendor_command! {
 vendor_struct! {
     /// A peer device, before 1.17.0 renamed it [`PeerEntry`].
     Whitelist_Entry_t => WhitelistEntry {
-        peer_address_type: u8,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
     }
 }
@@ -255,7 +256,7 @@ vendor_struct! {
 vendor_struct! {
     /// A peer device, named [`WhitelistEntry`] before 1.17.0.
     Peer_Entry_t => PeerEntry {
-        peer_address_type: u8,
+        peer_address_type: AddressType,
         peer_address: BdAddr,
     }
 }
@@ -392,7 +393,7 @@ vendor_command! {
 vendor_struct! {
     /// A bonded device.
     Bonded_Device_Entry_t => BondedDeviceEntry {
-        address_type: u8,
+        address_type: OrUnknown<AddressType>,
         address: BdAddr,
     }
 }
@@ -463,7 +464,7 @@ vendor_command! {
 vendor_struct! {
     /// A peer identity address, before 1.17.0 renamed it [`IdentityEntry`].
     Whitelist_Identity_Entry_t => WhitelistIdentityEntry {
-        peer_identity_address_type: u8,
+        peer_identity_address_type: AddressType,
         peer_identity_address: BdAddr,
     }
 }
@@ -471,7 +472,7 @@ vendor_struct! {
 vendor_struct! {
     /// A peer identity address, named [`WhitelistIdentityEntry`] before 1.17.0.
     Identity_Entry_t => IdentityEntry {
-        peer_identity_address_type: u8,
+        peer_identity_address_type: AddressType,
         peer_identity_address: BdAddr,
     }
 }
@@ -499,7 +500,7 @@ vendor_command! {
 vendor_struct! {
     /// A device address.
     List_Entry_t => ListEntry {
-        address_type: u8,
+        address_type: AddressType,
         address: BdAddr,
     }
 }
@@ -573,8 +574,8 @@ vendor_command! {
 vendor_struct! {
     /// An advertising set to enable, and when to stop it.
     Adv_Set_t => AdvSet {
-        advertising_handle: u8,
-        duration: u16,
+        advertising_handle: AdvHandle,
+        duration: AdvDuration,
         max_extended_advertising_events: u8,
     }
 }
@@ -630,9 +631,9 @@ vendor_command! {
 vendor_struct! {
     /// Scan parameters for one PHY.
     Scan_Param_Phy_t => ScanParamPhy {
-        scan_type: u8,
-        scan_interval: u16,
-        scan_window: u16,
+        scan_type: ScanType,
+        scan_interval: ExtScanInterval,
+        scan_window: ExtScanWindow,
     }
 }
 
@@ -655,14 +656,14 @@ vendor_command! {
 vendor_struct! {
     /// Connection parameters for one PHY.
     Init_Param_Phy_t => InitParamPhy {
-        scan_interval: u16,
-        scan_window: u16,
-        conn_interval_min: u16,
-        conn_interval_max: u16,
-        conn_latency: u16,
-        supervision_timeout: u16,
-        min_ce_length: u16,
-        max_ce_length: u16,
+        scan_interval: ExtScanInterval,
+        scan_window: ExtScanWindow,
+        conn_interval_min: ConnInterval,
+        conn_interval_max: ConnInterval,
+        conn_latency: ConnLatency,
+        supervision_timeout: SupervisionTimeout,
+        min_ce_length: CeLength,
+        max_ce_length: CeLength,
     }
 }
 
@@ -853,10 +854,10 @@ mod tests {
     )))]
     #[test]
     fn fixed_structure_arrays_encode_element_by_element() {
-        let phy = |scan_type, scan_interval, scan_window| ScanParamPhy {
+        let phy = |scan_type, interval, window| ScanParamPhy {
             scan_type,
-            scan_interval,
-            scan_window,
+            scan_interval: ExtScanInterval::from_units(interval).unwrap(),
+            scan_window: ExtScanWindow::from_units(window).unwrap(),
         };
         let command = GapExtStartScan::new(
             0,
@@ -867,7 +868,10 @@ mod tests {
             ScanPeriod::CONTINUOUS,
             ScanningFilterPolicy::BasicUnfiltered,
             ScanningPhys::LE_1M,
-            [phy(1, 0x10, 0x20), phy(0, 0x30, 0x40)],
+            [
+                phy(ScanType::Active, 0x10, 0x20),
+                phy(ScanType::Passive, 0x30, 0x40),
+            ],
         );
         assert_eq!(GapExtStartScan::OPCODE.to_raw(), 0xFCD0);
         let (bytes, len) = encode(&command);
@@ -879,8 +883,8 @@ mod tests {
     #[test]
     fn advertising_sets_encode_their_count() {
         let sets = [AdvSet {
-            advertising_handle: 3,
-            duration: 0x0102,
+            advertising_handle: AdvHandle::new(3).unwrap(),
+            duration: AdvDuration::from_units(0x0102).unwrap(),
             max_extended_advertising_events: 4,
         }];
         let (bytes, len) = encode(&GapAdvSetEnable::try_new(true, &sets).unwrap());
@@ -919,7 +923,7 @@ mod tests {
     #[test]
     fn device_lists_hold_addresses() {
         let entry = ListEntry {
-            address_type: 1,
+            address_type: AddressType::Random,
             address: BdAddr::new([1, 2, 3, 4, 5, 6]),
         };
         let (bytes, len) = encode(
@@ -999,14 +1003,14 @@ mod tests {
     #[test]
     fn extended_connections_encode_three_phys() {
         let phy = |n: u16| InitParamPhy {
-            scan_interval: n,
-            scan_window: n,
-            conn_interval_min: n,
-            conn_interval_max: n,
-            conn_latency: n,
-            supervision_timeout: n,
-            min_ce_length: n,
-            max_ce_length: n,
+            scan_interval: ExtScanInterval::from_units(n).unwrap(),
+            scan_window: ExtScanWindow::from_units(n).unwrap(),
+            conn_interval_min: ConnInterval::from_units(n).unwrap(),
+            conn_interval_max: ConnInterval::from_units(n).unwrap(),
+            conn_latency: ConnLatency::new(n).unwrap(),
+            supervision_timeout: SupervisionTimeout::from_units(n).unwrap(),
+            min_ce_length: CeLength::from_units(n).unwrap(),
+            max_ce_length: CeLength::from_units(n).unwrap(),
         };
         let command = GapExtCreateConnection::new(
             0,
@@ -1018,25 +1022,25 @@ mod tests {
             Subevent::NONE,
             InitiatorFilterPolicy::PeerAddress,
             InitiatingPhys::LE_1M | InitiatingPhys::LE_2M,
-            [phy(1), phy(2), phy(3)],
+            [phy(0x10), phy(0x20), phy(0x30)],
         );
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..3], [0xD1, 0xFC, 14 + 3 * 16]);
         assert_eq!(bytes[16], 0b011);
-        assert_eq!(bytes[17..19], [1, 0]);
-        assert_eq!(bytes[33..35], [2, 0]);
-        assert_eq!(bytes[len - 2..len], [3, 0]);
+        assert_eq!(bytes[17..19], [0x10, 0]);
+        assert_eq!(bytes[33..35], [0x20, 0]);
+        assert_eq!(bytes[len - 2..len], [0x30, 0]);
     }
 
     #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]
     fn peers() -> [PeerEntry; 2] {
         [
             PeerEntry {
-                peer_address_type: 0,
+                peer_address_type: AddressType::Public,
                 peer_address: BdAddr::new([1, 2, 3, 4, 5, 6]),
             },
             PeerEntry {
-                peer_address_type: 1,
+                peer_address_type: AddressType::Random,
                 peer_address: BdAddr::new([7, 8, 9, 10, 11, 12]),
             },
         ]
@@ -1046,11 +1050,11 @@ mod tests {
     fn peers() -> [WhitelistEntry; 2] {
         [
             WhitelistEntry {
-                peer_address_type: 0,
+                peer_address_type: AddressType::Public,
                 peer_address: BdAddr::new([1, 2, 3, 4, 5, 6]),
             },
             WhitelistEntry {
-                peer_address_type: 1,
+                peer_address_type: AddressType::Random,
                 peer_address: BdAddr::new([7, 8, 9, 10, 11, 12]),
             },
         ]
@@ -1100,21 +1104,22 @@ mod tests {
     #[test]
     fn counted_return_structures_decode_element_by_element() {
         let devices = <GapGetBondedDevices as SyncCmd>::Return::from_hci_bytes_complete(&[
-            2, 0, 1, 2, 3, 4, 5, 6, 1, 7, 8, 9, 10, 11, 12,
+            2, 0, 1, 2, 3, 4, 5, 6, 2, 7, 8, 9, 10, 11, 12,
         ])
         .unwrap();
         assert_eq!(
             devices.bonded_device_entry.as_slice(),
             [
                 BondedDeviceEntry {
-                    address_type: 0,
+                    address_type: OrUnknown::Known(AddressType::Public),
                     address: BdAddr::new([1, 2, 3, 4, 5, 6]),
                 },
                 BondedDeviceEntry {
-                    address_type: 1,
+                    address_type: OrUnknown::Unknown(2),
                     address: BdAddr::new([7, 8, 9, 10, 11, 12]),
                 },
-            ]
+            ],
+            "an address type the catalog does not document is kept"
         );
         assert!(
             <GapGetBondedDevices as SyncCmd>::Return::from_hci_bytes_complete(&[2, 0, 1, 2])

@@ -180,16 +180,21 @@ pub fn system_command(input: TokenStream) -> TokenStream {
 /// Declare the Rust type standing for one of the catalog's C structures.
 ///
 /// Fields must match the structure's members in order, as for
-/// [`vendor_command!`], in every definition of the structure. The type exists
-/// on the targets where a command or event uses the structure, and implements
-/// `WriteHci`, `FromHciBytes`, `HciWireType`, and `CatalogStruct`, which
-/// commands check their structure members against.
+/// [`vendor_command!`], in every definition of the structure, and are checked
+/// against the values the catalog documents for them as parameters are. A
+/// structure some return or event carries is decoded, so a field standing for
+/// some values is declared `OrUnknown<T>` there.
+///
+/// The type exists on the targets where a command or event uses the
+/// structure, and implements `FromHciBytes`, `HciWireType`, and
+/// `CatalogStruct`, which commands check their structure members against,
+/// and `WriteHci` if a command sends it.
 ///
 /// ```ignore
 /// vendor_struct! {
 ///     /// A peer device address.
 ///     Peer_Entry_t => PeerEntry {
-///         peer_address_type: u8,
+///         peer_address_type: AddressType,
 ///         peer_address: BdAddr,
 ///     }
 /// }

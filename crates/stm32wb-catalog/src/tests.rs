@@ -234,7 +234,87 @@ fn snapshot(version: &str, commands: Vec<SnapshotCommand>) -> Snapshot {
             domains: Vec::new(),
         }],
         statuses: Vec::new(),
+        struct_domains: Vec::new(),
     }
+}
+
+#[test]
+fn structure_fields_have_their_own_domains() {
+    let address_types = |last: i64| Domain {
+        kind: DomainKind::Values,
+        items: (0..=last)
+            .map(|value| DomainItem {
+                first: value,
+                last: value,
+                hex_digits: Some(2),
+                label: None,
+            })
+            .collect(),
+        unit_us: None,
+    };
+    let with = |version: &str, last: i64| {
+        let mut command = set_discoverable(
+            &[Profile::FullExtended],
+            fields(&["Num: u8", "Peer: [Peer_Entry_t; Num] (capacity 2)"]),
+        );
+        command.structs = Structs::from([(
+            "Peer_Entry_t".to_owned(),
+            vec!["Peer_Address_Type: u8".parse().unwrap()],
+        )]);
+        let mut snapshot = snapshot(version, vec![command]);
+        snapshot.struct_domains = vec![(
+            "Peer_Entry_t".to_owned(),
+            "Peer_Address_Type".to_owned(),
+            address_types(last),
+        )];
+        snapshot
+    };
+    let merged = merge_snapshots(
+        Platform::Stm32wb,
+        vec![with("1.15.0", 1), with("1.16.0", 1), with("1.17.0", 3)],
+    )
+    .unwrap();
+    let rendered = merged
+        .struct_domains
+        .iter()
+        .map(|domain| {
+            format!(
+                "{} {}.{} {}",
+                domain.releases,
+                domain.structure,
+                domain.member,
+                domain.domain.items.len()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rendered,
+        [
+            "1.15.0..=1.16.0 Peer_Entry_t.Peer_Address_Type 2",
+            "1.17.0 Peer_Entry_t.Peer_Address_Type 4"
+        ]
+    );
+    let release = "1.17.0".parse().unwrap();
+    assert_eq!(
+        merged
+            .struct_domain("Peer_Entry_t", "Peer_Address_Type", release)
+            .map(|domain| domain.items.len()),
+        Some(4)
+    );
+    assert!(Catalog::from_toml(&merged.to_toml().unwrap()).unwrap() == merged);
+
+    let mut uncarried = with("1.15.0", 1);
+    uncarried.commands[0].structs.clear();
+    uncarried.commands[0].params = fields(&["Num: u8"]);
+    let error = merge_snapshots(Platform::Stm32wb, vec![uncarried]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("no command or event of 1.15.0 carries"),
+        "{error}"
+    );
+    let error = merge_snapshots(Platform::Stm32wb, vec![with("1.15.0", 0x100)]).unwrap_err();
+    assert!(error.to_string().contains("cannot hold"), "{error}");
 }
 
 #[test]
@@ -1035,6 +1115,15 @@ fn stm32wb_items_follow_the_mcu_and_profile_conditions() {
         variant.stm32wb_ranges(Profile::HciLayer).unwrap(),
         [(0, 0xFF)]
     );
+    let named = domain(
+        DomainKind::Values,
+        &["0x0004..=0x5DC0: STM32WB", "0x0004..=0xFFFF: STM32WBA"],
+    );
+    assert_eq!(named.stm32wb_ranges(Profile::Full).unwrap(), [(4, 0x5DC0)]);
+    let error = domain(DomainKind::Values, &["0x0004..=0x5DC0: STM32WBx"])
+        .stm32wb_ranges(Profile::Full)
+        .unwrap_err();
+    assert!(error.contains("cannot interpret"), "{error}");
     let error = domain(DomainKind::Values, &["0x00..=0x25: for XY variant"])
         .stm32wb_ranges(Profile::Full)
         .unwrap_err();

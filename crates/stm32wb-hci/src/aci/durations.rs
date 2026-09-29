@@ -61,6 +61,24 @@ wire_duration! {
 }
 
 wire_duration! {
+    /// The interval between the starts of two scan windows when scanning for
+    /// extended advertising, from 2.5 ms to 15 s.
+    pub struct ExtScanInterval: u16 {
+        unit_us = 625;
+        units = 0x0004..=0x5DC0;
+    }
+}
+
+wire_duration! {
+    /// How long each scan lasts when scanning for extended advertising, from
+    /// 2.5 ms to 15 s, and at most the scan interval.
+    pub struct ExtScanWindow: u16 {
+        unit_us = 625;
+        units = 0x0004..=0x5DC0;
+    }
+}
+
+wire_duration! {
     /// How long an extended scan lasts, from 10 ms to 655.35 s.
     pub struct ScanDuration: u16 {
         unit_us = 10_000;
@@ -78,6 +96,16 @@ wire_duration! {
         units = 0x0001..=0xFFFF;
         /// Scan continuously, without repeating.
         const CONTINUOUS = 0x0000;
+    }
+}
+
+wire_duration! {
+    /// How long an advertising set advertises, from 10 ms to 655.35 s.
+    pub struct AdvDuration: u16 {
+        unit_us = 10_000;
+        units = 0x0001..=0xFFFF;
+        /// Advertise until advertising is disabled.
+        const UNLIMITED = 0x0000;
     }
 }
 

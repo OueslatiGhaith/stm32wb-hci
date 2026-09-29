@@ -186,11 +186,7 @@ struct MemberDomainRepr {
 
 impl Serialize for MemberDomain {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let items = Some(self.domain.items.clone());
-        let (values, flags) = match self.domain.kind {
-            DomainKind::Values => (items, None),
-            DomainKind::Flags => (None, items),
-        };
+        let (values, flags) = split_items(&self.domain);
         MemberDomainRepr {
             releases: self.releases,
             member: self.member.clone(),
@@ -206,27 +202,107 @@ impl Serialize for MemberDomain {
 impl<'de> Deserialize<'de> for MemberDomain {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let repr = MemberDomainRepr::deserialize(deserializer)?;
-        let (kind, items) = match (repr.values, repr.flags) {
-            (Some(items), None) => (DomainKind::Values, items),
-            (None, Some(items)) => (DomainKind::Flags, items),
-            _ => {
-                return Err(serde::de::Error::custom(format!(
-                    "domain of {} must set exactly one of `values` or `flags`",
-                    repr.member
-                )));
-            }
-        };
+        let domain = join_items(&repr.member, repr.values, repr.flags, repr.unit_us)
+            .map_err(serde::de::Error::custom)?;
         Ok(Self {
             releases: repr.releases,
             member: repr.member,
             returned: repr.returned,
-            domain: Domain {
-                kind,
-                items,
-                unit_us: repr.unit_us,
-            },
+            domain,
         })
     }
+}
+
+/// The documented values of one field of a C structure over a range of
+/// releases, from the field's comment in `ble_types.h`.
+///
+/// Written as a table naming the `structure` and its `member`, with `values`
+/// or `flags`, and `unit_us` for a time member.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructDomain {
+    pub releases: ReleaseRange,
+    /// The C name of the structure, such as `Adv_Set_t`.
+    pub structure: String,
+    pub member: String,
+    pub domain: Domain,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StructDomainRepr {
+    releases: ReleaseRange,
+    structure: String,
+    member: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    values: Option<Vec<DomainItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flags: Option<Vec<DomainItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit_us: Option<u32>,
+}
+
+impl Serialize for StructDomain {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let (values, flags) = split_items(&self.domain);
+        StructDomainRepr {
+            releases: self.releases,
+            structure: self.structure.clone(),
+            member: self.member.clone(),
+            values,
+            flags,
+            unit_us: self.domain.unit_us,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for StructDomain {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let repr = StructDomainRepr::deserialize(deserializer)?;
+        let member = format!("{}.{}", repr.structure, repr.member);
+        let domain = join_items(&member, repr.values, repr.flags, repr.unit_us)
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            releases: repr.releases,
+            structure: repr.structure,
+            member: repr.member,
+            domain,
+        })
+    }
+}
+
+type Items = Option<Vec<DomainItem>>;
+
+/// A domain's items as the `values` or the `flags` it is written with.
+fn split_items(domain: &Domain) -> (Items, Items) {
+    let items = Some(domain.items.clone());
+    match domain.kind {
+        DomainKind::Values => (items, None),
+        DomainKind::Flags => (None, items),
+    }
+}
+
+/// The domain written with exactly one of `values` or `flags`.
+fn join_items(
+    member: &str,
+    values: Items,
+    flags: Items,
+    unit_us: Option<u32>,
+) -> Result<Domain, String> {
+    let (kind, items) = match (values, flags) {
+        (Some(items), None) => (DomainKind::Values, items),
+        (None, Some(items)) => (DomainKind::Flags, items),
+        _ => {
+            return Err(format!(
+                "domain of {member} must set exactly one of `values` or `flags`"
+            ));
+        }
+    };
+    Ok(Domain {
+        kind,
+        items,
+        unit_us,
+    })
 }
 
 /// The inclusive range of values a scalar holds.
@@ -368,7 +444,8 @@ fn profiles_named(label: &str) -> Option<&'static [Profile]> {
 impl Domain {
     /// The items an STM32WB binary of `profile` accepts: every item, except
     /// those whose label says they are not supported, not supported on
-    /// STM32WB, only on STM32WBA, or only for profiles other than `profile`,
+    /// STM32WB, only on STM32WBA (or is just `STM32WBA`), or only for
+    /// profiles other than `profile`,
     /// such as the full stack or the BO variant. An item labelled
     /// `otherwise` is accepted when no item restricted to some profiles is.
     /// A label naming any other condition is an error rather than a guess.
@@ -378,10 +455,16 @@ impl Domain {
         let mut restricted = false;
         for item in &self.items {
             let label = item.label.as_deref().unwrap_or_default();
+            // Some structure fields label each MCU's range with its bare name.
             let mcu = mcu_after(label, "not supported on")
                 .map(|mcu| (mcu, false))
                 .or_else(|| mcu_after(label, "only for").map(|mcu| (mcu, true)))
-                .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)));
+                .or_else(|| mcu_after(label, "with").map(|mcu| (mcu, true)))
+                .or(match label {
+                    "STM32WB" => Some((Mcu::Stm32wb, true)),
+                    "STM32WBA" => Some((Mcu::Stm32wba, true)),
+                    _ => None,
+                });
             let applies = match (mcu, profiles_named(label)) {
                 (Some((mcu, only)), _) => (mcu == Mcu::Stm32wb) == only,
                 (None, Some(profiles)) => {

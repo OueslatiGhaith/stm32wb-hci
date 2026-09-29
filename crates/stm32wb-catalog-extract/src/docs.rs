@@ -192,18 +192,22 @@ fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>, String
             continue;
         }
         found = true;
-        for row in table.iter().skip(1).filter(|row| row.len() == 3) {
+        for row in table.iter().skip(1) {
+            if row.len() != 3 {
+                return Err(format!("a binary row has {} cells: {row:?}", row.len()));
+            }
+            // A binary the catalog cannot name the profile of would drop out
+            // of it unnoticed.
             let profile = if row[1] == "-" {
                 Profile::FullExtended
             } else {
-                match row[1]
+                row[1]
                     .split_whitespace()
                     .next()
                     .and_then(Profile::from_documentation_column)
-                {
-                    Some(profile) => profile,
-                    None => continue,
-                }
+                    .ok_or_else(|| {
+                        format!("{} has an unknown stack profile {:?}", row[0], row[1])
+                    })?
             };
             if mapping.insert(row[0].clone(), profile).is_some() {
                 return Err(format!("{} is listed twice", row[0]));
@@ -328,7 +332,6 @@ mod tests {
             <tr><th>Wireless Coprocessor Binary</th><th>stack features naming (3)</th><th>#define used in FW M0 code</th></tr>
             <tr><td>stm32wb5x_BLE_Stack_full_extended_fw.bin</td><td>-</td><td>x</td></tr>
             <tr><td>stm32wb5x_BLE_Stack_light_fw.bin</td><td>PO (Peripheral Only)</td><td>x</td></tr>
-            <tr><td>stm32wb5x_BLE_Thread_static_fw.bin</td><td>Thread FTD</td><td>x</td></tr>
         </table>"#;
         let mapping = parse_release_notes(html).unwrap();
         assert_eq!(mapping["stm32wb5x_BLE_Stack_light_fw.bin"], Profile::Light);
@@ -336,7 +339,18 @@ mod tests {
             mapping["stm32wb5x_BLE_Stack_full_extended_fw.bin"],
             Profile::FullExtended
         );
-        assert!(!mapping.contains_key("stm32wb5x_BLE_Thread_static_fw.bin"));
+
+        let unknown = html.replace(
+            "</table>",
+            "<tr><td>stm32wb5x_BLE_Thread_static_fw.bin</td><td>Thread FTD</td><td>x</td></tr></table>",
+        );
+        let error = parse_release_notes(&unknown).unwrap_err();
+        assert!(error.contains("unknown stack profile"), "{error}");
+        let short = html.replace(
+            "<td>PO (Peripheral Only)</td><td>x</td>",
+            "<td>PO (Peripheral Only)</td>",
+        );
+        assert!(parse_release_notes(&short).is_err(), "a row missing a cell");
         assert!(same_name(
             "aci_gap_set_discoverable",
             "ACI_GAP_SET_DISCOVERABLE"

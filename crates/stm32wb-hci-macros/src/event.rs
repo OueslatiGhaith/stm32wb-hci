@@ -343,6 +343,7 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
             event.facts.payload,
             &event.documented,
             Side::Event,
+            true,
         ));
     let code = event.facts.code;
     let latest = event.latest;

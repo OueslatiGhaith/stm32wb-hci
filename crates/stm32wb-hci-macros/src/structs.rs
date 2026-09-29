@@ -4,17 +4,20 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use stm32wb_catalog::layout::struct_width;
-use stm32wb_catalog::{Field, Profile, ReleaseRange, Structs, bundled};
+use stm32wb_catalog::{Element, Field, FieldType, Profile, ReleaseRange, Structs, bundled};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Token};
 
 use crate::cfg;
-use crate::command::{Fields, Side, field_size, field_write, plan, width_assertions};
+use crate::command::{
+    Fields, Side, Targets, add_documents, documented_groups, documents, field_size, field_write,
+    plan, profile_documents, value_assertions, width_assertions,
+};
 
 /// ```text
 /// /// Documentation for the structure.
 /// Peer_Entry_t => PeerEntry {
-///     peer_address_type: u8,
+///     peer_address_type: AddressType,
 ///     peer_address: BdAddr,
 /// }
 /// ```
@@ -61,17 +64,30 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     }
 
     // Every definition of the structure, with the targets of the commands and
-    // events using it and the structures it may refer to.
+    // events using it, the structures it may refer to, and whether any of
+    // them sends or decodes it.
     let mut definition: Option<(&[Field], &Structs)> = None;
-    let mut targets: Vec<(ReleaseRange, &[Profile])> = Vec::new();
+    let mut targets: Targets<'static> = Vec::new();
+    let (mut encoded, mut decoded) = (false, false);
     let mut consider = |user: &str,
+                        layout: Option<&'static [Field]>,
                         structs: &'static Structs,
                         releases: ReleaseRange,
-                        profiles: &'static [Profile]|
+                        profiles: &'static [Profile],
+                        decodes: bool|
      -> syn::Result<()> {
         let Some(fields) = structs.get(&c_name_string) else {
             return Ok(());
         };
+        // A definition's structures serve its parameters and returns alike.
+        if !layout.is_some_and(|layout| refers(layout, structs, &c_name_string)) {
+            return Ok(());
+        }
+        if decodes {
+            decoded = true;
+        } else {
+            encoded = true;
+        }
         match definition {
             Some((first, _)) if first != fields.as_slice() => {
                 return Err(syn::Error::new(
@@ -96,10 +112,23 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         };
         for segment in segments {
             let active = &segment.entry;
-            for structs in std::iter::once(active.params.structs)
-                .chain(active.returns.map(|returns| returns.structs))
-            {
-                consider(active.name, structs, segment.releases, segment.profiles)?;
+            consider(
+                active.name,
+                active.params.fields.ok(),
+                active.params.structs,
+                segment.releases,
+                segment.profiles,
+                false,
+            )?;
+            if let Some(returns) = active.returns {
+                consider(
+                    active.name,
+                    returns.fields.ok(),
+                    returns.structs,
+                    segment.releases,
+                    segment.profiles,
+                    true,
+                )?;
             }
         }
     }
@@ -111,9 +140,11 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
             let active = &segment.entry;
             consider(
                 active.name,
+                active.payload.fields.ok(),
                 active.payload.structs,
                 segment.releases,
                 segment.profiles,
+                true,
             )?;
         }
     }
@@ -140,7 +171,26 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         struct_width(&c_name_string, structs)
             .map_err(|error| syn::Error::new(c_name.span(), error.to_string()))?,
     );
-    let cfg = cfg::targets(&bundled.catalog, targets).map(|predicate| quote!(#[cfg(#predicate)]));
+    // The values the catalog documents for the fields, in each release the
+    // structure is carried in.
+    let catalog = &bundled.catalog;
+    let mut groups = Vec::new();
+    for &(releases, profiles) in &targets {
+        for release in catalog
+            .versions()
+            .filter(|release| releases.contains(*release))
+        {
+            for (documents, target) in profile_documents(release, profiles, |profile| {
+                documents(members, profile, |member| {
+                    catalog.struct_domain(&c_name_string, member, release)
+                })
+            }) {
+                add_documents(&mut groups, documents, target);
+            }
+        }
+    }
+    let documented = documented_groups(catalog, groups);
+    let cfg = cfg::targets(catalog, targets).map(|predicate| quote!(#[cfg(#predicate)]));
 
     let fields = &input.fields.fields;
     let (field_names, types): (Vec<_>, Vec<_>) =
@@ -148,41 +198,55 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
     let sizes = fields.iter().map(field_size);
     let sync_writes = fields.iter().map(|field| field_write(field, false));
     let async_writes = fields.iter().map(|field| field_write(field, true));
-    let widths = width_assertions(&cfg, name, &slots);
+    let widths = width_assertions(&cfg, name, &slots).chain(value_assertions(
+        name,
+        &slots,
+        members,
+        &documented,
+        Side::Struct,
+        decoded,
+    ));
     let attrs = &input.attrs;
     let doc = format!("`{c_name}` in the catalog, {width} bytes on the wire.");
+    // Only a structure some command sends is written; a decoded one may hold
+    // values it would not send.
+    let write = encoded.then(|| {
+        quote! {
+            #cfg
+            impl ::bt_hci::WriteHci for #name {
+                #[inline]
+                fn size(&self) -> usize {
+                    0 #(+ #sizes)*
+                }
+
+                fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
+                    #(#sync_writes)*
+                    Ok(())
+                }
+
+                async fn write_hci_async<W: ::embedded_io_async::Write>(
+                    &self,
+                    mut writer: W,
+                ) -> Result<(), W::Error> {
+                    #(#async_writes)*
+                    Ok(())
+                }
+            }
+        }
+    });
     Ok(quote! {
         #cfg
         #(#attrs)*
         #[doc = ""]
         #[doc = #doc]
-        #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         #[allow(missing_docs)]
         pub struct #name {
             #(pub #field_names: #types,)*
         }
 
-        #cfg
-        impl ::bt_hci::WriteHci for #name {
-            #[inline]
-            fn size(&self) -> usize {
-                0 #(+ #sizes)*
-            }
-
-            fn write_hci<W: ::embedded_io::Write>(&self, mut writer: W) -> Result<(), W::Error> {
-                #(#sync_writes)*
-                Ok(())
-            }
-
-            async fn write_hci_async<W: ::embedded_io_async::Write>(
-                &self,
-                mut writer: W,
-            ) -> Result<(), W::Error> {
-                #(#async_writes)*
-                Ok(())
-            }
-        }
+        #write
 
         #cfg
         impl<'de> ::bt_hci::FromHciBytes<'de> for #name {
@@ -209,6 +273,29 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         }
 
         #(#widths)*
+    })
+}
+
+/// Whether `fields` hold the structure `name`, directly or in another
+/// structure.
+fn refers(fields: &[Field], structs: &Structs, name: &str) -> bool {
+    fields.iter().any(|field| {
+        let inner = match &field.ty {
+            FieldType::Struct(inner)
+            | FieldType::Array {
+                element: Element::Struct(inner),
+                ..
+            }
+            | FieldType::Counted {
+                element: Element::Struct(inner),
+                ..
+            } => inner,
+            _ => return false,
+        };
+        inner == name
+            || structs
+                .get(inner)
+                .is_some_and(|fields| refers(fields, structs, name))
     })
 }
 
@@ -245,6 +332,37 @@ mod tests {
 
         let tokens = expand_str("Handle_Item_t => HandleItem { handle: u16 }").unwrap();
         assert!(tokens.contains("const WIDTH : usize = 2usize"), "{tokens}");
+        assert!(!tokens.contains("values_documented"), "{tokens}");
+
+        let tokens = expand_str(
+            "Peer_Entry_t => PeerEntry { peer_address_type: AddressType, peer_address: BdAddr }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "values_documented :: < AddressType > (& [(0i64 , 0i64) , (1i64 , 1i64)])"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("impl :: bt_hci :: WriteHci for PeerEntry"),
+            "{tokens}"
+        );
+        assert!(
+            !tokens.contains("decodes_any"),
+            "a structure only sent: {tokens}"
+        );
+
+        let tokens = expand_str(
+            "Bonded_Device_Entry_t => BondedDeviceEntry { \
+                 address_type: OrUnknown<AddressType>, address: BdAddr }",
+        )
+        .unwrap();
+        assert!(tokens.contains("decodes_any"), "{tokens}");
+        assert!(
+            !tokens.contains("WriteHci for BondedDeviceEntry"),
+            "a structure only decoded: {tokens}"
+        );
 
         let error = expand_str("Peer_Entry_t => PeerEntry { peer_address_type: u8 }").unwrap_err();
         assert!(

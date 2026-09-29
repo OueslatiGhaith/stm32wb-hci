@@ -1,11 +1,11 @@
 //! Extract one tagged release into a catalog snapshot.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use clang::Index;
 use stm32wb_catalog::{
-    CommandScope, EventScope, Layout, Profile, ReleaseSource, Snapshot, SnapshotCommand,
+    CommandScope, Domain, EventScope, Layout, Profile, ReleaseSource, Snapshot, SnapshotCommand,
     SnapshotEvent, Version,
 };
 
@@ -32,6 +32,9 @@ pub struct Report {
     /// dropped because its layout is unresolved.
     pub domains: usize,
     pub dropped_domains: Vec<(String, String)>,
+    /// `(structure, field)` for every structure field list dropped because
+    /// no resolved layout carries the structure.
+    pub dropped_field_domains: Vec<(String, String)>,
 }
 
 pub fn extract(
@@ -56,6 +59,30 @@ pub fn extract(
         return Err(format!("{}: ble_hci_le.c is missing", tag.tag));
     }
 
+    // Structure fields documented in every file parsed, which must agree.
+    let mut field_domains: BTreeMap<(String, String), Domain> = BTreeMap::new();
+    let mut document_fields =
+        |records: &BTreeMap<String, c::CRecord>, file: &str| -> Result<(), String> {
+            let documented = crate::domains::field_domains(records)
+                .map_err(|error| format!("{} {file}: {error}", tag.tag))?;
+            for (structure, member, domain) in documented {
+                let key = (structure, member);
+                match field_domains.get(&key) {
+                    Some(other) if *other != domain => {
+                        return Err(format!(
+                            "{} {file}: {}.{} is documented differently elsewhere",
+                            tag.tag, key.0, key.1
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        field_domains.insert(key, domain);
+                    }
+                }
+            }
+            Ok(())
+        };
+
     let mut extracted_commands: Vec<ExtractedCommand> = Vec::new();
     for file in &sources {
         let scope = if file == "ble_hci_le.c" {
@@ -65,6 +92,7 @@ pub fn extract(
         };
         let unit = c::parse(index, &core.join("auto").join(file), shim, &core_includes)?;
         let records = c::records(&unit);
+        document_fields(&records, file)?;
         extracted_commands.extend(
             commands::extract(&unit, &records, scope)
                 .map_err(|error| format!("{} {file}: {error}", tag.tag))?,
@@ -73,6 +101,7 @@ pub fn extract(
 
     let unit = c::parse(index, &core.join("auto/ble_events.c"), shim, &core_includes)?;
     let records = c::records(&unit);
+    document_fields(&records, "ble_events.c")?;
     let mut extracted_events: Vec<ExtractedEvent> = events::extract(&unit, &records)
         .map_err(|error| format!("{} ble_events.c: {error}", tag.tag))?;
 
@@ -84,6 +113,7 @@ pub fn extract(
         &[shci_dir.join("shci"), shci_dir.join("tl")],
     )?;
     let records = c::records(&unit);
+    document_fields(&records, "shci.h")?;
     extracted_events.extend(
         shci::extract(&unit, &records).map_err(|error| format!("{} shci.h: {error}", tag.tag))?,
     );
@@ -95,6 +125,7 @@ pub fn extract(
         &[shci_dir.join("shci"), shci_dir.join("tl")],
     )?;
     let records = c::records(&unit);
+    document_fields(&records, "shci.c")?;
     extracted_commands.extend(
         shci::commands(&unit, &records).map_err(|error| format!("{} shci.c: {error}", tag.tag))?,
     );
@@ -140,6 +171,7 @@ pub fn extract(
         unresolved: Vec::new(),
         domains: 0,
         dropped_domains: Vec::new(),
+        dropped_field_domains: Vec::new(),
     };
     let mut commands = Vec::new();
     for command in extracted_commands {
@@ -237,6 +269,24 @@ pub fn extract(
         ));
     }
 
+    // A structure's field lists belong to the catalog where a resolved
+    // layout carries the structure; the others are reported.
+    let carried = commands
+        .iter()
+        .map(|command| &command.structs)
+        .chain(events.iter().map(|event| &event.structs))
+        .flat_map(|structs| structs.keys())
+        .collect::<BTreeSet<_>>();
+    let mut struct_domains = Vec::new();
+    for ((structure, member), domain) in field_domains {
+        if carried.contains(&structure) {
+            report.domains += 1;
+            struct_domains.push((structure, member, domain));
+        } else {
+            report.dropped_field_domains.push((structure, member));
+        }
+    }
+
     let snapshot = Snapshot {
         source: ReleaseSource {
             version,
@@ -247,6 +297,7 @@ pub fn extract(
         commands,
         events,
         statuses: statuses::extract(&tag)?,
+        struct_domains,
     };
     if snapshot.binaries.is_empty() {
         return Err(format!("{}: no BLE wireless binaries were found", tag.tag));

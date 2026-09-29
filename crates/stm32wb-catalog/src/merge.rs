@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::{
     Availability, Bearer, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion,
     Domain, Error, Event, EventDefinition, EventScope, Family, Layout, MemberDomain, Named,
-    Platform, Profile, ReleaseRange, ReleaseSource, StatusCode, Structs, Version,
+    Platform, Profile, ReleaseRange, ReleaseSource, StatusCode, StructDomain, Structs, Version,
 };
 
 /// Everything extracted from one tagged release.
@@ -17,6 +17,8 @@ pub struct Snapshot {
     pub events: Vec<SnapshotEvent>,
     /// The `BLE_STATUS_*` codes, by name.
     pub statuses: Vec<(String, u8)>,
+    /// Documented values of structure fields, by structure and field.
+    pub struct_domains: Vec<(String, String, Domain)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -67,6 +69,7 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
         BTreeMap::new();
     let mut events: BTreeMap<(EventScope, u16), Vec<(usize, SnapshotEvent)>> = BTreeMap::new();
     let mut statuses: BTreeMap<(u8, String), Vec<(usize, ())>> = BTreeMap::new();
+    let mut struct_domains: BTreeMap<(String, String), Vec<(usize, Domain)>> = BTreeMap::new();
 
     for (index, snapshot) in snapshots.iter().enumerate() {
         for binary in &snapshot.binaries {
@@ -97,6 +100,18 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                 .entry((*value, name.clone()))
                 .or_default()
                 .push((index, ()));
+        }
+        for (structure, member, domain) in &snapshot.struct_domains {
+            let entries = struct_domains
+                .entry((structure.clone(), member.clone()))
+                .or_default();
+            if entries.last().is_some_and(|(last, _)| *last == index) {
+                return Err(Error::invalid(format!(
+                    "{}: {structure}.{member} is documented twice",
+                    snapshot.source.version
+                )));
+            }
+            entries.push((index, domain.clone()));
         }
         for event in &snapshot.events {
             let entries = events.entry((event.scope, event.code)).or_default();
@@ -200,6 +215,19 @@ pub fn merge_snapshots(platform: Platform, mut snapshots: Vec<Snapshot>) -> Resu
                         .map(|(member, domain)| (member.clone(), false, domain.clone()))
                         .collect()
                 }),
+            })
+            .collect(),
+        struct_domains: struct_domains
+            .into_iter()
+            .flat_map(|((structure, member), entries)| {
+                runs(&entries, &versions)
+                    .into_iter()
+                    .map(move |(releases, domain)| StructDomain {
+                        releases,
+                        structure: structure.clone(),
+                        member: member.clone(),
+                        domain,
+                    })
             })
             .collect(),
         statuses: statuses

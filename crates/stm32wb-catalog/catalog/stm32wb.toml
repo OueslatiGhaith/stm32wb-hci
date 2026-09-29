@@ -16758,6 +16758,258 @@ releases = "1.15.0..=1.24.0"
 [events.definitions.payload]
 unresolved = "shci.h documents no payload structure for SHCI_SUB_EVT_CODE_CONCURRENT_802154_EVT"
 
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Adv_Set_t"
+member = "Advertising_Handle"
+values = ["0x00..=0xEF"]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Adv_Set_t"
+member = "Duration"
+values = [
+    "0x0000: No advertising duration.",
+    "0x0001..=0xFFFF: Advertising duration",
+]
+unit_us = 10000
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Adv_Set_t"
+member = "Max_Extended_Advertising_Events"
+values = [
+    "0x00: No maximum number of advertising events",
+    "0x01..=0xFF: Maximum number of extended advertising events the Controller shall attempt to send prior to terminating the extended advertising",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Bonded_Device_Entry_t"
+member = "Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.22.1"
+structure = "Direct_Advertising_Report_t"
+member = "Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+    "0x02: Public Identity Address",
+    "0x03: Random (Static) Identity Address",
+]
+
+[[struct_domains]]
+releases = "1.23.0..=1.24.0"
+structure = "Direct_Advertising_Report_t"
+member = "Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+    "0x02: Public Identity Address (corresponds to the Resolved Private Address)",
+    "0x03: Random (static) Identity Address (corresponds to the Resolved Private Address)",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Direct_Advertising_Report_t"
+member = "Direct_Address_Type"
+values = ["0x01: Random Device Address"]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Direct_Advertising_Report_t"
+member = "Event_Type"
+values = ["0x01: Connectable directed advertising (ADV_DIRECT_IND)"]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Direct_Advertising_Report_t"
+member = "RSSI"
+values = [
+    "-127..=20",
+    "127: RSSI not available",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Host_Nb_Of_Completed_Pkt_Pair_t"
+member = "Connection_Handle"
+values = ["0x0000..=0x0EFF"]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Host_Nb_Of_Completed_Pkt_Pair_t"
+member = "Host_Num_Of_Completed_Packets"
+values = ["0x0000..=0xFFFF"]
+
+[[struct_domains]]
+releases = "1.17.0..=1.22.1"
+structure = "Identity_Entry_t"
+member = "Peer_Identity_Address_Type"
+values = [
+    "0x00: Public Identity Address",
+    "0x01: Random (static) Identity Address",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Conn_Interval_Max"
+values = ["0x0006..=0x0C80"]
+unit_us = 1250
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Conn_Interval_Min"
+values = ["0x0006..=0x0C80"]
+unit_us = 1250
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Conn_Latency"
+values = ["0x0000..=0x01F3"]
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Max_CE_Length"
+values = ["0x0000..=0xFFFF"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Min_CE_Length"
+values = ["0x0000..=0xFFFF"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.22.1"
+structure = "Init_Param_Phy_t"
+member = "Scan_Interval"
+values = [
+    "0x0004..=0x5DC0: STM32WB",
+    "0x0004..=0xFFFF: STM32WBA",
+]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.23.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Scan_Interval"
+values = ["0x0004..=0x5DC0: only supported range"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.22.1"
+structure = "Init_Param_Phy_t"
+member = "Scan_Window"
+values = [
+    "0x0004..=0x5DC0: STM32WB",
+    "0x0004..=0xFFFF: STM32WBA",
+]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.23.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Scan_Window"
+values = ["0x0004..=0x5DC0: only supported range"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Init_Param_Phy_t"
+member = "Supervision_Timeout"
+values = ["0x000A..=0x0C80"]
+unit_us = 10000
+
+[[struct_domains]]
+releases = "1.17.0..=1.24.0"
+structure = "List_Entry_t"
+member = "Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+]
+
+[[struct_domains]]
+releases = "1.17.0..=1.24.0"
+structure = "Peer_Entry_t"
+member = "Peer_Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.22.1"
+structure = "Scan_Param_Phy_t"
+member = "Scan_Interval"
+values = [
+    "0x0004..=0x5DC0: STM32WB",
+    "0x0004..=0xFFFF: STM32WBA",
+]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.23.0..=1.24.0"
+structure = "Scan_Param_Phy_t"
+member = "Scan_Interval"
+values = ["0x0004..=0x5DC0: only supported range"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.24.0"
+structure = "Scan_Param_Phy_t"
+member = "Scan_Type"
+values = [
+    "0x00: Passive scanning",
+    "0x01: Active scanning",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.22.1"
+structure = "Scan_Param_Phy_t"
+member = "Scan_Window"
+values = [
+    "0x0004..=0x5DC0: STM32WB",
+    "0x0004..=0xFFFF: STM32WBA",
+]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.23.0..=1.24.0"
+structure = "Scan_Param_Phy_t"
+member = "Scan_Window"
+values = ["0x0004..=0x5DC0: only supported range"]
+unit_us = 625
+
+[[struct_domains]]
+releases = "1.15.0..=1.16.0"
+structure = "Whitelist_Entry_t"
+member = "Peer_Address_Type"
+values = [
+    "0x00: Public Device Address",
+    "0x01: Random Device Address",
+]
+
+[[struct_domains]]
+releases = "1.15.0..=1.16.0"
+structure = "Whitelist_Identity_Entry_t"
+member = "Peer_Identity_Address_Type"
+values = [
+    "0x00: Public Identity Address",
+    "0x01: Random (static) Identity Address",
+]
+
 [[statuses]]
 releases = "1.15.0..=1.24.0"
 name = "BLE_STATUS_SUCCESS"

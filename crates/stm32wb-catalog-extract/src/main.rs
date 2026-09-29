@@ -205,6 +205,11 @@ fn extract(cube: &Path, releases: &[Version]) -> Result<Catalog, String> {
         for (name, member) in &report.dropped_domains {
             eprintln!("  dropped the values of {name} {member}: its layout is unresolved");
         }
+        for (structure, member) in &report.dropped_field_domains {
+            eprintln!(
+                "  dropped the values of {structure}.{member}: no resolved layout carries {structure}"
+            );
+        }
         snapshots.push(snapshot);
     }
     merge_snapshots(Platform::Stm32wb, snapshots).map_err(|error| error.to_string())

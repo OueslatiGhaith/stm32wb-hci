@@ -297,7 +297,7 @@ pub const fn present<T: Copy, const N: usize>(all: &[Option<T>], zero: T) -> [T;
 /// [`OrUnknown`] decodes with a fallback to the others.
 pub trait WireValue: HciWireType + Copy {
     /// The integer the value is encoded as.
-    type Raw: Copy + fmt::Debug + Eq + core::hash::Hash + for<'de> FromHciBytes<'de>;
+    type Raw: Copy + fmt::Debug + Ord + core::hash::Hash + for<'de> FromHciBytes<'de>;
 
     /// The value `raw` encodes, if the type stands for it.
     fn from_raw(raw: Self::Raw) -> Option<Self>;
@@ -329,7 +329,7 @@ impl WireValue for bool {
 /// declared with it, so decoding never fails on a value the catalog does not
 /// document. It is never a command parameter, which sends only documented
 /// values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OrUnknown<T: WireValue> {
     /// A value `T` stands for.
     Known(T),
@@ -1489,32 +1489,31 @@ impl core::error::Error for OmittedBefore {}
 /// containing it can be `Copy`.
 #[derive(Clone, Copy)]
 pub struct BoundedArray<T, const MAX_LEN: usize> {
-    elements: [T; MAX_LEN],
+    /// The elements, once there is one: the slots past `len` repeat the
+    /// first, so no element type needs a default value.
+    elements: Option<[T; MAX_LEN]>,
     len: usize,
 }
 
 /// Up to `MAX_LEN` bytes of a variable-length field.
 pub type BoundedBytes<const MAX_LEN: usize> = BoundedArray<u8, MAX_LEN>;
 
-impl<T: Copy + Default, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
+impl<T: Copy, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
     /// Copy `elements`, which must not exceed the field's capacity.
     pub fn new(elements: &[T]) -> Result<Self, FromHciBytesError> {
         let mut array = Self::default();
-        array
-            .elements
-            .get_mut(..elements.len())
-            .ok_or(FromHciBytesError::InvalidSize)?
-            .copy_from_slice(elements);
-        array.len = elements.len();
+        for element in elements {
+            array.push(*element)?;
+        }
         Ok(array)
     }
 
     /// Append `element`, which must fit the field's capacity.
     pub fn push(&mut self, element: T) -> Result<(), FromHciBytesError> {
-        *self
-            .elements
-            .get_mut(self.len)
-            .ok_or(FromHciBytesError::InvalidSize)? = element;
+        if self.len == MAX_LEN {
+            return Err(FromHciBytesError::InvalidSize);
+        }
+        self.elements.get_or_insert([element; MAX_LEN])[self.len] = element;
         self.len += 1;
         Ok(())
     }
@@ -1523,14 +1522,17 @@ impl<T: Copy + Default, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
 impl<T, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
     /// The elements present on the wire.
     pub fn as_slice(&self) -> &[T] {
-        &self.elements[..self.len]
+        match &self.elements {
+            Some(elements) => &elements[..self.len],
+            None => &[],
+        }
     }
 }
 
-impl<T: Copy + Default, const MAX_LEN: usize> Default for BoundedArray<T, MAX_LEN> {
+impl<T, const MAX_LEN: usize> Default for BoundedArray<T, MAX_LEN> {
     fn default() -> Self {
         Self {
-            elements: [T::default(); MAX_LEN],
+            elements: None,
             len: 0,
         }
     }
@@ -1973,6 +1975,16 @@ mod tests {
             BoundedBytes::<2>::new(&[1, 2, 3]),
             Err(FromHciBytesError::InvalidSize)
         );
+    }
+
+    #[test]
+    fn bounded_arrays_need_no_default_element() {
+        let mut array = BoundedArray::<OrUnknown<bool>, 2>::default();
+        assert!(array.is_empty());
+        array.push(OrUnknown::Unknown(7)).unwrap();
+        assert_eq!(array.as_slice(), [OrUnknown::Unknown(7)]);
+        assert_eq!(BoundedArray::<bool, 0>::new(&[]).unwrap().as_slice(), []);
+        assert!(BoundedArray::<bool, 0>::new(&[true]).is_err());
     }
 
     #[test]

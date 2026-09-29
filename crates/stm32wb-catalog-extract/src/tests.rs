@@ -672,3 +672,46 @@ fn domains_are_read_not_guessed() {
     let value = error("/**\n * @param Mode Mode\n *        Values:\n *        - zero: Off\n */");
     assert!(value.contains("is not a value"), "{value}");
 }
+
+#[test]
+fn structure_fields_list_their_values() {
+    let comment = "/**\n   * Duration of advertising set.\n   * Time = N * 10 ms.\n   * Values:\n   \
+                   * - 0x0000 (0 ms) : No advertising duration.\n   \
+                   * - 0x0001 (10 ms)  ... 0xFFFF (655350 ms) : Advertising\n   \
+                   *   duration\n   */";
+    let domain = crate::domains::field_domain("Adv_Set_t.Duration", comment)
+        .unwrap()
+        .unwrap();
+    let items = domain
+        .items
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items,
+        [
+            "0x0000: No advertising duration.",
+            "0x0001..=0xFFFF: Advertising duration"
+        ]
+    );
+    assert_eq!(domain.unit_us, Some(10_000));
+    assert_eq!(
+        crate::domains::field_domain("T.Handle", "/**\n   * A handle.\n   */").unwrap(),
+        None
+    );
+
+    let error = |comment: &str| crate::domains::field_domain("T.Mode", comment).unwrap_err();
+    let indent = error("/**\n   *   Values:\n   * - 0x00: Off\n   */");
+    assert!(indent.contains("indented 3 rather than 1"), "{indent}");
+    let stray = error("/**\n   * Values:\n   * - 0x00: Off\n   *  Note: stray\n   */");
+    assert!(stray.contains("not an item"), "{stray}");
+}
+
+#[test]
+fn lists_outside_their_place_are_errors() {
+    let error = |comment: &str| crate::domains::domains_in(comment).unwrap_err();
+    let indent = error("/**\n * @param Mode Mode\n *      Values:\n *        - 0x00: Off\n */");
+    assert!(indent.contains("indented 6 rather than 8"), "{indent}");
+    let outside = error("/**\n * Values:\n * - 0x00: Off\n */");
+    assert!(outside.contains("outside any @param block"), "{outside}");
+}

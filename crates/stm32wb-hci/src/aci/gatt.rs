@@ -752,7 +752,7 @@ mod tests {
             GattReadMultipleCharValue::try_new(ConnHandle::new(1).into(), &handles).unwrap();
         let (bytes, len) = encode(&command);
         assert_eq!(bytes[..len], [0x1B, 0xFD, 7, 1, 0, 2, 0x10, 0, 0x03, 0x02]);
-        let too_many = [HandleEntry::default(); 127];
+        let too_many = [HandleEntry { handle: 0 }; 127];
         assert!(GattReadMultipleCharValue::try_new(ConnHandle::new(1).into(), &too_many).is_err());
     }
 

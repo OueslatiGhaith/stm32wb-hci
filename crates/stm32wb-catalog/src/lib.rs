@@ -39,7 +39,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 pub use bundled::{Bundled, bundled};
-pub use domain::{Domain, DomainItem, DomainKind, MemberDomain};
+pub use domain::{Domain, DomainItem, DomainKind, MemberDomain, StructDomain};
 pub use error::{Error, ErrorKind};
 pub use history::{CommandSegment, EventSegment, Segment};
 pub use layout::{Element, Envelope, Field, FieldType, Layout, Scalar, Structs, UnionVariant};
@@ -67,6 +67,10 @@ pub struct Catalog {
     pub commands: Vec<Command>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// The documented values of fields of the structures commands and events
+    /// carry, by structure, field, and release.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub struct_domains: Vec<StructDomain>,
     /// The status codes ST's BLE stack returns besides the Bluetooth Core's,
     /// by release.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -372,6 +376,43 @@ impl Catalog {
             .find(|event| event.scope == scope && event.code == code)
     }
 
+    /// The documented values of the field `member` of the structure
+    /// `structure` in `release`.
+    pub fn struct_domain(
+        &self,
+        structure: &str,
+        member: &str,
+        release: Version,
+    ) -> Option<&Domain> {
+        self.struct_domains
+            .iter()
+            .find(|domain| {
+                domain.structure == structure
+                    && domain.member == member
+                    && domain.releases.contains(release)
+            })
+            .map(|domain| &domain.domain)
+    }
+
+    /// The fields of the structure `structure` as a command or event of
+    /// `release` defines it.
+    pub fn structure_at(&self, structure: &str, release: Version) -> Option<&[Field]> {
+        let commands = self
+            .commands
+            .iter()
+            .filter_map(move |command| command.definition_at(release))
+            .map(|definition| &definition.structs);
+        let events = self
+            .events
+            .iter()
+            .filter_map(move |event| event.definition_at(release))
+            .map(|definition| &definition.structs);
+        commands
+            .chain(events)
+            .find_map(|structs| structs.get(structure))
+            .map(Vec::as_slice)
+    }
+
     /// The status codes `release` defines, by value.
     pub fn statuses_at(&self, release: Version) -> Vec<&StatusCode> {
         let mut statuses = self
@@ -554,6 +595,44 @@ impl Catalog {
             })?;
         }
 
+        for (index, domain) in self.struct_domains.iter().enumerate() {
+            let label = || {
+                format!(
+                    "{}.{} ({}) domain",
+                    domain.structure, domain.member, domain.releases
+                )
+            };
+            check_range(domain.releases, &label)?;
+            if self.struct_domains[..index].iter().any(|other| {
+                other.structure == domain.structure
+                    && other.member == domain.member
+                    && other.releases.overlaps(domain.releases)
+            }) {
+                return Err(Error::invalid(format!("{}: overlaps another", label())));
+            }
+            let member = MemberDomain {
+                releases: domain.releases,
+                member: domain.member.clone(),
+                returned: false,
+                domain: domain.domain.clone(),
+            };
+            for &release in versions
+                .iter()
+                .filter(|release| domain.releases.contains(**release))
+            {
+                let fields = self
+                    .structure_at(&domain.structure, release)
+                    .ok_or_else(|| {
+                        Error::invalid(format!(
+                            "{}: no command or event of {release} carries {}",
+                            label(),
+                            domain.structure
+                        ))
+                    })?;
+                domain::validate_domain(&Layout::Fields(fields.to_vec()), &member)
+                    .map_err(|error| error.context(label()))?;
+            }
+        }
         for status in &self.statuses {
             check_range(status.releases, &|| format!("status {}", status.name))?;
         }

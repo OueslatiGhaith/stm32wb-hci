@@ -343,6 +343,7 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
             facts.params,
             &command.documented,
             Side::Params,
+            false,
         ))
         .chain(returned.iter().flat_map(|(returns, slots)| {
             width_assertions(&cfg, &returns.name, slots)
@@ -358,6 +359,7 @@ fn expand_variant(command: &Command<'_>, channel: Channel) -> syn::Result<TokenS
                     &facts.returns[1..],
                     &command.return_documented,
                     Side::Returns,
+                    true,
                 ))
         }));
     let return_struct = returned
@@ -1539,13 +1541,15 @@ fn is_integer(ty: &Type) -> bool {
 
 /// Assert at compile time that each value or flag a declared type stands for
 /// is one the catalog documents for its member, in each group of releases,
-/// and that a decoded type keeps the values it does not stand for.
+/// and, if the members are `decoded`, that the type keeps the values it does
+/// not stand for.
 pub(crate) fn value_assertions(
     owner: &Ident,
     slots: &[Slot<'_>],
     members: &[Field],
     groups: &[DocumentedGroup],
     side: Side,
+    decoded: bool,
 ) -> Vec<TokenStream> {
     let mut assertions = Vec::new();
     for slot in slots {
@@ -1571,7 +1575,7 @@ pub(crate) fn value_assertions(
                 .cfg
                 .as_ref()
                 .map(|predicate| quote!(#[cfg(#predicate)]));
-            if side != Side::Params {
+            if decoded {
                 let message = format!(
                     "{owner}.{}: {} may hold values the catalog does not document for {} on STM32WB in {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
                     field.name,

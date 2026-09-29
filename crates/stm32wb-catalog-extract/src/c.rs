@@ -375,6 +375,8 @@ pub fn typedef_name(ty: Type<'_>) -> Option<String> {
 pub struct CField {
     pub name: String,
     pub ty: CType,
+    /// The documentation comment of the member, which may list its values.
+    pub comment: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -432,6 +434,7 @@ pub fn records(unit: &TranslationUnit<'_>) -> BTreeMap<String, CRecord> {
             fields.push(CField {
                 name: field_name,
                 ty: CType::of(ty, capacity),
+                comment: member.get_comment(),
             });
         }
         let size = canonical.get_sizeof().unwrap_or(0);
