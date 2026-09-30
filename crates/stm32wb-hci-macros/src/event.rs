@@ -1,0 +1,636 @@
+//! `vendor_event!` and `system_event!`: an ST vendor or system event whose
+//! code, availability, and parameter layout come from the catalog.
+
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+use stm32wb_catalog::{Bundled, EventScope, Field, ReleaseRange, Structs};
+use syn::parse::{Parse, ParseStream};
+use syn::{Attribute, Ident, Lifetime, Token};
+
+use crate::command::{
+    BearerGroup, Channel, DocumentedGroup, Documents, ElementType, Fields, InputField, Side, Slot,
+    Targets, add_bearers, add_documents, bearer_assertions, bearer_groups, bearer_positions,
+    check_bounds, documented_groups, documents, elements_lifetime_and_element, fields_in,
+    fixed_decode, plan, profile_documents, record_history_names, record_names, same_layout,
+    slice_lifetime_and_element, value_assertions, width_assertions,
+};
+use crate::{cfg, complete};
+
+/// ```text
+/// /// Documentation for the event.
+/// aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
+///     last_state: u8,
+///     ...
+/// }
+/// ```
+pub struct Input {
+    attrs: Vec<Attribute>,
+    c_name: Ident,
+    fields: Fields,
+}
+
+impl Parse for Input {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        let c_name = input.parse()?;
+        input.parse::<Token![=>]>()?;
+        let fields = input.parse()?;
+        Ok(Self {
+            attrs,
+            c_name,
+            fields,
+        })
+    }
+}
+
+pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
+    expand_in(&crate::catalogs()?, input, channel)
+}
+
+/// The declaration for each of `catalogs` having the event.
+pub(crate) fn expand_in(
+    catalogs: &[&'static Bundled],
+    input: Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let c_name = input.c_name.to_string();
+    crate::per_platform(
+        catalogs,
+        |catalog| catalog.event_named(&c_name).is_some(),
+        |bundled| expand_on(bundled, &input, channel),
+    )
+}
+
+/// The declaration for one platform's catalog.
+fn expand_on(
+    bundled: &'static Bundled,
+    input: &Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let variants = Event::resolve(bundled, input, channel)?;
+    let several = variants.len() > 1;
+    let mut tokens = TokenStream::new();
+    for variant in &variants {
+        let expanded = expand_variant(input, variant, channel).map_err(|error| {
+            if several {
+                syn::Error::new(
+                    error.span(),
+                    format!("in releases {}: {error}", variant.releases),
+                )
+            } else {
+                error
+            }
+        })?;
+        tokens.extend(expanded);
+    }
+    let c_name = input.c_name.to_string();
+    tokens.extend(
+        complete::declared(bundled, complete::Kind::Event, &c_name)
+            .map_err(|error| syn::Error::new(input.c_name.span(), error.to_string()))?,
+    );
+    Ok(tokens)
+}
+
+/// The facts a declaration is generated from, identical on the wire in every
+/// release and profile it covers.
+struct Facts<'a> {
+    scope: EventScope,
+    code: u16,
+    payload: &'a [Field],
+    structs: &'a Structs,
+}
+
+impl Facts<'_> {
+    fn same_wire(&self, other: &Facts<'_>) -> bool {
+        self.code == other.code
+            && self.structs == other.structs
+            && same_layout(self.payload, other.payload)
+    }
+}
+
+/// The declaration for the releases in which the same fields exist.
+struct Event<'a> {
+    /// The declared fields without those its releases lack.
+    fields: Fields,
+    facts: Facts<'a>,
+    /// Every name each parameter had, by position, latest first.
+    names: Vec<Vec<&'a str>>,
+    releases: ReleaseRange,
+    cfg: Option<TokenStream>,
+    /// The latest C name of the catalog entry, which the event's type names.
+    latest: &'a str,
+    /// The parameters addressing ATT bearers.
+    bearers: Vec<BearerGroup>,
+    /// What the catalog documents for the parameters, by group of releases.
+    documented: Vec<DocumentedGroup>,
+}
+
+impl<'a> Event<'a> {
+    /// One declaration per set of fields that exist together, each for the
+    /// releases and profiles having exactly those fields.
+    fn resolve(bundled: &'a Bundled, input: &Input, channel: Channel) -> syn::Result<Vec<Self>> {
+        let c_name = input.c_name.to_string();
+        let error = |message: String| syn::Error::new(input.c_name.span(), message);
+        let segments = bundled
+            .event_segments(&c_name)
+            .map_err(|failure| error(failure.to_string()))?;
+        let ranges = segments
+            .iter()
+            .map(|segment| segment.releases)
+            .collect::<Vec<_>>();
+        check_bounds(bundled, &c_name, input.fields.fields.iter(), &ranges)?;
+
+        // Each variant with its code and the fields it declares, which it is
+        // keyed by, the targets it covers, and those its bearers and
+        // documented values are the same on.
+        #[allow(clippy::type_complexity)]
+        let mut variants: Vec<(
+            (u16, Vec<bool>),
+            Self,
+            Targets<'a>,
+            Vec<(Vec<(usize, u16)>, Targets<'a>)>,
+            Vec<(Documents, Targets<'a>)>,
+        )> = Vec::new();
+        // Every release's layout, for the names renamed members had.
+        let mut history: Vec<&'a [Field]> = Vec::new();
+        for segment in &segments {
+            let active = &segment.entry;
+            let releases = segment.releases;
+            if !channel.carries_event(active.event.scope) {
+                return Err(error(format!(
+                    "{c_name} is not {} {} event",
+                    channel.event_owner(),
+                    channel.event_kind()
+                )));
+            }
+            if let Some(exclusion) = active.excluded {
+                return Err(error(format!(
+                    "{c_name} is excluded in {releases}: {}",
+                    exclusion.reason
+                )));
+            }
+            let payload = active.payload.fields.map_err(|reason| {
+                error(format!(
+                    "{c_name} has no derivable parameter layout in {releases}: {reason}"
+                ))
+            })?;
+            history.push(payload);
+            let current = Facts {
+                scope: active.event.scope,
+                code: active.event.code,
+                payload,
+                structs: active.payload.structs,
+            };
+            let key = (
+                current.code,
+                input
+                    .fields
+                    .fields
+                    .iter()
+                    .map(|field| field.exists_in(bundled.catalog.platform, releases))
+                    .collect::<Vec<_>>(),
+            );
+            let bearers = bearer_positions(payload, &active.definition.bearers);
+            let documents = bundled
+                .catalog
+                .versions()
+                .filter(|release| releases.contains(*release))
+                .flat_map(|release| {
+                    profile_documents(release, segment.profiles, |profile| {
+                        documents(payload, profile, |member| {
+                            active.event.domain(member, release)
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            let Some((_, variant, targets, groups, documented)) =
+                variants.iter_mut().find(|(other, ..)| *other == key)
+            else {
+                let mut variant = Self {
+                    fields: fields_in(&input.fields, bundled.catalog.platform, releases),
+                    facts: current,
+                    names: Vec::new(),
+                    releases,
+                    cfg: None,
+                    latest: active.event.name(),
+                    bearers: Vec::new(),
+                    documented: Vec::new(),
+                };
+                record_names(&mut variant.names, payload);
+                let target = (releases, segment.profiles);
+                let mut documented = Vec::new();
+                for (documents, target) in documents {
+                    add_documents(&mut documented, documents, target);
+                }
+                variants.push((
+                    key,
+                    variant,
+                    vec![target],
+                    vec![(bearers, vec![target])],
+                    documented,
+                ));
+                continue;
+            };
+            if !variant.facts.same_wire(&current) {
+                let (since, before) = crate::command::bound_keys(bundled.catalog.platform);
+                return Err(error(format!(
+                    "{c_name} changes its layout in {releases}; if it adds or removes members \
+                     there, declare them with #[wire({since} = \"{0}\")] or \
+                     #[wire({before} = \"{0}\")]",
+                    releases.first
+                )));
+            }
+            record_names(&mut variant.names, current.payload);
+            variant.facts = current;
+            variant.releases.first = variant.releases.first.min(releases.first);
+            variant.releases.last = variant.releases.last.max(releases.last);
+            targets.push((releases, segment.profiles));
+            add_bearers(groups, bearers, (releases, segment.profiles));
+            for (documents, target) in documents {
+                add_documents(documented, documents, target);
+            }
+        }
+
+        Ok(variants
+            .into_iter()
+            .map(|(_, mut variant, targets, groups, documented)| {
+                for payload in &history {
+                    record_history_names(&mut variant.names, variant.facts.payload, payload);
+                }
+                variant.cfg = Some(cfg::targets(&bundled.catalog, targets));
+                variant.bearers = bearer_groups(&bundled.catalog, groups);
+                variant.documented = documented_groups(&bundled.catalog, documented);
+                variant
+            })
+            .collect())
+    }
+}
+
+/// The lifetime the fields borrow the event with, if any borrows it.
+fn borrowed_lifetime(fields: &[InputField]) -> syn::Result<Option<&Lifetime>> {
+    let mut lifetime: Option<&Lifetime> = None;
+    for field in fields {
+        let Some((current, _)) = slice_lifetime_and_element(&field.ty)
+            .or_else(|| elements_lifetime_and_element(&field.ty))
+        else {
+            continue;
+        };
+        match lifetime {
+            Some(first) if first != current => {
+                return Err(syn::Error::new(
+                    current.span(),
+                    format!("borrow every field for the same lifetime, `{first}`"),
+                ));
+            }
+            _ => lifetime = Some(current),
+        }
+    }
+    Ok(lifetime)
+}
+
+/// A plain struct with the event's parameters, decoded in catalog order from
+/// the bytes after the event code. Variable-length parameters borrow the
+/// event, and their counts are left out.
+fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Result<TokenStream> {
+    let c_name = &input.c_name;
+    let name = &event.fields.name;
+    let slots = plan(
+        c_name,
+        &event.fields,
+        event.facts.payload,
+        &event.names,
+        event.facts.structs,
+        Side::Event,
+    )?;
+    let cfg = event
+        .cfg
+        .as_ref()
+        .map(|predicate| quote!(#[cfg(#predicate)]));
+    let lifetime = borrowed_lifetime(&event.fields.fields)?;
+    let (generics, de) = match lifetime {
+        Some(lifetime) => (quote!(<#lifetime>), quote!(#lifetime)),
+        None => (quote!(), quote!('de)),
+    };
+    let impl_generics = quote!(<#de>);
+    let count_of = |counted: &InputField| format_ident!("__{}_count", counted.name);
+    let decodes = slots.iter().map(|slot| match slot {
+        Slot::Fixed { field, .. } => fixed_decode(field, &de),
+        Slot::Count { counted, scalar } => {
+            let (count, scalar) = (count_of(counted), format_ident!("{}", scalar.name()));
+            quote!(let (#count, rest) = <#scalar as ::bt_hci::FromHciBytes<#de>>::from_hci_bytes(rest)?;)
+        }
+        Slot::Elements {
+            field,
+            element: ElementType::Byte,
+            ..
+        } => {
+            let count = count_of(field);
+            let field = &field.name;
+            quote! {
+                let (#field, rest) = rest
+                    .split_at_checked(usize::from(#count))
+                    .ok_or(::bt_hci::FromHciBytesError::InvalidSize)?;
+            }
+        }
+        Slot::Elements {
+            field,
+            element: ElementType::Typed { .. },
+            ..
+        } => {
+            let count = count_of(field);
+            let field = &field.name;
+            quote! {
+                let (#field, rest) =
+                    ::stm32wb_hci::wire::Elements::decode(rest, usize::from(#count))?;
+            }
+        }
+        Slot::Selector { .. }
+        | Slot::Union { .. }
+        | Slot::Optional { .. } => unreachable!("plan rejects these in events"),
+    });
+    let names = event.fields.fields.iter().map(|field| &field.name);
+    let types = event.fields.fields.iter().map(|field| &field.ty);
+    let field_names = names.clone();
+    let widths = width_assertions(&cfg, name, &slots)
+        .chain(bearer_assertions(
+            name,
+            &slots,
+            event.facts.payload,
+            &event.bearers,
+        ))
+        .chain(value_assertions(
+            name,
+            &slots,
+            event.facts.payload,
+            &event.documented,
+            Side::Event,
+            true,
+        ));
+    let code = event.facts.code;
+    let latest = event.latest;
+    let doc = match (channel, event.facts.scope) {
+        (Channel::Standard, EventScope::LeMeta) => {
+            format!("`{c_name}` in the catalog, LE meta subevent code {code:#04X}.")
+        }
+        _ => format!(
+            "`{c_name}` in the catalog, {} event code {code:#06X}.",
+            channel.event_kind()
+        ),
+    };
+    let event_impl = match (channel, event.facts.scope) {
+        (Channel::Standard, scope) => {
+            let code = u8::try_from(code).map_err(|_| {
+                syn::Error::new(
+                    c_name.span(),
+                    format!("{c_name} has code {code:#06X}, wider than bt-hci's"),
+                )
+            })?;
+            let le_meta = scope == EventScope::LeMeta;
+            let bt_hci_impl = if le_meta {
+                quote! {
+                    impl #impl_generics ::bt_hci::event::le::LeEventParams<#de> for #name #generics {
+                        const SUBEVENT_CODE: u8 = #code;
+                    }
+                }
+            } else {
+                quote! {
+                    impl #impl_generics ::bt_hci::event::EventParams<#de> for #name #generics {
+                        const EVENT_CODE: u8 = #code;
+                    }
+                }
+            };
+            quote! {
+                #bt_hci_impl
+
+                #cfg
+                impl #impl_generics ::stm32wb_hci::wire::StandardEvent<#de> for #name #generics {
+                    const CODE: u8 = #code;
+                    const LE_META: bool = #le_meta;
+                    const C_NAME: &'static str = #latest;
+                }
+            }
+        }
+        (channel, _) => {
+            let event_trait = match channel {
+                Channel::Vendor => quote!(VendorEvent),
+                _ => quote!(SystemEvent),
+            };
+            quote! {
+                impl #impl_generics ::stm32wb_hci::wire::#event_trait<#de> for #name #generics {
+                    const CODE: u16 = #code;
+                    const C_NAME: &'static str = #latest;
+                }
+            }
+        }
+    };
+    let attrs = &input.attrs;
+    Ok(quote! {
+        #cfg
+        #(#attrs)*
+        #[doc = ""]
+        #[doc = #doc]
+        #[allow(missing_docs)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub struct #name #generics {
+            #(pub #names: #types,)*
+        }
+
+        #cfg
+        impl #impl_generics ::bt_hci::FromHciBytes<#de> for #name #generics {
+            fn from_hci_bytes(
+                data: &#de [u8],
+            ) -> Result<(Self, &#de [u8]), ::bt_hci::FromHciBytesError> {
+                let rest = data;
+                #(#decodes)*
+                Ok((Self { #(#field_names),* }, rest))
+            }
+        }
+
+        #cfg
+        #event_impl
+
+        #(#widths)*
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The STM32WB catalog alone, which these tests exercise.
+    fn wb() -> [&'static Bundled; 1] {
+        [stm32wb_catalog::bundled(stm32wb_catalog::Platform::Stm32wb).unwrap()]
+    }
+
+    fn expand_str(source: &str) -> Result<String, String> {
+        expand_on(source, Channel::Vendor)
+    }
+
+    fn expand_on(source: &str, channel: Channel) -> Result<String, String> {
+        let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
+        expand_in(&wb(), input, channel)
+            .map(|tokens| tokens.to_string())
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn events_follow_their_code_across_releases() {
+        let tokens = expand_str(
+            "aci_hal_end_of_radio_activity_event => HalEndOfRadioActivityEvent {
+                 last_state: u8,
+                 next_state: u8,
+                 next_state_sys_time: u32,
+                 last_state_slot: u8,
+                 next_state_slot: u8,
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("const CODE : u16 = 4u16"), "{tokens}");
+        assert!(tokens.contains("const CODE : u16 = 6148u16"), "{tokens}");
+    }
+
+    #[test]
+    fn counted_bytes_borrow_the_event() {
+        let tokens = expand_str(
+            "aci_warning_event => HalWarningEvent {
+                 warning_type: u8,
+                 data: &'a [u8],
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("pub struct HalWarningEvent < 'a >"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("split_at_checked"), "{tokens}");
+
+        let error = expand_str(
+            "aci_warning_event => HalWarningEvent {
+                 warning_type: u8,
+                 data: BoundedBytes<251>,
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("holds up to 251 bytes; declare it as `&'a [u8]`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn events_are_checked_against_the_catalog() {
+        let error = expand_str("hci_disconnection_complete_event => Disconnection {}").unwrap_err();
+        assert!(error.contains("is not an ST vendor event"), "{error}");
+
+        let error = expand_str("aci_missing_event => Missing {}").unwrap_err();
+        assert!(error.contains("has no event"), "{error}");
+
+        let error = expand_str("aci_gap_bond_lost_event => GapBondLost { connection_handle: u16 }")
+            .unwrap_err();
+        assert!(error.contains("since = \"1.22.0\""), "{error}");
+
+        let tokens = expand_str(
+            "aci_gap_bond_lost_event => GapBondLost {
+                 #[wire(since = \"1.22.0\")]
+                 connection_handle: u16,
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("feature = \"fw_1_21_0\""), "{tokens}");
+    }
+
+    #[test]
+    fn structure_lists_are_borrowed_elements() {
+        let tokens = expand_str(
+            "aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
+                 connection_handle: u16,
+                 handle_item: Elements<'a, HandleItem>,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("pub struct GattReadMultiPermitReqEvent < 'a >"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("Elements :: decode"), "{tokens}");
+        assert!(tokens.contains("stands_for :: < HandleItem >"), "{tokens}");
+
+        let error = expand_str(
+            "aci_gatt_read_multi_permit_req_event => GattReadMultiPermitReqEvent {
+                 connection_handle: u16,
+                 handle_item: &'a [HandleItem],
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains(
+                "declare it as `Elements<'a, T>` with T the type standing for Handle_Item_t"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn event_parameters_keep_undocumented_values() {
+        let tokens = expand_str(
+            "aci_gap_pairing_complete_event => GapPairingCompleteEvent {
+                 connection_handle: ConnHandle,
+                 status: OrUnknown<PairingStatus>,
+                 reason: u8,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("decodes_any :: < OrUnknown < PairingStatus > > ()"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains(
+                "values_documented :: < OrUnknown < PairingStatus > > (& [(0i64 , 0i64) , (1i64 , 1i64) , (2i64 , 2i64) , (3i64 , 3i64)])"
+            ),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("decodes_any :: < u8 >"), "{tokens}");
+
+        let tokens = expand_str(
+            "aci_gap_pairing_request_event => GapPairingRequestEvent {
+                 connection_handle: ConnHandle,
+                 bonded: bool,
+                 auth_req: u8,
+             }",
+        )
+        .unwrap();
+        assert!(tokens.contains("decodes_any :: < bool > ()"), "{tokens}");
+        assert!(
+            tokens.contains(
+                "GapPairingRequestEvent.bonded: an event parameter may hold values the catalog \
+                 does not document for Bonded on STM32WB in 1.21.0..=1.24.0"
+            ),
+            "{tokens}"
+        );
+    }
+
+    #[test]
+    fn system_events_are_not_vendor_events() {
+        let tokens = expand_on(
+            "SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWriteEvent { number_of_words: u32 }",
+            Channel::System,
+        )
+        .unwrap();
+        assert!(tokens.contains("wire :: SystemEvent"), "{tokens}");
+        assert!(tokens.contains("const CODE : u16 = 37380u16"), "{tokens}");
+
+        let error = expand_str("SHCI_SUB_EVT_NVM_END_WRITE => NvmEndWriteEvent {}").unwrap_err();
+        assert!(error.contains("is not an ST vendor event"), "{error}");
+        let error =
+            expand_on("aci_warning_event => HalWarningEvent {}", Channel::System).unwrap_err();
+        assert!(error.contains("is not an ST system event"), "{error}");
+        let error = expand_on(
+            "SHCI_SUB_EVT_THREAD_NVM_RAM_UPDATE => ThreadNvmRamUpdateEvent {}",
+            Channel::System,
+        )
+        .unwrap_err();
+        assert!(error.contains("is excluded"), "{error}");
+    }
+}

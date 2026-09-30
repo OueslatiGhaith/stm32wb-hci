@@ -1,0 +1,128 @@
+# The STM32WB wireless-interface catalog, layer 3: curated facts.
+#
+# Each annotation refines one entry of stm32wb.toml and must cite the evidence
+# it rests on. `stm32wb-catalog-extract audit` rejects annotations whose
+# target disappeared, that fill a layout the extractor now derives (stale),
+# or that contradict an extracted layout without `override = true`.
+
+# System events whose payload is a C enum. The wire width of an enum is an
+# ABI property that the generated C does not state.
+
+[[annotations]]
+event = "SHCI_SUB_EVT_CODE_READY"
+source = "AAPCS32 section 7.1.3: enumerations on arm-none-eabi use the smallest container holding their values, and SHCI_SysEvt_Ready_Rsp_t's values (0x00..=0x11) fit one byte; stm32wb-hci 0.19 decodes this payload as one byte on hardware"
+reason = "sysevt_ready_rsp is declared with an enum type"
+payload = ["sysevt_ready_rsp: u8"]
+
+[[annotations]]
+event = "SHCI_SUB_EVT_ERROR_NOTIF"
+source = "AAPCS32 section 7.1.3: enumerations on arm-none-eabi use the smallest container holding their values, and SCHI_SystemErrCode_t's values (0..=200) fit one byte"
+reason = "errorCode is declared with an enum type"
+payload = ["errorCode: u8"]
+
+# System events shci.h documents without parameters.
+
+[[annotations]]
+event = "SHCI_SUB_EVT_NVM_END_WRITE"
+source = "shci.h documents SHCI_SUB_EVT_NVM_END_WRITE with a description and no parameters, while every event with parameters is documented on its payload structure"
+reason = "no payload structure exists to extract"
+payload = []
+
+[[annotations]]
+event = "SHCI_SUB_EVT_NVM_END_ERASE"
+source = "shci.h documents SHCI_SUB_EVT_NVM_END_ERASE with a description and no parameters, while every event with parameters is documented on its payload structure"
+reason = "no payload structure exists to extract"
+payload = []
+
+# System events for the other wireless stacks sharing the system channel.
+
+[[annotations]]
+event = "SHCI_SUB_EVT_THREAD_NVM_RAM_UPDATE"
+source = "shci.h: OpenThread NVM RAM section update notification"
+reason = "OpenThread is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+event = "SHCI_SUB_EVT_CODE_CONCURRENT_802154_EVT"
+source = "shci.h: concurrent 802.15.4 mode notification"
+reason = "802.15.4 is outside this Bluetooth HCI crate"
+exclude = true
+
+# System commands for the other wireless stacks and test binaries sharing the
+# system channel.
+
+[[annotations]]
+command = "SHCI_C2_THREAD_Init"
+source = "shci.h, SHCI_C2_THREAD_Init: \"Starts the THREAD Stack\""
+reason = "OpenThread is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_ZIGBEE_Init"
+source = "shci.h, SHCI_C2_ZIGBEE_Init: \"Starts the Zigbee Stack\""
+reason = "Zigbee is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_MAC_802_15_4_Init"
+source = "shci.h, SHCI_C2_MAC_802_15_4_Init: \"Starts the MAC 802.15.4 on M0\""
+reason = "802.15.4 is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_802_15_4_DeInit"
+source = "shci.h, SHCI_C2_802_15_4_DeInit: \"Deinit 802.15.4 layer (to be used before entering StandBy mode)\""
+reason = "802.15.4 is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_SetMode"
+source = "shci.h, SHCI_C2_CONCURRENT_SetMode: \"Enable/Disable Thread on CPU2 (M0+)\""
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_GetNextBleEvtTime"
+source = "shci.h, SHCI_C2_CONCURRENT_GetNextBleEvtTime: \"Get the next BLE event date (relative time)\", for scheduling the concurrent Thread stack around BLE"
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_CONCURRENT_EnableNext_802154_EvtNotification"
+source = "shci.h, SHCI_C2_CONCURRENT_EnableNext_802154_EvtNotification: \"Activate the next 802.15.4 event notification (one shot)\""
+reason = "concurrent Thread and 802.15.4 operation is outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_LLDTESTS_Init"
+source = "shci.h, SHCI_C2_LLDTESTS_Init: \"Starts the LLD tests CLI\""
+reason = "the LLD test binaries are outside this Bluetooth HCI crate"
+exclude = true
+
+[[annotations]]
+command = "SHCI_C2_BLE_LLD_Init"
+source = "shci.h, SHCI_C2_BLE_LLD_Init: \"Starts the LLD tests BLE\""
+reason = "the LLD test binaries are outside this Bluetooth HCI crate"
+exclude = true
+
+# System commands whose parameter length depends on argument values.
+
+[[annotations]]
+command = "SHCI_C2_FUS_FwUpgrade"
+source = "shci.c, SHCI_C2_FUS_FwUpgrade: writes fw_src_add at offset 0 if it is nonzero and fw_dest_add at offset 4 if it is nonzero, adding 4 to the length for each, so it sends 0, 4, or 8 bytes; with only fw_dest_add nonzero it sends the 4 unwritten bytes at offset 0, so fw_dest_add is only sent after fw_src_add"
+reason = "the generated C sends a run-time length; each address may be omitted, with the ones after it"
+params = [
+    "fw_src_add: u32 (optional)",
+    "fw_dest_add: u32 (optional)",
+]
+
+[[annotations]]
+command = "SHCI_C2_FUS_StoreUsrKey"
+source = "shci.c, SHCI_C2_FUS_StoreUsrKey: sends KeySize + 2 bytes of SHCI_C2_FUS_StoreUsrKey_Cmd_Param_t, or KeySize + 14 when KeyType is KEYTYPE_ENCRYPTED (3), \"the 12 bytes IV Key is included in the payload\"; shci.h declares KeyData[32 + 12], so the IV follows the key and the key holds at most 32 bytes (1.24.0 adds KEYSIZE_64, which the structure cannot hold)"
+reason = "the generated C sends a run-time length; the key is counted by KeySize and the IV's presence is selected by KeyType"
+params = [
+    "KeyType: u8",
+    "KeySize: u8",
+    "KeyData: [u8; KeySize] (capacity 32)",
+    "IV: union(KeyType) { 3 => 12, _ => 0 }",
+]

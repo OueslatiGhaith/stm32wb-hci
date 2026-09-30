@@ -1,0 +1,99 @@
+[package]
+name = "stm32wb-hci"
+edition = "2024"
+version = "0.20.0"
+authors = [
+    "Daniel Gallagher <pdanielgallagher@gmail.com>",
+    "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
+]
+categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
+description = "Implementation of the Bluetooth HCI for the STM32WB family"
+keywords = ["ble", "bluetooth", "stm32"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OueslatiGhaith/stm32wb-hci"
+readme = "../../README.md"
+exclude = ["tests"]
+
+[dependencies]
+bt-hci = "0.10.1"
+# bt-hci's command macros, which the declarations expand to, name it by path.
+bt-hci-transport = "0.1.0"
+defmt = { version = "1", optional = true }
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
+stm32wb-hci-macros = { path = "../stm32wb-hci-macros", version = "0.1.0" }
+
+[target.'cfg(windows)'.dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+
+[dev-dependencies]
+stm32wb-catalog = { path = "../stm32wb-catalog" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+toml = "1"
+
+[features]
+default = ["fw_1_24_0", "stack-full-extended"]
+defmt = ["dep:defmt", "bt-hci/defmt", "bt-hci-transport/defmt"]
+
+# Enable exactly one release and one stack profile, both of the same
+# platform: STM32WB, whose CPU2 wireless binary they name, or STM32WBA,
+# whose BLE stack library they name.
+
+# The STM32CubeWB release of the CPU2 wireless binary.
+fw_1_15_0 = ["_stm32wb"]
+fw_1_16_0 = ["_stm32wb"]
+fw_1_17_0 = ["_stm32wb"]
+fw_1_17_1 = ["_stm32wb"]
+fw_1_17_2 = ["_stm32wb"]
+fw_1_17_3 = ["_stm32wb"]
+fw_1_18_0 = ["_stm32wb"]
+fw_1_19_0 = ["_stm32wb"]
+fw_1_19_1 = ["_stm32wb"]
+fw_1_20_0 = ["_stm32wb"]
+fw_1_21_0 = ["_stm32wb"]
+fw_1_22_0 = ["_stm32wb"]
+fw_1_22_1 = ["_stm32wb"]
+fw_1_23_0 = ["_stm32wb"]
+fw_1_24_0 = ["_stm32wb"]
+
+# The BLE stack profile of the CPU2 wireless binary.
+stack-full-extended = ["_stm32wb"]
+stack-full = ["_stm32wb"]
+stack-light = ["_stm32wb"]
+stack-hci-layer-extended = ["_stm32wb"]
+stack-hci-layer = ["_stm32wb"]
+stack-hci-adv-scan = ["_stm32wb"]
+
+# The STM32CubeWBA release of the BLE stack library.
+wba_1_0_0 = ["_stm32wba"]
+wba_1_1_0 = ["_stm32wba"]
+wba_1_1_1 = ["_stm32wba"]
+wba_1_2_0 = ["_stm32wba"]
+wba_1_3_1 = ["_stm32wba"]
+wba_1_4_0 = ["_stm32wba"]
+wba_1_4_1 = ["_stm32wba"]
+wba_1_5_0 = ["_stm32wba"]
+wba_1_6_0 = ["_stm32wba"]
+wba_1_6_1 = ["_stm32wba"]
+wba_1_7_0 = ["_stm32wba"]
+wba_1_8_0 = ["_stm32wba"]
+wba_1_9_0 = ["_stm32wba"]
+wba_1_10_0 = ["_stm32wba"]
+
+# The configuration of the STM32WBA BLE stack library; releases before 1.4.0
+# have no Basic Plus or Peripheral Only, and only those before 1.8.0 have
+# Link Layer Only Basic.
+stack-wba-full = ["_stm32wba"]
+stack-wba-basic-plus = ["_stm32wba"]
+stack-wba-basic-features = ["_stm32wba"]
+stack-wba-peripheral-only = ["_stm32wba"]
+stack-wba-link-layer-only = ["_stm32wba"]
+stack-wba-link-layer-only-basic = ["_stm32wba"]
+
+# The platform, which the release and stack profile features enable; not
+# meant to be enabled directly.
+_stm32wb = []
+_stm32wba = []

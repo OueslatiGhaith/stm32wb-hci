@@ -4,6 +4,9 @@
 #![allow(static_mut_refs)]
 
 use crate::transport::ControllerAdapter;
+use bt_hci::ControllerToHostPacket;
+use bt_hci::cmd::controller_baseband::Reset;
+use bt_hci::controller::{Controller, ControllerCmdSync};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -13,9 +16,18 @@ use embassy_stm32::{
     rcc::WPAN_DEFAULT,
 };
 use stm32wb_hci::{
-    BdAddr,
-    host::{HostHci, uart::UartHci},
-    vendor::command::{gap::GapCommands, gatt::GattCommands, hal::HalCommands},
+    aci::{
+        durations::{AdvInterval, PreferredConnInterval},
+        flags::Role,
+        gap::{GapInit, GapSetDiscoverable},
+        gatt::GattInit,
+        hal::HalWriteConfigData,
+        status::StatusError,
+        values::{AdvertisingType, ConfigDataOffset, OwnAddressType, Privacy},
+    },
+    adv_data::local_name_structure,
+    event::BleEvent,
+    shci::{BleInit, BleInitParams},
 };
 
 use {defmt_rtt as _, panic_probe as _};
@@ -69,11 +81,7 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    if sys
-        .ble_init(transport::BleInitParam::default())
-        .await
-        .is_err()
-    {
+    if sys.command(&ble_init()).await.is_err() {
         error!("BLE stack init failed");
         return;
     }
@@ -83,44 +91,114 @@ async fn main(spawner: Spawner) {
     join(
         async {
             loop {
-                let pkt = ble.read_packet().await;
-
-                defmt::info!("pkt: {}", pkt);
+                let mut buf = ();
+                // Core events decode with bt-hci, vendor events with `AciEvent`.
+                match ble.read(&mut buf).await {
+                    Ok(ControllerToHostPacket::Event(packet)) => {
+                        match BleEvent::from_packet(packet) {
+                            Ok(BleEvent::Vendor(event)) => info!("vendor event: {}", event),
+                            Ok(BleEvent::Core(event)) => info!("core event: {}", event),
+                            Err(_) => error!("undecodable event"),
+                        }
+                    }
+                    Ok(packet) => info!("packet: {}", packet),
+                    Err(error) => error!("read failed: {}", error),
+                }
             }
         },
         async {
             defmt::info!("hci: reset");
-            // From this point `ble` implements `stm32wb_hci::Controller` below. All commands
-            // after this line are normal stm32wb-hci host/vendor commands, not transport code.
-            let response = ble.reset().await;
-            defmt::info!("{}", response);
+            // From this point `ble` executes the bt-hci commands the selected target's
+            // wireless binary implements: Core ones from bt-hci, vendor ones from `aci`.
+            let response = ble.exec(&Reset::new()).await;
+            defmt::info!("{}", response.is_ok());
 
             defmt::info!("hci: write config data");
-            let public_address = BdAddr([0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1]);
-            let response = ble
-                .write_config_data(
-                    &stm32wb_hci::vendor::command::hal::ConfigData::public_address(public_address)
-                        .build(),
-                )
-                .await;
+            // The public address, least significant byte first.
+            let public_address = [0xE7, 0xCA, 0x10, 0x01, 0x00, 0xE1];
+            let response =
+                match HalWriteConfigData::entry(ConfigDataOffset::PublicAddress, &public_address) {
+                    Some(command) => ble.exec(&command).await.is_ok(),
+                    None => false,
+                };
             defmt::info!("{}", response);
 
             defmt::info!("hci: init gatt");
-            let response = ble.init_gatt().await;
-            defmt::info!("{}", response);
+            let response = ble.exec(&GattInit::new()).await;
+            defmt::info!("{}", response.is_ok());
 
             defmt::info!("hci: init gap");
+            // Peripheral role, without privacy, with an 8-byte device name.
             let response = ble
-                .init_gap(
-                    stm32wb_hci::vendor::command::gap::Role::PERIPHERAL,
-                    false,
-                    8,
-                )
+                .exec(&GapInit::new(Role::PERIPHERAL, Privacy::Disabled, 8))
                 .await;
-            defmt::info!("{}", response);
+            defmt::info!("{}", response.is_ok());
+
+            defmt::info!("hci: advertise");
+            let name = local_name_structure::<32>(b"STM32WB", true).unwrap();
+            let interval = AdvInterval::from_millis(100).unwrap();
+            let command = GapSetDiscoverable::try_new(
+                AdvertisingType::ConnectableUndirected,
+                interval,
+                interval,
+                OwnAddressType::Public,
+                0,
+                &name,
+                &[],
+                PreferredConnInterval::OMITTED,
+                PreferredConnInterval::OMITTED,
+            )
+            .unwrap();
+            // A failure names the BLE stack's status codes, which bt-hci
+            // shows as unknown.
+            match ble.exec(&command).await {
+                Ok(_) => info!("advertising"),
+                Err(bt_hci::cmd::Error::Hci(error)) => {
+                    error!("advertising failed: {}", StatusError::from(error))
+                }
+                Err(bt_hci::cmd::Error::Io(error)) => error!("advertising failed: {}", error),
+            }
 
             info!("BLE HCI ready");
         },
     )
     .await;
+}
+
+/// The BLE stack configuration, in the layout of the selected release.
+fn ble_init() -> BleInit {
+    BleInit::from(BleInitParams {
+        p_ble_buffer_address: 0,
+        ble_buffer_size: 0,
+        num_attr_record: 68,
+        num_attr_serv: 4,
+        attr_value_arr_size: 1344,
+        num_of_links: 2,
+        extended_packet_length_enable: 1,
+        pr_write_list_size: 0x3A,
+        mblock_count: 0x79,
+        att_mtu: 156,
+        peripheral_sca: 500,
+        central_sca: 0,
+        ls_source: 1,
+        max_conn_event_length: 0xFFFF_FFFF,
+        hs_startup_time: 0x148,
+        viterbi_enable: 1,
+        options: 0,
+        hw_version: 0,
+        max_coc_initiator_nbr: 32,
+        min_tx_power: -40,
+        max_tx_power: 6,
+        rx_model_config: 0,
+        max_adv_set_nbr: 2,
+        max_adv_data_len: 1650,
+        tx_path_compens: 0,
+        rx_path_compens: 0,
+        ble_core_version: 11,
+        options_extension: 0,
+        max_add_eatt_bearers: 4,
+        // No extra data buffer.
+        extra_data_buffer: 0,
+        extra_data_buffer_size: 0,
+    })
 }
