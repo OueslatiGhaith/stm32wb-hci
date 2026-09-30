@@ -1926,7 +1926,6 @@ version = "0.1.0"
 dependencies = [
  "aligned",
  "bt-hci",
- "bt-hci-transport",
  "cortex-m",
  "cortex-m-rt",
  "critical-section",
