@@ -15,7 +15,7 @@ readme = "../../README.md"
 exclude = ["tests"]
 
 [dependencies]
-bt-hci = "0.10.0"
+bt-hci = "0.10.1"
 # bt-hci's command macros, which the declarations expand to, name it by path.
 bt-hci-transport = "0.1.0"
 defmt = { version = "1", optional = true }
