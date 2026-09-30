@@ -139,6 +139,16 @@ vendor_command! {
 }
 
 vendor_command! {
+    /// Read how many buffers are allocated for ACL packets, counted in 16
+    /// bits.
+    aci_hal_get_pm_debug_info_v2 => HalGetPmDebugInfoV2 {} -> HalPmDebugInfoV2 {
+        allocated_for_tx: u16,
+        allocated_for_rx: u16,
+        allocated_mblocks: u16,
+    }
+}
+
+vendor_command! {
     /// Enable or disable peripheral latency on connections, which is enabled
     /// by default. Named `aci_hal_set_slave_latency` before 1.17.0.
     aci_hal_set_peripheral_latency => HalSetPeripheralLatency {
@@ -230,11 +240,78 @@ vendor_event! {
 }
 
 vendor_event! {
+    /// An isochronous group reached its next anchor point, at `time_stamp`,
+    /// as configured with [`HalSetSyncEventConfig`]. STM32WBA only; the code
+    /// is 0x1808 from 1.8.0.
+    aci_hal_sync_event => HalSyncEvent {
+        group_id: u8,
+        next_anchor_point: u32,
+        time_stamp: u32,
+        #[wire(wba_since = "1.1.0")]
+        next_sdu_delivery_timeout: u32,
+    }
+}
+
+vendor_event! {
     /// A warning from the wireless stack, with data depending on its type.
     /// Named `aci_hal_fw_error_event` before 1.22.0.
     aci_warning_event => HalWarningEvent {
         warning_type: OrUnknown<WarningType>,
         data: &'a [u8],
+    }
+}
+
+vendor_command! {
+    /// Start transmitting `pattern` continuously on `rf_channel`.
+    aci_hal_continuous_tx_start => HalContinuousTxStart {
+        rf_channel: u8,
+        phy: u8,
+        pattern: u8,
+    }
+}
+
+vendor_command! {
+    /// Read the state of every link the device manages, and its connection
+    /// handle.
+    aci_hal_get_link_status_v2 => HalGetLinkStatusV2 {} -> HalLinkStatusV2 {
+        #[wire(wba_before = "1.3.1")]
+        link_status: [u8; 10],
+        #[wire(wba_since = "1.3.1")]
+        link_status: [u8; 22],
+        #[wire(wba_before = "1.3.1")]
+        link_connection_handle: [u16; 10],
+        #[wire(wba_since = "1.3.1")]
+        link_connection_handle: [u16; 22],
+    }
+}
+
+vendor_command! {
+    /// Enable or disable the packet traffic arbitration (PTA) hardware.
+    aci_hal_pta_enable => HalPtaEnable {
+        enable: u8,
+    }
+}
+
+vendor_command! {
+    /// Set the packet traffic arbitration priority of the events `mode`
+    /// selects.
+    aci_hal_pta_set_priority => HalPtaSetPriority {
+        mode: u8,
+        handle: u16,
+        priority: u32,
+        priority_mask: u32,
+        slots_number: u8,
+        limit_timeout: u8,
+    }
+}
+
+vendor_command! {
+    /// Configure the [`HalSyncEvent`]s of a CIG or BIG.
+    aci_hal_set_sync_event_config => HalSetSyncEventConfig {
+        group_id: u8,
+        enable_sync: u8,
+        enable_cb_trigger: u8,
+        trigger_source: u8,
     }
 }
 
@@ -362,6 +439,7 @@ mod tests {
         C::Return::from_hci_bytes_complete(bytes).unwrap()
     }
 
+    #[cfg(feature = "_stm32wb")]
     #[test]
     fn return_parameters_decode_after_the_status() {
         assert_eq!(HalGetAnchorPeriod::OPCODE.to_raw(), 0xFC19);
@@ -417,6 +495,7 @@ mod tests {
         assert_eq!(<HalReadConfigData as SyncCmd>::ReturnBuf::LEN, 251);
     }
 
+    #[cfg(feature = "_stm32wb")]
     #[test]
     fn return_parameters_read_one_member_at_a_time() {
         let mut buffer = [0; 251];
@@ -495,7 +574,12 @@ mod tests {
 
     #[test]
     fn events_decode_after_their_code() {
-        let code = if cfg!(feature = "fw_1_24_0") {
+        let code = if cfg!(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        )) {
             0x1804
         } else {
             0x0004

@@ -1592,6 +1592,12 @@ pub const fn declares_event<T: VendorEvent<'static>>(c_name: &str) -> bool {
     same_name(T::C_NAME, c_name)
 }
 
+/// Whether `T` is the type declared for the catalog's Core event `c_name`.
+#[doc(hidden)]
+pub const fn declares_standard_event<T: StandardEvent<'static>>(c_name: &str) -> bool {
+    same_name(T::C_NAME, c_name)
+}
+
 /// Whether `T` is the type declared for the catalog's system event `c_name`.
 #[doc(hidden)]
 pub const fn declares_system_event<T: SystemEvent<'static>>(c_name: &str) -> bool {
@@ -1827,6 +1833,37 @@ pub trait VendorEvent<'a>: FromHciBytes<'a> {
     }
 }
 
+/// A Bluetooth Core event bt-hci lacks or decodes differently from the
+/// catalog, as [`standard_event!`](stm32wb_hci_macros::standard_event)
+/// declares it. It also implements bt-hci's `LeEventParams` or `EventParams`.
+pub trait StandardEvent<'a>: FromHciBytes<'a> {
+    /// The LE meta subevent code of an LE meta event, or the event code of
+    /// any other.
+    const CODE: u8;
+
+    /// Whether the event is an LE meta subevent.
+    const LE_META: bool;
+
+    /// The latest C name of the event in the catalog.
+    const C_NAME: &'static str;
+
+    /// Decode an event packet if it is this event: an LE meta event carrying
+    /// its subevent code, or an event with its code. The parameters must be
+    /// exactly those the catalog lists.
+    fn from_packet(
+        packet: &bt_hci::event::EventPacket<'a>,
+    ) -> Option<Result<Self, FromHciBytesError>> {
+        let payload = if Self::LE_META {
+            let (&code, payload) = packet.data.split_first()?;
+            (packet.kind == bt_hci::event::EventKind::Le && code == Self::CODE)
+                .then_some(payload)?
+        } else {
+            (packet.kind.0 == Self::CODE).then_some(packet.data)?
+        };
+        Some(Self::from_hci_bytes_complete(payload))
+    }
+}
+
 /// An ST system (SHCI) event, which the wireless CPU sends on the system
 /// channel as a vendor-specific HCI event: a 16-bit sub-event code followed
 /// by the event's parameters.
@@ -2029,10 +2066,15 @@ mod tests {
         }
     }
 
-    /// Releases before 1.17.0 document 32 enhanced ATT bearers, later ones 64.
+    /// Releases before 1.17.0, and STM32CubeWBA 1.0.0, document 32 enhanced
+    /// ATT bearers, later ones 64.
     #[test]
     fn enhanced_bearers_follow_the_selected_release() {
-        let last = if cfg!(any(feature = "fw_1_15_0", feature = "fw_1_16_0")) {
+        let last = if cfg!(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "wba_1_0_0"
+        )) {
             0xEA1F
         } else {
             0xEA3F

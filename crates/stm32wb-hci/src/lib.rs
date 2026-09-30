@@ -1,4 +1,5 @@
-//! Bluetooth HCI commands and events for the STM32WB wireless coprocessor.
+//! Bluetooth HCI commands and events for the STM32WB wireless coprocessor
+//! and the STM32WBA BLE stack.
 //!
 //! Every declaration is checked at compile time against a catalog extracted
 //! from ST's STM32CubeWB sources, for the wireless binary the features
@@ -6,9 +7,11 @@
 //! one `stack-*` feature, the BLE stack profile. A command or event that
 //! binary does not implement is not compiled.
 //!
-//! The STM32WBA BLE stack is selected the same way, by a `wba_*` release
-//! and one of its `stack-wba-*` profiles. No declaration is checked against
-//! its catalog yet, so only [`wire`] is compiled for it.
+//! The STM32WBA BLE stack library is selected the same way, by one `wba_*`
+//! feature, the STM32CubeWBA release, and one `stack-wba-*` feature, its
+//! profile, and checked against a catalog extracted from ST's STM32CubeWBA
+//! sources. Its commands and events are declared at the bytes level, as on
+//! STM32WB; it has no system channel, so `shci` is STM32WB only.
 //!
 //! - [`aci`] declares the ST vendor commands and events, and [`AciEvent`]
 //!   decodes any vendor event. [`aci::status`] names the BLE stack's own
@@ -16,8 +19,8 @@
 //! - [`event`] decodes any event the BLE stack sends, Core or vendor.
 //! - [`standard`] checks bt-hci's Bluetooth Core commands and events against
 //!   the catalog, and declares the ones bt-hci gets wrong or lacks.
-//! - [`shci`] declares the system commands and events of the CPU2 system
-//!   channel.
+//! - `shci` declares the system commands and events of the CPU2 system
+//!   channel, on STM32WB.
 //! - [`adv_data`] builds advertising and scan response data.
 //! - [`wire`] holds the traits and buffers the declarations are built on.
 //!
@@ -43,17 +46,12 @@ stm32wb_hci_macros::check_target!();
 // This must go FIRST so that all the other modules see its macros.
 mod fmt;
 
-#[cfg(feature = "_stm32wb")]
 pub mod aci;
-#[cfg(feature = "_stm32wb")]
 pub mod adv_data;
-#[cfg(feature = "_stm32wb")]
 #[doc(hidden)]
 pub mod catalog;
-#[cfg(feature = "_stm32wb")]
 pub mod event;
 #[cfg(feature = "_stm32wb")]
 pub mod shci;
-#[cfg(feature = "_stm32wb")]
 pub mod standard;
 pub mod wire;

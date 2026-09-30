@@ -1,9 +1,14 @@
-//! ST vendor (ACI) commands declared against the STM32WB catalog.
+//! ST vendor (ACI) commands declared against the STM32WB and STM32WBA
+//! catalogs.
 //!
 //! Each command's opcode, completion kind, and availability come from the
 //! catalog for the release and stack profile selected by the `fw_*` and
-//! `stack-*` features; a command the selected binary does not implement is
-//! not compiled.
+//! `stack-*` features, or the `wba_*` and `stack-wba-*` features; a command
+//! the selected binary or library does not implement is not compiled. A
+//! field only one platform's command has is declared with
+//! `#[wire(platform = "...")]`, and `wba_since` and `wba_before` bound the
+//! STM32CubeWBA releases a field exists in as `since` and `before` bound the
+//! STM32CubeWB ones.
 
 pub mod att;
 pub mod durations;
@@ -24,6 +29,7 @@ stm32wb_hci_macros::vendor_events! {
     pub enum AciEvent<'a> {
         aci_hal_end_of_radio_activity_event => HalEndOfRadioActivity(hal::HalEndOfRadioActivityEvent),
         aci_hal_scan_req_report_event => HalScanReqReport(hal::HalScanReqReportEvent),
+        aci_hal_sync_event => HalSync(hal::HalSyncEvent),
         aci_warning_event => HalWarning(hal::HalWarningEvent<'a>),
         aci_gap_limited_discoverable_event => GapLimitedDiscoverable(gap::GapLimitedDiscoverableEvent),
         aci_gap_pairing_complete_event => GapPairingComplete(gap::GapPairingCompleteEvent),

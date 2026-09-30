@@ -25,7 +25,8 @@ use std::path::Path;
 
 use clang::{EntityKind, Index};
 use stm32wb_catalog::{
-    Bearer, Layout, Platform, ReleaseSource, Snapshot, SnapshotCommand, SnapshotEvent, Version,
+    Bearer, Field, FieldType, Layout, Platform, ReleaseSource, Snapshot, SnapshotCommand,
+    SnapshotEvent, Version,
 };
 
 use crate::c::{self, CMSIS_PACKING, Shim};
@@ -44,14 +45,21 @@ const INTERFACE_DOCUMENT: &str = "ble/stack/doc/STM32WBA_BLE_Wireless_Interface.
 const TYPE_HEADERS: [&str; 3] = ["ble_types.h", "ble_raw_api.h", "ble_vs_codes.h"];
 const EVENTS_HEADER: &str = "ble_events.h";
 /// Declarations of the headers that are neither commands nor events:
-/// sending ACL data, and the wrapper's event dispatcher.
-const NOT_INTERFACE: [&str; 2] = ["hci_tx_acl_data", "BLE_EventProcess"];
+/// sending and, before 1.4.0, receiving ACL data, and the wrapper's event
+/// dispatcher.
+const NOT_INTERFACE: [&str; 3] = [
+    "hci_tx_acl_data",
+    "hci_rx_acl_data_event",
+    "BLE_EventProcess",
+];
 
 /// What a header declares about one function.
 struct Declared {
     parameters: Vec<String>,
     bearers: Vec<Bearer>,
     domains: Vec<Documented>,
+    /// Members whose declared size is only a maximum.
+    maximum_sized: Vec<String>,
 }
 
 pub fn extract(
@@ -81,6 +89,7 @@ pub fn extract(
     let mut records = None;
     let mut functions = BTreeMap::new();
     let mut callbacks = BTreeMap::new();
+    let mut orphaned_lists = Vec::new();
     for file in &headers {
         let context = format!("{} {file}", cube.tag);
         let unit = c::parse_with(
@@ -109,12 +118,15 @@ pub fn extract(
                 .into_iter()
                 .map(|parameter| parameter.get_name().unwrap_or_default())
                 .collect();
+            let (domains, orphans) = crate::domains::domains_and_orphans(function)
+                .map_err(|error| format!("{context} {name}: {error}"))?;
+            orphaned_lists.extend(orphans.into_iter().map(|orphan| (name.clone(), orphan)));
             let entry = Declared {
                 parameters,
                 bearers: c::bearers(function)
                     .map_err(|error| format!("{context} {name}: {error}"))?,
-                domains: crate::domains::domains(function)
-                    .map_err(|error| format!("{context} {name}: {error}"))?,
+                domains,
+                maximum_sized: c::maximum_sized(function),
             };
             if declared.insert(name.clone(), entry).is_some() {
                 return Err(format!("{context}: {name} is declared twice"));
@@ -130,6 +142,7 @@ pub fn extract(
     )?;
     let completions = docs::command_completions(&wpan, &format!("{prefix}{INTERFACE_DOCUMENT}"))?;
     let mut report = Report::new(version);
+    report.orphaned_lists = orphaned_lists;
     let mut commands = Vec::new();
     let mut events = Vec::new();
     let mut used = BTreeSet::new();
@@ -137,12 +150,10 @@ pub fn extract(
         let name = entry.name.to_ascii_lowercase();
         match *key {
             Key::Command(scope, opcode) => {
-                let declared = functions.get(&name).ok_or_else(|| {
-                    format!(
-                        "{}: the interface document lists {}, which no header declares",
-                        cube.tag, entry.name
-                    )
-                })?;
+                let Some(declared) = functions.get(&name) else {
+                    report.undeclared.push(name);
+                    continue;
+                };
                 used.insert(name.clone());
                 let Some(Some(completion)) = completions.get(&entry.name) else {
                     report.unstated_completions.push(name);
@@ -151,6 +162,10 @@ pub fn extract(
                 report.documented_completions += 1;
                 let (params, returns, structs) =
                     crate::declared::command(&name, *completion, &records);
+                let params = bounded_by_maximum(&name, params, &declared.maximum_sized)?;
+                let returns = returns.map(|returns| {
+                    returned_in_order(&name, &params, returns, &declared.parameters)
+                });
                 note_unresolved(&mut report, &name, "params", &params);
                 if let Some(returns) = &returns {
                     note_unresolved(&mut report, &name, "returns", returns);
@@ -183,12 +198,10 @@ pub fn extract(
                 events.push(transport_event(scope, code, entry));
             }
             Key::Event(scope, code) => {
-                let callback = callbacks.get(&name).ok_or_else(|| {
-                    format!(
-                        "{}: the interface document lists {}, which {EVENTS_HEADER} does not declare",
-                        cube.tag, entry.name
-                    )
-                })?;
+                let Some(callback) = callbacks.get(&name) else {
+                    report.undeclared.push(name);
+                    continue;
+                };
                 used.insert(name.clone());
                 let (mut payload, mut structs) = crate::declared::event(&name, &records);
                 if let Layout::Fields(fields) = &payload
@@ -200,6 +213,10 @@ pub fn extract(
                     payload = Layout::Unresolved(format!(
                         "the callback does not receive every {name}_rp0 member in order"
                     ));
+                    structs.clear();
+                }
+                let payload = bounded_by_maximum(&name, payload, &callback.maximum_sized)?;
+                if !matches!(payload, Layout::Fields(_)) {
                     structs.clear();
                 }
                 note_unresolved(&mut report, &name, "payload", &payload);
@@ -225,19 +242,12 @@ pub fn extract(
             }
         }
     }
-    let undocumented = functions
+    report.undocumented = functions
         .keys()
         .chain(callbacks.keys())
         .filter(|name| !used.contains(*name) && !NOT_INTERFACE.contains(&name.as_str()))
         .cloned()
-        .collect::<Vec<_>>();
-    if !undocumented.is_empty() {
-        return Err(format!(
-            "{}: the headers declare commands or events the interface document does not list: {}",
-            cube.tag,
-            undocumented.join(", ")
-        ));
-    }
+        .collect();
 
     let struct_domains = field_domains.carried(&mut report, &commands, &events);
     let snapshot = Snapshot {
@@ -245,6 +255,11 @@ pub fn extract(
             version,
             tag: cube.tag.clone(),
             commit: cube.commit.clone(),
+            profiles: docs::interface_profiles(
+                &wpan,
+                &format!("{prefix}{INTERFACE_DOCUMENT}"),
+                Platform::Stm32wba,
+            )?,
         },
         binaries: Vec::new(),
         commands,
@@ -255,20 +270,80 @@ pub fn extract(
     Ok((snapshot, report))
 }
 
-/// The bearers of a layout, or none, reported, where it is unresolved.
+/// A return layout, unresolved unless the function's parameters are the
+/// command's parameters followed by every `_rp0` member after the status
+/// that does not echo one of them, in order: a function returning more than
+/// `_rp0` declares shows the structure incomplete.
+pub(crate) fn returned_in_order(
+    name: &str,
+    params: &Layout,
+    returns: Layout,
+    parameters: &[String],
+) -> Layout {
+    let (Layout::Fields(inputs), Layout::Fields(outputs)) = (params, &returns) else {
+        return returns;
+    };
+    let echoed = |field: &&Field| inputs.iter().any(|input| input.name == field.name);
+    let expected = inputs
+        .iter()
+        .chain(outputs.iter().skip(1).filter(|field| !echoed(field)))
+        .map(|field| &field.name);
+    if expected.ne(parameters.iter()) {
+        return Layout::Unresolved(format!(
+            "the function's parameters are not the {name}_cpN members followed by the \
+             {name}_rp0 members after Status, in order"
+        ));
+    }
+    returns
+}
+
+/// A layout holding a member whose declared size the documentation calls a
+/// maximum, unresolved: the member's documented fields repeat, each sized by
+/// its own length, so the packed structure does not give its width.
+pub(crate) fn bounded_by_maximum(
+    name: &str,
+    layout: Layout,
+    members: &[String],
+) -> Result<Layout, String> {
+    let Layout::Fields(fields) = &layout else {
+        return Ok(layout);
+    };
+    let mut reasons = Vec::new();
+    for member in members {
+        match fields.iter().find(|field| field.name == *member) {
+            Some(Field {
+                ty: FieldType::Array { len, .. },
+                ..
+            }) => reasons.push(format!(
+                "{member} declares {len} elements, which its documentation calls the maximum size"
+            )),
+            _ => {
+                return Err(format!(
+                    "{name}: {member} is documented with a maximum size but is not a fixed array"
+                ));
+            }
+        }
+    }
+    if reasons.is_empty() {
+        Ok(layout)
+    } else {
+        Ok(Layout::Unresolved(reasons.join("; ")))
+    }
+}
+
+/// The bearers of a layout, reported where it is unresolved.
 fn resolved_bearers(
     report: &mut Report,
     name: &str,
     layout: &Layout,
     bearers: &[Bearer],
 ) -> Vec<Bearer> {
-    if let Layout::Fields(_) = layout {
-        return bearers.to_vec();
+    if let Layout::Unresolved(_) = layout {
+        report.deferred_bearers.extend(
+            bearers
+                .iter()
+                .map(|bearer| (name.to_owned(), bearer.member.clone())),
+        );
     }
-    report.dropped_bearers.extend(
-        bearers
-            .iter()
-            .map(|bearer| (name.to_owned(), bearer.member.clone())),
-    );
-    Vec::new()
+    bearers.to_vec()
 }

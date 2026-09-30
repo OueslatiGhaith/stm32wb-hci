@@ -9,7 +9,6 @@ use stm32wb_catalog::layout::{element_width, struct_width};
 use stm32wb_catalog::{
     Bearer, Bundled, Catalog, CommandScope, Completion, Domain, DomainKind, Element, EventScope,
     Field, FieldType, Platform, Profile, ReleaseRange, Scalar, Structs, UnionVariant, Version,
-    bundled,
 };
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -44,12 +43,38 @@ pub(crate) struct Fields {
 pub(crate) struct InputField {
     /// The catalog member this field encodes, when it is not the Rust name.
     wire_name: Option<LitStr>,
+    /// The releases of each platform with the field, in `Platform::ALL`
+    /// order.
+    bounds: [Bounds; 2],
+    /// The only platform with the field, if it is not on both.
+    platform: Option<(Platform, Span)>,
+    pub(crate) name: Ident,
+    pub(crate) ty: Type,
+}
+
+/// The releases of one platform a field exists in.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Bounds {
     /// The first release with the field; it is declared in no earlier one.
     pub(crate) since: Option<(Version, Span)>,
     /// The first release without the field; it is declared in no later one.
     pub(crate) before: Option<(Version, Span)>,
-    pub(crate) name: Ident,
-    pub(crate) ty: Type,
+}
+
+/// The `#[wire]` keys bounding a field's releases of `platform`.
+pub(crate) fn bound_keys(platform: Platform) -> (&'static str, &'static str) {
+    match platform {
+        Platform::Stm32wb => ("since", "before"),
+        Platform::Stm32wba => ("wba_since", "wba_before"),
+    }
+}
+
+/// The index of `platform` in `Platform::ALL`.
+fn platform_index(platform: Platform) -> usize {
+    match platform {
+        Platform::Stm32wb => 0,
+        Platform::Stm32wba => 1,
+    }
 }
 
 impl Parse for Input {
@@ -97,54 +122,107 @@ impl InputField {
             ));
         }
         let mut wire_name = None;
-        let mut since = None;
-        let mut before = None;
+        let mut bounds = [Bounds::default(); 2];
+        let mut platform = None;
         for attr in &field.attrs {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
                     attr.span(),
-                    "only #[wire(name = \"...\", since = \"...\", before = \"...\")] is supported \
-                     on fields",
+                    "only #[wire(name = \"...\", since = \"...\", before = \"...\", \
+                     wba_since = \"...\", wba_before = \"...\", platform = \"...\")] is \
+                     supported on fields",
                 ));
             }
             attr.parse_nested_meta(|meta| {
+                let bound = [
+                    ("since", Platform::Stm32wb, true),
+                    ("before", Platform::Stm32wb, false),
+                    ("wba_since", Platform::Stm32wba, true),
+                    ("wba_before", Platform::Stm32wba, false),
+                ]
+                .into_iter()
+                .find(|(key, ..)| meta.path.is_ident(key));
                 if meta.path.is_ident("name") {
                     wire_name = Some(meta.value()?.parse()?);
                     Ok(())
-                } else if meta.path.is_ident("since") || meta.path.is_ident("before") {
+                } else if let Some((_, on, since)) = bound {
                     let release: LitStr = meta.value()?.parse()?;
                     let version = release
                         .value()
                         .parse::<Version>()
                         .map_err(|error| syn::Error::new(release.span(), error.to_string()))?;
                     let bound = Some((version, release.span()));
-                    if meta.path.is_ident("since") {
-                        since = bound;
+                    let bounds = &mut bounds[platform_index(on)];
+                    if since {
+                        bounds.since = bound;
                     } else {
-                        before = bound;
+                        bounds.before = bound;
                     }
+                    Ok(())
+                } else if meta.path.is_ident("platform") {
+                    let name: LitStr = meta.value()?.parse()?;
+                    let only = Platform::ALL
+                        .into_iter()
+                        .find(|platform| platform.feature().trim_start_matches('_') == name.value())
+                        .ok_or_else(|| {
+                            syn::Error::new(name.span(), "expected \"stm32wb\" or \"stm32wba\"")
+                        })?;
+                    platform = Some((only, name.span()));
                     Ok(())
                 } else {
                     Err(meta.error(
-                        "expected `name = \"<catalog member>\"`, `since = \"<release>\"`, or \
-                         `before = \"<release>\"`",
+                        "expected `name = \"<catalog member>\"`, `since`, `before`, \
+                         `wba_since`, or `wba_before` = \"<release>\", or \
+                         `platform = \"<platform>\"`",
                     ))
                 }
             })?;
         }
+        if let Some((only, span)) = platform
+            && Platform::ALL.into_iter().any(|other| {
+                let bounds = bounds[platform_index(other)];
+                other != only && (bounds.since.is_some() || bounds.before.is_some())
+            })
+        {
+            return Err(syn::Error::new(
+                span,
+                "a field on one platform has no releases of the other",
+            ));
+        }
         Ok(Self {
             wire_name,
-            since,
-            before,
+            bounds,
+            platform,
             name: field.ident.expect("parse_named yields named fields"),
             ty: field.ty,
         })
     }
 
-    /// Whether the field exists throughout `releases`.
-    pub(crate) fn exists_in(&self, releases: ReleaseRange) -> bool {
-        self.since.is_none_or(|(since, _)| since <= releases.first)
-            && self.before.is_none_or(|(before, _)| releases.last < before)
+    /// The releases of `platform` with the field.
+    pub(crate) fn bounds(&self, platform: Platform) -> Bounds {
+        self.bounds[platform_index(platform)]
+    }
+
+    /// Whether the field is declared on `platform`.
+    pub(crate) fn is_on(&self, platform: Platform) -> bool {
+        self.platform.is_none_or(|(only, _)| only == platform)
+    }
+
+    /// Whether the field is declared on some releases or platforms only.
+    pub(crate) fn is_specific(&self) -> bool {
+        self.platform.is_some()
+            || self
+                .bounds
+                .iter()
+                .any(|bounds| bounds.since.is_some() || bounds.before.is_some())
+    }
+
+    /// Whether the field exists throughout `releases` of `platform`.
+    pub(crate) fn exists_in(&self, platform: Platform, releases: ReleaseRange) -> bool {
+        let Bounds { since, before } = self.bounds(platform);
+        self.is_on(platform)
+            && since.is_none_or(|(since, _)| since <= releases.first)
+            && before.is_none_or(|(before, _)| releases.last < before)
     }
 
     fn matches(&self, member: &str) -> bool {
@@ -188,32 +266,68 @@ impl Channel {
         }
     }
 
+    /// The ST event scope the channel carries; Bluetooth Core events have
+    /// two, which `carries_event` accepts.
     pub(crate) fn event_scope(self) -> EventScope {
         match self {
             Channel::Vendor => EventScope::Vendor,
             Channel::System => EventScope::System,
-            Channel::Standard => unreachable!("Core events are bt-hci's"),
+            Channel::Standard => unreachable!("Core events have two scopes"),
         }
     }
 
-    /// The kind of event the channel carries, `vendor` or `system`.
+    /// Whether the channel carries events of `scope`.
+    pub(crate) fn carries_event(self, scope: EventScope) -> bool {
+        match self {
+            Channel::Standard => matches!(scope, EventScope::Standard | EventScope::LeMeta),
+            channel => scope == channel.event_scope(),
+        }
+    }
+
+    /// The kind of event the channel carries: `vendor`, `system`, or
+    /// `Bluetooth Core`.
     pub(crate) fn event_kind(self) -> &'static str {
         match self {
             Channel::Vendor => "vendor",
             Channel::System => "system",
-            Channel::Standard => unreachable!("Core events are bt-hci's"),
+            Channel::Standard => "Bluetooth Core",
+        }
+    }
+
+    /// Who defines the channel's events, for messages.
+    pub(crate) fn event_owner(self) -> &'static str {
+        match self {
+            Channel::Vendor | Channel::System => "an ST",
+            Channel::Standard => "a",
         }
     }
 }
 
 pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
-    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
-        syn::Error::new(
-            Span::call_site(),
-            format!("the bundled catalog is invalid: {error}"),
-        )
-    })?;
-    let variants = Command::resolve(bundled, &input, channel)?;
+    expand_in(&crate::catalogs()?, input, channel)
+}
+
+/// The declaration for each of `catalogs` having the command.
+pub(crate) fn expand_in(
+    catalogs: &[&'static Bundled],
+    input: Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let c_name = input.c_name.to_string();
+    crate::per_platform(
+        catalogs,
+        |catalog| catalog.command_named(&c_name).is_some(),
+        |bundled| expand_on(bundled, &input, channel),
+    )
+}
+
+/// The declaration for one platform's catalog.
+fn expand_on(
+    bundled: &'static Bundled,
+    input: &Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let variants = Command::resolve(bundled, input, channel)?;
     let several = variants.len() > 1;
     let mut tokens = TokenStream::new();
     for variant in &variants {
@@ -471,7 +585,7 @@ fn return_struct(
         }
         Slot::Elements {
             field,
-            element: ElementType::Struct { ty, .. },
+            element: ElementType::Typed { ty, .. },
             ..
         } => {
             let count = count_of(field);
@@ -650,7 +764,7 @@ fn encoded_command(
         }
         Slot::Elements {
             field,
-            element: ElementType::Struct { ty, .. },
+            element: ElementType::Typed { ty, .. },
             ..
         } => {
             let field = &field.name;
@@ -704,7 +818,7 @@ fn encoded_command(
                 }
                 Slot::Elements {
                     field,
-                    element: ElementType::Struct { ty, .. },
+                    element: ElementType::Typed { ty, .. },
                     ..
                 } => {
                     let field = &field.name;
@@ -1150,15 +1264,16 @@ pub(crate) fn width_assertions<'a>(
         }
         Slot::Elements {
             field,
-            element: ElementType::Struct { ty, c_name, width },
+            element: ElementType::Typed { ty, c_name, width },
             ..
         } => {
             let width = usize::from(*width);
             let message = format!(
-                "{owner}.{}: the catalog encodes each {c_name} in {width} bytes",
-                field.name
+                "{owner}.{}: the catalog encodes each {} in {width} bytes",
+                field.name,
+                c_name.unwrap_or("element"),
             );
-            let identity = struct_identity(cfg, owner, field, ty, c_name);
+            let identity = c_name.map(|c_name| struct_identity(cfg, owner, field, ty, c_name));
             Some(quote_spanned! {ty.span()=>
                 #cfg
                 const _: () = ::core::assert!(
@@ -1287,7 +1402,7 @@ pub(crate) fn bearer_groups(
             releases.dedup();
             BearerGroup {
                 positions,
-                cfg: cfg::targets(catalog, targets),
+                cfg: Some(cfg::targets(catalog, targets)),
                 releases: releases.join(", "),
             }
         })
@@ -1436,6 +1551,7 @@ pub(crate) fn add_documents<'a>(
 pub(crate) struct DocumentedGroup {
     documents: Documents,
     cfg: Option<TokenStream>,
+    /// The platform and releases, for messages: `STM32WB in 1.15.0..=1.24.0`.
     releases: String,
 }
 
@@ -1447,10 +1563,14 @@ pub(crate) fn documented_groups(
     groups
         .into_iter()
         .map(|(documents, targets)| {
-            let releases = profile_runs(catalog, &targets, &all_profiles);
+            let releases = format!(
+                "{} in {}",
+                catalog.platform.package().replace("Cube", ""),
+                profile_runs(catalog, &targets, &all_profiles)
+            );
             DocumentedGroup {
                 documents,
-                cfg: cfg::targets(catalog, targets),
+                cfg: Some(cfg::targets(catalog, targets)),
                 releases,
             }
         })
@@ -1529,15 +1649,21 @@ pub(crate) fn release_runs(
         .join(", ")
 }
 
-/// Whether `ty` is a primitive integer, which stands for no fixed values.
+/// Whether `ty` is a primitive integer, or an array of them such as the
+/// bytes of a 24-bit member, which stands for no fixed values.
 fn is_integer(ty: &Type) -> bool {
-    matches!(ty, Type::Path(path)
-    if path.qself.is_none()
-        && path.path.get_ident().is_some_and(|ident| {
-            ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"]
-                .iter()
-                .any(|integer| ident == integer)
-        }))
+    match ty {
+        Type::Array(array) => is_integer(&array.elem),
+        Type::Path(path) => {
+            path.qself.is_none()
+                && path.path.get_ident().is_some_and(|ident| {
+                    ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"]
+                        .iter()
+                        .any(|integer| ident == integer)
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Assert at compile time that each value or flag a declared type stands for
@@ -1578,7 +1704,7 @@ pub(crate) fn value_assertions(
                 .map(|predicate| quote!(#[cfg(#predicate)]));
             if decoded {
                 let message = format!(
-                    "{owner}.{}: {} may hold values the catalog does not document for {} on STM32WB in {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
+                    "{owner}.{}: {} may hold values the catalog does not document for {} on {}; declare it as `OrUnknown<T>`, which keeps them, or as an integer",
                     field.name,
                     side.a_what(),
                     member.name,
@@ -1611,7 +1737,7 @@ pub(crate) fn value_assertions(
                     }
                 };
                 let message = format!(
-                    "{owner}.{}: the catalog documents {listed} for {} on STM32WB in {}; each length the declared type gives must be one of them",
+                    "{owner}.{}: the catalog documents {listed} for {} on {}; each length the declared type gives must be one of them",
                     field.name, member.name, group.releases
                 );
                 assertions.push(quote_spanned! {ty.span()=>
@@ -1627,14 +1753,14 @@ pub(crate) fn value_assertions(
                     Some(unit) => (
                         quote!(::core::option::Option::Some(#unit)),
                         format!(
-                            "{owner}.{}: the catalog documents {} in units of {unit} µs on STM32WB in {}; the declared type must count in them",
+                            "{owner}.{}: the catalog documents {} in units of {unit} µs on {}; the declared type must count in them",
                             field.name, member.name, group.releases
                         ),
                     ),
                     None => (
                         quote!(::core::option::Option::None),
                         format!(
-                            "{owner}.{}: the catalog documents {} in no unit of time on STM32WB in {}; the declared type must not count time",
+                            "{owner}.{}: the catalog documents {} in no unit of time on {}; the declared type must not count time",
                             field.name, member.name, group.releases
                         ),
                     ),
@@ -1664,7 +1790,7 @@ pub(crate) fn value_assertions(
                     (
                         quote!(::stm32wb_hci::wire::values_documented::<#ty>(&[#(#pairs),*])),
                         format!(
-                            "{owner}.{}: the catalog documents {} as one of {listed} on STM32WB in {}; every value of the declared type must be one of them",
+                            "{owner}.{}: the catalog documents {} as one of {listed} on {}; every value of the declared type must be one of them",
                             field.name, member.name, group.releases
                         ),
                     )
@@ -1679,7 +1805,7 @@ pub(crate) fn value_assertions(
                     (
                         quote!(::stm32wb_hci::wire::flags_documented::<#ty>(#bits)),
                         format!(
-                            "{owner}.{}: the catalog documents {} as the flags {listed} on STM32WB in {}; every flag of the declared type must be one of them",
+                            "{owner}.{}: the catalog documents {} as the flags {listed} on {}; every flag of the declared type must be one of them",
                             field.name, member.name, group.releases
                         ),
                     )
@@ -1687,14 +1813,14 @@ pub(crate) fn value_assertions(
                 Documented::Nothing => (
                     quote!(::stm32wb_hci::wire::is_opaque::<#ty>()),
                     format!(
-                        "{owner}.{}: the catalog documents no values for {} in {}; declare it as an integer",
+                        "{owner}.{}: the catalog documents no values for {} on {}; declare it as an integer",
                         field.name, member.name, group.releases
                     ),
                 ),
                 Documented::Unreadable(reason) => (
                     quote!(::stm32wb_hci::wire::is_opaque::<#ty>()),
                     format!(
-                        "{owner}.{}: the catalog's values for {} in {} cannot be checked: {reason}; declare it as an integer",
+                        "{owner}.{}: the catalog's values for {} on {} cannot be checked: {reason}; declare it as an integer",
                         field.name, member.name, group.releases
                     ),
                 ),
@@ -1827,14 +1953,14 @@ pub(crate) fn record_history_names<'a>(
     }
 }
 
-/// The declared fields existing throughout `releases`.
-pub(crate) fn fields_in(fields: &Fields, releases: ReleaseRange) -> Fields {
+/// The declared fields existing throughout `releases` of `platform`.
+pub(crate) fn fields_in(fields: &Fields, platform: Platform, releases: ReleaseRange) -> Fields {
     Fields {
         name: fields.name.clone(),
         fields: fields
             .fields
             .iter()
-            .filter(|field| field.exists_in(releases))
+            .filter(|field| field.exists_in(platform, releases))
             .cloned()
             .collect(),
     }
@@ -1845,6 +1971,7 @@ impl<'a> Command<'a> {
     /// releases and profiles having exactly those fields.
     fn resolve(bundled: &'a Bundled, input: &Input, channel: Channel) -> syn::Result<Vec<Self>> {
         let c_name = input.c_name.to_string();
+        let platform = bundled.catalog.platform;
         let error = |message: String| syn::Error::new(input.c_name.span(), message);
         let segments = bundled
             .command_segments(&c_name)
@@ -1915,7 +2042,7 @@ impl<'a> Command<'a> {
             };
 
             let key = fields()
-                .map(|field| field.exists_in(releases))
+                .map(|field| field.exists_in(platform, releases))
                 .collect::<Vec<_>>();
             let bearers = bearer_positions(params, &active.definition.bearers);
             let after_status = returns.get(1..).unwrap_or_default();
@@ -1944,7 +2071,7 @@ impl<'a> Command<'a> {
                 let declared_returns = input
                     .returns
                     .as_ref()
-                    .map(|returns| fields_in(returns, releases))
+                    .map(|returns| fields_in(returns, platform, releases))
                     .filter(|returns| {
                         !returns.fields.is_empty()
                             || input
@@ -1956,7 +2083,7 @@ impl<'a> Command<'a> {
                     input: Input {
                         attrs: input.attrs.clone(),
                         c_name: input.c_name.clone(),
-                        params: fields_in(&input.params, releases),
+                        params: fields_in(&input.params, platform, releases),
                         returns: declared_returns,
                     },
                     facts: current,
@@ -1988,10 +2115,11 @@ impl<'a> Command<'a> {
                 continue;
             };
             if !variant.facts.same_wire(&current) {
+                let (since, before) = bound_keys(platform);
                 return Err(error(format!(
                     "{c_name} changes its opcode, completion, or layout in {releases}; if it \
                      adds or removes members there, declare them with \
-                     #[wire(since = \"{0}\")] or #[wire(before = \"{0}\")]",
+                     #[wire({since} = \"{0}\")] or #[wire({before} = \"{0}\")]",
                     releases.first
                 )));
             }
@@ -2024,7 +2152,7 @@ impl<'a> Command<'a> {
                             returns,
                         );
                     }
-                    variant.cfg = cfg::targets(&bundled.catalog, targets);
+                    variant.cfg = Some(cfg::targets(&bundled.catalog, targets));
                     variant.bearers = bearer_groups(&bundled.catalog, groups);
                     variant.documented = documented_groups(&bundled.catalog, documented);
                     variant.return_documented =
@@ -2044,8 +2172,11 @@ pub(crate) fn check_bounds<'f>(
     fields: impl Iterator<Item = &'f InputField>,
     ranges: &[ReleaseRange],
 ) -> syn::Result<()> {
+    let platform = bundled.catalog.platform;
+    let (since_key, before_key) = bound_keys(platform);
     for field in fields {
-        if let (Some((since, _)), Some((before, span))) = (field.since, field.before)
+        let Bounds { since, before } = field.bounds(platform);
+        if let (Some((since, _)), Some((before, span))) = (since, before)
             && before <= since
         {
             return Err(syn::Error::new(
@@ -2053,7 +2184,10 @@ pub(crate) fn check_bounds<'f>(
                 format!("`{}` must start before it ends", field.name),
             ));
         }
-        let bounds = [(field.since, "start in"), (field.before, "end before")];
+        if !field.is_on(platform) {
+            continue;
+        }
+        let bounds = [(since, "start in"), (before, "end before")];
         for (release, span, verb) in bounds
             .into_iter()
             .filter_map(|(bound, verb)| bound.map(|(release, span)| (release, span, verb)))
@@ -2061,7 +2195,10 @@ pub(crate) fn check_bounds<'f>(
             if !bundled.catalog.versions().any(|known| known == release) {
                 return Err(syn::Error::new(
                     span,
-                    format!("{release} is not a release the catalog describes"),
+                    format!(
+                        "{release} is not a release the {} catalog describes",
+                        platform.package()
+                    ),
                 ));
             }
             if let Some(range) = ranges
@@ -2077,12 +2214,12 @@ pub(crate) fn check_bounds<'f>(
                 ));
             }
         }
-        let Some((_, span)) = field.since.or(field.before) else {
+        let Some((_, span)) = since.or(before) else {
             continue;
         };
         match ranges
             .iter()
-            .filter(|range| field.exists_in(**range))
+            .filter(|range| field.exists_in(platform, **range))
             .count()
         {
             0 => {
@@ -2095,8 +2232,8 @@ pub(crate) fn check_bounds<'f>(
                 return Err(syn::Error::new(
                     span,
                     format!(
-                        "`{}` exists in every release of {c_name}; remove `since` and \
-                         `before`",
+                        "`{}` exists in every release of {c_name}; remove `{since_key}` and \
+                         `{before_key}`",
                         field.name
                     ),
                 ));
@@ -2188,10 +2325,11 @@ pub(crate) enum Slot<'a> {
 #[derive(Clone, Copy)]
 pub(crate) enum ElementType<'a> {
     Byte,
-    /// A C structure, with the declared type standing for it.
-    Struct {
+    /// A C structure, named `c_name`, or an integer wider than a byte, with
+    /// the declared type standing for it.
+    Typed {
         ty: &'a Type,
-        c_name: &'a str,
+        c_name: Option<&'a str>,
         width: u16,
     },
 }
@@ -2200,7 +2338,7 @@ impl ElementType<'_> {
     fn width(self) -> u16 {
         match self {
             ElementType::Byte => 1,
-            ElementType::Struct { width, .. } => width,
+            ElementType::Typed { width, .. } => width,
         }
     }
 }
@@ -2343,7 +2481,7 @@ pub(crate) fn plan<'a>(
                     return unsupported("a variable-length array");
                 }
                 FieldType::Counted {
-                    element: element @ (Element::Scalar(Scalar::U8) | Element::Struct(_)),
+                    element,
                     count,
                     capacity,
                 } => {
@@ -2362,9 +2500,16 @@ pub(crate) fn plan<'a>(
                             format!("`{member}` has a capacity its {count} cannot express"),
                         ));
                     }
+                    // The type standing for each element that is not a byte.
+                    let standing_for = match element {
+                        Element::Struct(c_name) => Some(format!("the type standing for {c_name}")),
+                        Element::Scalar(Scalar::U8) => None,
+                        Element::Scalar(scalar) => Some(format!("a {}-byte type", scalar.width())),
+                    };
                     let what_holds = match element {
                         Element::Struct(c_name) => format!("{capacity} {c_name}"),
-                        Element::Scalar(_) => format!("{capacity} bytes"),
+                        Element::Scalar(Scalar::U8) => format!("{capacity} bytes"),
+                        Element::Scalar(scalar) => format!("{capacity} {}", scalar.name()),
                     };
                     let member_index = members
                         .iter()
@@ -2373,47 +2518,45 @@ pub(crate) fn plan<'a>(
                     if side != Side::Params && count_index > member_index {
                         return unsupported("counted by a later member");
                     }
-                    let (declared_element, expected) = match side {
-                        Side::Params => (
+                    let (declared_element, expected) = match (side, &standing_for) {
+                        (Side::Params, Some(standing_for)) => (
                             slice_element(&field.ty),
-                            match element {
-                                Element::Struct(c_name) => {
-                                    format!("&'a [T]` with T the type standing for {c_name}")
-                                }
-                                Element::Scalar(_) => "&'a [u8]`".to_owned(),
-                            },
+                            format!("&'a [T]` with T {standing_for}"),
                         ),
-                        Side::Event => match element {
-                            Element::Struct(c_name) => (
-                                elements_lifetime_and_element(&field.ty)
-                                    .map(|(_, element)| Some(element)),
-                                format!("Elements<'a, T>` with T the type standing for {c_name}"),
-                            ),
-                            Element::Scalar(_) => {
-                                (slice_element(&field.ty), "&'a [u8]`".to_owned())
-                            }
-                        },
-                        Side::Returns | Side::Struct => (
+                        (Side::Params, None) => (slice_element(&field.ty), "&'a [u8]`".to_owned()),
+                        (Side::Event, Some(standing_for)) => (
+                            elements_lifetime_and_element(&field.ty)
+                                .map(|(_, element)| Some(element)),
+                            format!("Elements<'a, T>` with T {standing_for}"),
+                        ),
+                        (Side::Event, None) => (slice_element(&field.ty), "&'a [u8]`".to_owned()),
+                        (Side::Returns | Side::Struct, standing_for) => (
                             bounded_array(&field.ty)
                                 .filter(|(_, declared)| *declared == u64::from(*capacity))
                                 .map(|(element, _)| element),
-                            match element {
-                                Element::Struct(c_name) => format!(
-                                    "BoundedArray<T, {capacity}>` with T the type standing \
-                                         for {c_name}"
-                                ),
-                                Element::Scalar(_) => format!("BoundedBytes<{capacity}>`"),
+                            match standing_for {
+                                Some(standing_for) => {
+                                    format!("BoundedArray<T, {capacity}>` with T {standing_for}")
+                                }
+                                None => format!("BoundedBytes<{capacity}>`"),
                             },
                         ),
                     };
                     let element = match (element, declared_element) {
-                        (Element::Scalar(_), Some(None)) => Some(ElementType::Byte),
-                        (Element::Scalar(_), Some(Some(ty))) if is_u8(ty) => {
+                        (Element::Scalar(Scalar::U8), Some(None)) => Some(ElementType::Byte),
+                        (Element::Scalar(Scalar::U8), Some(Some(ty))) if is_u8(ty) => {
                             Some(ElementType::Byte)
                         }
-                        (Element::Struct(c_name), Some(Some(ty))) => Some(ElementType::Struct {
+                        (Element::Scalar(scalar), Some(Some(ty))) if *scalar != Scalar::U8 => {
+                            Some(ElementType::Typed {
+                                ty,
+                                c_name: None,
+                                width: scalar.width(),
+                            })
+                        }
+                        (Element::Struct(c_name), Some(Some(ty))) => Some(ElementType::Typed {
                             ty,
-                            c_name,
+                            c_name: Some(c_name),
                             width: struct_width(c_name, structs).map_err(|error| {
                                 syn::Error::new(field.name.span(), error.to_string())
                             })?,
@@ -2434,7 +2577,6 @@ pub(crate) fn plan<'a>(
                         element,
                     });
                 }
-                FieldType::Counted { .. } => return unsupported("a variable-length array"),
                 FieldType::Union { .. } if side != Side::Params => {
                     return unsupported("a union");
                 }
@@ -2521,9 +2663,14 @@ pub(crate) fn snake_case(member: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The STM32WB catalog alone, which these tests exercise.
+    fn wb() -> [&'static Bundled; 1] {
+        [stm32wb_catalog::bundled(stm32wb_catalog::Platform::Stm32wb).unwrap()]
+    }
+
     fn expand_str(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input, Channel::Vendor)
+        expand_in(&wb(), input, Channel::Vendor)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -2560,8 +2707,9 @@ mod tests {
         assert!(tokens.contains("Return = ()"), "{tokens}");
         assert!(tokens.contains("WIDTH == 2usize"), "{tokens}");
         assert!(
-            !tokens.contains("# [cfg ("),
-            "available everywhere: {tokens}"
+            tokens.matches("# [cfg (").count()
+                == tokens.matches("# [cfg (feature = \"_stm32wb\")]").count(),
+            "available on every STM32WB target: {tokens}"
         );
         assert!(tokens.contains("pub radio_activity_mask : u16"), "{tokens}");
         assert!(
@@ -3120,7 +3268,7 @@ mod tests {
 
     fn expand_system(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input, Channel::System)
+        expand_in(&wb(), input, Channel::System)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -3452,7 +3600,7 @@ mod tests {
     fn standard_commands_use_their_opcode_group() {
         let expand_standard = |source: &str| {
             let input = syn::parse_str::<Input>(source).unwrap();
-            expand(input, Channel::Standard)
+            expand_in(&wb(), input, Channel::Standard)
                 .map(|tokens| tokens.to_string())
                 .map_err(|error| error.to_string())
         };

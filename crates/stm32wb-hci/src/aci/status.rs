@@ -28,19 +28,37 @@ wire_values! {
         /// The peer is in the blacklist, so the pairing it requested cannot
         /// be performed.
         DeviceInBlacklist = 0x59,
-        /// No CSRK was found to validate an incoming signed packet.
+        /// No CSRK was found to validate an incoming signed packet; STM32WBA
+        /// dropped it in 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         CsrkNotFound = 0x5A,
         /// No IRK was found.
         IrkNotFound = 0x5B,
         /// No bonded or volatile record of the device exists.
         DeviceNotFound = 0x5C,
-        /// The security database is full, before 1.17.1.
-        #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0"))]
+        /// The security database is full, before 1.17.1 on STM32WB and 1.2.0 on
+        /// STM32WBA.
+        #[cfg(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
+        ))]
         SecurityDatabaseFull = 0x5D,
         /// The peer is not bonded, so no operation on bonded devices applies.
         DeviceNotBonded = 0x5E,
-        /// The encryption key is too short, before 1.17.1.
-        #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0"))]
+        /// The encryption key is too short, before 1.17.1 on STM32WB and 1.2.0 on
+        /// STM32WBA.
+        #[cfg(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
+        ))]
         InsufficientEncryptionKeySize = 0x5F,
         /// The attribute handle is invalid.
         InvalidHandle = 0x60,
@@ -49,8 +67,16 @@ wire_values! {
         OutOfHandles = 0x61,
         /// The GATT rules do not allow the operation here.
         InvalidOperation = 0x62,
-        /// The characteristic already exists, before 1.17.1.
-        #[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0"))]
+        /// The characteristic already exists, before 1.17.1 on STM32WB and 1.2.0 on
+        /// STM32WBA.
+        #[cfg(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
+        ))]
         CharacteristicAlreadyExists = 0x63,
         /// Resources such as packets or timers are short for now; the
         /// operation may be retried.

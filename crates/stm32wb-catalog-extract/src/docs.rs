@@ -3,8 +3,9 @@
 //! - `STM32WB_BLE_Wireless_Interface.html` and
 //!   `STM32WBA_BLE_Wireless_Interface.html` list every command and event with
 //!   one availability column per reduced stack profile (BF, PO, LO, LB, BO on
-//!   STM32WB; BP, BF, PO, LO on STM32WBA). The platform's complete profile
-//!   supports the whole interface.
+//!   STM32WB; BP, BF, PO, LO, and LB before 1.8.0, on STM32WBA, which added
+//!   BP and PO in 1.5.0). The platform's complete profile supports the whole
+//!   interface, and a release has the profiles its document has columns for.
 //!   Each entry's section lists the events it generates, which name the
 //!   completion event of a command.
 //! - Each family's `Release_Notes.html` maps binary files to stack profiles.
@@ -50,6 +51,49 @@ pub fn interface_availability(
     parse_interface_availability(&source, platform).map_err(|error| format!("{path}: {error}"))
 }
 
+/// The stack profiles the interface document at `path` has: the complete
+/// one, and those its availability tables have columns for.
+pub fn interface_profiles(
+    tag: &CubeTag,
+    path: &str,
+    platform: Platform,
+) -> Result<Vec<Profile>, String> {
+    let source = tag.read_text(path)?;
+    parse_interface_profiles(&source, platform).map_err(|error| format!("{path}: {error}"))
+}
+
+fn parse_interface_profiles(source: &str, platform: Platform) -> Result<Vec<Profile>, String> {
+    let mut profiles = BTreeSet::from([platform.complete_profile()]);
+    for table in parse_html_tables(source)? {
+        let Some(header) = table.first() else {
+            continue;
+        };
+        if table_kind(header).is_some() {
+            for (_, profile) in profile_columns(header, platform)? {
+                profiles.insert(profile);
+            }
+        }
+    }
+    Ok(profiles.into_iter().collect())
+}
+
+/// The index and profile of each availability column of a table header.
+fn profile_columns(header: &[String], platform: Platform) -> Result<Vec<(usize, Profile)>, String> {
+    let mut columns = Vec::new();
+    for (index, heading) in header.iter().enumerate().skip(2) {
+        let profile = platform
+            .profile_for_column(heading)
+            .ok_or_else(|| format!("unknown availability column {heading:?}"))?;
+        columns.push((index, profile));
+    }
+    if columns.is_empty() {
+        return Err(format!(
+            "availability table without profile columns: {header:?}"
+        ));
+    }
+    Ok(columns)
+}
+
 fn parse_interface_availability(
     source: &str,
     platform: Platform,
@@ -64,18 +108,7 @@ fn parse_interface_availability(
             continue;
         };
         recognized += 1;
-        let mut columns = Vec::new();
-        for (index, heading) in header.iter().enumerate().skip(2) {
-            let profile = platform
-                .profile_for_column(heading)
-                .ok_or_else(|| format!("unknown availability column {heading:?}"))?;
-            columns.push((index, profile));
-        }
-        if columns.is_empty() {
-            return Err(format!(
-                "availability table without profile columns: {header:?}"
-            ));
-        }
+        let columns = profile_columns(header, platform)?;
         for row in table.iter().skip(1) {
             if row.len() != header.len() {
                 return Err(format!(

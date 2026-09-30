@@ -37,7 +37,17 @@ const MAX_COC_MPS: u16 = 0x00F8;
     feature = "fw_1_20_0",
     feature = "fw_1_21_0",
     feature = "fw_1_22_0",
-    feature = "fw_1_22_1"
+    feature = "fw_1_22_1",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0",
+    feature = "wba_1_6_0",
+    feature = "wba_1_6_1"
 ))]
 const MAX_COC_CONNECT_RESULT: u16 = 0x000C;
 #[cfg(not(any(
@@ -53,7 +63,17 @@ const MAX_COC_CONNECT_RESULT: u16 = 0x000C;
     feature = "fw_1_20_0",
     feature = "fw_1_21_0",
     feature = "fw_1_22_0",
-    feature = "fw_1_22_1"
+    feature = "fw_1_22_1",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0",
+    feature = "wba_1_6_0",
+    feature = "wba_1_6_1"
 )))]
 const MAX_COC_CONNECT_RESULT: u16 = 0x000F;
 

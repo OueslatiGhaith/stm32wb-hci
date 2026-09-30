@@ -128,19 +128,23 @@ mod tests {
     }
 
     #[test]
-    fn one_range_is_selected_by_the_platform() {
+    fn each_platform_selects_its_own_releases() {
         let tokens = expand(bundled(Platform::Stm32wba).unwrap())
             .unwrap()
             .to_string();
+        // STM32CubeWBA 1.0.0 documents 32 enhanced bearers, and later
+        // releases 64.
         assert!(
-            tokens.starts_with("# [cfg (feature = \"_stm32wba\")]"),
+            tokens.starts_with("# [cfg (any (feature = \"wba_1_0_0\"))]"),
             "{tokens}"
         );
         assert_eq!(
             tokens.matches("pub const LAST_ENHANCED").count(),
-            1,
+            2,
             "{tokens}"
         );
+        assert!(tokens.contains("= 59935u16"), "{tokens}");
         assert!(tokens.contains("= 59967u16"), "{tokens}");
+        assert!(!tokens.contains("fw_"), "{tokens}");
     }
 }

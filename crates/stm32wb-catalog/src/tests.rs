@@ -196,6 +196,7 @@ fn source(version: &str) -> ReleaseSource {
         version,
         tag: version.cube_tag(),
         commit: "0".repeat(40),
+        profiles: Vec::new(),
     }
 }
 
@@ -596,6 +597,35 @@ fn annotations_fill_unresolved_layouts() {
     );
 }
 
+/// The values the headers document for an unresolved layout are checked
+/// against the annotation filling it.
+#[test]
+fn annotations_fit_the_deferred_values() {
+    let catalog = Catalog::from_toml(&format!(
+        "{SAMPLE}
+[[events.domains]]
+releases = \"1.15.0..=1.18.0\"
+member = \"sysevt_ready_rsp\"
+values = [\"0x00..=0x01\"]
+"
+    ))
+    .unwrap();
+    let annotated = |ty: &str| {
+        Annotations::from_toml(&format!(
+            r#"[[annotations]]
+            event = "SHCI_SUB_EVT_CODE_READY"
+            source = "x"
+            reason = "y"
+            payload = ["{ty}"]"#
+        ))
+        .unwrap()
+        .audit(&catalog)
+    };
+    annotated("sysevt_ready_rsp: u8").unwrap();
+    let error = annotated("other: u8").unwrap_err().to_string();
+    assert!(error.contains("sysevt_ready_rsp"), "{error}");
+}
+
 #[test]
 fn annotations_are_audited() {
     let cases = [
@@ -825,7 +855,18 @@ fn bundled_wba_catalog_is_valid_and_audited() {
         .into_iter()
         .map(Target::features)
         .collect::<Vec<_>>();
-    assert_eq!(targets[0], "wba_1_10_0,stack-wba-full");
+    assert_eq!(targets[0], "wba_1_0_0,stack-wba-full");
+    // Link Layer Only Basic was dropped in 1.8.0, and Basic Plus added in
+    // 1.5.0.
+    let first = wba.catalog.profiles_in(Version::new(1, 0, 0));
+    let last = wba.catalog.profiles_in(Version::new(1, 10, 0));
+    assert!(first.contains(&Profile::WbaLinkLayerOnlyBasic));
+    assert!(!first.contains(&Profile::WbaBasicPlus));
+    assert!(!last.contains(&Profile::WbaLinkLayerOnlyBasic));
+    assert!(last.contains(&Profile::WbaBasicPlus));
+    assert!(targets.iter().all(|target| {
+        !target.starts_with("wba_1_0_0,") || !target.ends_with("stack-wba-basic-plus")
+    }));
 }
 
 /// Every label of both bundled catalogs names only conditions the catalog
@@ -931,8 +972,13 @@ fn validation_checks_bearer_members() {
     let twice = [bearer.clone(), bearer];
     let error = validate_bearers(&params, &twice).unwrap_err().to_string();
     assert!(error.contains("listed twice"), "{error}");
+    // An unresolved layout's bearers wait for the annotation filling it.
     let unresolved = Layout::Unresolved("procedural".into());
-    assert!(validate_bearers(&unresolved, &twice[..1]).is_err());
+    assert!(validate_bearers(&unresolved, &twice[..1]).is_ok());
+    let error = validate_bearers(&unresolved, &twice)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("listed twice"), "{error}");
 }
 
 /// The GATT client took enhanced ATT bearers on 32 channels, then 64 from
@@ -1148,9 +1194,7 @@ fn distinct_targets_cover_every_interface_once() {
             profile: Profile::FullExtended
         }
     );
-    assert!(
-        targets.len() < bundled.catalog.releases.len() * bundled.catalog.platform.profiles().len()
-    );
+    assert!(targets.len() < bundled.catalog.targets().count());
 }
 
 #[test]

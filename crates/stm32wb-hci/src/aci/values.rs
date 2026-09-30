@@ -141,16 +141,27 @@ wire_values! {
         LimitedDiscovery = 0x01,
         /// `GAP_GENERAL_DISCOVERY_PROC`.
         GeneralDiscovery = 0x02,
+        /// `GAP_PERIODIC_ADVERTISING_CONNECTION_PROC`, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        PeriodicAdvertisingConnection = 0x04,
         /// `GAP_AUTO_CONNECTION_ESTABLISHMENT_PROC`.
         AutoConnectionEstablishment = 0x08,
-        /// `GAP_GENERAL_CONNECTION_ESTABLISHMENT_PROC`.
+        /// `GAP_GENERAL_CONNECTION_ESTABLISHMENT_PROC`, on STM32WBA before
+        /// 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         GeneralConnectionEstablishment = 0x10,
-        /// `GAP_SELECTIVE_CONNECTION_ESTABLISHMENT_PROC`.
+        /// `GAP_SELECTIVE_CONNECTION_ESTABLISHMENT_PROC`, on STM32WBA before
+        /// 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         SelectiveConnectionEstablishment = 0x20,
         /// `GAP_DIRECT_CONNECTION_ESTABLISHMENT_PROC`.
         DirectConnectionEstablishment = 0x40,
-        /// `GAP_OBSERVATION_PROC`.
+        /// `GAP_OBSERVATION_PROC`, on STM32WBA before 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         Observation = 0x80,
+        /// `GAP_GENERIC_SCAN_PROC`, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        GenericScan = 0xB0,
     }
 }
 
@@ -171,11 +182,15 @@ wire_values! {
 wire_values! {
     /// Why pairing failed, as the security manager reports it.
     pub enum PairingFailureReason: u8 {
-        /// The user cancelled or could not enter the passkey, from 1.17.1.
+        /// The user cancelled or could not enter the passkey, from 1.17.1,
+        /// and STM32CubeWBA 1.2.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
-            feature = "fw_1_17_0"
+            feature = "fw_1_17_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
         )))]
         PasskeyEntryFailed = 0x01,
         /// The out-of-band data is not available.
@@ -200,14 +215,18 @@ wire_values! {
         DhKeyCheckFailed = 0x0B,
         /// The numeric comparison values do not match.
         NumericComparisonFailed = 0x0C,
-        /// The key was rejected, from 1.17.1.
+        /// The key was rejected, from 1.17.1, and STM32CubeWBA 1.2.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
-            feature = "fw_1_17_0"
+            feature = "fw_1_17_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
         )))]
         KeyRejected = 0x0F,
-        /// The device is busy with another pairing, from 1.23.0.
+        /// The device is busy with another pairing, from 1.23.0, and
+        /// STM32CubeWBA 1.7.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -221,7 +240,17 @@ wire_values! {
             feature = "fw_1_20_0",
             feature = "fw_1_21_0",
             feature = "fw_1_22_0",
-            feature = "fw_1_22_1"
+            feature = "fw_1_22_1",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0",
+            feature = "wba_1_6_0",
+            feature = "wba_1_6_1"
         )))]
         Busy = 0x10,
     }
@@ -239,17 +268,22 @@ wire_values! {
         /// Data received on a connection-oriented channel was too long.
         CocRxDataLengthTooLarge = 0x04,
         /// A connection-oriented channel was given a DCID already assigned,
-        /// from 1.18.0.
+        /// from 1.18.0, and
+        /// STM32CubeWBA 1.2.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
             feature = "fw_1_17_0",
             feature = "fw_1_17_1",
             feature = "fw_1_17_2",
-            feature = "fw_1_17_3"
+            feature = "fw_1_17_3",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
         )))]
         CocAlreadyAssignedDcid = 0x05,
-        /// The peer requested an LTK unexpectedly, from 1.22.0.
+        /// The peer requested an LTK unexpectedly, from 1.22.0, and STM32CubeWBA
+        /// 1.6.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -261,10 +295,18 @@ wire_values! {
             feature = "fw_1_19_0",
             feature = "fw_1_19_1",
             feature = "fw_1_20_0",
-            feature = "fw_1_21_0"
+            feature = "fw_1_21_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0"
         )))]
         SmpUnexpectedLtkRequest = 0x06,
-        /// No GATT bearer was allocated, from 1.23.0.
+        /// No GATT bearer was allocated, from 1.23.0, and STM32CubeWBA 1.7.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -278,7 +320,17 @@ wire_values! {
             feature = "fw_1_20_0",
             feature = "fw_1_21_0",
             feature = "fw_1_22_0",
-            feature = "fw_1_22_1"
+            feature = "fw_1_22_1",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0",
+            feature = "wba_1_6_0",
+            feature = "wba_1_6_1"
         )))]
         GattBearerNotAllocated = 0x07,
     }
@@ -291,7 +343,7 @@ wire_values! {
         Created = 0x00,
         /// The bearer was terminated.
         Terminated = 0x01,
-        /// The bearer was reconfigured, from 1.23.0.
+        /// The bearer was reconfigured, from 1.23.0, and STM32CubeWBA 1.7.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -305,7 +357,17 @@ wire_values! {
             feature = "fw_1_20_0",
             feature = "fw_1_21_0",
             feature = "fw_1_22_0",
-            feature = "fw_1_22_1"
+            feature = "fw_1_22_1",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0",
+            feature = "wba_1_6_0",
+            feature = "wba_1_6_1"
         )))]
         Reconfigured = 0x02,
     }
@@ -498,7 +560,8 @@ wire_values! {
         Disabled = 0x00,
         /// Report each advertiser once.
         Enabled = 0x01,
-        /// Report each advertiser once per scan period, from 1.22.0.
+        /// Report each advertiser once per scan period, from 1.22.0, and
+        /// STM32CubeWBA 1.6.0.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -510,7 +573,15 @@ wire_values! {
             feature = "fw_1_19_0",
             feature = "fw_1_19_1",
             feature = "fw_1_20_0",
-            feature = "fw_1_21_0"
+            feature = "fw_1_21_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0"
         )))]
         EnabledPerPeriod = 0x02,
     }
@@ -523,12 +594,18 @@ wire_values! {
         LimitedDiscovery = 0x01,
         /// General discovery.
         GeneralDiscovery = 0x02,
-        /// General connection establishment.
+        /// General connection establishment, on STM32WBA before 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         GeneralConnectionEstablishment = 0x10,
-        /// Selective connection establishment.
+        /// Selective connection establishment, on STM32WBA before 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         SelectiveConnectionEstablishment = 0x20,
-        /// Observation.
+        /// Observation, on STM32WBA before 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         Observation = 0x80,
+        /// A generic scan, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        GenericScan = 0xB0,
     }
 }
 
@@ -825,8 +902,9 @@ wire_values! {
         /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
         StaticRandomAddress = 0x2E => [u8; 6],
         /// `CONFIG_DATA_GAP_ADD_REC_NBR_OFFSET`: the number of additional
-        /// records of the GAP service, from 1.22.0. Earlier releases
-        /// document the offset without its length.
+        /// records of the GAP service, from 1.22.0 on STM32WB and 1.6.0 on
+        /// STM32WBA. Earlier releases document the offset without its
+        /// length.
         #[cfg(not(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -838,40 +916,89 @@ wire_values! {
             feature = "fw_1_19_0",
             feature = "fw_1_19_1",
             feature = "fw_1_20_0",
-            feature = "fw_1_21_0"
+            feature = "fw_1_21_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0"
         )))]
         GapAdditionalRecordNumber = 0x34 => [u8; 1],
         /// `CONFIG_DATA_SC_KEY_TYPE_OFFSET`: whether Secure Connections uses
-        /// the normal or the debug keys, from 1.17.0.
+        /// the normal or the debug keys, from 1.17.0 on STM32WB and 1.1.0 on
+        /// STM32WBA.
         #[cfg(not(any(
             feature = "fw_1_15_0",
-            feature = "fw_1_16_0"
+            feature = "fw_1_16_0",
+            feature = "wba_1_0_0"
         )))]
         ScKeyType = 0x35 => [u8; 1],
         /// `CONFIG_DATA_SMP_MODE_OFFSET`: the SMP mode.
         SmpMode = 0xB0 => [u8; 1],
         /// `CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET`: the channels scanning uses,
-        /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap).
+        /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap). STM32WB
+        /// only.
+        #[cfg(feature = "_stm32wb")]
         ScanChannelMap = 0xC0 => [u8; 1],
         /// `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET`: whether background scanning
-        /// is enabled, from 1.16.0.
-        #[cfg(not(feature = "fw_1_15_0"))]
+        /// is enabled, on STM32WB from 1.16.0.
+        #[cfg(all(feature = "_stm32wb", not(feature = "fw_1_15_0")))]
         BackgroundScanMode = 0xC1 => [u8; 1],
+        /// `CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET`: the link layer's RSSI
+        /// golden range, on STM32WBA from 1.5.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(
+                feature = "wba_1_0_0",
+                feature = "wba_1_1_0",
+                feature = "wba_1_1_1",
+                feature = "wba_1_2_0",
+                feature = "wba_1_3_1",
+                feature = "wba_1_4_0",
+                feature = "wba_1_4_1"
+            ))
+        ))]
+        RssiGoldenRange = 0xC2 => [u8; 2],
         /// `CONFIG_DATA_LL_RPA_MODE_OFFSET`: how the link layer updates
-        /// resolvable private addresses, from 1.21.0.
-        #[cfg(not(any(
-            feature = "fw_1_15_0",
-            feature = "fw_1_16_0",
-            feature = "fw_1_17_0",
-            feature = "fw_1_17_1",
-            feature = "fw_1_17_2",
-            feature = "fw_1_17_3",
-            feature = "fw_1_18_0",
-            feature = "fw_1_19_0",
-            feature = "fw_1_19_1",
-            feature = "fw_1_20_0"
-        )))]
+        /// resolvable private addresses, on STM32WB from 1.21.0.
+        #[cfg(all(
+            feature = "_stm32wb",
+            not(any(
+                feature = "fw_1_15_0",
+                feature = "fw_1_16_0",
+                feature = "fw_1_17_0",
+                feature = "fw_1_17_1",
+                feature = "fw_1_17_2",
+                feature = "fw_1_17_3",
+                feature = "fw_1_18_0",
+                feature = "fw_1_19_0",
+                feature = "fw_1_19_1",
+                feature = "fw_1_20_0"
+            ))
+        ))]
         RpaMode = 0xC3 => [u8; 1],
+        /// `CONFIG_DATA_LL_RX_ACL_CTRL_OFFSET`: the link layer's control of
+        /// received ACL data, on STM32WBA from 1.5.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(
+                feature = "wba_1_0_0",
+                feature = "wba_1_1_0",
+                feature = "wba_1_1_1",
+                feature = "wba_1_2_0",
+                feature = "wba_1_3_1",
+                feature = "wba_1_4_0",
+                feature = "wba_1_4_1"
+            ))
+        ))]
+        RxAclControl = 0xC4 => [u8; 2],
+        /// `CONFIG_DATA_LL_ISO_SCHED_MODE_OFFSET`: the link layer's
+        /// isochronous scheduling mode, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        IsoSchedulingMode = 0xC5 => [u8; 1],
         /// `CONFIG_DATA_LL_MAX_DATA_EXT_OFFSET`: the largest data length
         /// extension, as the supported maximum TX octets, TX time, RX octets
         /// and RX time, each a `u16`, from 1.21.0 on the full stack.

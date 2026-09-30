@@ -5,3 +5,138 @@
 # `stm32wb-catalog-extract audit --platform stm32wba` rejects annotations
 # whose target disappeared, that fill a layout the extractor now derives
 # (stale), or that contradict an extracted layout without `override = true`.
+
+# Commands carrying a UUID union. ble_types.h declares each UUID as a union
+# of a 16-bit and a 128-bit UUID, packed after the member selecting it, and
+# STM32CubeWBA ships no code filling it; the selector's doc comment names the
+# alternatives. The structures are the same in every release from 1.0.0 on.
+
+[[annotations]]
+command = "aci_gatt_add_service"
+source = "ble_gatt_aci.h aci_gatt_add_service: \"@param Service_UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_add_service_cp0 and _cp1: Service_UUID_Type, Service_UUID (Service_UUID_t, a union of uint16_t and uint8_t[16]), Service_Type, Max_Attribute_Records"
+reason = "Service_UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Service_UUID_Type: u8",
+    "Service_UUID: union(Service_UUID_Type) { 1 => 2, 2 => 16 }",
+    "Service_Type: u8",
+    "Max_Attribute_Records: u8",
+]
+
+[[annotations]]
+command = "aci_gatt_include_service"
+source = "ble_gatt_aci.h aci_gatt_include_service: \"@param Include_UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_include_service_cp0: Service_Handle, Include_Start_Handle, Include_End_Handle, Include_UUID_Type, Include_UUID (Include_UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "Include_UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Service_Handle: u16",
+    "Include_Start_Handle: u16",
+    "Include_End_Handle: u16",
+    "Include_UUID_Type: u8",
+    "Include_UUID: union(Include_UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+[[annotations]]
+command = "aci_gatt_add_char"
+source = "ble_gatt_aci.h aci_gatt_add_char: \"@param Char_UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_add_char_cp0 and _cp1: Service_Handle, Char_UUID_Type, Char_UUID (Char_UUID_t, a union of uint16_t and uint8_t[16]), Char_Value_Length, Char_Properties, Security_Permissions, GATT_Evt_Mask, Enc_Key_Size, Is_Variable"
+reason = "Char_UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Service_Handle: u16",
+    "Char_UUID_Type: u8",
+    "Char_UUID: union(Char_UUID_Type) { 1 => 2, 2 => 16 }",
+    "Char_Value_Length: u16",
+    "Char_Properties: u8",
+    "Security_Permissions: u8",
+    "GATT_Evt_Mask: u8",
+    "Enc_Key_Size: u8",
+    "Is_Variable: u8",
+]
+
+[[annotations]]
+command = "aci_gatt_add_char_desc"
+source = "ble_gatt_aci.h aci_gatt_add_char_desc: \"@param Char_Desc_Uuid_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_add_char_desc_cp0, _cp1, and _cp2: Service_Handle, Char_Handle, Char_Desc_Uuid_Type, Char_Desc_Uuid (Char_Desc_Uuid_t, a union of uint16_t and uint8_t[16]), Char_Desc_Value_Max_Len, Char_Desc_Value_Length, Char_Desc_Value[BLE_CMD_MAX_PARAM_LEN - 12] with BLE_CMD_MAX_PARAM_LEN 255 (ble_const.h, ble_std.h), Security_Permissions, Access_Permissions, GATT_Evt_Mask, Enc_Key_Size, Is_Variable"
+reason = "Char_Desc_Uuid_t is a union whose selector only the doc comment names"
+params = [
+    "Service_Handle: u16",
+    "Char_Handle: u16",
+    "Char_Desc_Uuid_Type: u8",
+    "Char_Desc_Uuid: union(Char_Desc_Uuid_Type) { 1 => 2, 2 => 16 }",
+    "Char_Desc_Value_Max_Len: u8",
+    "Char_Desc_Value_Length: u8",
+    "Char_Desc_Value: [u8; Char_Desc_Value_Length] (capacity 243)",
+    "Security_Permissions: u8",
+    "Access_Permissions: u8",
+    "GATT_Evt_Mask: u8",
+    "Enc_Key_Size: u8",
+    "Is_Variable: u8",
+]
+
+[[annotations]]
+command = "aci_att_read_by_type_req"
+source = "ble_gatt_aci.h aci_att_read_by_type_req: \"@param UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_att_read_by_type_req_cp0: Connection_Handle, Start_Handle, End_Handle, UUID_Type, UUID (UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+[[annotations]]
+command = "aci_att_read_by_group_type_req"
+source = "ble_gatt_aci.h aci_att_read_by_group_type_req: \"@param UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_att_read_by_group_type_req_cp0: Connection_Handle, Start_Handle, End_Handle, UUID_Type, UUID (UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+[[annotations]]
+command = "aci_gatt_disc_char_by_uuid"
+source = "ble_gatt_aci.h aci_gatt_disc_char_by_uuid: \"@param UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_disc_char_by_uuid_cp0: Connection_Handle, Start_Handle, End_Handle, UUID_Type, UUID (UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+[[annotations]]
+command = "aci_gatt_read_using_char_uuid"
+source = "ble_gatt_aci.h aci_gatt_read_using_char_uuid: \"@param UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_read_using_char_uuid_cp0: Connection_Handle, Start_Handle, End_Handle, UUID_Type, UUID (UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Connection_Handle: u16",
+    "Start_Handle: u16",
+    "End_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+[[annotations]]
+command = "aci_gatt_disc_primary_service_by_uuid"
+source = "ble_gatt_aci.h aci_gatt_disc_primary_service_by_uuid: \"@param UUID_Type UUID type: 0x01 = 16 bits UUID while 0x02 = 128 bits UUID\"; ble_types.h aci_gatt_disc_primary_service_by_uuid_cp0: Connection_Handle, UUID_Type, UUID (UUID_t, a union of uint16_t and uint8_t[16])"
+reason = "UUID_t is a union whose selector only the doc comment names"
+params = [
+    "Connection_Handle: u16",
+    "UUID_Type: u8",
+    "UUID: union(UUID_Type) { 1 => 2, 2 => 16 }",
+]
+
+# Core commands whose returns no catalog layout describes.
+
+[[annotations]]
+command = "hci_read_local_supported_codecs_v2"
+source = "ble_hci_le.h hci_read_local_supported_codecs_v2 returns Num_Supported_Standard_Codecs, Standard_Codec, Num_Supported_Vendor_Specific_Codecs, and Vendor_Specific_Codec, while ble_types.h hci_read_local_supported_codecs_v2_rp0 declares only Status, Num_Supported_Standard_Codecs, and Standard_Codec; Core Specification v5.4, Vol 4, Part E, 7.4.8"
+reason = "ST's return structure lacks the vendor-specific codecs its function returns, so no layout of the return is derivable"
+exclude = true
+
+[[annotations]]
+command = "hci_read_local_supported_codec_capabilities"
+source = "ble_types.h hci_read_local_supported_codec_capabilities_rp0: Codec_Capabilities[250]; Core Specification v5.4, Vol 4, Part E, 7.4.10: Num_Codec_Capabilities capabilities, each prefixed by its length"
+reason = "the capabilities are a list of length-prefixed entries, which ST's fixed 250-byte member does not describe and no catalog layout can"
+exclude = true

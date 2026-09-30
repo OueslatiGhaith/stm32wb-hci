@@ -320,13 +320,12 @@ fn scalar_range(scalar: Scalar) -> (i64, i64) {
 /// A domain belongs to an integer member of the layout, or to an array of
 /// integers whose every element it constrains, lists distinct items
 /// in ascending order, holds only values the member can encode, and, for
-/// flags, lists single bits or a named zero.
+/// flags, lists single bits or a named zero. The domain of an unresolved
+/// layout is checked against the annotation supplying it.
 pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<(), Error> {
     let member = &domain.member;
     let Layout::Fields(fields) = layout else {
-        return Err(Error::invalid(format!(
-            "{member} has a domain, but its layout is unresolved"
-        )));
+        return Ok(());
     };
     // A byte array of up to 8 bytes, such as an event mask, is a
     // little-endian integer on the wire.

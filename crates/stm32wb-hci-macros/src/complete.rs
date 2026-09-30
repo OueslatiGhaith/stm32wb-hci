@@ -7,7 +7,7 @@
 //! catalog lists the entry for. A missing declaration fails to compile with
 //! the entry's name; a duplicate one conflicts with the first.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -63,8 +63,7 @@ pub(crate) fn declared(bundled: &Bundled, kind: Kind, name: &str) -> Result<Toke
         .into_iter()
         .map(|(entry, targets)| {
             let marker = format_ident!("{entry}");
-            let cfg =
-                cfg::targets(&bundled.catalog, targets).map(|predicate| quote!(#[cfg(#predicate)]));
+            let cfg = cfg::attr(&cfg::targets(&bundled.catalog, targets));
             quote! {
                 #cfg
                 impl ::stm32wb_hci::catalog::Declared for ::stm32wb_hci::catalog::#marker {}
@@ -73,7 +72,41 @@ pub(crate) fn declared(bundled: &Bundled, kind: Kind, name: &str) -> Result<Toke
         .collect())
 }
 
-pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
+/// The markers and checks of every platform's catalog, each check gated to
+/// the targets of its own platform.
+pub fn expand(catalogs: &[&Bundled]) -> Result<TokenStream, Error> {
+    let mut markers = BTreeSet::new();
+    let mut checks = TokenStream::new();
+    for bundled in catalogs {
+        let (entries, tokens) = platform_checks(bundled)?;
+        markers.extend(entries);
+        checks.extend(tokens);
+    }
+    let markers = markers.iter().map(|entry| format_ident!("{entry}"));
+    Ok(quote! {
+        /// Implemented by the marker of each catalog entry a declaration
+        /// covers, on the targets it covers.
+        #[diagnostic::on_unimplemented(
+            message = "the catalog lists `{Self}` for the selected target, but nothing declares it",
+            label = "no vendor_command!, system_command!, standard_command!, standard_commands! entry, vendor_event!, system_event!, standard_event!, or standard_events! entry declares `{Self}` for this target",
+            note = "declare it in the module of its group, or check the since/before bounds of an existing declaration"
+        )]
+        pub trait Declared {}
+
+        #(
+            #[allow(non_camel_case_types, missing_docs)]
+            pub struct #markers;
+        )*
+
+        const fn declared<T: Declared>() {}
+
+        #checks
+    })
+}
+
+/// The entries one platform's catalog requires a declaration of, and the
+/// checks requiring them on its targets.
+fn platform_checks(bundled: &Bundled) -> Result<(Vec<&str>, TokenStream), Error> {
     let catalog = &bundled.catalog;
     let mut required: BTreeMap<&str, (Kind, Targets<'_>)> = BTreeMap::new();
     let commands = catalog
@@ -109,11 +142,9 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
         }
     }
 
-    let markers = required.keys().map(|entry| format_ident!("{entry}"));
     let checks = required.iter().map(|(entry, (kind, targets))| {
         let marker = format_ident!("{entry}");
-        let cfg = cfg::targets(catalog, targets.iter().copied())
-            .map(|predicate| quote!(#[cfg(#predicate)]));
+        let cfg = cfg::attr(&cfg::targets(catalog, targets.iter().copied()));
         let doc = match kind {
             Kind::Command => {
                 format!(
@@ -123,8 +154,8 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
             }
             Kind::Event => {
                 format!(
-                    "Requires a `vendor_event!`, `system_event!`, or `standard_events!` entry \
-                     declaring `{entry}`."
+                    "Requires a `vendor_event!`, `system_event!`, `standard_event!`, or \
+                     `standard_events!` entry declaring `{entry}`."
                 )
             }
         };
@@ -134,25 +165,7 @@ pub fn expand(bundled: &Bundled) -> Result<TokenStream, Error> {
             const _: () = declared::<#marker>();
         }
     });
-    Ok(quote! {
-        /// Implemented by the marker of each catalog entry a declaration
-        /// covers, on the targets it covers.
-        #[diagnostic::on_unimplemented(
-            message = "the catalog lists `{Self}` for the selected target, but nothing declares it",
-            label = "no vendor_command!, system_command!, standard_command!, standard_commands! entry, vendor_event!, system_event!, or standard_events! entry declares `{Self}` for this target",
-            note = "declare it in the module of its group, or check the since/before bounds of an existing declaration"
-        )]
-        pub trait Declared {}
-
-        #(
-            #[allow(non_camel_case_types, missing_docs)]
-            pub struct #markers;
-        )*
-
-        const fn declared<T: Declared>() {}
-
-        #(#checks)*
-    })
+    Ok((required.keys().copied().collect(), quote!(#(#checks)*)))
 }
 
 #[cfg(test)]
@@ -182,9 +195,8 @@ mod tests {
 
     #[test]
     fn every_vendor_and_system_entry_is_required() {
-        let tokens = expand(bundled(Platform::Stm32wb).unwrap())
-            .unwrap()
-            .to_string();
+        let catalogs = Platform::ALL.map(|platform| bundled(platform).unwrap());
+        let tokens = expand(&catalogs).unwrap().to_string();
         assert!(tokens.contains("pub struct aci_reset ;"), "{tokens}");
         assert!(tokens.contains("pub struct hci_reset ;"), "{tokens}");
         assert!(
@@ -204,5 +216,16 @@ mod tests {
             tokens.contains("declared :: < aci_gatt_notification_complete_event > ()"),
             "{tokens}"
         );
+        // STM32WBA's own entries are required on its targets only.
+        assert!(
+            tokens.contains("pub struct hci_le_create_cis ;"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("feature = \"wba_1_10_0\"")
+                || tokens.contains("feature = \"_stm32wba\""),
+            "{tokens}"
+        );
+        assert_eq!(tokens.matches("pub trait Declared").count(), 1);
     }
 }

@@ -6,12 +6,13 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use stm32wb_catalog::{Catalog, Profile, ReleaseRange, Version};
 
-/// The predicate enabling an item on every `(release, profile)` pair the
-/// segments cover, or `None` when they cover every target.
+/// The predicate enabling an item on every `(release, profile)` pair of the
+/// catalog's platform the segments cover: the platform's feature when they
+/// cover every target.
 pub fn targets<'a>(
     catalog: &Catalog,
     segments: impl IntoIterator<Item = (ReleaseRange, &'a [Profile])>,
-) -> Option<TokenStream> {
+) -> TokenStream {
     let segments = segments.into_iter().collect::<Vec<_>>();
     let covered = segments
         .iter()
@@ -20,8 +21,9 @@ pub fn targets<'a>(
                 .flat_map(move |release| profiles.iter().map(move |profile| (release, *profile)))
         })
         .collect::<BTreeSet<_>>();
-    if covered.len() == catalog.releases.len() * catalog.platform.profiles().len() {
-        return None;
+    if covered.len() == catalog.targets().count() {
+        let feature = catalog.platform.feature();
+        return quote!(feature = #feature);
     }
     let alternatives = segments.iter().map(|(releases, profiles)| {
         let releases = releases_in(catalog, *releases)
@@ -34,7 +36,12 @@ pub fn targets<'a>(
             )
         }
     });
-    Some(quote!(any(#(#alternatives),*)))
+    quote!(any(#(#alternatives),*))
+}
+
+/// `#[cfg(predicate)]`.
+pub fn attr(predicate: &TokenStream) -> TokenStream {
+    quote!(#[cfg(#predicate)])
 }
 
 fn releases_in(catalog: &Catalog, range: ReleaseRange) -> impl Iterator<Item = Version> + '_ {

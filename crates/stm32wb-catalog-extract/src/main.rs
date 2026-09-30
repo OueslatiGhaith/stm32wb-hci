@@ -273,14 +273,29 @@ fn extract(platform: PlatformArg, cube: &Path, releases: &[Version]) -> Result<C
                         "  left out {name}: the interface document does not state how it completes"
                     );
                 }
+                for name in &report.undeclared {
+                    eprintln!(
+                        "  left out {name}: the interface document lists it, but no header declares it"
+                    );
+                }
+                for name in &report.undocumented {
+                    eprintln!(
+                        "  left out {name}: a header declares it, but the interface document does not list it"
+                    );
+                }
             }
         }
         for (name, layout, reason) in &report.unresolved {
             eprintln!("  unresolved {name} {layout}: {reason}");
         }
         eprintln!("  {} documented value lists", report.domains);
+        for (name, member) in &report.deferred_domains {
+            eprintln!(
+                "  kept the values of {name} {member} for the annotation of its unresolved layout"
+            );
+        }
         for (name, member) in &report.dropped_domains {
-            eprintln!("  dropped the values of {name} {member}: its layout is unresolved");
+            eprintln!("  dropped the values of {name} {member}: it has no layout on that side");
         }
         for (name, member) in &report.dropped_flags {
             eprintln!("  dropped the flags of {name} {member}: an item is not a single bit");
@@ -290,8 +305,13 @@ fn extract(platform: PlatformArg, cube: &Path, releases: &[Version]) -> Result<C
                 "  dropped the values of {structure}.{member}: no resolved layout carries {structure}"
             );
         }
-        for (name, member) in &report.dropped_bearers {
-            eprintln!("  dropped the bearer {name} {member}: its layout is unresolved");
+        for (name, header) in &report.orphaned_lists {
+            eprintln!("  dropped a list of {name} outside any @param block: {header:?}");
+        }
+        for (name, member) in &report.deferred_bearers {
+            eprintln!(
+                "  kept the bearer {name} {member} for the annotation of its unresolved layout"
+            );
         }
         snapshots.push(snapshot);
     }

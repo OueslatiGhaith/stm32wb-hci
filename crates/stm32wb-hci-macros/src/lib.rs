@@ -15,11 +15,64 @@ mod structs;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use stm32wb_catalog::{Catalog, Platform, Profile, bundled};
+use stm32wb_catalog::{Bundled, Catalog, Platform, Profile, bundled};
+
+/// Every platform's bundled catalog, in `Platform::ALL` order.
+pub(crate) fn catalogs() -> syn::Result<Vec<&'static Bundled>> {
+    Platform::ALL
+        .into_iter()
+        .map(|platform| {
+            bundled(platform).map_err(|error| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "the bundled {} catalog is invalid: {error}",
+                        platform.package()
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Expand a declaration for each of the catalogs that `has` its entry,
+/// and for STM32WB if none does, so its error names the missing entry. Each
+/// expansion is gated to its own platform's targets; an error from another
+/// platform than STM32WB names it.
+pub(crate) fn per_platform(
+    catalogs: &[&'static Bundled],
+    has: impl Fn(&Catalog) -> bool,
+    mut expand: impl FnMut(&'static Bundled) -> syn::Result<TokenStream2>,
+) -> syn::Result<TokenStream2> {
+    let having = catalogs
+        .iter()
+        .copied()
+        .filter(|bundled| has(&bundled.catalog))
+        .collect::<Vec<_>>();
+    if having.is_empty() {
+        return expand(catalogs[0]);
+    }
+    let mut tokens = TokenStream2::new();
+    for bundled in having {
+        tokens
+            .extend(expand(bundled).map_err(|error| on_platform(bundled.catalog.platform, error))?);
+    }
+    Ok(tokens)
+}
+
+/// `error`, naming `platform` unless it is STM32WB.
+pub(crate) fn on_platform(platform: Platform, error: syn::Error) -> syn::Error {
+    match platform {
+        Platform::Stm32wb => error,
+        Platform::Stm32wba => {
+            syn::Error::new(error.span(), format!("{}: {error}", platform.package()))
+        }
+    }
+}
 
 /// Require exactly one release feature (`fw_*` for STM32WB, `wba_*` for
 /// STM32WBA) and exactly one `stack-*` feature (a BLE stack profile), both of
-/// the same platform.
+/// the same platform, and a profile the release has.
 ///
 /// The features themselves are declared in `stm32wb-hci`'s manifest, which a
 /// test keeps in sync with the catalogs; each also enables its platform's
@@ -91,7 +144,37 @@ pub fn check_target(input: TokenStream) -> TokenStream {
     let release_error = exactly_one(&releases, &release_message);
     let profile_error = exactly_one(&profiles, &profile_message);
     let platform_error = exactly_one(&platforms, platform_message);
-    quote!(#release_error #profile_error #platform_error).into()
+    let missing_errors = catalogs.iter().flat_map(|catalog| {
+        catalog.versions().filter_map(move |release| {
+            let present = catalog.profiles_in(release);
+            let missing = catalog
+                .platform
+                .profiles()
+                .iter()
+                .filter(|profile| !present.contains(profile))
+                .map(|profile| profile.feature_name())
+                .collect::<Vec<_>>();
+            if missing.is_empty() {
+                return None;
+            }
+            let feature = catalog.platform.release_feature(release);
+            let message = format!(
+                "{} {release} has no {} profile; its profiles are {}",
+                catalog.platform.package(),
+                missing.join(" or "),
+                present
+                    .iter()
+                    .map(|profile| profile.feature_name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Some(quote! {
+                #[cfg(all(feature = #feature, any(#(feature = #missing),*)))]
+                ::core::compile_error!(#message);
+            })
+        })
+    });
+    quote!(#release_error #profile_error #platform_error #(#missing_errors)*).into()
 }
 
 /// A `compile_error!` unless exactly one of `features` is enabled, raised
@@ -317,6 +400,30 @@ pub fn system_event(input: TokenStream) -> TokenStream {
         .into()
 }
 
+/// Declare a Bluetooth Core event bt-hci lacks from its generated C name.
+///
+/// The declaration is checked and generated as for [`vendor_event!`], but
+/// implements bt-hci's `LeEventParams` with the catalog's subevent code for
+/// an LE meta event, or `EventParams` with its event code for any other, so
+/// bt-hci decodes it like its own. Every other Core event is listed in
+/// [`standard_events!`] with bt-hci's type.
+///
+/// ```ignore
+/// standard_event! {
+///     /// A Channel Sounding test ended.
+///     hci_le_cs_test_end_complete_event => LeCsTestEndComplete {
+///         status: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Require a declaration of every vendor and system command and event the
 /// catalog lists for the selected target.
 ///
@@ -331,13 +438,17 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
     if !input.is_empty() {
         return error("catalog_complete! takes no arguments");
     }
-    match bundled(Platform::Stm32wb)
-        .map_err(|error| error.to_string())
-        .and_then(|bundled| complete::expand(bundled).map_err(|error| error.to_string()))
-    {
-        Ok(tokens) => tokens.into(),
-        Err(message) => error(&format!("the bundled catalog is invalid: {message}")),
-    }
+    catalogs()
+        .and_then(|catalogs| {
+            complete::expand(&catalogs).map_err(|error| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!("a bundled catalog is invalid: {error}"),
+                )
+            })
+        })
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Declare a Bluetooth Core command bt-hci declares differently from the
@@ -458,6 +569,31 @@ pub fn att_bearer_range(input: TokenStream) -> TokenStream {
 pub fn vendor_events(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as dispatch::Input);
     dispatch::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an enum of the Bluetooth Core events [`standard_event!`] declares
+/// that the selected target emits.
+///
+/// The variants are checked as for [`vendor_events!`], against the types
+/// [`standard_event!`] declares, but need not cover every Core event: bt-hci
+/// decodes the others. `from_packet` decodes an event packet into the variant
+/// its event code, or LE meta subevent code, selects.
+///
+/// ```ignore
+/// standard_events_enum! {
+///     /// The Core events bt-hci does not decode as the catalog lists them.
+///     pub enum StandardEvent<'a> {
+///         hci_le_cs_test_end_complete_event => LeCsTestEndComplete(LeCsTestEndComplete),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_events_enum(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input, command::Channel::Standard)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

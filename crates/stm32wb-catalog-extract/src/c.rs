@@ -203,6 +203,33 @@ pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>, String> {
     Ok(bearers)
 }
 
+/// The `@param` blocks of an entity's documentation noting that the size
+/// their member declares is only a maximum.
+pub fn maximum_sized(entity: Entity<'_>) -> Vec<String> {
+    entity
+        .get_comment()
+        .map_or_else(Vec::new, |comment| maximum_sized_in(&comment))
+}
+
+pub fn maximum_sized_in(comment: &str) -> Vec<String> {
+    comment
+        .split("@param")
+        .skip(1)
+        .filter_map(|block| {
+            let block = block.split("@return").next().unwrap_or_default();
+            let words = block
+                .split_whitespace()
+                .filter(|word| !word.starts_with('*'))
+                .collect::<Vec<_>>();
+            let (name, _) = words.split_first()?;
+            words
+                .join(" ")
+                .contains("the indicated size is the maximum size")
+                .then(|| (*name).to_owned())
+        })
+        .collect()
+}
+
 /// Descend through implicit conversions, parentheses, and casts.
 pub fn strip(mut entity: Entity<'_>) -> Entity<'_> {
     while matches!(

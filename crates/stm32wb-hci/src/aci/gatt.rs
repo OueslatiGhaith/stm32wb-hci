@@ -334,7 +334,7 @@ vendor_command! {
 vendor_command! {
     /// Confirm an indication.
     aci_gatt_confirm_indication => GattConfirmIndication {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         connection_handle: ConnHandle,
         #[wire(since = "1.16.0")]
         connection_handle: AttBearer,
@@ -359,11 +359,11 @@ vendor_command! {
     /// `aci_gatt_allow_read` before 1.24.0.
     aci_gatt_permit_read => GattPermitRead {
         connection_handle: AttBearer,
-        #[wire(since = "1.24.0")]
+        #[wire(since = "1.24.0", wba_since = "1.8.0")]
         read_status: PermitStatus,
-        #[wire(since = "1.24.0")]
+        #[wire(since = "1.24.0", wba_since = "1.8.0")]
         error_code: AttAppError,
-        #[wire(since = "1.24.0")]
+        #[wire(since = "1.24.0", wba_since = "1.8.0")]
         attr_handle: u16,
     }
 }
@@ -407,7 +407,7 @@ vendor_command! {
     /// `conn_handle_to_notify` as `update_type` selects. The unenhanced
     /// bearer of connection handle 0x0000 notifies every subscribed client.
     aci_gatt_update_char_value_ext => GattUpdateCharValueExt {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         conn_handle_to_notify: ConnHandle,
         #[wire(since = "1.16.0")]
         conn_handle_to_notify: AttBearer,
@@ -461,11 +461,15 @@ vendor_command! {
 vendor_command! {
     /// Write `data_length` bytes at `data_pointer` without waiting for a
     /// response. The wireless CPU reads the data from that address, so it
-    /// must stay valid until the write completes.
+    /// must stay valid until the write completes. STM32WBA documents
+    /// `signed_mode` as unused from 1.10.0, so it takes an integer there.
     aci_gatt_write_without_resp_ext => GattWriteWithoutRespExt {
         connection_handle: ConnHandle,
         attr_handle: u16,
+        #[wire(platform = "stm32wb")]
         signed_mode: SignedWriteMode,
+        #[wire(platform = "stm32wba")]
+        signed_mode: u8,
         data_length: u16,
         data_pointer: u32,
     }
@@ -506,7 +510,7 @@ vendor_event! {
     /// The server indicated a characteristic value; confirm it with
     /// [`GattConfirmIndication`].
     aci_gatt_indication_event => GattIndicationEvent {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         connection_handle: ConnHandle,
         #[wire(since = "1.16.0")]
         connection_handle: AttBearer,
@@ -518,7 +522,7 @@ vendor_event! {
 vendor_event! {
     /// The server notified a characteristic value.
     aci_gatt_notification_event => GattNotificationEvent {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         connection_handle: ConnHandle,
         #[wire(since = "1.16.0")]
         connection_handle: AttBearer,
@@ -602,7 +606,7 @@ vendor_event! {
 vendor_event! {
     /// The client confirmed an indication.
     aci_gatt_server_confirmation_event => GattServerConfirmationEvent {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         connection_handle: ConnHandle,
         #[wire(since = "1.16.0")]
         connection_handle: AttBearer,
@@ -624,13 +628,13 @@ vendor_event! {
     /// An enhanced ATT bearer changed state. From 1.23.0 the event names the
     /// connection and the bearer's MTU instead of a status.
     aci_gatt_eatt_bearer_event => GattEattBearerEvent {
-        #[wire(since = "1.23.0")]
+        #[wire(since = "1.23.0", wba_since = "1.7.0")]
         connection_handle: ConnHandle,
         channel_index: u8,
         eab_state: OrUnknown<EattBearerState>,
-        #[wire(before = "1.23.0")]
+        #[wire(before = "1.23.0", wba_before = "1.7.0")]
         status: u8,
-        #[wire(since = "1.23.0")]
+        #[wire(since = "1.23.0", wba_since = "1.7.0")]
         mtu: OrUnknown<EattMtu>,
     }
 }
@@ -663,7 +667,7 @@ vendor_event! {
 vendor_event! {
     /// Part of a long indicated value, from `offset`.
     aci_gatt_indication_ext_event => GattIndicationExtEvent {
-        #[wire(before = "1.16.0")]
+        #[wire(platform = "stm32wb", before = "1.16.0")]
         connection_handle: ConnHandle,
         #[wire(since = "1.16.0")]
         connection_handle: AttBearer,
@@ -910,5 +914,19 @@ mod tests {
         let handle: ConnHandle = event.connection_handle;
         assert_eq!(handle.raw(), 0x0801);
         let _ = GattConfirmIndication::new(ConnHandle::new(1));
+    }
+}
+
+vendor_command! {
+    /// Read up to `value_length_requested` bytes of an attribute value of the
+    /// local GATT database, from `offset`.
+    aci_gatt_get_attribute_value => GattGetAttributeValue {
+        connection_handle: ConnHandle,
+        attr_handle: u16,
+        offset: u16,
+        value_length_requested: u16,
+    } -> GattAttributeValue {
+        length: u16,
+        value: BoundedBytes<247>,
     }
 }

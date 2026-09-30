@@ -97,6 +97,11 @@ pub struct ReleaseSource {
     pub tag: String,
     /// The commit the tag resolved to when the catalog was extracted.
     pub commit: String,
+    /// The stack profiles the release has, listed by STM32WBA, whose
+    /// profiles changed across releases, and empty on STM32WB, where every
+    /// release has every profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<Profile>,
 }
 
 /// A CPU2 wireless binary shipped for one MCU family.
@@ -365,6 +370,29 @@ impl Catalog {
         self.releases.iter().map(|release| release.version)
     }
 
+    /// The stack profiles `release` has, empty if the catalog does not
+    /// describe it.
+    pub fn profiles_in(&self, release: Version) -> &[Profile] {
+        match self
+            .releases
+            .iter()
+            .find(|source| source.version == release)
+        {
+            Some(source) if source.profiles.is_empty() => self.platform.profiles(),
+            Some(source) => &source.profiles,
+            None => &[],
+        }
+    }
+
+    /// Every `(release, profile)` target the catalog describes.
+    pub fn targets(&self) -> impl Iterator<Item = (Version, Profile)> + '_ {
+        self.versions().flat_map(move |release| {
+            self.profiles_in(release)
+                .iter()
+                .map(move |profile| (release, *profile))
+        })
+    }
+
     pub fn command(&self, scope: CommandScope, opcode: u16) -> Option<&Command> {
         self.commands
             .iter()
@@ -460,6 +488,50 @@ impl Catalog {
             }
         };
 
+        for release in &self.releases {
+            let mut profiles = release.profiles.clone();
+            profiles.sort();
+            profiles.dedup();
+            let valid = match self.platform {
+                Platform::Stm32wb => profiles.is_empty(),
+                Platform::Stm32wba => {
+                    profiles == release.profiles
+                        && profiles.contains(&self.platform.complete_profile())
+                        && profiles
+                            .iter()
+                            .all(|profile| profile.platform() == self.platform)
+                }
+            };
+            if !valid {
+                return Err(Error::invalid(format!(
+                    "release {}: invalid profiles {:?}; STM32WB lists none, and STM32WBA its \
+                     own, sorted, unique, and with the complete one",
+                    release.version, release.profiles
+                )));
+            }
+        }
+        let check_profiles = |availability: &[Availability], context: &dyn Fn() -> String| {
+            for entry in availability {
+                for release in versions
+                    .iter()
+                    .filter(|release| entry.releases.contains(**release))
+                {
+                    let profiles = self.profiles_in(*release);
+                    if let Some(profile) = entry
+                        .profiles
+                        .iter()
+                        .find(|profile| !profiles.contains(profile))
+                    {
+                        return Err(Error::invalid(format!(
+                            "{}: release {release} has no {profile} profile",
+                            context()
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        };
+
         let mut binaries = BTreeSet::new();
         for binary in &self.binaries {
             check_range(binary.releases, &|| format!("binary {}", binary.file))?;
@@ -517,6 +589,7 @@ impl Catalog {
                 &command.availability,
                 &label,
             )?;
+            check_profiles(&command.availability, &label)?;
             for range in definitions
                 .iter()
                 .chain(command.names.iter().map(|named| &named.releases))
@@ -580,6 +653,7 @@ impl Catalog {
                 &event.availability,
                 &label,
             )?;
+            check_profiles(&event.availability, &label)?;
             for range in definitions
                 .iter()
                 .chain(event.names.iter().map(|named| &named.releases))
@@ -781,23 +855,19 @@ fn validate_domains<'a>(
 
 /// Each bearer is a distinct `u16` member of a resolved layout, with an
 /// enhanced range of channel indexes after 0xEA00.
-fn validate_bearers(layout: &Layout, bearers: &[Bearer]) -> Result<(), Error> {
-    if bearers.is_empty() {
-        return Ok(());
-    }
-    let Layout::Fields(fields) = layout else {
-        return Err(Error::invalid(
-            "an unresolved layout cannot have bearer members",
-        ));
-    };
+/// Each bearer member is listed once, with the enhanced bearers' range, and
+/// is a `u16` member of the layout. The bearers of an unresolved layout are
+/// checked against the annotation supplying it.
+pub(crate) fn validate_bearers(layout: &Layout, bearers: &[Bearer]) -> Result<(), Error> {
     for (index, bearer) in bearers.iter().enumerate() {
         let member = &bearer.member;
         if bearers[..index].iter().any(|other| other.member == *member) {
             return Err(Error::invalid(format!("bearer {member} is listed twice")));
         }
-        if !fields
-            .iter()
-            .any(|field| field.name == *member && field.ty == FieldType::Scalar(Scalar::U16))
+        if let Layout::Fields(fields) = layout
+            && !fields
+                .iter()
+                .any(|field| field.name == *member && field.ty == FieldType::Scalar(Scalar::U16))
         {
             return Err(Error::invalid(format!(
                 "bearer {member} is not a u16 member"

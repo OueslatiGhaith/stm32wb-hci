@@ -712,6 +712,67 @@ fn bearer_ranges_are_read_not_guessed() {
 }
 
 #[test]
+fn maximum_sizes_are_read_across_lines() {
+    let members = c::maximum_sized_in(
+        "/** @param Num_Subevents Number of subevents\n \
+         * @param Subevent_Param All fields are repeated 'Num_Subevents' times. Note: the\n \
+         *        indicated size is the maximum size.\n * @return Value indicating success */",
+    );
+    assert_eq!(members, ["Subevent_Param"]);
+}
+
+#[test]
+fn incomplete_structures_are_not_trusted() {
+    let layout = |members: &[&str]| {
+        Layout::Fields(
+            members
+                .iter()
+                .map(|member| member.parse().unwrap())
+                .collect(),
+        )
+    };
+    let names = |names: &[&str]| {
+        names
+            .iter()
+            .map(|&name| name.to_owned())
+            .collect::<Vec<_>>()
+    };
+    let params = layout(&["Connection_Handle: u16"]);
+    let returns = layout(&["Status: u8", "Connection_Handle: u16", "RSSI: u8"]);
+    // The echoed handle is not returned again.
+    let checked = crate::wba::returned_in_order(
+        "hci_read_rssi",
+        &params,
+        returns.clone(),
+        &names(&["Connection_Handle", "RSSI"]),
+    );
+    assert_eq!(checked, returns);
+    let checked = crate::wba::returned_in_order(
+        "hci_read_rssi",
+        &params,
+        returns,
+        &names(&["Connection_Handle", "RSSI", "Missing"]),
+    );
+    assert!(matches!(checked, Layout::Unresolved(_)), "{checked:?}");
+
+    let bounded = crate::wba::bounded_by_maximum(
+        "hci_le_set_periodic_advertising_subevent_data",
+        layout(&["Num_Subevents: u8", "Subevent_Param: [u8; 252]"]),
+        &names(&["Subevent_Param"]),
+    )
+    .unwrap();
+    assert!(matches!(bounded, Layout::Unresolved(_)), "{bounded:?}");
+    assert!(
+        crate::wba::bounded_by_maximum(
+            "x",
+            layout(&["Num_Subevents: u8"]),
+            &names(&["Num_Subevents"])
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn domains_come_from_the_header_documentation() {
     let commands = command_fixture(&format!("{BEARER_DOC}{SET_NAME}")).unwrap();
     let (member, returned, domain) = &commands[0].domains[0];

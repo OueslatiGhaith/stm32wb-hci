@@ -38,9 +38,31 @@ pub fn domains(entity: Entity<'_>) -> Result<Vec<Documented>, String> {
         .map_or(Ok(Vec::new()), |comment| domains_in(&comment))
 }
 
+/// The documented values of an entity's parameters, and the header of each
+/// list its comment has outside any `@param` block, which documents no
+/// parameter.
+pub fn domains_and_orphans(entity: Entity<'_>) -> Result<(Vec<Documented>, Vec<String>), String> {
+    entity
+        .get_comment()
+        .map_or(Ok((Vec::new(), Vec::new())), |comment| {
+            domains_with_orphans(&comment)
+        })
+}
+
 /// The documented values of every `@param` block of a doc comment.
 pub fn domains_in(comment: &str) -> Result<Vec<Documented>, String> {
+    let (documented, orphans) = domains_with_orphans(comment)?;
+    match orphans.first() {
+        Some(orphan) => Err(format!("a list outside any @param block: {orphan:?}")),
+        None => Ok(documented),
+    }
+}
+
+/// The documented values of every `@param` block of a doc comment, and the
+/// header of each list outside any.
+fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>), String> {
     let lines = comment_lines(comment);
+    let mut orphans = Vec::new();
     let mut documented = Vec::new();
     let mut param: Option<(String, bool)> = None;
     let mut list: Option<(DomainKind, Vec<Item>)> = None;
@@ -65,7 +87,7 @@ pub fn domains_in(comment: &str) -> Result<Vec<Documented>, String> {
         }
         let Some((name, _)) = &param else {
             if list_kind(content).is_some() {
-                return Err(format!("a list outside any @param block: {content:?}"));
+                orphans.push(content.to_owned());
             }
             continue;
         };
@@ -94,7 +116,7 @@ pub fn domains_in(comment: &str) -> Result<Vec<Documented>, String> {
         )?;
     }
     finish(&param, &mut list)?;
-    Ok(documented)
+    Ok((documented, orphans))
 }
 
 /// The documented values of the fields of every structure in `records`

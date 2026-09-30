@@ -121,23 +121,28 @@ declare the command functions, the event callbacks, and the packed structures,
 but no C fills or reads them. So its catalog takes:
 
 - commands, events, opcodes, codes, and profile availability (columns BP, BF,
-  PO, and LO; the full stack supports everything) from
-  `STM32WBA_BLE_Wireless_Interface.html`;
+  PO, LO, and, before 1.8.0, LB; the full stack supports everything) from
+  `STM32WBA_BLE_Wireless_Interface.html`, whose columns also give the
+  profiles each release has. An entry the document lists but no header
+  declares, or the reverse, is left out and reported;
 - each command's completion from the "Events generated" list of its section,
   a rule checked against the code of every STM32WB release; a command whose
   section states none is left out and reported;
 - layouts from the `_cpN` and `_rp0` structures of `ble_types.h` alone, by
   the rule every STM32WB layout the code proves is checked against. A union
-  has no selector without code, so a layout holding one is unresolved. An
+  has no selector without code, so a layout holding one is unresolved, as is
+  one holding an array whose documentation calls its size the maximum. An
   event payload must be the members its `ble_events.h` callback receives, in
-  order;
+  order, and a command's function must take its parameters followed by the
+  `_rp0` members after Status that do not echo one of them;
 - values, bearers, and statuses as on STM32WB. A value labelled for one
   platform, such as `(only for STM32WB)` or `[not supported on STM32WBA]`,
   applies only to that platform's profiles.
 
 A `Flags:` list whose items are not single bits (some CS events pack two
-4-bit fields under one) is dropped and reported, as are the bearers of an
-unresolved layout. The releases from v1.9.0 on pin
+4-bit fields under one) is dropped and reported, as is a list outside any
+`@param` block. The values and bearers of an unresolved layout are kept and
+checked against the annotation filling it. The releases from v1.9.0 on pin
 `Middlewares/ST/STM32_WPAN` as a submodule, read at its pinned commit, so the
 clone needs `git submodule update --init Middlewares/ST/STM32_WPAN`.
 

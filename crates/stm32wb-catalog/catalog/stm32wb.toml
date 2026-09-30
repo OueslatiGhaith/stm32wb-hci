@@ -12986,6 +12986,11 @@ releases = "1.15.0..=1.24.0"
 [events.definitions.payload]
 unresolved = "the process function decodes its payload procedurally"
 
+[[events.domains]]
+releases = "1.15.0..=1.24.0"
+member = "Num_Reports"
+values = ["0x01"]
+
 [[events]]
 scope = "le-meta"
 code = "0x0003"

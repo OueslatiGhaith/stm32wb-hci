@@ -62,6 +62,8 @@ jobs:
       - run: cargo test -p stm32wb-catalog -p stm32wb-catalog-extract
       - name: Audit the catalog annotations
         run: cargo run -p stm32wb-catalog-extract -- audit
+      - name: Audit the STM32WBA catalog annotations
+        run: cargo run -p stm32wb-catalog-extract -- audit --platform stm32wba
 
   catalog-reproducible:
     runs-on: ubuntu-latest

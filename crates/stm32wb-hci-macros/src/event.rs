@@ -1,9 +1,9 @@
 //! `vendor_event!` and `system_event!`: an ST vendor or system event whose
 //! code, availability, and parameter layout come from the catalog.
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use stm32wb_catalog::{Bundled, Field, Platform, ReleaseRange, Structs, bundled};
+use stm32wb_catalog::{Bundled, EventScope, Field, ReleaseRange, Structs};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Lifetime, Token};
 
@@ -44,17 +44,34 @@ impl Parse for Input {
 }
 
 pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
-    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
-        syn::Error::new(
-            Span::call_site(),
-            format!("the bundled catalog is invalid: {error}"),
-        )
-    })?;
-    let variants = Event::resolve(bundled, &input, channel)?;
+    expand_in(&crate::catalogs()?, input, channel)
+}
+
+/// The declaration for each of `catalogs` having the event.
+pub(crate) fn expand_in(
+    catalogs: &[&'static Bundled],
+    input: Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let c_name = input.c_name.to_string();
+    crate::per_platform(
+        catalogs,
+        |catalog| catalog.event_named(&c_name).is_some(),
+        |bundled| expand_on(bundled, &input, channel),
+    )
+}
+
+/// The declaration for one platform's catalog.
+fn expand_on(
+    bundled: &'static Bundled,
+    input: &Input,
+    channel: Channel,
+) -> syn::Result<TokenStream> {
+    let variants = Event::resolve(bundled, input, channel)?;
     let several = variants.len() > 1;
     let mut tokens = TokenStream::new();
     for variant in &variants {
-        let expanded = expand_variant(&input, variant, channel).map_err(|error| {
+        let expanded = expand_variant(input, variant, channel).map_err(|error| {
             if several {
                 syn::Error::new(
                     error.span(),
@@ -77,6 +94,7 @@ pub fn expand(input: Input, channel: Channel) -> syn::Result<TokenStream> {
 /// The facts a declaration is generated from, identical on the wire in every
 /// release and profile it covers.
 struct Facts<'a> {
+    scope: EventScope,
     code: u16,
     payload: &'a [Field],
     structs: &'a Structs,
@@ -138,9 +156,10 @@ impl<'a> Event<'a> {
         for segment in &segments {
             let active = &segment.entry;
             let releases = segment.releases;
-            if active.event.scope != channel.event_scope() {
+            if !channel.carries_event(active.event.scope) {
                 return Err(error(format!(
-                    "{c_name} is not an ST {} event",
+                    "{c_name} is not {} {} event",
+                    channel.event_owner(),
                     channel.event_kind()
                 )));
             }
@@ -157,6 +176,7 @@ impl<'a> Event<'a> {
             })?;
             history.push(payload);
             let current = Facts {
+                scope: active.event.scope,
                 code: active.event.code,
                 payload,
                 structs: active.payload.structs,
@@ -167,7 +187,7 @@ impl<'a> Event<'a> {
                     .fields
                     .fields
                     .iter()
-                    .map(|field| field.exists_in(releases))
+                    .map(|field| field.exists_in(bundled.catalog.platform, releases))
                     .collect::<Vec<_>>(),
             );
             let bearers = bearer_positions(payload, &active.definition.bearers);
@@ -187,7 +207,7 @@ impl<'a> Event<'a> {
                 variants.iter_mut().find(|(other, ..)| *other == key)
             else {
                 let mut variant = Self {
-                    fields: fields_in(&input.fields, releases),
+                    fields: fields_in(&input.fields, bundled.catalog.platform, releases),
                     facts: current,
                     names: Vec::new(),
                     releases,
@@ -212,10 +232,11 @@ impl<'a> Event<'a> {
                 continue;
             };
             if !variant.facts.same_wire(&current) {
+                let (since, before) = crate::command::bound_keys(bundled.catalog.platform);
                 return Err(error(format!(
                     "{c_name} changes its layout in {releases}; if it adds or removes members \
-                     there, declare them with #[wire(since = \"{0}\")] or \
-                     #[wire(before = \"{0}\")]",
+                     there, declare them with #[wire({since} = \"{0}\")] or \
+                     #[wire({before} = \"{0}\")]",
                     releases.first
                 )));
             }
@@ -236,7 +257,7 @@ impl<'a> Event<'a> {
                 for payload in &history {
                     record_history_names(&mut variant.names, variant.facts.payload, payload);
                 }
-                variant.cfg = cfg::targets(&bundled.catalog, targets);
+                variant.cfg = Some(cfg::targets(&bundled.catalog, targets));
                 variant.bearers = bearer_groups(&bundled.catalog, groups);
                 variant.documented = documented_groups(&bundled.catalog, documented);
                 variant
@@ -313,7 +334,7 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
         }
         Slot::Elements {
             field,
-            element: ElementType::Struct { .. },
+            element: ElementType::Typed { .. },
             ..
         } => {
             let count = count_of(field);
@@ -347,14 +368,60 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
         ));
     let code = event.facts.code;
     let latest = event.latest;
-    let doc = format!(
-        "`{c_name}` in the catalog, {} event code {code:#06X}.",
-        channel.event_kind()
-    );
-    let event_trait = match channel {
-        Channel::Vendor => quote!(VendorEvent),
-        Channel::System => quote!(SystemEvent),
-        Channel::Standard => unreachable!("Core events are bt-hci's"),
+    let doc = match (channel, event.facts.scope) {
+        (Channel::Standard, EventScope::LeMeta) => {
+            format!("`{c_name}` in the catalog, LE meta subevent code {code:#04X}.")
+        }
+        _ => format!(
+            "`{c_name}` in the catalog, {} event code {code:#06X}.",
+            channel.event_kind()
+        ),
+    };
+    let event_impl = match (channel, event.facts.scope) {
+        (Channel::Standard, scope) => {
+            let code = u8::try_from(code).map_err(|_| {
+                syn::Error::new(
+                    c_name.span(),
+                    format!("{c_name} has code {code:#06X}, wider than bt-hci's"),
+                )
+            })?;
+            let le_meta = scope == EventScope::LeMeta;
+            let bt_hci_impl = if le_meta {
+                quote! {
+                    impl #impl_generics ::bt_hci::event::le::LeEventParams<#de> for #name #generics {
+                        const SUBEVENT_CODE: u8 = #code;
+                    }
+                }
+            } else {
+                quote! {
+                    impl #impl_generics ::bt_hci::event::EventParams<#de> for #name #generics {
+                        const EVENT_CODE: u8 = #code;
+                    }
+                }
+            };
+            quote! {
+                #bt_hci_impl
+
+                #cfg
+                impl #impl_generics ::stm32wb_hci::wire::StandardEvent<#de> for #name #generics {
+                    const CODE: u8 = #code;
+                    const LE_META: bool = #le_meta;
+                    const C_NAME: &'static str = #latest;
+                }
+            }
+        }
+        (channel, _) => {
+            let event_trait = match channel {
+                Channel::Vendor => quote!(VendorEvent),
+                _ => quote!(SystemEvent),
+            };
+            quote! {
+                impl #impl_generics ::stm32wb_hci::wire::#event_trait<#de> for #name #generics {
+                    const CODE: u16 = #code;
+                    const C_NAME: &'static str = #latest;
+                }
+            }
+        }
     };
     let attrs = &input.attrs;
     Ok(quote! {
@@ -381,10 +448,7 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
         }
 
         #cfg
-        impl #impl_generics ::stm32wb_hci::wire::#event_trait<#de> for #name #generics {
-            const CODE: u16 = #code;
-            const C_NAME: &'static str = #latest;
-        }
+        #event_impl
 
         #(#widths)*
     })
@@ -394,13 +458,18 @@ fn expand_variant(input: &Input, event: &Event<'_>, channel: Channel) -> syn::Re
 mod tests {
     use super::*;
 
+    /// The STM32WB catalog alone, which these tests exercise.
+    fn wb() -> [&'static Bundled; 1] {
+        [stm32wb_catalog::bundled(stm32wb_catalog::Platform::Stm32wb).unwrap()]
+    }
+
     fn expand_str(source: &str) -> Result<String, String> {
         expand_on(source, Channel::Vendor)
     }
 
     fn expand_on(source: &str, channel: Channel) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input, channel)
+        expand_in(&wb(), input, channel)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }

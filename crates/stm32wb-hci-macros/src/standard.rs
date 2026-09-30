@@ -4,9 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
-use stm32wb_catalog::{Bundled, CommandScope, Completion, EventScope, Platform, bundled};
+use stm32wb_catalog::{Bundled, CommandScope, Completion, EventScope, Platform};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -98,31 +98,42 @@ struct Facts {
 }
 
 pub fn expand(input: Input) -> syn::Result<TokenStream> {
-    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
-        syn::Error::new(
-            Span::call_site(),
-            format!("the bundled catalog is invalid: {error}"),
-        )
-    })?;
+    expand_in(&crate::catalogs()?, input)
+}
+
+/// The checks against each of `catalogs` having each command.
+pub(crate) fn expand_in(catalogs: &[&'static Bundled], input: Input) -> syn::Result<TokenStream> {
     let mut declared = BTreeSet::new();
     let mut tokens = TokenStream::new();
     for entry in &input.entries {
-        tokens.extend(expand_entry(bundled, entry, &mut declared)?);
+        let c_name = entry.c_name.to_string();
+        tokens.extend(crate::per_platform(
+            catalogs,
+            |catalog| catalog.command_named(&c_name).is_some(),
+            |bundled| expand_entry(bundled, entry, &mut declared),
+        )?);
     }
     Ok(tokens)
 }
 
 pub fn expand_events(input: Input) -> syn::Result<TokenStream> {
-    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
-        syn::Error::new(
-            Span::call_site(),
-            format!("the bundled catalog is invalid: {error}"),
-        )
-    })?;
+    expand_events_in(&crate::catalogs()?, input)
+}
+
+/// The checks against each of `catalogs` having each event.
+pub(crate) fn expand_events_in(
+    catalogs: &[&'static Bundled],
+    input: Input,
+) -> syn::Result<TokenStream> {
     let mut declared = BTreeSet::new();
     let mut tokens = TokenStream::new();
     for entry in &input.entries {
-        tokens.extend(expand_event(bundled, entry, &mut declared)?);
+        let c_name = entry.c_name.to_string();
+        tokens.extend(crate::per_platform(
+            catalogs,
+            |catalog| catalog.event_named(&c_name).is_some(),
+            |bundled| expand_event(bundled, entry, &mut declared),
+        )?);
     }
     Ok(tokens)
 }
@@ -132,7 +143,7 @@ pub fn expand_events(input: Input) -> syn::Result<TokenStream> {
 fn expand_event(
     bundled: &Bundled,
     entry: &Entry,
-    declared: &mut BTreeSet<String>,
+    declared: &mut BTreeSet<(Platform, String)>,
 ) -> syn::Result<TokenStream> {
     let c_name = entry.c_name.to_string();
     let error = |message: String| syn::Error::new(entry.c_name.span(), message);
@@ -144,7 +155,7 @@ fn expand_event(
         .last()
         .map(|segment| segment.entry.event.name())
         .ok_or_else(|| error(format!("{c_name} exists in no release")))?;
-    if !declared.insert(latest.to_owned()) {
+    if !declared.insert((bundled.catalog.platform, latest.to_owned())) {
         return Err(error(format!("{latest} is listed twice")));
     }
 
@@ -191,9 +202,7 @@ fn expand_event(
     let mut tokens = TokenStream::new();
     for (index, ((scope, code, width), targets)) in groups.into_iter().enumerate() {
         let predicate = cfg::targets(catalog, targets.iter().copied());
-        let cfg = predicate
-            .as_ref()
-            .map(|predicate| quote!(#[cfg(#predicate)]));
+        let cfg = cfg::attr(&predicate);
         let code = u8::try_from(code).map_err(|_| {
             error(format!(
                 "{latest} has code 0x{code:04X}, wider than bt-hci's"
@@ -222,10 +231,7 @@ fn expand_event(
                 ),
                 entry.c_name.span(),
             );
-            let test_cfg = match &predicate {
-                Some(predicate) => quote!(#[cfg(all(test, #predicate))]),
-                None => quote!(#[cfg(test)]),
-            };
+            let test_cfg = quote!(#[cfg(all(test, #predicate))]);
             tokens.extend(quote! {
                 #test_cfg
                 #[test]
@@ -246,7 +252,7 @@ fn expand_event(
 fn expand_entry(
     bundled: &Bundled,
     entry: &Entry,
-    declared: &mut BTreeSet<String>,
+    declared: &mut BTreeSet<(Platform, String)>,
 ) -> syn::Result<TokenStream> {
     let c_name = entry.c_name.to_string();
     let error = |message: String| syn::Error::new(entry.c_name.span(), message);
@@ -258,7 +264,7 @@ fn expand_entry(
         .last()
         .map(|segment| segment.entry.command.name())
         .ok_or_else(|| error(format!("{c_name} exists in no release")))?;
-    if !declared.insert(latest.to_owned()) {
+    if !declared.insert((bundled.catalog.platform, latest.to_owned())) {
         return Err(error(format!("{latest} is listed twice")));
     }
 
@@ -276,12 +282,12 @@ fn expand_entry(
                 exclusion.reason
             )));
         }
-        let fixed = |layout: &stm32wb_catalog::ResolvedLayout<'_>, what: &str| {
-            let fields = layout.fields.map_err(|reason| {
-                error(format!(
-                    "{c_name} has no derivable {what} layout in {releases}: {reason}"
-                ))
-            })?;
+        // bt-hci's type is the authority on the layout: an unresolved one,
+        // like a variable one, leaves only the opcode and completion checked.
+        let fixed = |layout: &stm32wb_catalog::ResolvedLayout<'_>| {
+            let Ok(fields) = layout.fields else {
+                return Ok(None);
+            };
             let envelope = stm32wb_catalog::Layout::Fields(fields.to_vec())
                 .envelope(layout.structs)
                 .map_err(|failure| error(failure.to_string()))?
@@ -291,10 +297,10 @@ fn expand_entry(
         let facts = Facts {
             opcode: active.command.opcode,
             completion: active.definition.completion,
-            params: fixed(&active.params, "parameter")?,
+            params: fixed(&active.params)?,
             // The status is bt-hci's to consume.
             returns: match &active.returns {
-                Some(returns) => fixed(returns, "return")?.map(|width| width - 1),
+                Some(returns) => fixed(returns)?.map(|width| width - 1),
                 None => None,
             },
         };
@@ -312,15 +318,13 @@ fn expand_entry(
     let lifetimes = lifetimes(ty);
     let shown = quote!(#ty).to_string().replace(' ', "");
     let generics = (!lifetimes.is_empty()).then(|| quote!(<#(#lifetimes),*>));
-    let supported_cfg =
-        cfg::targets(catalog, all.iter().copied()).map(|predicate| quote!(#[cfg(#predicate)]));
+    let supported_cfg = cfg::attr(&cfg::targets(catalog, all.iter().copied()));
     let mut tokens = quote! {
         #supported_cfg
         impl #generics ::stm32wb_hci::catalog::Supported for #ty {}
     };
     for (facts, targets) in groups {
-        let cfg = cfg::targets(catalog, targets.iter().copied())
-            .map(|predicate| quote!(#[cfg(#predicate)]));
+        let cfg = cfg::attr(&cfg::targets(catalog, targets.iter().copied()));
         let mut releases = targets
             .iter()
             .map(|(releases, _)| releases.to_string())
@@ -387,9 +391,14 @@ fn expand_entry(
 mod tests {
     use super::*;
 
+    /// The STM32WB catalog alone, which these tests exercise.
+    fn wb() -> [&'static Bundled; 1] {
+        [stm32wb_catalog::bundled(stm32wb_catalog::Platform::Stm32wb).unwrap()]
+    }
+
     fn expand_str(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input)
+        expand_in(&wb(), input)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -458,7 +467,7 @@ mod tests {
 
     fn expand_events_str(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand_events(input)
+        expand_events_in(&wb(), input)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }

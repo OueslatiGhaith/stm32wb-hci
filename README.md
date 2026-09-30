@@ -4,7 +4,7 @@ forked from [bluetooth_hci](https://github.com/danielgallagher0/bluetooth-hci)
 
 [![Build Status](https://github.com/OueslatiGhaith/stm32wb-hci/actions/workflows/ci.yml/badge.svg)](https://github.com/OueslatiGhaith/stm32wb-hci/actions/workflows/ci.yml/badge.svg)
 
-This crate defines a pure Rust implementation of the [Bluetooth Host-Controller Interface](https://github.com/STMicroelectronics/STM32CubeWB/) for the STM32WB family of microcontrollers. It declares
+This crate defines a pure Rust implementation of the [Bluetooth Host-Controller Interface](https://github.com/STMicroelectronics/STM32CubeWB/) for the STM32WB family of microcontrollers, and for the BLE stack library of STM32WBA. It declares
 ST's vendor (ACI) and system (SHCI) commands and events.
 
 ## Selecting the wireless binary
@@ -35,11 +35,15 @@ The BLE stack library of STM32WBA is selected the same way, from ST's
 stm32wb-hci = { version = "0.19", default-features = false, features = ["wba_1_10_0", "stack-wba-full"] }
 ```
 
-- `wba_1_10_0`: the STM32CubeWBA release of the library.
+- `wba_1_0_0` to `wba_1_10_0`: the STM32CubeWBA release of the library.
 - `stack-wba-full`, `stack-wba-basic-plus`, `stack-wba-basic-features`,
-  `stack-wba-peripheral-only`, `stack-wba-link-layer-only`: its configuration.
+  `stack-wba-peripheral-only`, `stack-wba-link-layer-only`,
+  `stack-wba-link-layer-only-basic`: its configuration. Basic Plus and Peripheral Only exist from
+  1.4.0, and Link Layer Only Basic before 1.8.0; selecting a configuration the release lacks fails
+  to compile.
 
-No command or event is declared for STM32WBA yet: only `stm32wb_hci::wire` is compiled for it.
+The same vendor and Bluetooth Core commands and events are declared for STM32WBA, checked against
+its catalog. It has no system channel, so `stm32wb_hci::shci` is STM32WB only.
 
 ## Usage
 

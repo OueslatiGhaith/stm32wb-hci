@@ -139,7 +139,9 @@ wire_flags! {
         const NOTIFY = 0x10;
         /// `CHAR_PROP_INDICATE`.
         const INDICATE = 0x20;
-        /// `CHAR_PROP_SIGNED_WRITE`: authenticated signed writes.
+        /// `CHAR_PROP_SIGNED_WRITE`: authenticated signed writes, which
+        /// STM32WBA dropped in 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         const SIGNED_WRITE = 0x40;
         /// `CHAR_PROP_EXT`: extended properties.
         const EXTENDED_PROPERTIES = 0x80;
@@ -180,7 +182,8 @@ wire_flags! {
         const WRITE = 0x02;
         /// `WRITE_WO_RESP`.
         const WRITE_WITHOUT_RESPONSE = 0x04;
-        /// `SIGNED_WRITE`.
+        /// `SIGNED_WRITE`, which STM32WBA dropped in 1.10.0.
+        #[cfg(not(feature = "wba_1_10_0"))]
         const SIGNED_WRITE = 0x08;
     }
 }
@@ -194,8 +197,9 @@ wire_flags! {
         const WRITE_REQUEST_AND_WAIT_FOR_RESPONSE = 0x02;
         /// `GATT_NOTIFY_READ_REQ_AND_WAIT_FOR_APPL_RESP`.
         const READ_REQUEST_AND_WAIT_FOR_RESPONSE = 0x04;
-        /// `GATT_NOTIFY_NOTIFICATION_COMPLETION`, from 1.17.0.
-        #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0")))]
+        /// `GATT_NOTIFY_NOTIFICATION_COMPLETION`, from 1.17.0, and
+        /// STM32CubeWBA 1.1.0.
+        #[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "wba_1_0_0")))]
         const NOTIFICATION_COMPLETION = 0x08;
     }
 }
@@ -247,8 +251,12 @@ wire_flags! {
 wire_flags! {
     /// The HAL events the host receives.
     pub struct HalEventMask: u32 {
-        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`.
+        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`. STM32WB only.
+        #[cfg(feature = "_stm32wb")]
         const SCAN_REQUEST_REPORT = 0x0000_0001;
+        /// `ACI_HAL_SYNC_EVENT`. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const SYNC = 0x0000_0002;
     }
 }
 
@@ -263,7 +271,8 @@ wire_flags! {
         const DEVICE_NAME_READ_ONLY = 0x0000_0004;
         /// Support extended advertising.
         const EXTENDED_ADVERTISING = 0x0000_0008;
-        /// Support channel selection algorithm #2.
+        /// Support channel selection algorithm #2. STM32WB only.
+        #[cfg(feature = "_stm32wb")]
         const CHANNEL_SELECTION_ALGORITHM_2 = 0x0000_0010;
         /// Reduced GATT database in NVM.
         const REDUCED_GATT_DATABASE = 0x0000_0020;

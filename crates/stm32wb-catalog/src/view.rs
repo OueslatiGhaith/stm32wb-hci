@@ -154,8 +154,8 @@ impl Bundled {
     pub fn distinct_targets(&self) -> Vec<Target> {
         let mut seen = std::collections::BTreeSet::new();
         let mut representatives = Vec::new();
-        for release in self.catalog.versions() {
-            for &profile in self.catalog.platform.profiles() {
+        for (release, profile) in self.catalog.targets() {
+            {
                 let target = Target { release, profile };
                 let view = self.view(target).expect("release comes from the catalog");
                 let annotation = |provenance: Provenance<'_>| match provenance {

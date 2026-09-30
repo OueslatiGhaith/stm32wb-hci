@@ -35,10 +35,13 @@ pub enum Profile {
     WbaPeripheralOnly,
     /// STM32WBA's Link Layer Only configuration, column LO.
     WbaLinkLayerOnly,
+    /// STM32WBA's Link Layer Only Basic configuration, column LB, which
+    /// releases before 1.8.0 have.
+    WbaLinkLayerOnlyBasic,
 }
 
 impl Profile {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::FullExtended,
         Self::Full,
         Self::Light,
@@ -50,6 +53,7 @@ impl Profile {
         Self::WbaBasicFeatures,
         Self::WbaPeripheralOnly,
         Self::WbaLinkLayerOnly,
+        Self::WbaLinkLayerOnlyBasic,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -65,6 +69,7 @@ impl Profile {
             Self::WbaBasicFeatures => "wba-basic-features",
             Self::WbaPeripheralOnly => "wba-peripheral-only",
             Self::WbaLinkLayerOnly => "wba-link-layer-only",
+            Self::WbaLinkLayerOnlyBasic => "wba-link-layer-only-basic",
         }
     }
 
@@ -80,7 +85,8 @@ impl Profile {
             | Self::WbaBasicPlus
             | Self::WbaBasicFeatures
             | Self::WbaPeripheralOnly
-            | Self::WbaLinkLayerOnly => Platform::Stm32wba,
+            | Self::WbaLinkLayerOnly
+            | Self::WbaLinkLayerOnlyBasic => Platform::Stm32wba,
         }
     }
 
@@ -103,7 +109,7 @@ impl Profile {
             Self::Full | Self::WbaBasicFeatures => Some("BF"),
             Self::Light | Self::WbaPeripheralOnly => Some("PO"),
             Self::HciLayerExtended | Self::WbaLinkLayerOnly => Some("LO"),
-            Self::HciLayer => Some("LB"),
+            Self::HciLayer | Self::WbaLinkLayerOnlyBasic => Some("LB"),
             Self::HciAdvScan => Some("BO"),
             Self::WbaBasicPlus => Some("BP"),
         }
@@ -165,7 +171,8 @@ impl Platform {
         Version::from_feature_name(feature, self.release_feature_prefix())
     }
 
-    /// The stack profiles of the platform, the complete one first.
+    /// The stack profiles of the platform, the complete one first. A
+    /// release of the platform may have only some of them.
     pub fn profiles(self) -> &'static [Profile] {
         match self {
             Self::Stm32wb => &Profile::ALL[..6],

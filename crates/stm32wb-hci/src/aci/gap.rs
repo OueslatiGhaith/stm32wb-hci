@@ -273,9 +273,9 @@ vendor_command! {
         supervision_timeout: SupervisionTimeout,
         minimum_ce_length: CeLength,
         maximum_ce_length: CeLength,
-        #[wire(before = "1.17.0")]
+        #[wire(before = "1.17.0", wba_before = "1.1.0")]
         whitelist_entry: &'a [WhitelistEntry],
-        #[wire(since = "1.17.0")]
+        #[wire(since = "1.17.0", wba_since = "1.1.0")]
         peer_entry: &'a [PeerEntry],
     }
 }
@@ -301,9 +301,9 @@ vendor_command! {
         own_address_type: OwnAddressType,
         scanning_filter_policy: ScanningFilterPolicy,
         filter_duplicates: bool,
-        #[wire(before = "1.17.0")]
+        #[wire(before = "1.17.0", wba_before = "1.1.0")]
         whitelist_entry: &'a [WhitelistEntry],
-        #[wire(since = "1.17.0")]
+        #[wire(since = "1.17.0", wba_since = "1.1.0")]
         peer_entry: &'a [PeerEntry],
     }
 }
@@ -371,9 +371,9 @@ vendor_command! {
         advertising_type: NonConnectableAdvertisingType,
         own_address_type: OwnAddressType,
         adv_data: &'a [u8],
-        #[wire(before = "1.17.0")]
+        #[wire(before = "1.17.0", wba_before = "1.1.0")]
         whitelist_entry: &'a [WhitelistEntry],
-        #[wire(since = "1.17.0")]
+        #[wire(since = "1.17.0", wba_since = "1.1.0")]
         peer_entry: &'a [PeerEntry],
     }
 }
@@ -413,9 +413,9 @@ vendor_command! {
         peer_address_type: AddressType,
         peer_address: BdAddr,
     } -> GapBondedIdentity {
-        #[wire(since = "1.22.0")]
+        #[wire(since = "1.22.0", wba_since = "1.6.0")]
         id_address_type: u8,
-        #[wire(since = "1.22.0")]
+        #[wire(since = "1.22.0", wba_since = "1.6.0")]
         id_address: BdAddr,
     }
 }
@@ -481,9 +481,9 @@ vendor_command! {
     /// Add bonded devices to the controller's resolving list, clearing it
     /// first if `clear_resolving_list` is set.
     aci_gap_add_devices_to_resolving_list => GapAddDevicesToResolvingList {
-        #[wire(before = "1.17.0")]
+        #[wire(before = "1.17.0", wba_before = "1.1.0")]
         whitelist_identity_entry: &'a [WhitelistIdentityEntry],
-        #[wire(since = "1.17.0")]
+        #[wire(since = "1.17.0", wba_since = "1.1.0")]
         identity_entry: &'a [IdentityEntry],
         clear_resolving_list: bool,
     }
@@ -509,7 +509,7 @@ vendor_command! {
     /// Add devices to the controller's filter accept list, resolving list, or
     /// both, as `mode` selects. Before 1.17.0 the list is raw bytes.
     aci_gap_add_devices_to_list => GapAddDevicesToList {
-        #[wire(before = "1.17.0")]
+        #[wire(platform = "stm32wb", before = "1.17.0")]
         list_entry: &'a [u8],
         #[wire(since = "1.17.0")]
         list_entry: &'a [ListEntry],
@@ -703,6 +703,8 @@ vendor_event! {
     /// Pairing needs a passkey; answer with [`GapPassKeyResp`].
     aci_gap_pass_key_req_event => GapPassKeyReqEvent {
         connection_handle: ConnHandle,
+        #[wire(platform = "stm32wba", wba_since = "1.9.0")]
+        io_capability: u8,
     }
 }
 
@@ -723,7 +725,7 @@ vendor_event! {
     /// A bonded peer asked to pair again, having lost its keys; allow it with
     /// [`GapAllowRebond`]. From 1.22.0 the event names the connection.
     aci_gap_bond_lost_event => GapBondLostEvent {
-        #[wire(since = "1.22.0")]
+        #[wire(since = "1.22.0", wba_since = "1.6.0")]
         connection_handle: ConnHandle,
     }
 }
@@ -1214,5 +1216,65 @@ mod tests {
             Ok(GapBondLostEvent {})
         );
         assert!(GapBondLostEvent::from_hci_bytes_complete(&[0x01, 0x08]).is_err());
+    }
+}
+
+vendor_command! {
+    /// Configure an extended advertising set, with the PHY options and the
+    /// scan request notifications of
+    /// `hci_le_set_extended_advertising_parameters_v2`.
+    aci_gap_adv_set_configuration_v2 => GapAdvSetConfigurationV2 {
+        adv_mode: u8,
+        advertising_handle: u8,
+        adv_event_properties: u16,
+        primary_adv_interval_min: u32,
+        primary_adv_interval_max: u32,
+        primary_adv_channel_map: u8,
+        own_address_type: u8,
+        peer_address_type: u8,
+        peer_address: BdAddr,
+        adv_filter_policy: u8,
+        adv_tx_power: u8,
+        primary_adv_phy: u8,
+        secondary_adv_max_skip: u8,
+        secondary_adv_phy: u8,
+        adv_sid: u8,
+        scan_req_notification_enable: u8,
+        primary_adv_phy_options: u8,
+        secondary_adv_phy_options: u8,
+    }
+}
+
+vendor_command! {
+    /// Set one fragment of the periodic advertising data of an advertising
+    /// set, as `operation` selects.
+    aci_gap_adv_set_periodic_data => GapAdvSetPeriodicData {
+        advertising_handle: u8,
+        operation: u8,
+        advertising_data: &'a [u8],
+    }
+}
+
+vendor_command! {
+    /// Enable or disable the periodic advertising of an advertising set.
+    aci_gap_adv_set_periodic_enable => GapAdvSetPeriodicEnable {
+        enable: u8,
+        advertising_handle: u8,
+    }
+}
+
+vendor_command! {
+    /// Set the periodic advertising parameters of an advertising set, with
+    /// its subevents and response slots.
+    aci_gap_adv_set_periodic_parameters => GapAdvSetPeriodicParameters {
+        advertising_handle: u8,
+        periodic_adv_interval_min: u16,
+        periodic_adv_interval_max: u16,
+        periodic_adv_properties: u16,
+        num_subevents: u8,
+        subevent_interval: u8,
+        response_slot_delay: u8,
+        response_slot_spacing: u8,
+        num_response_slots: u8,
     }
 }

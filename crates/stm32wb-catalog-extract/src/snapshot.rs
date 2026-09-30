@@ -36,9 +36,12 @@ pub struct Report {
     pub unstated_completions: Vec<String>,
     /// `(entry, layout, reason)` for every layout left unresolved.
     pub unresolved: Vec<(String, &'static str, String)>,
-    /// Documented values in total, and `(entry, member)` for every list
-    /// dropped because its layout is unresolved.
+    /// Documented values in total, `(entry, member)` for every list kept
+    /// for an unresolved layout, which the annotation supplying it must
+    /// hold, and for every list dropped because its entry has no such
+    /// layout at all.
     pub domains: usize,
+    pub deferred_domains: Vec<(String, String)>,
     pub dropped_domains: Vec<(String, String)>,
     /// `(entry, member)` for every `Flags:` list dropped because an item is
     /// not a single bit, such as one listing packed subfields.
@@ -46,9 +49,17 @@ pub struct Report {
     /// `(structure, field)` for every structure field list dropped because
     /// no resolved layout carries the structure.
     pub dropped_field_domains: Vec<(String, String)>,
-    /// `(entry, member)` for every bearer dropped because its layout is
-    /// unresolved.
-    pub dropped_bearers: Vec<(String, String)>,
+    /// `(entry, member)` for every bearer kept for an unresolved layout,
+    /// which the annotation supplying it must hold.
+    pub deferred_bearers: Vec<(String, String)>,
+    /// `(entry, list header)` for every list a doc comment has outside any
+    /// `@param` block, which documents no member.
+    pub orphaned_lists: Vec<(String, String)>,
+    /// Entries the interface document lists that no header declares, and
+    /// those the headers declare that it does not list, left out: the
+    /// document alone gives an entry its code, and the headers its layout.
+    pub undeclared: Vec<String>,
+    pub undocumented: Vec<String>,
 }
 
 impl Report {
@@ -64,10 +75,14 @@ impl Report {
             unstated_completions: Vec::new(),
             unresolved: Vec::new(),
             domains: 0,
+            deferred_domains: Vec::new(),
             dropped_domains: Vec::new(),
             dropped_flags: Vec::new(),
             dropped_field_domains: Vec::new(),
-            dropped_bearers: Vec::new(),
+            deferred_bearers: Vec::new(),
+            orphaned_lists: Vec::new(),
+            undeclared: Vec::new(),
+            undocumented: Vec::new(),
         }
     }
 }
@@ -387,6 +402,7 @@ pub fn extract(
             version,
             tag: tag.tag.clone(),
             commit: tag.commit.clone(),
+            profiles: Vec::new(),
         },
         binaries: docs::binaries(&tag)?,
         commands,
@@ -420,7 +436,14 @@ pub fn resolved_domains<'a>(
                 report.domains += 1;
                 true
             }
-            _ => {
+            Some(Layout::Unresolved(_)) => {
+                report.domains += 1;
+                report
+                    .deferred_domains
+                    .push((name.to_owned(), member.clone()));
+                true
+            }
+            None => {
                 report
                     .dropped_domains
                     .push((name.to_owned(), member.clone()));

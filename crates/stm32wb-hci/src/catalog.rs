@@ -3,7 +3,7 @@
 //!
 //! Every vendor command and event the selected target's wireless binary
 //! implements must be declared in [`crate::aci`], every system command and
-//! event in [`crate::shci`], and every Bluetooth Core command and event in
+//! event in `shci` on STM32WB, and every Bluetooth Core command and event in
 //! [`crate::standard`]; a missing one fails to compile here, naming it.
 
 /// A bt-hci command the selected target's wireless binary implements, with

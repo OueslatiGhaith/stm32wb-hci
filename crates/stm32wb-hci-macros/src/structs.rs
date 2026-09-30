@@ -1,12 +1,10 @@
 //! `vendor_struct!`: a Rust type standing for one C structure of the catalog,
 //! checked against every definition of that structure.
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::quote;
 use stm32wb_catalog::layout::struct_width;
-use stm32wb_catalog::{
-    Element, Field, FieldType, Platform, Profile, ReleaseRange, Structs, bundled,
-};
+use stm32wb_catalog::{Bundled, Element, Field, FieldType, Profile, ReleaseRange, Structs};
 use syn::parse::{Parse, ParseStream};
 use syn::{Attribute, Ident, Token};
 
@@ -44,24 +42,40 @@ impl Parse for Input {
 }
 
 pub fn expand(input: Input) -> syn::Result<TokenStream> {
-    let bundled = bundled(Platform::Stm32wb).map_err(|error| {
-        syn::Error::new(
-            Span::call_site(),
-            format!("the bundled catalog is invalid: {error}"),
-        )
-    })?;
+    expand_in(&crate::catalogs()?, input)
+}
+
+/// The declaration for each of `catalogs` using the structure.
+pub(crate) fn expand_in(catalogs: &[&'static Bundled], input: Input) -> syn::Result<TokenStream> {
+    let c_name = input.c_name.to_string();
+    crate::per_platform(
+        catalogs,
+        |catalog| {
+            catalog.commands.iter().any(|command| {
+                command
+                    .definitions
+                    .iter()
+                    .any(|definition| definition.structs.contains_key(&c_name))
+            }) || catalog.events.iter().any(|event| {
+                event
+                    .definitions
+                    .iter()
+                    .any(|definition| definition.structs.contains_key(&c_name))
+            })
+        },
+        |bundled| expand_on(bundled, &input),
+    )
+}
+
+/// The declaration for one platform's catalog.
+fn expand_on(bundled: &'static Bundled, input: &Input) -> syn::Result<TokenStream> {
     let c_name = &input.c_name;
     let c_name_string = c_name.to_string();
     let name = &input.fields.name;
-    if let Some(field) = input
-        .fields
-        .fields
-        .iter()
-        .find(|field| field.since.is_some() || field.before.is_some())
-    {
+    if let Some(field) = input.fields.fields.iter().find(|field| field.is_specific()) {
         return Err(syn::Error::new(
             field.name.span(),
-            "structures cannot be release-specific; declare one per layout",
+            "structures cannot be release- or platform-specific; declare one per layout",
         ));
     }
 
@@ -192,7 +206,7 @@ pub fn expand(input: Input) -> syn::Result<TokenStream> {
         }
     }
     let documented = documented_groups(catalog, groups);
-    let cfg = cfg::targets(catalog, targets).map(|predicate| quote!(#[cfg(#predicate)]));
+    let cfg = Some(cfg::attr(&cfg::targets(catalog, targets)));
 
     let fields = &input.fields.fields;
     let (field_names, types): (Vec<_>, Vec<_>) =
@@ -305,9 +319,14 @@ fn refers(fields: &[Field], structs: &Structs, name: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The STM32WB catalog alone, which these tests exercise.
+    fn wb() -> [&'static Bundled; 1] {
+        [stm32wb_catalog::bundled(stm32wb_catalog::Platform::Stm32wb).unwrap()]
+    }
+
     fn expand_str(source: &str) -> Result<String, String> {
         let input = syn::parse_str::<Input>(source).map_err(|error| error.to_string())?;
-        expand(input)
+        expand_in(&wb(), input)
             .map(|tokens| tokens.to_string())
             .map_err(|error| error.to_string())
     }
@@ -386,6 +405,9 @@ mod tests {
              }",
         )
         .unwrap_err();
-        assert!(error.contains("cannot be release-specific"), "{error}");
+        assert!(
+            error.contains("cannot be release- or platform-specific"),
+            "{error}"
+        );
     }
 }

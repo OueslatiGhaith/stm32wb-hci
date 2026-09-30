@@ -80,7 +80,7 @@ vendor_command! {
         mps: CocMps,
         initial_credits: u16,
         result: CocConnectResult,
-        #[wire(since = "1.23.0")]
+        #[wire(since = "1.23.0", wba_since = "1.7.0")]
         max_channel_number: CocMaxChannelCount,
     } -> L2capCocChannels {
         channel_index_list: BoundedBytes<250>,
