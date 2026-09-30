@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use itertools::Itertools;
+
 use crate::{
     Availability, Bearer, Binary, Catalog, Command, CommandDefinition, CommandScope, Completion,
     Domain, Error, Event, EventDefinition, EventScope, Family, Layout, MemberDomain, Named,
@@ -317,14 +319,17 @@ fn runs<T: Clone + PartialEq>(
     entries: &[(usize, T)],
     versions: &[Version],
 ) -> Vec<(ReleaseRange, T)> {
-    let mut runs: Vec<(usize, usize, T)> = Vec::new();
-    for (index, value) in entries {
-        match runs.last_mut() {
-            Some((_, last, current)) if *last + 1 == *index && current == value => *last = *index,
-            _ => runs.push((*index, *index, value.clone())),
-        }
-    }
-    runs.into_iter()
+    entries
+        .iter()
+        .map(|(index, value)| (*index, *index, value.clone()))
+        // Merge each entry into the run before it if it extends that run.
+        .coalesce(|(first, last, value), (index, _, next)| {
+            if last + 1 == index && value == next {
+                Ok((first, index, value))
+            } else {
+                Err(((first, last, value), (index, index, next)))
+            }
+        })
         .map(|(first, last, value)| {
             (
                 ReleaseRange {

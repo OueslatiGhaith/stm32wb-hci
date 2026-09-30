@@ -1,5 +1,7 @@
 //! The catalog as seen by one wireless-binary target.
 
+use itertools::Itertools;
+
 use crate::annotations::{Annotation, Annotations, LayoutSlot};
 use crate::{
     Bundled, Catalog, Command, CommandDefinition, Error, Event, EventDefinition, Family, Field,
@@ -92,8 +94,7 @@ impl<'a> TargetView<'a> {
 
     /// Families shipping a binary for this target's profile and release.
     pub fn families(&self) -> Vec<Family> {
-        let mut families = self
-            .catalog
+        self.catalog
             .binaries
             .iter()
             .filter(|binary| {
@@ -101,10 +102,9 @@ impl<'a> TargetView<'a> {
                     && binary.releases.contains(self.target.release)
             })
             .map(|binary| binary.family)
-            .collect::<Vec<_>>();
-        families.sort();
-        families.dedup();
-        families
+            .sorted()
+            .dedup()
+            .collect()
     }
 
     /// Commands the target's binary accepts.

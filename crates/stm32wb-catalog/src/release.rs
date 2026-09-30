@@ -3,12 +3,14 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::Error;
 
 /// One STM32CubeWB or STM32CubeWBA release, such as `1.17.1`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, DeserializeFromStr, SerializeDisplay,
+)]
 pub struct Version {
     pub major: u16,
     pub minor: u16,
@@ -73,23 +75,11 @@ impl FromStr for Version {
     }
 }
 
-impl Serialize for Version {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for Version {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// An inclusive range of releases, interpreted against the catalog's ordered
 /// release list. Ranges never imply releases the catalog does not declare.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, DeserializeFromStr, SerializeDisplay,
+)]
 pub struct ReleaseRange {
     pub first: Version,
     pub last: Version,
@@ -137,20 +127,6 @@ impl FromStr for ReleaseRange {
             return Err(Error::parse(format!("empty release range {value:?}")));
         }
         Ok(range)
-    }
-}
-
-impl Serialize for ReleaseRange {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for ReleaseRange {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
     }
 }
 

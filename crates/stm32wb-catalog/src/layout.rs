@@ -22,7 +22,16 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use itertools::Itertools;
+use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use winnow::ascii::multispace0;
+use winnow::combinator::{
+    alt, cut_err, delimited, eof, opt, preceded, separated, separated_pair, terminated,
+};
+use winnow::error::{ContextError, StrContext, StrContextValue};
+use winnow::prelude::*;
+use winnow::token::take_while;
 
 use crate::Error;
 
@@ -106,6 +115,15 @@ pub struct UnionVariant {
     pub width: u16,
 }
 
+impl fmt::Display for UnionVariant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.tag {
+            Some(tag) => write!(f, "{tag} => {}", self.width),
+            None => write!(f, "_ => {}", self.width),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FieldType {
     Scalar(Scalar),
@@ -133,7 +151,9 @@ pub enum FieldType {
     Optional(Scalar),
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, DeserializeFromStr, SerializeDisplay,
+)]
 pub struct Field {
     pub name: String,
     pub ty: FieldType,
@@ -161,17 +181,11 @@ impl fmt::Display for Field {
                 capacity,
             } => write!(f, "[{element}; {count}] (capacity {capacity})"),
             FieldType::Union { selector, variants } => {
-                write!(f, "union({selector}) {{ ")?;
-                for (index, variant) in variants.iter().enumerate() {
-                    if index > 0 {
-                        f.write_str(", ")?;
-                    }
-                    match variant.tag {
-                        Some(tag) => write!(f, "{tag} => {}", variant.width)?,
-                        None => write!(f, "_ => {}", variant.width)?,
-                    }
-                }
-                f.write_str(" }")
+                write!(
+                    f,
+                    "union({selector}) {{ {} }}",
+                    variants.iter().format(", ")
+                )
             }
             FieldType::Optional(scalar) => write!(f, "{} (optional)", scalar.name()),
         }
@@ -182,24 +196,15 @@ impl FromStr for Field {
     type Err = Error;
 
     fn from_str(source: &str) -> Result<Self, Error> {
-        let mut parser = Parser::new(source);
-        let field = parser.field()?;
-        parser.end()?;
-        Ok(field)
-    }
-}
-
-impl Serialize for Field {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for Field {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
+        terminated(field, (multispace0, eof.context(expected("end of field"))))
+            .parse(source)
+            .map_err(|error| {
+                Error::parse(format!(
+                    "invalid field {source:?}: {} at {:?}",
+                    error.inner(),
+                    &source[error.offset()..]
+                ))
+            })
     }
 }
 
@@ -208,7 +213,8 @@ pub type Structs = BTreeMap<String, Vec<Field>>;
 
 /// A layout extracted from the generated source, or the reason it could not
 /// be derived without guessing.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(into = "LayoutRepr", from = "LayoutRepr")]
 pub enum Layout {
     Fields(Vec<Field>),
     Unresolved(String),
@@ -238,24 +244,21 @@ enum LayoutRepr {
     Unresolved { unresolved: String },
 }
 
-impl Serialize for Layout {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Fields(fields) => LayoutRepr::Fields(fields.clone()),
-            Self::Unresolved(reason) => LayoutRepr::Unresolved {
-                unresolved: reason.clone(),
-            },
+impl From<Layout> for LayoutRepr {
+    fn from(layout: Layout) -> Self {
+        match layout {
+            Layout::Fields(fields) => Self::Fields(fields),
+            Layout::Unresolved(unresolved) => Self::Unresolved { unresolved },
         }
-        .serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for Layout {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(match LayoutRepr::deserialize(deserializer)? {
+impl From<LayoutRepr> for Layout {
+    fn from(repr: LayoutRepr) -> Self {
+        match repr {
             LayoutRepr::Fields(fields) => Self::Fields(fields),
             LayoutRepr::Unresolved { unresolved } => Self::Unresolved(unresolved),
-        })
+        }
     }
 }
 
@@ -371,147 +374,117 @@ fn require_scalar_reference(
     }
 }
 
-struct Parser<'a> {
-    source: &'a str,
-    rest: &'a str,
+/// One field of the notation, `name: type`.
+fn field(input: &mut &str) -> ModalResult<Field> {
+    separated_pair(
+        identifier,
+        punct(":"),
+        alt((array, union, scalar_or_struct)),
+    )
+    .map(|(name, ty)| Field::new(name, ty))
+    .parse_next(input)
 }
 
-impl<'a> Parser<'a> {
-    fn new(source: &'a str) -> Self {
-        Self {
-            source,
-            rest: source,
-        }
+/// `[element; len]`, or `[element; count] (capacity n)`.
+fn array(input: &mut &str) -> ModalResult<FieldType> {
+    punct("[").parse_next(input)?;
+    let (element, count) = cut_err(terminated(
+        separated_pair(element, punct(";"), word),
+        punct("]"),
+    ))
+    .parse_next(input)?;
+    if let Ok(len) = count.parse() {
+        return Ok(FieldType::Array { element, len });
     }
+    let capacity = cut_err(delimited(
+        (punct("("), punct("capacity")),
+        integer,
+        punct(")"),
+    ))
+    .parse_next(input)?;
+    Ok(FieldType::Counted {
+        element,
+        count: count.to_owned(),
+        capacity,
+    })
+}
 
-    fn error(&self, expected: &str) -> Error {
-        Error::parse(format!(
-            "invalid field {:?}: expected {expected} at {:?}",
-            self.source, self.rest
-        ))
-    }
+/// `union(selector) { tag => width, ..., _ => width }`.
+fn union(input: &mut &str) -> ModalResult<FieldType> {
+    (punct("union"), punct("(")).parse_next(input)?;
+    let (selector, variants) = cut_err(separated_pair(
+        identifier,
+        punct(")"),
+        delimited(punct("{"), separated(1.., variant, punct(",")), punct("}")),
+    ))
+    .parse_next(input)?;
+    Ok(FieldType::Union {
+        selector: selector.to_owned(),
+        variants,
+    })
+}
 
-    fn skip_space(&mut self) {
-        self.rest = self.rest.trim_start();
-    }
+/// `tag => width`, or `_ => width` for every other selector value.
+fn variant(input: &mut &str) -> ModalResult<UnionVariant> {
+    separated_pair(
+        alt((punct("_").value(None), integer.map(Some))),
+        punct("=>"),
+        integer,
+    )
+    .map(|(tag, width)| UnionVariant { tag, width })
+    .parse_next(input)
+}
 
-    fn eat(&mut self, token: &str) -> bool {
-        self.skip_space();
-        match self.rest.strip_prefix(token) {
-            Some(rest) => {
-                self.rest = rest;
-                true
+/// `scalar`, `scalar (optional)`, or `Struct_t`.
+fn scalar_or_struct(input: &mut &str) -> ModalResult<FieldType> {
+    Ok(match element.parse_next(input)? {
+        Element::Scalar(scalar) => {
+            match opt((punct("("), punct("optional"), punct(")"))).parse_next(input)? {
+                Some(_) => FieldType::Optional(scalar),
+                None => FieldType::Scalar(scalar),
             }
-            None => false,
         }
-    }
+        Element::Struct(name) => FieldType::Struct(name),
+    })
+}
 
-    fn expect(&mut self, token: &str) -> Result<(), Error> {
-        if self.eat(token) {
-            Ok(())
-        } else {
-            Err(self.error(&format!("{token:?}")))
-        }
-    }
-
-    fn word(&mut self) -> Option<&'a str> {
-        self.skip_space();
-        let end = self
-            .rest
-            .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .unwrap_or(self.rest.len());
-        (end > 0).then(|| {
-            let (word, rest) = self.rest.split_at(end);
-            self.rest = rest;
-            word
+fn element(input: &mut &str) -> ModalResult<Element> {
+    identifier
+        .map(|name| {
+            Scalar::from_name(name)
+                .map_or_else(|| Element::Struct(name.to_owned()), Element::Scalar)
         })
-    }
+        .parse_next(input)
+}
 
-    fn identifier(&mut self) -> Result<&'a str, Error> {
-        match self.word() {
-            Some(word) if !word.starts_with(|c: char| c.is_ascii_digit()) => Ok(word),
-            _ => Err(self.error("an identifier")),
-        }
-    }
+fn identifier<'s>(input: &mut &'s str) -> ModalResult<&'s str> {
+    word.verify(|word: &str| !word.starts_with(|c: char| c.is_ascii_digit()))
+        .context(expected("an identifier"))
+        .parse_next(input)
+}
 
-    fn integer<T: FromStr>(&mut self) -> Result<T, Error> {
-        self.word()
-            .and_then(|word| word.parse().ok())
-            .ok_or_else(|| self.error("an integer"))
-    }
+fn integer<T: FromStr>(input: &mut &str) -> ModalResult<T> {
+    word.parse_to()
+        .context(expected("an integer"))
+        .parse_next(input)
+}
 
-    fn element(&mut self) -> Result<Element, Error> {
-        let name = self.identifier()?;
-        Ok(Scalar::from_name(name)
-            .map_or_else(|| Element::Struct(name.to_owned()), Element::Scalar))
-    }
+fn word<'s>(input: &mut &'s str) -> ModalResult<&'s str> {
+    preceded(
+        multispace0,
+        take_while(1.., |c: char| c.is_ascii_alphanumeric() || c == '_'),
+    )
+    .parse_next(input)
+}
 
-    fn field(&mut self) -> Result<Field, Error> {
-        let name = self.identifier()?.to_owned();
-        self.expect(":")?;
-        let ty = if self.eat("[") {
-            let element = self.element()?;
-            self.expect(";")?;
-            let count = self.word().ok_or_else(|| self.error("a count"))?;
-            self.expect("]")?;
-            if let Ok(len) = count.parse() {
-                FieldType::Array { element, len }
-            } else {
-                self.expect("(")?;
-                self.expect("capacity")?;
-                let capacity = self.integer()?;
-                self.expect(")")?;
-                FieldType::Counted {
-                    element,
-                    count: count.to_owned(),
-                    capacity,
-                }
-            }
-        } else if self.eat("union") {
-            self.expect("(")?;
-            let selector = self.identifier()?.to_owned();
-            self.expect(")")?;
-            self.expect("{")?;
-            let mut variants = Vec::new();
-            loop {
-                let tag = if self.eat("_") {
-                    None
-                } else {
-                    Some(self.integer()?)
-                };
-                self.expect("=>")?;
-                variants.push(UnionVariant {
-                    tag,
-                    width: self.integer()?,
-                });
-                if !self.eat(",") {
-                    break;
-                }
-            }
-            self.expect("}")?;
-            FieldType::Union { selector, variants }
-        } else {
-            match self.element()? {
-                Element::Scalar(scalar) if self.eat("(") => {
-                    self.expect("optional")?;
-                    self.expect(")")?;
-                    FieldType::Optional(scalar)
-                }
-                Element::Scalar(scalar) => FieldType::Scalar(scalar),
-                Element::Struct(name) => FieldType::Struct(name),
-            }
-        };
-        Ok(Field { name, ty })
-    }
+/// A punctuation token or keyword, after any whitespace.
+fn punct<'s>(token: &'static str) -> impl ModalParser<&'s str, &'s str, ContextError> {
+    preceded(multispace0, token)
+        .context(StrContext::Expected(StrContextValue::StringLiteral(token)))
+}
 
-    fn end(&mut self) -> Result<(), Error> {
-        self.skip_space();
-        if self.rest.is_empty() {
-            Ok(())
-        } else {
-            Err(self.error("end of field"))
-        }
-    }
+fn expected(description: &'static str) -> StrContext {
+    StrContext::Expected(StrContextValue::Description(description))
 }
 
 #[cfg(test)]

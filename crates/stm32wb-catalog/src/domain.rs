@@ -26,12 +26,15 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::{Element, Error, Field, FieldType, Layout, Platform, Profile, ReleaseRange, Scalar};
 
 /// One documented value, or an inclusive range of them, with its label.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, DeserializeFromStr, SerializeDisplay,
+)]
 pub struct DomainItem {
     pub first: i64,
     pub last: i64,
@@ -126,20 +129,6 @@ impl FromStr for DomainItem {
     }
 }
 
-impl Serialize for DomainItem {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for DomainItem {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// Whether a list gives the values of a member or the bits of a bitmap.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DomainKind {
@@ -160,7 +149,8 @@ pub struct Domain {
 ///
 /// Written as a table with `values` or `flags`, `unit_us` for a time member,
 /// and `returned = true` for a return parameter.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(into = "MemberDomainRepr", try_from = "MemberDomainRepr")]
 pub struct MemberDomain {
     pub releases: ReleaseRange,
     pub member: String,
@@ -184,26 +174,25 @@ struct MemberDomainRepr {
     unit_us: Option<u32>,
 }
 
-impl Serialize for MemberDomain {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (values, flags) = split_items(&self.domain);
-        MemberDomainRepr {
-            releases: self.releases,
-            member: self.member.clone(),
-            returned: self.returned,
+impl From<MemberDomain> for MemberDomainRepr {
+    fn from(member: MemberDomain) -> Self {
+        let (values, flags) = split_items(&member.domain);
+        Self {
+            releases: member.releases,
+            member: member.member,
+            returned: member.returned,
             values,
             flags,
-            unit_us: self.domain.unit_us,
+            unit_us: member.domain.unit_us,
         }
-        .serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for MemberDomain {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let repr = MemberDomainRepr::deserialize(deserializer)?;
-        let domain = join_items(&repr.member, repr.values, repr.flags, repr.unit_us)
-            .map_err(serde::de::Error::custom)?;
+impl TryFrom<MemberDomainRepr> for MemberDomain {
+    type Error = String;
+
+    fn try_from(repr: MemberDomainRepr) -> Result<Self, String> {
+        let domain = join_items(&repr.member, repr.values, repr.flags, repr.unit_us)?;
         Ok(Self {
             releases: repr.releases,
             member: repr.member,
@@ -218,7 +207,8 @@ impl<'de> Deserialize<'de> for MemberDomain {
 ///
 /// Written as a table naming the `structure` and its `member`, with `values`
 /// or `flags`, and `unit_us` for a time member.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(into = "StructDomainRepr", try_from = "StructDomainRepr")]
 pub struct StructDomain {
     pub releases: ReleaseRange,
     /// The C name of the structure, such as `Adv_Set_t`.
@@ -241,27 +231,26 @@ struct StructDomainRepr {
     unit_us: Option<u32>,
 }
 
-impl Serialize for StructDomain {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (values, flags) = split_items(&self.domain);
-        StructDomainRepr {
-            releases: self.releases,
-            structure: self.structure.clone(),
-            member: self.member.clone(),
+impl From<StructDomain> for StructDomainRepr {
+    fn from(field: StructDomain) -> Self {
+        let (values, flags) = split_items(&field.domain);
+        Self {
+            releases: field.releases,
+            structure: field.structure,
+            member: field.member,
             values,
             flags,
-            unit_us: self.domain.unit_us,
+            unit_us: field.domain.unit_us,
         }
-        .serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for StructDomain {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let repr = StructDomainRepr::deserialize(deserializer)?;
+impl TryFrom<StructDomainRepr> for StructDomain {
+    type Error = String;
+
+    fn try_from(repr: StructDomainRepr) -> Result<Self, String> {
         let member = format!("{}.{}", repr.structure, repr.member);
-        let domain = join_items(&member, repr.values, repr.flags, repr.unit_us)
-            .map_err(serde::de::Error::custom)?;
+        let domain = join_items(&member, repr.values, repr.flags, repr.unit_us)?;
         Ok(Self {
             releases: repr.releases,
             structure: repr.structure,

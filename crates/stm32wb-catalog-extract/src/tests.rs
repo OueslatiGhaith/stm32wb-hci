@@ -44,6 +44,7 @@ fn with_fixture<T>(source: &str, analyze: impl FnOnce(&clang::TranslationUnit<'_
 fn command_fixture(source: &str) -> Result<Vec<commands::ExtractedCommand>, String> {
     with_fixture(source, |unit| {
         commands::extract(unit, &c::records(unit), CommandScope::Vendor)
+            .map_err(|error| format!("{error:#}"))
     })
 }
 
@@ -241,7 +242,9 @@ fn declared_fixture(source: &str) -> Vec<Result<Result<usize, String>, String>> 
         commands::extract(unit, &records, CommandScope::Vendor)
             .unwrap()
             .iter()
-            .map(|command| snapshot::compare_declared(command, &records))
+            .map(|command| {
+                snapshot::compare_declared(command, &records).map_err(|error| format!("{error:#}"))
+            })
             .collect()
     })
 }
@@ -692,6 +695,7 @@ fn bearer_ranges_are_read_not_guessed() {
         bearers
             .as_ref()
             .unwrap_err()
+            .to_string()
             .contains("Offset documents a value at 0xEA that is not a range"),
         "{bearers:?}"
     );
@@ -703,8 +707,9 @@ fn bearer_ranges_are_read_not_guessed() {
     .unwrap();
     assert_eq!(bearers[0].to_string(), "Connection_Handle: 0xEA00..=0xEA1F");
 
-    let error =
-        c::bearers_in("/** @param Handle 0xEA00 ... 0xEA1F or 0xEA40 ... 0xEA7F */").unwrap_err();
+    let error = c::bearers_in("/** @param Handle 0xEA00 ... 0xEA1F or 0xEA40 ... 0xEA7F */")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("several enhanced ATT bearer ranges"),
         "{error}"
@@ -902,7 +907,7 @@ fn flags_that_are_not_single_bits_are_dropped() {
 
 #[test]
 fn domains_are_read_not_guessed() {
-    let error = |comment: &str| crate::domains::domains_in(comment).unwrap_err();
+    let error = |comment: &str| format!("{:#}", crate::domains::domains_in(comment).unwrap_err());
     let unit = error(
         "/**\n * @param Interval Values:\n *        Values:\n *        \
          - 0x0020 (20.000 ms)  ... 0x4000 (10000.000 ms)\n */",
@@ -949,7 +954,12 @@ fn structure_fields_list_their_values() {
         None
     );
 
-    let error = |comment: &str| crate::domains::field_domain("T.Mode", comment).unwrap_err();
+    let error = |comment: &str| {
+        format!(
+            "{:#}",
+            crate::domains::field_domain("T.Mode", comment).unwrap_err()
+        )
+    };
     let indent = error("/**\n   *   Values:\n   * - 0x00: Off\n   */");
     assert!(indent.contains("indented 3 rather than 1"), "{indent}");
     let stray = error("/**\n   * Values:\n   * - 0x00: Off\n   *  Note: stray\n   */");
@@ -958,7 +968,7 @@ fn structure_fields_list_their_values() {
 
 #[test]
 fn lists_outside_their_place_are_errors() {
-    let error = |comment: &str| crate::domains::domains_in(comment).unwrap_err();
+    let error = |comment: &str| format!("{:#}", crate::domains::domains_in(comment).unwrap_err());
     let indent = error("/**\n * @param Mode Mode\n *      Values:\n *        - 0x00: Off\n */");
     assert!(indent.contains("indented 6 rather than 8"), "{indent}");
     let outside = error("/**\n * Values:\n * - 0x00: Off\n */");

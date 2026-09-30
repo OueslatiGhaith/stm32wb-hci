@@ -22,6 +22,7 @@
 //!
 //! Anything outside these shapes leaves the layout unresolved with a reason.
 
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit};
@@ -59,15 +60,14 @@ pub fn extract(
     unit: &TranslationUnit<'_>,
     records: &BTreeMap<String, CRecord>,
     scope: CommandScope,
-) -> Result<Vec<ExtractedCommand>, String> {
+) -> Result<Vec<ExtractedCommand>> {
     let mut commands = Vec::new();
     for function in c::main_file_entities(unit) {
         if function.get_kind() != EntityKind::FunctionDecl || !function.is_definition() {
             continue;
         }
         let name = function.get_name().unwrap_or_default();
-        let command =
-            analyze(function, &name, records, scope).map_err(|error| format!("{name}: {error}"))?;
+        let command = analyze(function, &name, records, scope).with_context(|| name.to_owned())?;
         commands.push(command);
     }
     Ok(commands)
@@ -80,12 +80,12 @@ fn analyze(
     name: &str,
     records: &BTreeMap<String, CRecord>,
     scope: CommandScope,
-) -> Result<ExtractedCommand, String> {
+) -> Result<ExtractedCommand> {
     let body = function
         .get_children()
         .into_iter()
         .find(|child| child.get_kind() == EntityKind::CompoundStmt)
-        .ok_or("the wrapper has no body")?;
+        .context("the wrapper has no body")?;
     let nodes = descendants(body);
 
     let mut request = BTreeMap::new();
@@ -101,33 +101,31 @@ fn analyze(
             && base == "rq"
             && request.insert(field.clone(), right).is_some()
         {
-            return Err(format!("rq.{field} is assigned more than once"));
+            bail!("rq.{field} is assigned more than once");
         }
     }
     let integer = |field: &str| {
         request
             .get(field)
             .and_then(|value| int_value(*value))
-            .ok_or_else(|| format!("rq.{field} is not an integer constant"))
+            .with_context(|| format!("rq.{field} is not an integer constant"))
     };
     let ogf = integer("ogf")?;
     let ocf = integer("ocf")?;
     if !(0..0x40).contains(&ogf) || !(0..0x400).contains(&ocf) {
-        return Err(format!("OGF 0x{ogf:X} / OCF 0x{ocf:X} is out of range"));
+        bail!("OGF 0x{ogf:X} / OCF 0x{ocf:X} is out of range");
     }
     let opcode = u16::try_from(ogf << 10 | ocf).expect("range-checked");
     match (scope, ogf == 0x3F) {
         (CommandScope::Vendor, false) | (CommandScope::Standard, true) => {
-            return Err(format!(
-                "OGF 0x{ogf:02X} does not belong to {scope:?} commands"
-            ));
+            bail!("OGF 0x{ogf:02X} does not belong to {scope:?} commands");
         }
         _ => {}
     }
     let completion = match request.get("event").map(|value| int_value(*value)) {
         None => Completion::CommandComplete,
         Some(Some(0x0F)) => Completion::CommandStatus,
-        Some(other) => return Err(format!("unexpected rq.event {other:?}")),
+        Some(other) => bail!("unexpected rq.event {other:?}"),
     };
     let return_variable = request
         .get("rparam")
@@ -135,7 +133,7 @@ fn analyze(
         .filter(|value| value.get_kind() == EntityKind::UnaryOperator)
         .and_then(|value| value.get_children().first().copied())
         .and_then(local)
-        .ok_or("rq.rparam does not point to a local variable")?;
+        .context("rq.rparam does not point to a local variable")?;
 
     let mut structs = Structs::new();
     let mut proven_counts = Vec::new();
@@ -152,7 +150,7 @@ fn analyze(
     let returns = match (completion, return_variable.as_str()) {
         (Completion::CommandStatus, "status") => None,
         (Completion::CommandStatus, other) => {
-            return Err(format!("a Command Status wrapper returns through {other}"));
+            bail!("a Command Status wrapper returns through {other}");
         }
         (Completion::CommandComplete, "status") => Some(Layout::Fields(vec![Field::new(
             "Status",
@@ -162,7 +160,7 @@ fn analyze(
             returns_layout(name, &nodes, records, &mut structs, &mut byte_counted)
                 .unwrap_or_else(Layout::Unresolved),
         ),
-        (_, other) => return Err(format!("unexpected return variable {other}")),
+        (_, other) => bail!("unexpected return variable {other}"),
     };
 
     // A layout left unresolved must not leave orphaned structure definitions.

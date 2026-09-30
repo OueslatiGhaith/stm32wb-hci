@@ -10,5 +10,8 @@ categories = ["embedded"]
 keywords = ["ble", "bluetooth", "stm32", "hci"]
 
 [dependencies]
+itertools = "0.15"
 serde = { version = "1", features = ["derive"] }
+serde_with = "3"
 toml = "1"
+winnow = "1"

@@ -12,6 +12,7 @@
 //! their structure is read by the rule of `declared.rs`: a buffer is counted,
 //! in elements, by the unsigned integer member immediately before it.
 
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit};
@@ -41,7 +42,7 @@ const TABLES: [(&str, EventScope); 3] = [
 pub fn extract(
     unit: &TranslationUnit<'_>,
     records: &BTreeMap<String, CRecord>,
-) -> Result<Vec<ExtractedEvent>, String> {
+) -> Result<Vec<ExtractedEvent>> {
     let entities = c::main_file_entities(unit);
     // The callbacks the process functions forward to, which `ble_events.h`
     // declares and documents.
@@ -66,30 +67,30 @@ pub fn extract(
                 entity.get_kind() == EntityKind::VarDecl
                     && entity.get_name().as_deref() == Some(table)
             })
-            .ok_or_else(|| format!("{table} is not defined"))?;
+            .with_context(|| format!("{table} is not defined"))?;
         let initializer = declaration
             .get_children()
             .into_iter()
             .find(|child| child.get_kind() == EntityKind::InitListExpr)
-            .ok_or_else(|| format!("{table} has no initializer"))?;
+            .with_context(|| format!("{table} has no initializer"))?;
         for entry in initializer.get_children() {
             let [code, handler] = entry.get_children()[..] else {
-                return Err(format!("{table} has a malformed entry"));
+                bail!("{table} has a malformed entry");
             };
             let code = int_value(code)
                 .and_then(|code| u16::try_from(code).ok())
-                .ok_or_else(|| format!("{table} has a non-constant code"))?;
+                .with_context(|| format!("{table} has a non-constant code"))?;
             let handler = strip(handler)
                 .get_reference()
                 .and_then(|reference| reference.get_name())
-                .ok_or_else(|| format!("{table} entry 0x{code:04X} has no handler"))?;
+                .with_context(|| format!("{table} entry 0x{code:04X} has no handler"))?;
             let name = handler
                 .strip_suffix("_process")
-                .ok_or_else(|| format!("handler {handler} is not a process function"))?
+                .with_context(|| format!("handler {handler} is not a process function"))?
                 .to_owned();
             let function = functions
                 .get(&handler)
-                .ok_or_else(|| format!("{handler} is not defined"))?;
+                .with_context(|| format!("{handler} is not defined"))?;
             let mut structs = Structs::new();
             let payload =
                 payload(*function, &name, records, &mut structs).unwrap_or_else(|reason| {
@@ -98,10 +99,9 @@ pub fn extract(
                 });
             let callback = callbacks
                 .get(&name)
-                .ok_or_else(|| format!("the callback {name} is not declared"))?;
-            let bearers = c::bearers(*callback).map_err(|error| format!("{name}: {error}"))?;
-            let domains =
-                crate::domains::domains(*callback).map_err(|error| format!("{name}: {error}"))?;
+                .with_context(|| format!("the callback {name} is not declared"))?;
+            let bearers = c::bearers(*callback).with_context(|| name.to_owned())?;
+            let domains = crate::domains::domains(*callback).with_context(|| name.to_owned())?;
             events.push(ExtractedEvent {
                 scope,
                 code,

@@ -2,16 +2,17 @@
 //! read from the `BLE_STATUS_*` definitions of `ble_defs.h`.
 
 use crate::cube::CubeTag;
+use anyhow::{Context, Result, bail};
 
 /// The statuses the `ble_defs.h` at `path` defines.
-pub fn extract(tag: &CubeTag, path: &str) -> Result<Vec<(String, u8)>, String> {
-    parse(&tag.read_text(path)?).map_err(|error| format!("{} {path}: {error}", tag.tag))
+pub fn extract(tag: &CubeTag, path: &str) -> Result<Vec<(String, u8)>> {
+    parse(&tag.read_text(path)?).with_context(|| format!("{} {path}", tag.tag))
 }
 
 /// Each `#define BLE_STATUS_<NAME> 0x<NN>U` of `header`, in order. Any other
 /// definition of a `BLE_STATUS_` name is an error, so a change in how ST
 /// writes them is noticed rather than skipped.
-pub fn parse(header: &str) -> Result<Vec<(String, u8)>, String> {
+pub fn parse(header: &str) -> Result<Vec<(String, u8)>> {
     let mut statuses = Vec::new();
     for line in header.lines() {
         let mut words = line.split_whitespace();
@@ -28,17 +29,17 @@ pub fn parse(header: &str) -> Result<Vec<(String, u8)>, String> {
             .and_then(|value| value.strip_suffix('U'))
             .filter(|digits| digits.len() == 2)
             .and_then(|digits| u8::from_str_radix(digits, 16).ok())
-            .ok_or_else(|| format!("cannot read the definition {:?}", line.trim()))?;
+            .with_context(|| format!("cannot read the definition {:?}", line.trim()))?;
         if !name
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
         {
-            return Err(format!("{name} is not a C constant name"));
+            bail!("{name} is not a C constant name");
         }
         statuses.push((name.to_owned(), value));
     }
     if statuses.is_empty() {
-        return Err("defines no BLE_STATUS_ codes".to_owned());
+        bail!("defines no BLE_STATUS_ codes");
     }
     Ok(statuses)
 }

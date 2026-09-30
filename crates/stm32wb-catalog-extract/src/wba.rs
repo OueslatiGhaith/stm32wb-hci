@@ -20,6 +20,7 @@
 //! STM32CubeWBA v1.9.0 and later pin `Middlewares/ST/STM32_WPAN` as a
 //! submodule, read from its clone at the pinned commit.
 
+use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -67,7 +68,7 @@ pub fn extract(
     shim: &Shim,
     repository: &Path,
     version: Version,
-) -> Result<(Snapshot, Report), String> {
+) -> Result<(Snapshot, Report)> {
     let cube = CubeTag::open(repository, version)?;
     let (wpan, prefix) = cube.directory(WPAN_DIR)?;
     let include = format!("{prefix}{INCLUDE_DIR}");
@@ -82,7 +83,7 @@ pub fn extract(
         .collect::<Vec<_>>();
     headers.sort();
     if !headers.iter().any(|file| file == EVENTS_HEADER) {
-        return Err(format!("{}: {EVENTS_HEADER} is missing", cube.tag));
+        bail!("{}: {EVENTS_HEADER} is missing", cube.tag);
     }
 
     let mut field_domains = FieldDomains::default();
@@ -119,21 +120,20 @@ pub fn extract(
                 .map(|parameter| parameter.get_name().unwrap_or_default())
                 .collect();
             let (domains, orphans) = crate::domains::domains_and_orphans(function)
-                .map_err(|error| format!("{context} {name}: {error}"))?;
+                .with_context(|| format!("{context} {name}"))?;
             orphaned_lists.extend(orphans.into_iter().map(|orphan| (name.clone(), orphan)));
             let entry = Declared {
                 parameters,
-                bearers: c::bearers(function)
-                    .map_err(|error| format!("{context} {name}: {error}"))?,
+                bearers: c::bearers(function).with_context(|| format!("{context} {name}"))?,
                 domains,
                 maximum_sized: c::maximum_sized(function),
             };
             if declared.insert(name.clone(), entry).is_some() {
-                return Err(format!("{context}: {name} is declared twice"));
+                bail!("{context}: {name} is declared twice");
             }
         }
     }
-    let records = records.ok_or_else(|| format!("{}: no headers were parsed", cube.tag))?;
+    let records = records.with_context(|| format!("{}: no headers were parsed", cube.tag))?;
 
     let documented = docs::interface_availability(
         &wpan,
@@ -300,11 +300,7 @@ pub(crate) fn returned_in_order(
 /// A layout holding a member whose declared size the documentation calls a
 /// maximum, unresolved: the member's documented fields repeat, each sized by
 /// its own length, so the packed structure does not give its width.
-pub(crate) fn bounded_by_maximum(
-    name: &str,
-    layout: Layout,
-    members: &[String],
-) -> Result<Layout, String> {
+pub(crate) fn bounded_by_maximum(name: &str, layout: Layout, members: &[String]) -> Result<Layout> {
     let Layout::Fields(fields) = &layout else {
         return Ok(layout);
     };
@@ -318,9 +314,9 @@ pub(crate) fn bounded_by_maximum(
                 "{member} declares {len} elements, which its documentation calls the maximum size"
             )),
             _ => {
-                return Err(format!(
+                bail!(
                     "{name}: {member} is documented with a maximum size but is not a fixed array"
-                ));
+                );
             }
         }
     }

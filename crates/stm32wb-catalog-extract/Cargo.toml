@@ -7,8 +7,11 @@ description = "Extract the STM32WB wireless-interface catalog from tagged STM32C
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+anyhow = "1"
 clang = { version = "2", features = ["clang_10_0", "runtime"] }
 clap = { version = "4", features = ["derive"] }
-quick-xml = "0.38"
+itertools = "0.15"
+scraper = "0.27"
+similar = "3"
 stm32wb-catalog = { path = "../stm32wb-catalog" }
 tempfile = "3"

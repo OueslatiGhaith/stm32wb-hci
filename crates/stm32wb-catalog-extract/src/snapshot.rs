@@ -1,5 +1,6 @@
 //! Extract one tagged release into a catalog snapshot.
 
+use anyhow::{Context, Result, anyhow, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -93,21 +94,18 @@ impl Report {
 pub struct FieldDomains(BTreeMap<(String, String), Domain>);
 
 impl FieldDomains {
-    pub fn add(
-        &mut self,
-        records: &BTreeMap<String, c::CRecord>,
-        context: &str,
-    ) -> Result<(), String> {
-        let documented = crate::domains::field_domains(records)
-            .map_err(|error| format!("{context}: {error}"))?;
+    pub fn add(&mut self, records: &BTreeMap<String, c::CRecord>, context: &str) -> Result<()> {
+        let documented =
+            crate::domains::field_domains(records).with_context(|| context.to_owned())?;
         for (structure, member, domain) in documented {
             let key = (structure, member);
             match self.0.get(&key) {
                 Some(other) if *other != domain => {
-                    return Err(format!(
+                    bail!(
                         "{context}: {}.{} is documented differently elsewhere",
-                        key.0, key.1
-                    ));
+                        key.0,
+                        key.1
+                    );
                 }
                 Some(_) => {}
                 None => {
@@ -167,7 +165,7 @@ pub fn extract(
     shim: &Shim,
     repository: &Path,
     version: Version,
-) -> Result<(Snapshot, Report), String> {
+) -> Result<(Snapshot, Report)> {
     let tag = CubeTag::open(repository, version)?;
     let tree = tag.materialize(&[BLE_CORE_DIR, SHCI_DIR])?;
     let core = tree.path().join(BLE_CORE_DIR);
@@ -181,7 +179,7 @@ pub fn extract(
         .collect::<Vec<_>>();
     sources.sort();
     if !sources.iter().any(|file| file == "ble_hci_le.c") {
-        return Err(format!("{}: ble_hci_le.c is missing", tag.tag));
+        bail!("{}: ble_hci_le.c is missing", tag.tag);
     }
 
     // Structure fields documented in every file parsed, which must agree.
@@ -202,10 +200,10 @@ pub fn extract(
         let records = c::records(&unit);
         document_fields(&records, file)?;
         let extracted = commands::extract(&unit, &records, scope)
-            .map_err(|error| format!("{} {file}: {error}", tag.tag))?;
+            .with_context(|| format!("{} {file}", tag.tag))?;
         for command in &extracted {
             match compare_declared(command, &records)
-                .map_err(|error| format!("{} {file}: {error}", tag.tag))?
+                .with_context(|| format!("{} {file}", tag.tag))?
             {
                 Ok(sides) => declared_agreements += sides,
                 Err(difference) => declared_differences.push((command.name.clone(), difference)),
@@ -217,11 +215,11 @@ pub fn extract(
     let unit = c::parse(index, &core.join("auto/ble_events.c"), shim, &core_includes)?;
     let records = c::records(&unit);
     document_fields(&records, "ble_events.c")?;
-    let mut extracted_events: Vec<ExtractedEvent> = events::extract(&unit, &records)
-        .map_err(|error| format!("{} ble_events.c: {error}", tag.tag))?;
+    let mut extracted_events: Vec<ExtractedEvent> =
+        events::extract(&unit, &records).with_context(|| format!("{} ble_events.c", tag.tag))?;
     for event in &extracted_events {
         match compare_declared_event(event, &records)
-            .map_err(|error| format!("{} ble_events.c: {error}", tag.tag))?
+            .with_context(|| format!("{} ble_events.c", tag.tag))?
         {
             Ok(sides) => declared_agreements += sides,
             Err(difference) => declared_differences.push((event.name.clone(), difference)),
@@ -237,9 +235,8 @@ pub fn extract(
     )?;
     let records = c::records(&unit);
     document_fields(&records, "shci.h")?;
-    extracted_events.extend(
-        shci::extract(&unit, &records).map_err(|error| format!("{} shci.h: {error}", tag.tag))?,
-    );
+    extracted_events
+        .extend(shci::extract(&unit, &records).with_context(|| format!("{} shci.h", tag.tag))?);
 
     let unit = c::parse(
         index,
@@ -249,9 +246,8 @@ pub fn extract(
     )?;
     let records = c::records(&unit);
     document_fields(&records, "shci.c")?;
-    extracted_commands.extend(
-        shci::commands(&unit, &records).map_err(|error| format!("{} shci.c: {error}", tag.tag))?,
-    );
+    extracted_commands
+        .extend(shci::commands(&unit, &records).with_context(|| format!("{} shci.c", tag.tag))?);
 
     // ST's generator counts every variable buffer with the member right
     // before it. Events rely on that rule; commands prove it wherever their
@@ -261,11 +257,12 @@ pub fn extract(
         for (count, buffer, adjacent) in &command.proven_counts {
             proven_counts += 1;
             if !adjacent {
-                return Err(format!(
+                bail!(
                     "{} {}: {buffer} is counted by {count}, which does not immediately precede it; \
                      the event count convention no longer holds",
-                    tag.tag, command.name
-                ));
+                    tag.tag,
+                    command.name
+                );
             }
         }
     }
@@ -273,15 +270,16 @@ pub fn extract(
     let documented = docs::interface_availability(&tag, INTERFACE_DOCUMENT, Platform::Stm32wb)?;
     let completions = docs::command_completions(&tag, INTERFACE_DOCUMENT)?;
     let mut matched = BTreeSet::new();
-    let mut availability = |key: Key, name: &str| -> Result<Vec<Profile>, String> {
+    let mut availability = |key: Key, name: &str| -> Result<Vec<Profile>> {
         let entry = documented
             .get(&key)
-            .ok_or_else(|| format!("{}: {name} ({key:?}) has no availability row", tag.tag))?;
+            .with_context(|| format!("{}: {name} ({key:?}) has no availability row", tag.tag))?;
         if !docs::same_name(name, &entry.name) {
-            return Err(format!(
+            bail!(
                 "{}: {key:?} is {name} in C but {} in the interface document",
-                tag.tag, entry.name
-            ));
+                tag.tag,
+                entry.name
+            );
         }
         matched.insert(key);
         Ok(entry.profiles.clone())
@@ -311,10 +309,12 @@ pub fn extract(
                     report.documented_completions += 1;
                 }
                 Some(Some(completion)) => {
-                    return Err(format!(
+                    bail!(
                         "{}: {} completes with {:?} but its documentation lists {completion:?}",
-                        tag.tag, command.name, command.completion
-                    ));
+                        tag.tag,
+                        command.name,
+                        command.completion
+                    );
                 }
                 Some(None) | None => report.unstated_completions.push(command.name.clone()),
             }
@@ -388,11 +388,11 @@ pub fn extract(
         .map(|(_, entry)| entry.name.clone())
         .collect::<Vec<_>>();
     if !undocumented.is_empty() {
-        return Err(format!(
+        bail!(
             "{}: the interface document lists entries the generated C does not define: {}",
             tag.tag,
             undocumented.join(", ")
-        ));
+        );
     }
 
     let struct_domains = field_domains.carried(&mut report, &commands, &events);
@@ -411,7 +411,7 @@ pub fn extract(
         struct_domains,
     };
     if snapshot.binaries.is_empty() {
-        return Err(format!("{}: no BLE wireless binaries were found", tag.tag));
+        bail!("{}: no BLE wireless binaries were found", tag.tag);
     }
     Ok((snapshot, report))
 }
@@ -470,12 +470,12 @@ fn single_bits(domain: &Domain) -> bool {
 pub fn compare_declared(
     command: &ExtractedCommand,
     records: &BTreeMap<String, c::CRecord>,
-) -> Result<Result<usize, String>, String> {
+) -> Result<Result<usize, String>> {
     let (params, returns, structs) =
         crate::declared::command(&command.name, command.completion, records);
     let contradiction = |what: &str, detail: String| {
         if command.byte_counted.is_empty() {
-            Err(format!(
+            Err(anyhow!(
                 "{}: its {what} contradict the rule of ST's structures: {detail}",
                 command.name
             ))
@@ -530,7 +530,7 @@ pub fn compare_declared(
 pub fn compare_declared_event(
     event: &ExtractedEvent,
     records: &BTreeMap<String, c::CRecord>,
-) -> Result<Result<usize, String>, String> {
+) -> Result<Result<usize, String>> {
     let (payload, structs) = crate::declared::event(&event.name, records);
     match (&event.payload, &payload) {
         (Layout::Fields(code), Layout::Fields(declared))
@@ -542,10 +542,11 @@ pub fn compare_declared_event(
         (Layout::Fields(_), Layout::Unresolved(reason)) => Ok(Err(format!(
             "its structure leaves its payload unresolved: {reason}"
         ))),
-        (code, declared) => Err(format!(
+        (code, declared) => Err(anyhow!(
             "{}: its payload contradicts the rule of ST's structures: code {code:?} with \
              {:?}, structures {declared:?} with {structs:?}",
-            event.name, event.structs
+            event.name,
+            event.structs
         )),
     }
 }

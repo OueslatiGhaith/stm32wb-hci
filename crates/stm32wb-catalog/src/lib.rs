@@ -37,6 +37,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 pub use bundled::{Bundled, bundled};
 pub use domain::{Domain, DomainItem, DomainKind, MemberDomain, StructDomain};
@@ -227,7 +228,7 @@ pub struct EventDefinition {
 /// documentation states the range; C declares only a `uint16_t`.
 ///
 /// Written `"<member>: 0xEA00..=0xEA3F"`.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, DeserializeFromStr, SerializeDisplay)]
 pub struct Bearer {
     pub member: String,
     pub first: u16,
@@ -269,20 +270,6 @@ impl FromStr for Bearer {
                     "expected \"<member>: 0xEA00..=0xEAnn\", got {source:?}"
                 ))
             })
-    }
-}
-
-impl Serialize for Bearer {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for Bearer {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
     }
 }
 

@@ -16,12 +16,14 @@ mod statuses;
 mod tests;
 mod wba;
 
+use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clang::{Clang, Index};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use similar::TextDiff;
 use stm32wb_catalog::annotations::Annotations;
 use stm32wb_catalog::{Bundled, Catalog, Platform, Version, merge_snapshots};
 
@@ -151,13 +153,13 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}");
+            eprintln!("error: {error:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Extract {
             paths,
@@ -173,44 +175,46 @@ fn run(cli: Cli) -> Result<(), String> {
             releases.sort();
             releases.dedup();
             if releases.is_empty() {
-                return Err("no releases to extract; pass --release".to_owned());
+                bail!("no releases to extract; pass --release");
             }
             let catalog = extract(paths.platform, &paths.cube(), &releases)?;
             let text = render(&catalog)?;
-            fs::write(paths.catalog(), text).map_err(|error| {
-                format!("could not write {}: {error}", paths.catalog().display())
-            })?;
+            fs::write(paths.catalog(), text)
+                .with_context(|| format!("could not write {}", paths.catalog().display()))?;
             audit(&catalog, &paths.annotations())?;
             eprintln!("wrote {}", paths.catalog().display());
             Ok(())
         }
         Command::Check { paths } => {
-            let checked_in = fs::read_to_string(paths.catalog()).map_err(|error| {
-                format!("could not read {}: {error}", paths.catalog().display())
-            })?;
+            let checked_in = fs::read_to_string(paths.catalog())
+                .with_context(|| format!("could not read {}", paths.catalog().display()))?;
             let releases = existing_releases(&paths.catalog())?;
             let catalog = extract(paths.platform, &paths.cube(), &releases)?;
-            if render(&catalog)? != checked_in {
-                return Err(format!(
-                    "{} is not what the tagged Cube sources produce; run `extract` and review the diff",
+            let extracted = render(&catalog)?;
+            if extracted != checked_in {
+                let diff = TextDiff::from_lines(&checked_in, &extracted)
+                    .unified_diff()
+                    .header("checked in", "extracted")
+                    .to_string();
+                bail!(
+                    "{} is not what the tagged Cube sources produce; run `extract` to accept:\n{diff}",
                     paths.catalog().display()
-                ));
+                );
             }
             audit(&catalog, &paths.annotations())?;
             eprintln!("{} is reproducible", paths.catalog().display());
             Ok(())
         }
         Command::Audit { paths } => {
-            let catalog = Catalog::load(&paths.catalog()).map_err(|error| error.to_string())?;
+            let catalog = Catalog::load(&paths.catalog())?;
             audit(&catalog, &paths.annotations())?;
             eprintln!("catalog and annotations are consistent");
             Ok(())
         }
         Command::Targets { paths } => {
-            let catalog = Catalog::load(&paths.catalog()).map_err(|error| error.to_string())?;
-            let annotations =
-                Annotations::load(&paths.annotations()).map_err(|error| error.to_string())?;
-            let bundled = Bundled::new(catalog, annotations).map_err(|error| error.to_string())?;
+            let catalog = Catalog::load(&paths.catalog())?;
+            let annotations = Annotations::load(&paths.annotations())?;
+            let bundled = Bundled::new(catalog, annotations)?;
             for target in bundled.distinct_targets() {
                 println!("{}", target.features());
             }
@@ -219,16 +223,16 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
-fn existing_releases(path: &Path) -> Result<Vec<Version>, String> {
+fn existing_releases(path: &Path) -> Result<Vec<Version>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let catalog = Catalog::load(path).map_err(|error| error.to_string())?;
+    let catalog = Catalog::load(path)?;
     Ok(catalog.versions().collect())
 }
 
-fn extract(platform: PlatformArg, cube: &Path, releases: &[Version]) -> Result<Catalog, String> {
-    let clang = Clang::new().map_err(|error| format!("could not load libclang: {error}"))?;
+fn extract(platform: PlatformArg, cube: &Path, releases: &[Version]) -> Result<Catalog> {
+    let clang = Clang::new().map_err(|error| anyhow!("could not load libclang: {error}"))?;
     let index = Index::new(&clang, false, false);
     let shim = c::Shim::new()?;
     let mut snapshots = Vec::new();
@@ -315,10 +319,10 @@ fn extract(platform: PlatformArg, cube: &Path, releases: &[Version]) -> Result<C
         }
         snapshots.push(snapshot);
     }
-    merge_snapshots(platform.platform(), snapshots).map_err(|error| error.to_string())
+    Ok(merge_snapshots(platform.platform(), snapshots)?)
 }
 
-fn render(catalog: &Catalog) -> Result<String, String> {
+fn render(catalog: &Catalog) -> Result<String> {
     let platform = match catalog.platform {
         Platform::Stm32wb => PlatformArg::Stm32wb,
         Platform::Stm32wba => PlatformArg::Stm32wba,
@@ -339,15 +343,14 @@ fn render(catalog: &Catalog) -> Result<String, String> {
 # Curated facts belong in {annotations}.
 
 {}",
-        catalog.to_toml().map_err(|error| error.to_string())?
+        catalog.to_toml()?
     ))
 }
 
-fn audit(catalog: &Catalog, annotations: &Path) -> Result<(), String> {
+fn audit(catalog: &Catalog, annotations: &Path) -> Result<()> {
     if !annotations.exists() {
         return Ok(());
     }
-    Annotations::load(annotations)
-        .and_then(|annotations| annotations.audit(catalog))
-        .map_err(|error| error.to_string())
+    Annotations::load(annotations).and_then(|annotations| annotations.audit(catalog))?;
+    Ok(())
 }

@@ -12,8 +12,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use quick_xml::Reader;
-use quick_xml::events::Event;
+use anyhow::{Context, Result, anyhow, bail};
+use itertools::Itertools;
+use scraper::{ElementRef, Html, Selector};
 use stm32wb_catalog::{
     CommandScope, Completion, EventScope, Family, Platform, Profile, SnapshotBinary,
 };
@@ -46,25 +47,21 @@ pub fn interface_availability(
     tag: &CubeTag,
     path: &str,
     platform: Platform,
-) -> Result<BTreeMap<Key, Documented>, String> {
+) -> Result<BTreeMap<Key, Documented>> {
     let source = tag.read_text(path)?;
-    parse_interface_availability(&source, platform).map_err(|error| format!("{path}: {error}"))
+    parse_interface_availability(&source, platform).with_context(|| path.to_owned())
 }
 
 /// The stack profiles the interface document at `path` has: the complete
 /// one, and those its availability tables have columns for.
-pub fn interface_profiles(
-    tag: &CubeTag,
-    path: &str,
-    platform: Platform,
-) -> Result<Vec<Profile>, String> {
+pub fn interface_profiles(tag: &CubeTag, path: &str, platform: Platform) -> Result<Vec<Profile>> {
     let source = tag.read_text(path)?;
-    parse_interface_profiles(&source, platform).map_err(|error| format!("{path}: {error}"))
+    parse_interface_profiles(&source, platform).with_context(|| path.to_owned())
 }
 
-fn parse_interface_profiles(source: &str, platform: Platform) -> Result<Vec<Profile>, String> {
+fn parse_interface_profiles(source: &str, platform: Platform) -> Result<Vec<Profile>> {
     let mut profiles = BTreeSet::from([platform.complete_profile()]);
-    for table in parse_html_tables(source)? {
+    for table in parse_html_tables(source) {
         let Some(header) = table.first() else {
             continue;
         };
@@ -78,18 +75,16 @@ fn parse_interface_profiles(source: &str, platform: Platform) -> Result<Vec<Prof
 }
 
 /// The index and profile of each availability column of a table header.
-fn profile_columns(header: &[String], platform: Platform) -> Result<Vec<(usize, Profile)>, String> {
+fn profile_columns(header: &[String], platform: Platform) -> Result<Vec<(usize, Profile)>> {
     let mut columns = Vec::new();
     for (index, heading) in header.iter().enumerate().skip(2) {
         let profile = platform
             .profile_for_column(heading)
-            .ok_or_else(|| format!("unknown availability column {heading:?}"))?;
+            .with_context(|| format!("unknown availability column {heading:?}"))?;
         columns.push((index, profile));
     }
     if columns.is_empty() {
-        return Err(format!(
-            "availability table without profile columns: {header:?}"
-        ));
+        bail!("availability table without profile columns: {header:?}");
     }
     Ok(columns)
 }
@@ -97,10 +92,10 @@ fn profile_columns(header: &[String], platform: Platform) -> Result<Vec<(usize, 
 fn parse_interface_availability(
     source: &str,
     platform: Platform,
-) -> Result<BTreeMap<Key, Documented>, String> {
+) -> Result<BTreeMap<Key, Documented>> {
     let mut availability = BTreeMap::new();
     let mut recognized = 0usize;
-    for table in parse_html_tables(source)? {
+    for table in parse_html_tables(source) {
         let Some(header) = table.first() else {
             continue;
         };
@@ -111,11 +106,11 @@ fn parse_interface_availability(
         let columns = profile_columns(header, platform)?;
         for row in table.iter().skip(1) {
             if row.len() != header.len() {
-                return Err(format!(
+                bail!(
                     "row has {} cells but its header has {}: {row:?}",
                     row.len(),
                     header.len()
-                ));
+                );
             }
             let name = row[0].clone();
             let code = parse_hex(&row[1])?;
@@ -142,7 +137,7 @@ fn parse_interface_availability(
                     }
                     "" => {}
                     other => {
-                        return Err(format!("{name}: unknown availability marker {other:?}"));
+                        bail!("{name}: unknown availability marker {other:?}");
                     }
                 }
             }
@@ -151,12 +146,12 @@ fn parse_interface_availability(
                 profiles: profiles.into_iter().collect(),
             };
             if let Some(previous) = availability.insert(key.clone(), entry) {
-                return Err(format!("{key:?} is documented twice ({})", previous.name));
+                bail!("{key:?} is documented twice ({})", previous.name);
             }
         }
     }
     if recognized == 0 {
-        return Err("no availability tables were found".to_owned());
+        bail!("no availability tables were found");
     }
     Ok(availability)
 }
@@ -167,12 +162,12 @@ fn parse_interface_availability(
 pub fn command_completions(
     tag: &CubeTag,
     path: &str,
-) -> Result<BTreeMap<String, Option<Completion>>, String> {
+) -> Result<BTreeMap<String, Option<Completion>>> {
     let source = tag.read_text(path)?;
-    parse_command_completions(&source).map_err(|error| format!("{path}: {error}"))
+    parse_command_completions(&source).with_context(|| path.to_owned())
 }
 
-fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Completion>>, String> {
+fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Completion>>> {
     let mut completions = BTreeMap::new();
     for (name, events) in generated_events(source)? {
         let status = events
@@ -183,16 +178,14 @@ fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Com
             .any(|event| event == "HCI_COMMAND_COMPLETE_EVENT");
         let completion = match (status, complete) {
             (true, true) => {
-                return Err(format!(
-                    "{name} generates both Command Status and Command Complete"
-                ));
+                bail!("{name} generates both Command Status and Command Complete");
             }
             (true, false) => Some(Completion::CommandStatus),
             (false, true) => Some(Completion::CommandComplete),
             (false, false) => None,
         };
         if completions.insert(name.clone(), completion).is_some() {
-            return Err(format!("{name} lists the events it generates twice"));
+            bail!("{name} lists the events it generates twice");
         }
     }
     Ok(completions)
@@ -200,80 +193,40 @@ fn parse_command_completions(source: &str) -> Result<BTreeMap<String, Option<Com
 
 /// `(section, items)` for every `<h2>` section with an "Events generated"
 /// `<h3>` subsection, whose `<li>` items name the events.
-fn generated_events(source: &str) -> Result<Vec<(String, Vec<String>)>, String> {
-    let mut reader = Reader::from_str(source);
-    reader.config_mut().check_end_names = false;
-    reader.config_mut().allow_unmatched_ends = true;
-
+fn generated_events(source: &str) -> Result<Vec<(String, Vec<String>)>> {
+    let document = Html::parse_document(source);
     let mut sections: Vec<(String, Vec<String>)> = Vec::new();
-    let mut section: Option<String> = None;
+    let mut section = None;
     let mut listing = false;
-    // The text of the heading or item being read.
-    let mut text: Option<String> = None;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(tag)) => match tag.local_name().as_ref() {
-                b"h1" | b"h2" | b"h3" => {
-                    listing = false;
-                    text = Some(String::new());
-                }
-                b"li" if listing => text = Some(String::new()),
-                _ => {}
-            },
-            Ok(Event::Text(content)) => {
-                if let Some(text) = text.as_mut() {
-                    text.push_str(
-                        &content
-                            .html_content()
-                            .map_err(|error| format!("could not decode HTML text: {error}"))?,
-                    );
+    for element in document.select(&selector("h1, h2, h3, li")) {
+        match element.value().name() {
+            "h1" => {
+                section = None;
+                listing = false;
+            }
+            "h2" => {
+                section = Some(collapsed_text(element));
+                listing = false;
+            }
+            "h3" => {
+                listing = collapsed_text(element) == "Events generated";
+                if listing {
+                    let name = section
+                        .clone()
+                        .context("an \"Events generated\" list belongs to no section")?;
+                    sections.push((name, Vec::new()));
                 }
             }
-            Ok(Event::End(tag)) => {
-                let finished = || {
-                    text.as_deref()
-                        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
-                };
-                match tag.local_name().as_ref() {
-                    b"h1" => {
-                        section = None;
-                        text = None;
-                    }
-                    b"h2" => {
-                        section = finished();
-                        text = None;
-                    }
-                    b"h3" => {
-                        if finished().as_deref() == Some("Events generated") {
-                            let name = section
-                                .clone()
-                                .ok_or("an \"Events generated\" list belongs to no section")?;
-                            sections.push((name, Vec::new()));
-                            listing = true;
-                        }
-                        text = None;
-                    }
-                    b"li" if listing => {
-                        if let (Some(item), Some((_, items))) = (finished(), sections.last_mut()) {
-                            items.push(item);
-                        }
-                        text = None;
-                    }
-                    _ => {}
+            _ if listing => {
+                if let Some((_, items)) = sections.last_mut() {
+                    items.push(collapsed_text(element));
                 }
             }
-            Ok(Event::Eof) => break,
-            Ok(_) => {}
-            Err(error) => {
-                return Err(format!(
-                    "invalid HTML near byte {}: {error}",
-                    reader.error_position()
-                ));
-            }
+            _ => {}
         }
     }
     if sections.is_empty() {
-        return Err("no \"Events generated\" lists were found".to_owned());
+        bail!("no \"Events generated\" lists were found");
     }
     Ok(sections)
 }
@@ -288,12 +241,12 @@ fn table_kind(header: &[String]) -> Option<TableKind> {
     }
 }
 
-fn parse_hex(value: &str) -> Result<u16, String> {
+fn parse_hex(value: &str) -> Result<u16> {
     value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
         .and_then(|digits| u16::from_str_radix(digits, 16).ok())
-        .ok_or_else(|| format!("invalid hexadecimal code {value:?}"))
+        .with_context(|| format!("invalid hexadecimal code {value:?}"))
 }
 
 /// Whether a generated C name and a documented name denote the same entry.
@@ -310,7 +263,7 @@ pub fn same_name(generated: &str, documented: &str) -> bool {
 
 /// Binaries each family's release notes map to a BLE stack profile, each
 /// verified to exist at the tag.
-pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>, String> {
+pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>> {
     let mut binaries = Vec::new();
     for family in Family::ALL {
         let directory = format!("{BINARIES_DIR}/{}", family.directory());
@@ -320,8 +273,7 @@ pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>, String> {
         }
         let notes_path = format!("{directory}/Release_Notes.html");
         let notes = tag.read_text(&notes_path)?;
-        let mapping =
-            parse_release_notes(&notes).map_err(|error| format!("{notes_path}: {error}"))?;
+        let mapping = parse_release_notes(&notes).with_context(|| notes_path.to_owned())?;
         for &profile in Platform::Stm32wb.profiles() {
             let Some(file) = family.binary_file_name(profile) else {
                 continue;
@@ -330,14 +282,10 @@ pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>, String> {
                 continue;
             };
             if *documented != profile {
-                return Err(format!(
-                    "{notes_path}: {file} is documented as {documented}"
-                ));
+                bail!("{notes_path}: {file} is documented as {documented}");
             }
             if !files.contains(&format!("{directory}/{file}")) {
-                return Err(format!(
-                    "{notes_path} lists {file}, which is not in the tag"
-                ));
+                bail!("{notes_path} lists {file}, which is not in the tag");
             }
             binaries.push(SnapshotBinary { family, profile });
         }
@@ -346,10 +294,10 @@ pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>, String> {
 }
 
 /// File name -> documented profile, for rows naming a BLE stack profile.
-fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>, String> {
+fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>> {
     let mut mapping = BTreeMap::new();
     let mut found = false;
-    for table in parse_html_tables(source)? {
+    for table in parse_html_tables(source) {
         let Some(header) = table.first() else {
             continue;
         };
@@ -362,7 +310,7 @@ fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>, String
         found = true;
         for row in table.iter().skip(1) {
             if row.len() != 3 {
-                return Err(format!("a binary row has {} cells: {row:?}", row.len()));
+                bail!("a binary row has {} cells: {row:?}", row.len());
             }
             // A binary the catalog cannot name the profile of would drop out
             // of it unnoticed.
@@ -373,93 +321,50 @@ fn parse_release_notes(source: &str) -> Result<BTreeMap<String, Profile>, String
                     .split_whitespace()
                     .next()
                     .and_then(|column| Platform::Stm32wb.profile_for_column(column))
-                    .ok_or_else(|| {
+                    .with_context(|| {
                         format!("{} has an unknown stack profile {:?}", row[0], row[1])
                     })?
             };
             if mapping.insert(row[0].clone(), profile).is_some() {
-                return Err(format!("{} is listed twice", row[0]));
+                bail!("{} is listed twice", row[0]);
             }
         }
     }
     if found {
         Ok(mapping)
     } else {
-        Err("no binary/stack-feature table was found".to_owned())
+        Err(anyhow!("no binary/stack-feature table was found"))
     }
 }
 
 /// Table cells from Cube's generated HTML, with whitespace collapsed.
-/// quick-xml tokenizes with HTML-tolerant end tags; the documents need not
-/// be well-formed XML for cell boundaries to stay exact.
-fn parse_html_tables(source: &str) -> Result<Vec<Vec<Vec<String>>>, String> {
-    let mut reader = Reader::from_str(source);
-    reader.config_mut().check_end_names = false;
-    reader.config_mut().allow_unmatched_ends = true;
+fn parse_html_tables(source: &str) -> Vec<Vec<Vec<String>>> {
+    let document = Html::parse_document(source);
+    let (rows, cells) = (selector("tr"), selector("th, td"));
+    document
+        .select(&selector("table"))
+        .map(|table| {
+            table
+                .select(&rows)
+                .map(|row| row.select(&cells).map(collapsed_text).collect::<Vec<_>>())
+                .filter(|row| !row.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|table| !table.is_empty())
+        .collect()
+}
 
-    let mut tables = Vec::new();
-    let mut table: Option<Vec<Vec<String>>> = None;
-    let mut row: Option<Vec<String>> = None;
-    let mut cell: Option<String> = None;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(tag)) => match tag.local_name().as_ref() {
-                b"table" => table = Some(Vec::new()),
-                b"tr" if table.is_some() => row = Some(Vec::new()),
-                b"th" | b"td" if row.is_some() => cell = Some(String::new()),
-                _ => {}
-            },
-            Ok(Event::Text(text)) => {
-                if let Some(cell) = cell.as_mut() {
-                    cell.push_str(
-                        &text
-                            .html_content()
-                            .map_err(|error| format!("could not decode HTML text: {error}"))?,
-                    );
-                }
-            }
-            Ok(Event::CData(text)) => {
-                if let Some(cell) = cell.as_mut() {
-                    cell.push_str(
-                        &text
-                            .html_content()
-                            .map_err(|error| format!("could not decode HTML CDATA: {error}"))?,
-                    );
-                }
-            }
-            Ok(Event::End(tag)) => match tag.local_name().as_ref() {
-                b"th" | b"td" => {
-                    if let (Some(row), Some(value)) = (row.as_mut(), cell.take()) {
-                        row.push(value.split_whitespace().collect::<Vec<_>>().join(" "));
-                    }
-                }
-                b"tr" => {
-                    if let (Some(table), Some(row)) = (table.as_mut(), row.take())
-                        && !row.is_empty()
-                    {
-                        table.push(row);
-                    }
-                }
-                b"table" => {
-                    if let Some(table) = table.take()
-                        && !table.is_empty()
-                    {
-                        tables.push(table);
-                    }
-                }
-                _ => {}
-            },
-            Ok(Event::Eof) => break,
-            Ok(_) => {}
-            Err(error) => {
-                return Err(format!(
-                    "invalid HTML near byte {}: {error}",
-                    reader.error_position()
-                ));
-            }
-        }
-    }
-    Ok(tables)
+fn selector(css: &str) -> Selector {
+    Selector::parse(css).expect("a valid CSS selector")
+}
+
+/// The text of `element` and its descendants, with whitespace collapsed.
+fn collapsed_text(element: ElementRef) -> String {
+    element
+        .text()
+        .collect::<String>()
+        .split_whitespace()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -535,10 +440,10 @@ mod tests {
             "HCI_DISCONNECTION_COMPLETE_EVENT",
             "HCI_COMMAND_COMPLETE_EVENT",
         );
-        let error = parse_command_completions(&both).unwrap_err();
+        let error = format!("{:#}", parse_command_completions(&both).unwrap_err());
         assert!(error.contains("both"), "{error}");
         let twice = html.replace("HCI_RESET", "HCI_DISCONNECT");
-        let error = parse_command_completions(&twice).unwrap_err();
+        let error = format!("{:#}", parse_command_completions(&twice).unwrap_err());
         assert!(error.contains("twice"), "{error}");
     }
 
@@ -560,7 +465,7 @@ mod tests {
             "</table>",
             "<tr><td>stm32wb5x_BLE_Thread_static_fw.bin</td><td>Thread FTD</td><td>x</td></tr></table>",
         );
-        let error = parse_release_notes(&unknown).unwrap_err();
+        let error = format!("{:#}", parse_release_notes(&unknown).unwrap_err());
         assert!(error.contains("unknown stack profile"), "{error}");
         let short = html.replace(
             "<td>PO (Peripheral Only)</td><td>x</td>",

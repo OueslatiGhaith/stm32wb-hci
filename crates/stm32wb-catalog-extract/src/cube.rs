@@ -1,6 +1,7 @@
 //! Read-only access to immutable tags of an STM32CubeWB or STM32CubeWBA Git
 //! repository, and of the submodules they pin.
 
+use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -24,7 +25,7 @@ pub struct CubeTag {
 }
 
 impl CubeTag {
-    pub fn open(repository: &Path, version: Version) -> Result<Self, String> {
+    pub fn open(repository: &Path, version: Version) -> Result<Self> {
         let tag = version.cube_tag();
         let commit = git_text(
             repository,
@@ -35,18 +36,11 @@ impl CubeTag {
                 &format!("refs/tags/{tag}^{{commit}}"),
             ],
         )
-        .map_err(|error| {
-            format!(
-                "tag {tag} was not found in {}: {error}",
-                repository.display()
-            )
-        })?
+        .with_context(|| format!("tag {tag} was not found in {}", repository.display()))?
         .trim()
         .to_owned();
         if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(format!(
-                "tag {tag} resolved to an invalid commit {commit:?}"
-            ));
+            bail!("tag {tag} resolved to an invalid commit {commit:?}");
         }
         Ok(Self {
             repository: repository.to_owned(),
@@ -59,7 +53,7 @@ impl CubeTag {
     /// the prefix ending in `/`. A directory the tag pins as a submodule is
     /// read from the submodule's clone at `path` in the worktree, at the
     /// pinned commit.
-    pub fn directory(&self, path: &str) -> Result<(Self, String), String> {
+    pub fn directory(&self, path: &str) -> Result<(Self, String)> {
         let entry = git_text(&self.repository, &["ls-tree", &self.commit, "--", path])?;
         let fields = entry.split_whitespace().collect::<Vec<_>>();
         match fields[..] {
@@ -77,10 +71,10 @@ impl CubeTag {
                     &repository,
                     &["cat-file", "-e", &format!("{commit}^{{commit}}")],
                 )
-                .map_err(|error| {
+                .with_context(|| {
                     format!(
                         "{} pins {path} at {commit}, which {} does not have; run \
-                         `git submodule update --init {path}` in {}: {error}",
+                         `git submodule update --init {path}` in {}",
                         self.tag,
                         repository.display(),
                         self.repository.display()
@@ -95,20 +89,20 @@ impl CubeTag {
                     String::new(),
                 ))
             }
-            _ => Err(format!("{} has no directory {path}: {entry:?}", self.tag)),
+            _ => Err(anyhow!("{} has no directory {path}: {entry:?}", self.tag)),
         }
     }
 
     /// Read one file as bytes. The commit, not the tag name, is used so the
     /// result is stable even if a tag were moved during extraction.
-    pub fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         git_bytes(
             &self.repository,
             &["show", &format!("{}:{path}", self.commit)],
         )
     }
 
-    pub fn read_text(&self, path: &str) -> Result<String, String> {
+    pub fn read_text(&self, path: &str) -> Result<String> {
         let bytes = self.read(path)?;
         // ST occasionally ships Latin-1 comments; the protocol content is ASCII.
         Ok(String::from_utf8(bytes).unwrap_or_else(|error| {
@@ -120,7 +114,7 @@ impl CubeTag {
         }))
     }
 
-    pub fn list(&self, directory: &str) -> Result<Vec<String>, String> {
+    pub fn list(&self, directory: &str) -> Result<Vec<String>> {
         let listing = git_text(
             &self.repository,
             &[
@@ -137,31 +131,28 @@ impl CubeTag {
 
     /// Write the listed directories into a fresh temporary tree, preserving
     /// their repository-relative paths.
-    pub fn materialize(&self, directories: &[&str]) -> Result<TempDir, String> {
-        let temporary = tempfile::tempdir()
-            .map_err(|error| format!("could not create a temporary tree: {error}"))?;
+    pub fn materialize(&self, directories: &[&str]) -> Result<TempDir> {
+        let temporary = tempfile::tempdir().context("could not create a temporary tree")?;
         for directory in directories {
             let files = self.list(directory)?;
             if files.is_empty() {
-                return Err(format!("{} contains no files at {}", directory, self.tag));
+                bail!("{} contains no files at {}", directory, self.tag);
             }
             for file in files {
                 let destination = checked_join(temporary.path(), &file)?;
                 if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent).map_err(|error| {
-                        format!("could not create {}: {error}", parent.display())
-                    })?;
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("could not create {}", parent.display()))?;
                 }
-                fs::write(&destination, self.read(&file)?).map_err(|error| {
-                    format!("could not write {}: {error}", destination.display())
-                })?;
+                fs::write(&destination, self.read(&file)?)
+                    .with_context(|| format!("could not write {}", destination.display()))?;
             }
         }
         Ok(temporary)
     }
 }
 
-fn checked_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
+fn checked_join(root: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     if path
         .components()
@@ -169,23 +160,23 @@ fn checked_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
     {
         Ok(root.join(path))
     } else {
-        Err(format!(
+        Err(anyhow!(
             "refusing to materialize unexpected path {relative:?}"
         ))
     }
 }
 
-fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>, String> {
+fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repository)
         .args(arguments)
         .output()
-        .map_err(|error| format!("could not run git: {error}"))?;
+        .context("could not run git")?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
-        Err(format!(
+        Err(anyhow!(
             "git {} failed: {}",
             arguments.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
@@ -193,11 +184,7 @@ fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>, String> {
     }
 }
 
-fn git_text(repository: &Path, arguments: &[&str]) -> Result<String, String> {
-    String::from_utf8(git_bytes(repository, arguments)?).map_err(|error| {
-        format!(
-            "git {} returned non-UTF-8 output: {error}",
-            arguments.join(" ")
-        )
-    })
+fn git_text(repository: &Path, arguments: &[&str]) -> Result<String> {
+    String::from_utf8(git_bytes(repository, arguments)?)
+        .with_context(|| format!("git {} returned non-UTF-8 output", arguments.join(" ")))
 }

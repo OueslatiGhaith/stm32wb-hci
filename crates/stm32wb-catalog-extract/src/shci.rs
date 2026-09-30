@@ -8,6 +8,7 @@
 //! enumerator documents no structure is left unresolved rather than assumed
 //! to be empty.
 
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 
 use clang::{Entity, EntityKind, TranslationUnit, TypeKind};
@@ -24,7 +25,7 @@ const CODES: &str = "SHCI_SUB_EVT_CODE_t";
 pub fn extract(
     unit: &TranslationUnit<'_>,
     records: &BTreeMap<String, CRecord>,
-) -> Result<Vec<ExtractedEvent>, String> {
+) -> Result<Vec<ExtractedEvent>> {
     let entities = unit.get_entity().get_children();
     let codes = entities
         .iter()
@@ -35,7 +36,7 @@ pub fn extract(
         .and_then(|typedef| typedef.get_typedef_underlying_type())
         .and_then(|ty| ty.get_canonical_type().get_declaration())
         .filter(|declaration| declaration.get_kind() == EntityKind::EnumDecl)
-        .ok_or_else(|| format!("{CODES} is not declared as an enum"))?;
+        .with_context(|| format!("{CODES} is not declared as an enum"))?;
 
     // Typedef name -> the enumerator its documentation comment names.
     let mut documented: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -82,11 +83,11 @@ pub fn extract(
         }
         let name = constant
             .get_name()
-            .ok_or("an SHCI event code has no name")?;
+            .context("an SHCI event code has no name")?;
         let code = constant
             .get_enum_constant_value()
             .and_then(|(value, _)| u16::try_from(value).ok())
-            .ok_or_else(|| format!("{name} is not a 16-bit code"))?;
+            .with_context(|| format!("{name} is not a 16-bit code"))?;
         let mut structs = Structs::new();
         let payload = match documented.get(&name).map(Vec::as_slice) {
             None | Some([]) => {
@@ -99,7 +100,7 @@ pub fn extract(
                 })
             }
             Some(several) => {
-                return Err(format!("{name} documents several structures: {several:?}"));
+                bail!("{name} documents several structures: {several:?}");
             }
         };
         events.push(ExtractedEvent {
@@ -113,7 +114,7 @@ pub fn extract(
         });
     }
     if events.is_empty() {
-        return Err(format!("{CODES} has no enumerators"));
+        bail!("{CODES} has no enumerators");
     }
     Ok(events)
 }
@@ -167,7 +168,7 @@ const SEND: &str = "shci_send";
 pub fn commands(
     unit: &TranslationUnit<'_>,
     records: &BTreeMap<String, CRecord>,
-) -> Result<Vec<ExtractedCommand>, String> {
+) -> Result<Vec<ExtractedCommand>> {
     let mut commands = Vec::new();
     for function in c::main_file_entities(unit) {
         if function.get_kind() != EntityKind::FunctionDecl || !function.is_definition() {
@@ -185,19 +186,16 @@ pub fn commands(
             // shared memory, send nothing.
             [] => continue,
             [send] => send,
-            _ => return Err(format!("{name} calls {SEND} more than once")),
+            _ => bail!("{name} calls {SEND} more than once"),
         };
         let arguments = send.get_arguments().unwrap_or_default();
         let [opcode, length, buffer, _response] = arguments[..] else {
-            return Err(format!(
-                "{name} calls {SEND} with {} arguments",
-                arguments.len()
-            ));
+            bail!("{name} calls {SEND} with {} arguments", arguments.len());
         };
         let opcode = int_value(opcode)
             .and_then(|opcode| u16::try_from(opcode).ok())
             .filter(|opcode| opcode >> 10 == 0x3F)
-            .ok_or_else(|| format!("{name} sends no constant OGF 0x3F opcode"))?;
+            .with_context(|| format!("{name} sends no constant OGF 0x3F opcode"))?;
 
         let mut structs = Structs::new();
         let params = params_layout(function, length, buffer, records, &mut structs).unwrap_or_else(
@@ -222,7 +220,7 @@ pub fn commands(
         });
     }
     if commands.is_empty() {
-        return Err(format!("no function calls {SEND}"));
+        bail!("no function calls {SEND}");
     }
     Ok(commands)
 }

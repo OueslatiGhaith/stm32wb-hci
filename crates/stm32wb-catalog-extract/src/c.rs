@@ -8,6 +8,7 @@
 //! by its GCC packing macros and `stm32wbxx.h` by the few CMSIS symbols
 //! `shci.c` uses, so the SHCI sources can be parsed without CMSIS.
 
+use anyhow::{Context, Result, anyhow, bail};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -60,12 +61,11 @@ pub struct Shim {
 }
 
 impl Shim {
-    pub fn new() -> Result<Self, String> {
-        let directory =
-            tempfile::tempdir().map_err(|error| format!("could not create the shim: {error}"))?;
+    pub fn new() -> Result<Self> {
+        let directory = tempfile::tempdir().context("could not create the shim")?;
         for (name, contents) in SHIM_HEADERS {
             fs::write(directory.path().join(name), contents)
-                .map_err(|error| format!("could not write shim header {name}: {error}"))?;
+                .with_context(|| format!("could not write shim header {name}"))?;
         }
         Ok(Self { directory })
     }
@@ -82,7 +82,7 @@ pub fn parse<'i>(
     source: &Path,
     shim: &Shim,
     include_dirs: &[PathBuf],
-) -> Result<TranslationUnit<'i>, String> {
+) -> Result<TranslationUnit<'i>> {
     parse_with(index, source, shim, include_dirs, &[])
 }
 
@@ -93,7 +93,7 @@ pub fn parse_with<'i>(
     shim: &Shim,
     include_dirs: &[PathBuf],
     prelude: &[&str],
-) -> Result<TranslationUnit<'i>, String> {
+) -> Result<TranslationUnit<'i>> {
     let mut arguments = vec![
         "--target=thumbv7em-none-eabi".to_owned(),
         "-ffreestanding".to_owned(),
@@ -114,7 +114,7 @@ pub fn parse_with<'i>(
         .arguments(&arguments)
         .skip_function_bodies(false)
         .parse()
-        .map_err(|error| format!("libclang could not parse {}: {error:?}", source.display()))?;
+        .with_context(|| format!("libclang could not parse {}", source.display()))?;
     let errors = unit
         .get_diagnostics()
         .into_iter()
@@ -124,7 +124,7 @@ pub fn parse_with<'i>(
     if errors.is_empty() {
         Ok(unit)
     } else {
-        Err(format!(
+        Err(anyhow!(
             "libclang rejected {}:\n  {}",
             source.display(),
             errors.join("\n  ")
@@ -143,7 +143,7 @@ pub fn main_file_entities<'tu>(unit: &'tu TranslationUnit<'_>) -> Vec<Entity<'tu
 
 /// The parameters an entity's documentation says address an ATT bearer,
 /// with the range of enhanced bearers it gives.
-pub fn bearers(entity: Entity<'_>) -> Result<Vec<Bearer>, String> {
+pub fn bearers(entity: Entity<'_>) -> Result<Vec<Bearer>> {
     entity
         .get_comment()
         .map_or(Ok(Vec::new()), |comment| bearers_in(&comment))
@@ -152,7 +152,7 @@ pub fn bearers(entity: Entity<'_>) -> Result<Vec<Bearer>, String> {
 /// The `@param` blocks of a doc comment that list an enhanced ATT bearer
 /// range, written `0xEA00 ... 0xEAnn`. Any other spelling of a value starting
 /// at 0xEA is an error rather than a guess.
-pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>, String> {
+pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>> {
     let mut bearers = Vec::new();
     for block in comment.split("@param").skip(1) {
         let block = block.split("@return").next().unwrap_or_default();
@@ -176,10 +176,10 @@ pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>, String> {
             .map(|index| {
                 let window = &words[index..words.len().min(index + 3)];
                 match window {
-                    [first, "...", last] => hex(first).zip(hex(last)).ok_or_else(|| {
+                    [first, "...", last] => hex(first).zip(hex(last)).with_context(|| {
                         format!("{name} documents a malformed range {}", window.join(" "))
                     }),
-                    _ => Err(format!(
+                    _ => Err(anyhow!(
                         "{name} documents a value at 0xEA that is not a range: {}",
                         window.join(" ")
                     )),
@@ -190,9 +190,7 @@ pub fn bearers_in(comment: &str) -> Result<Vec<Bearer>, String> {
         };
         let (first, last) = range?;
         if ranges.next().is_some() {
-            return Err(format!(
-                "{name} documents several enhanced ATT bearer ranges"
-            ));
+            bail!("{name} documents several enhanced ATT bearer ranges");
         }
         bearers.push(Bearer {
             member: (*name).to_owned(),

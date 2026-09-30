@@ -11,6 +11,7 @@
 //! (`(NaN)`), then an optional `: label`. Any other line inside a list, or a
 //! list header anywhere else, is an error rather than a guess.
 
+use anyhow::{Context, Result, anyhow, bail};
 use std::collections::BTreeMap;
 
 use clang::Entity;
@@ -32,7 +33,7 @@ const FIELD_ITEM_INDENT: usize = 1;
 const FIELD_CONTINUATION_INDENT: usize = 3;
 
 /// The documented values of an entity's parameters.
-pub fn domains(entity: Entity<'_>) -> Result<Vec<Documented>, String> {
+pub fn domains(entity: Entity<'_>) -> Result<Vec<Documented>> {
     entity
         .get_comment()
         .map_or(Ok(Vec::new()), |comment| domains_in(&comment))
@@ -41,7 +42,7 @@ pub fn domains(entity: Entity<'_>) -> Result<Vec<Documented>, String> {
 /// The documented values of an entity's parameters, and the header of each
 /// list its comment has outside any `@param` block, which documents no
 /// parameter.
-pub fn domains_and_orphans(entity: Entity<'_>) -> Result<(Vec<Documented>, Vec<String>), String> {
+pub fn domains_and_orphans(entity: Entity<'_>) -> Result<(Vec<Documented>, Vec<String>)> {
     entity
         .get_comment()
         .map_or(Ok((Vec::new(), Vec::new())), |comment| {
@@ -50,17 +51,17 @@ pub fn domains_and_orphans(entity: Entity<'_>) -> Result<(Vec<Documented>, Vec<S
 }
 
 /// The documented values of every `@param` block of a doc comment.
-pub fn domains_in(comment: &str) -> Result<Vec<Documented>, String> {
+pub fn domains_in(comment: &str) -> Result<Vec<Documented>> {
     let (documented, orphans) = domains_with_orphans(comment)?;
     match orphans.first() {
-        Some(orphan) => Err(format!("a list outside any @param block: {orphan:?}")),
+        Some(orphan) => Err(anyhow!("a list outside any @param block: {orphan:?}")),
         None => Ok(documented),
     }
 }
 
 /// The documented values of every `@param` block of a doc comment, and the
 /// header of each list outside any.
-fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>), String> {
+fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>)> {
     let lines = comment_lines(comment);
     let mut orphans = Vec::new();
     let mut documented = Vec::new();
@@ -68,9 +69,9 @@ fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>),
     let mut list: Option<(DomainKind, Vec<Item>)> = None;
     let mut finish = |param: &Option<(String, bool)>,
                       list: &mut Option<(DomainKind, Vec<Item>)>|
-     -> Result<(), String> {
+     -> Result<()> {
         if let (Some((name, returned)), Some((kind, items))) = (param, list.take()) {
-            let domain = domain(kind, items).map_err(|error| format!("{name}: {error}"))?;
+            let domain = domain(kind, items).with_context(|| name.to_owned())?;
             documented.push((name.clone(), *returned, domain));
         }
         Ok(())
@@ -93,12 +94,10 @@ fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>),
         };
         if let Some(kind) = list_kind(content) {
             if indent != ITEM_INDENT {
-                return Err(format!(
-                    "{name} starts a list indented {indent} rather than {ITEM_INDENT}"
-                ));
+                bail!("{name} starts a list indented {indent} rather than {ITEM_INDENT}");
             }
             if list.is_some() {
-                return Err(format!("{name} documents two lists"));
+                bail!("{name} documents two lists");
             }
             list = Some((kind, Vec::new()));
             continue;
@@ -121,7 +120,7 @@ fn domains_with_orphans(comment: &str) -> Result<(Vec<Documented>, Vec<String>),
 
 /// The documented values of the fields of every structure in `records`
 /// whose comments list them.
-pub fn field_domains(records: &BTreeMap<String, CRecord>) -> Result<Vec<FieldDocumented>, String> {
+pub fn field_domains(records: &BTreeMap<String, CRecord>) -> Result<Vec<FieldDocumented>> {
     let mut documented = Vec::new();
     for (structure, record) in records {
         for field in &record.fields {
@@ -138,17 +137,15 @@ pub fn field_domains(records: &BTreeMap<String, CRecord>) -> Result<Vec<FieldDoc
 }
 
 /// The values the comment of the structure field `name` lists, if any.
-pub fn field_domain(name: &str, comment: &str) -> Result<Option<Domain>, String> {
+pub fn field_domain(name: &str, comment: &str) -> Result<Option<Domain>> {
     let mut list: Option<(DomainKind, Vec<Item>)> = None;
     for (indent, content) in comment_lines(comment) {
         if let Some(kind) = list_kind(content) {
             if indent != FIELD_ITEM_INDENT {
-                return Err(format!(
-                    "{name} starts a list indented {indent} rather than {FIELD_ITEM_INDENT}"
-                ));
+                bail!("{name} starts a list indented {indent} rather than {FIELD_ITEM_INDENT}");
             }
             if list.is_some() {
-                return Err(format!("{name} documents two lists"));
+                bail!("{name} documents two lists");
             }
             list = Some((kind, Vec::new()));
             continue;
@@ -164,7 +161,7 @@ pub fn field_domain(name: &str, comment: &str) -> Result<Option<Domain>, String>
             )?;
         }
     }
-    list.map(|(kind, items)| domain(kind, items).map_err(|error| format!("{name}: {error}")))
+    list.map(|(kind, items)| domain(kind, items).with_context(|| name.to_owned()))
         .transpose()
 }
 
@@ -199,14 +196,14 @@ fn list_line(
     content: &str,
     item_indent: usize,
     continuation_indent: usize,
-) -> Result<(), String> {
+) -> Result<()> {
     match content.strip_prefix("- ") {
         None if content.is_empty() => {}
         Some(item) if indent == item_indent => {
-            items.push(parse_item(item).map_err(|error| format!("{name}: {error}"))?)
+            items.push(parse_item(item).with_context(|| name.to_owned())?)
         }
         None if indent == continuation_indent && items.is_empty() => {
-            return Err(format!("{name} continues a label before any item"));
+            bail!("{name} continues a label before any item");
         }
         None if items.last().is_some_and(|item| {
             indent == continuation_indent
@@ -221,19 +218,17 @@ fn list_line(
                 .for_each(|item| item.continue_label(content))
         }
         _ => {
-            return Err(format!(
-                "{name} has a line inside its list that is not an item: {content:?}"
-            ));
+            bail!("{name} has a line inside its list that is not an item: {content:?}");
         }
     }
     Ok(())
 }
 
-fn first_word(text: &str) -> Result<String, String> {
+fn first_word(text: &str) -> Result<String> {
     text.split_whitespace()
         .next()
         .map(str::to_owned)
-        .ok_or_else(|| "a @param without a name".to_owned())
+        .context("a @param without a name")
 }
 
 /// One list item as written, before its durations become a unit.
@@ -266,7 +261,7 @@ impl Item {
 }
 
 /// `0x0020 (20.000 ms)  ... 0x4000 (10240.000 ms) : for Low Duty Cycle`
-fn parse_item(text: &str) -> Result<Item, String> {
+fn parse_item(text: &str) -> Result<Item> {
     let (first, rest) = parse_value_and_note(text)?;
     let (last, rest) = match rest.trim_start().strip_prefix("...") {
         Some(rest) => {
@@ -282,7 +277,7 @@ fn parse_item(text: &str) -> Result<Item, String> {
             (label.to_owned(), Some(text.len() - label.len()))
         }
         None if rest.is_empty() => (String::new(), None),
-        None => return Err(format!("unexpected {rest:?} in item {text:?}")),
+        None => bail!("unexpected {rest:?} in item {text:?}"),
     };
     Ok(Item {
         first,
@@ -292,7 +287,7 @@ fn parse_item(text: &str) -> Result<Item, String> {
     })
 }
 
-fn parse_value_and_note(text: &str) -> Result<(Value, &str), String> {
+fn parse_value_and_note(text: &str) -> Result<(Value, &str)> {
     let end = text
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .unwrap_or(text.len());
@@ -303,13 +298,13 @@ fn parse_value_and_note(text: &str) -> Result<(Value, &str), String> {
         None => word.to_owned(),
     };
     let (value, hex_digits) =
-        parse_value(&normalized).ok_or_else(|| format!("{word:?} is not a value"))?;
+        parse_value(&normalized).with_context(|| format!("{word:?} is not a value"))?;
     let trimmed = rest.trim_start();
     let (note, rest) = match trimmed.strip_prefix('(') {
         Some(inner) => {
             let (note, rest) = inner
                 .split_once(')')
-                .ok_or_else(|| format!("unclosed note after {word}"))?;
+                .with_context(|| format!("unclosed note after {word}"))?;
             (Some(note.trim().to_owned()), rest)
         }
         None => (None, rest),
@@ -326,7 +321,7 @@ fn parse_value_and_note(text: &str) -> Result<(Value, &str), String> {
 
 /// The catalog's view of a list: items in ascending order, labelled with the
 /// text or else the note, and the unit every written duration agrees with.
-fn domain(kind: DomainKind, items: Vec<Item>) -> Result<Domain, String> {
+fn domain(kind: DomainKind, items: Vec<Item>) -> Result<Domain> {
     let unit_us = unit_us(&items)?;
     let mut items = items
         .into_iter()
@@ -371,7 +366,7 @@ fn duration_ms(note: &str) -> Option<(&str, usize)> {
 /// The one unit, in whole microseconds, that every written duration rounds
 /// to: taken from the largest value, whose duration is the most precise, and
 /// checked against every other.
-fn unit_us(items: &[Item]) -> Result<Option<u32>, String> {
+fn unit_us(items: &[Item]) -> Result<Option<u32>> {
     let durations = items
         .iter()
         .flat_map(Item::values)
@@ -390,16 +385,14 @@ fn unit_us(items: &[Item]) -> Result<Option<u32>, String> {
     let unit = number
         .parse::<f64>()
         .map(|ms| (ms * 1000.0 / largest as f64).round())
-        .map_err(|error| format!("duration {number} ms: {error}"))?;
+        .with_context(|| format!("duration {number} ms"))?;
     if !(1.0..=f64::from(u32::MAX)).contains(&unit) {
-        return Err(format!("{number} ms for {largest} gives no whole unit"));
+        bail!("{number} ms for {largest} gives no whole unit");
     }
     for &(value, number, decimals) in &durations {
         let expected = format!("{:.decimals$}", value as f64 * unit / 1000.0);
         if expected != number {
-            return Err(format!(
-                "{value} is written as {number} ms, but a {unit} us unit gives {expected} ms"
-            ));
+            bail!("{value} is written as {number} ms, but a {unit} us unit gives {expected} ms");
         }
     }
     Ok(Some(unit as u32))
