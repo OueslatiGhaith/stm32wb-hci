@@ -2,6 +2,7 @@
 name = "stm32wb55-embassy"
 edition = "2024"
 version = "0.1.0"
+publish = false
 
 [dependencies]
 aligned = "0.4.3"

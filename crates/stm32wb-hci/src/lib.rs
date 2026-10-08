@@ -18,7 +18,7 @@
 //!   status codes, which bt-hci shows as unknown.
 //! - [`event`] decodes any event the BLE stack sends, Core or vendor.
 //! - [`standard`] checks bt-hci's Bluetooth Core commands and events against
-//!   the catalog, and declares the ones bt-hci gets wrong or lacks.
+//!   the catalog, and declares the few commands bt-hci encodes differently.
 //! - `shci` declares the system commands and events of the CPU2 system
 //!   channel, on STM32WB.
 //! - [`adv_data`] builds advertising and scan response data.

@@ -2,12 +2,13 @@
 name = "stm32wb-hci"
 edition = "2024"
 version = "0.20.0"
+rust-version = "1.88"
 authors = [
     "Daniel Gallagher <pdanielgallagher@gmail.com>",
     "Ghaith Oueslati <ghaith.oueslati@enis.tn>",
 ]
 categories = ["embedded", "hardware-support", "no-std", "asynchronous"]
-description = "Implementation of the Bluetooth HCI for the STM32WB family"
+description = "Implementation of the Bluetooth HCI for the STM32WB and STM32WBA families"
 keywords = ["ble", "bluetooth", "stm32"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/OueslatiGhaith/stm32wb-hci"

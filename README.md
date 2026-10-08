@@ -14,7 +14,7 @@ Every command and event is checked at compile time against a catalog extracted f
 running on CPU2. Select it with exactly one release feature and one stack profile feature:
 
 ```toml
-stm32wb-hci = { version = "0.19", default-features = false, features = ["fw_1_24_0", "stack-full-extended"] }
+stm32wb-hci = { version = "0.20", default-features = false, features = ["fw_1_24_0", "stack-full-extended"] }
 ```
 
 - `fw_1_15_0` to `fw_1_24_0`: the STM32CubeWB release of the binary.
@@ -32,7 +32,7 @@ The BLE stack library of STM32WBA is selected the same way, from ST's
 [STM32CubeWBA](https://github.com/STMicroelectronics/STM32CubeWBA) sources:
 
 ```toml
-stm32wb-hci = { version = "0.19", default-features = false, features = ["wba_1_10_0", "stack-wba-full"] }
+stm32wb-hci = { version = "0.20", default-features = false, features = ["wba_1_10_0", "stack-wba-full"] }
 ```
 
 - `wba_1_0_0` to `wba_1_10_0`: the STM32CubeWBA release of the library.
