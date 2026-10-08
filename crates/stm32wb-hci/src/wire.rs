@@ -1764,12 +1764,13 @@ pub const fn fixed_width<T: FixedWidth>() -> usize {
 /// Assert that bt-hci decodes the parameters of an event of `width` bytes,
 /// and neither one byte fewer nor one more: the catalog's width.
 ///
-/// Values are all zeros or all ones, one of which each field accepts.
+/// Values are all zeros or all ones, one of which each field accepts. The
+/// buffers are static, for the events bt-hci decodes by borrowing.
 #[doc(hidden)]
-pub fn assert_event_width<T: for<'a> FromHciBytes<'a>>(width: usize) {
+pub fn assert_event_width<T: FromHciBytes<'static>>(width: usize) {
+    static FILLS: [[u8; 256]; 2] = [[0; 256], [1; 256]];
     let decodes = |fill: u8, width: usize| {
-        let buffer = [fill; 256];
-        T::from_hci_bytes_complete(&buffer[..width]).is_ok()
+        T::from_hci_bytes_complete(&FILLS[usize::from(fill)][..width]).is_ok()
     };
     let name = core::any::type_name::<T>();
     assert!(
