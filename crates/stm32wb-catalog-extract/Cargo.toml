@@ -1,0 +1,17 @@
+[package]
+name = "stm32wb-catalog-extract"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Extract the STM32WB wireless-interface catalog from tagged STM32CubeWB releases"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+clang = { version = "2", features = ["clang_10_0", "runtime"] }
+clap = { version = "4", features = ["derive"] }
+itertools = "0.15"
+scraper = "0.27"
+similar = "3"
+stm32wb-catalog = { path = "../stm32wb-catalog" }
+tempfile = "3"

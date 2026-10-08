@@ -1,4 +1,5 @@
 use aligned::{A4, Aligned};
+use bt_hci::WriteHci;
 use bt_hci::transport::{PacketToController, WithIndicator};
 use core::{
     cell::RefCell,
@@ -24,6 +25,8 @@ use embassy_sync::{
     signal::Signal,
     waitqueue::AtomicWaker,
 };
+use stm32wb_hci::shci::ShciEvent;
+use stm32wb_hci::wire::SystemCommand;
 
 const TL_PACKET_HEADER_SIZE: usize = mem::size_of::<LinkedListNode>();
 const TL_EVT_HEADER_SIZE: usize = 3;
@@ -35,11 +38,6 @@ const POOL_SIZE: usize =
     CFG_TL_BLE_EVT_QUEUE_LENGTH * 4 * (TL_PACKET_HEADER_SIZE + TL_BLE_EVENT_FRAME_SIZE).div_ceil(4);
 const TL_BLEEVT_CC_OPCODE: u8 = 0x0E;
 const TL_BLEEVT_CS_OPCODE: u8 = 0x0F;
-const SHCI_OGF: u16 = 0x3F;
-
-const fn shci_opcode(ocf: u16) -> u16 {
-    (SHCI_OGF << 10) + ocf
-}
 
 pub fn init(
     ipcc: Peri<'static, IPCC>,
@@ -89,12 +87,12 @@ pub fn init(
         (_mac_cmd_tx, _mac_evt_rx),
         (mm_release_tx, _traces_rx),
         (_ble_lld_tx, _ble_lld_rx),
-        (_, _),
+        (hci_acl_tx, _),
     ] = Ipcc::new(ipcc, irqs, config).split();
 
     (
         Sys::new(sys_cmd_tx, sys_evt_rx),
-        Ble::new(ble_cmd_tx, ble_evt_rx),
+        Ble::new(ble_cmd_tx, ble_evt_rx, AclChannel::new(hci_acl_tx)),
         MemoryManager::new(mm_release_tx),
     )
 }
@@ -123,11 +121,20 @@ impl<'a> Sys<'a> {
     }
 
     pub async fn read_ready(&mut self) -> Result<SysEventReady, ()> {
-        self.read().await.payload()[0].try_into()
+        let event = self.read().await;
+        match ShciEvent::from_system_params(event.payload()) {
+            Some(Ok(ShciEvent::Ready(ready))) => ready.sysevt_ready_rsp.try_into(),
+            _ => Err(()),
+        }
     }
 
-    pub async fn ble_init(&mut self, param: BleInitParam) -> Result<SysCommandStatus, ()> {
-        self.write(SHCI_OPCODE_BLE_INIT, param.payload()).await;
+    /// Send a system command and wait for its status.
+    pub async fn command<C: SystemCommand>(&mut self, command: &C) -> Result<SysCommandStatus, ()> {
+        let params = command.params();
+        let mut payload = [0; 255];
+        let len = params.size();
+        params.write_hci(&mut payload[..len]).map_err(|_| ())?;
+        self.write(C::OPCODE, &payload[..len]).await;
         // System command responses are written back into SYS_CMD_BUF after channel clears.
         self.cmd.flush().await;
         unsafe { SysCommandStatus::from_cmd_buffer(SYS_CMD_BUF.as_ptr()) }
@@ -161,10 +168,11 @@ impl<'a> Sys<'a> {
 pub struct Ble<'a> {
     cmd: IpccTxChannel<'a>,
     evt: IpccRxChannel<'a>,
+    acl: AclChannel<'a>,
 }
 
 impl<'a> Ble<'a> {
-    fn new(cmd: IpccTxChannel<'a>, evt: IpccRxChannel<'a>) -> Self {
+    fn new(cmd: IpccTxChannel<'a>, evt: IpccRxChannel<'a>, acl: AclChannel<'a>) -> Self {
         unsafe {
             LinkedListNode::init_head(EVT_QUEUE.as_mut_ptr());
             TL_BLE_TABLE.as_mut_ptr().write_volatile(BleTable {
@@ -175,7 +183,39 @@ impl<'a> Ble<'a> {
             });
         }
 
-        Self { cmd, evt }
+        Self { cmd, evt, acl }
+    }
+}
+
+/// The channel sending ACL data to CPU2, IPCC channel 6.
+///
+/// embassy-stm32 0.6's IPCC interrupt handlers serve channels 1 to 5 only:
+/// waiting for channel 6 through `IpccTxChannel` unmasks an interrupt no
+/// handler masks again, which then fires forever. This drives the channel's
+/// registers directly, leaving its interrupt masked, and polls for CPU2 to
+/// free it.
+struct AclChannel<'a> {
+    _channel: IpccTxChannel<'a>,
+}
+
+impl<'a> AclChannel<'a> {
+    /// Channel 6.
+    const INDEX: usize = 5;
+
+    fn new(channel: IpccTxChannel<'a>) -> Self {
+        Self { _channel: channel }
+    }
+
+    /// Wait for CPU2 to read the previous packet, let `write` fill the ACL
+    /// data buffer, then hand it to CPU2.
+    async fn send(&mut self, write: impl FnOnce()) {
+        let cpu1 = embassy_stm32::pac::IPCC.cpu(0);
+        while cpu1.sr().read().chf(Self::INDEX) {
+            embassy_futures::yield_now().await;
+        }
+        write();
+        compiler_fence(Ordering::Release);
+        cpu1.scr().write(|w| w.set_chs(Self::INDEX, true));
     }
 }
 
@@ -246,6 +286,7 @@ pub fn make_cc_with_cs<'a>(
 
 pub struct ControllerAdapter<'d> {
     hw_ipcc_ble_cmd_channel: Mutex<NoopRawMutex, IpccTxChannel<'d>>,
+    hw_ipcc_hci_acl_data_channel: Mutex<NoopRawMutex, AclChannel<'d>>,
     ipcc_ble_event_channel: Mutex<NoopRawMutex, IpccRxChannel<'d>>,
     slot: blocking_mutex::NoopMutex<RefCell<Option<bt_hci::cmd::Opcode>>>,
     signal: Signal<NoopRawMutex, Option<EvtBox<Ble<'d>>>>,
@@ -274,6 +315,7 @@ impl<'d> ControllerAdapter<'d> {
     pub fn new(controller: Ble<'d>) -> Self {
         Self {
             hw_ipcc_ble_cmd_channel: Mutex::new(controller.cmd),
+            hw_ipcc_hci_acl_data_channel: Mutex::new(controller.acl),
             ipcc_ble_event_channel: Mutex::new(controller.evt),
             slot: blocking_mutex::NoopMutex::const_new(NoopRawMutex::new(), RefCell::new(None)),
             signal: Signal::new(),
@@ -402,23 +444,34 @@ impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
 
     async fn write_acl_data(
         &self,
-        _packet: &bt_hci::data::AclPacket<'_>,
+        packet: &bt_hci::data::AclPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        let mut ret = Ok(());
+        self.hw_ipcc_hci_acl_data_channel
+            .lock()
+            .await
+            .send(|| unsafe {
+                ret = WithIndicator::new(packet).write_hci(AclDataPacket::writer(
+                    HCI_ACL_DATA_BUFFER.as_mut_ptr().cast(),
+                ));
+            })
+            .await;
+        ret
     }
 
+    // The BLE stack carries neither isochronous nor synchronous data.
     async fn write_iso_data(
         &self,
         _packet: &bt_hci::data::IsoPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        Err(embedded_io::ErrorKind::Unsupported)
     }
 
     async fn write_sync_data(
         &self,
         _packet: &bt_hci::data::SyncPacket<'_>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        Err(embedded_io::ErrorKind::Unsupported)
     }
 
     async fn read<'a>(
@@ -477,9 +530,12 @@ impl<'d> bt_hci::controller::Controller for ControllerAdapter<'d> {
     }
 }
 
+// Only the commands the selected target's wireless binary implements, as the
+// catalog describes them: any other fails to compile rather than being
+// answered with Unknown HCI Command.
 impl<'d, C> bt_hci::controller::ControllerCmdSync<C> for ControllerAdapter<'d>
 where
-    C: bt_hci::cmd::SyncCmd,
+    C: bt_hci::cmd::SyncCmd + stm32wb_hci::catalog::Supported,
 {
     async fn exec(&self, cmd: &C) -> Result<C::Return, bt_hci::cmd::Error<Self::Error>> {
         use bt_hci::cmd;
@@ -498,7 +554,7 @@ where
 
 impl<'d, C> bt_hci::controller::ControllerCmdAsync<C> for ControllerAdapter<'d>
 where
-    C: bt_hci::cmd::AsyncCmd,
+    C: bt_hci::cmd::AsyncCmd + stm32wb_hci::catalog::Supported,
 {
     async fn exec(&self, cmd: &C) -> Result<(), bt_hci::cmd::Error<Self::Error>> {
         debug!("Executing async command with opcode {:x}", C::OPCODE.0);
@@ -586,85 +642,6 @@ impl<'a> EventMemoryManager for MemoryManager<'a> {
         Self::drop_event_packet(evt);
     }
 }
-
-#[derive(Clone, Copy)]
-#[repr(C, packed)]
-pub struct BleInitParam {
-    p_ble_buffer_address: u32,
-    ble_buffer_size: u32,
-    num_attr_record: u16,
-    num_attr_serv: u16,
-    attr_value_arr_size: u16,
-    num_of_links: u8,
-    extended_packet_length_enable: u8,
-    prepare_write_list_size: u8,
-    block_count: u8,
-    att_mtu: u16,
-    slave_sca: u16,
-    master_sca: u8,
-    ls_source: u8,
-    max_conn_event_length: u32,
-    hs_startup_time: u16,
-    viterbi_enable: u8,
-    options: u8,
-    hw_version: u8,
-    max_coc_initiator_nbr: u8,
-    min_tx_power: i8,
-    max_tx_power: i8,
-    rx_model_config: u8,
-    max_adv_set_nbr: u8,
-    max_adv_data_len: u16,
-    tx_path_compens: i16,
-    rx_path_compens: i16,
-    ble_core_version: u8,
-    options_extension: u8,
-    max_add_eatt_bearers: u8,
-}
-
-impl BleInitParam {
-    fn payload(&self) -> &[u8] {
-        // SHCI command parameters are packed C ABI bytes defined by STM32WB firmware.
-        unsafe { slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>()) }
-    }
-}
-
-impl Default for BleInitParam {
-    fn default() -> Self {
-        Self {
-            p_ble_buffer_address: 0,
-            ble_buffer_size: 0,
-            num_attr_record: 68,
-            num_attr_serv: 4,
-            attr_value_arr_size: 1344,
-            num_of_links: 2,
-            extended_packet_length_enable: 1,
-            prepare_write_list_size: 0x3A,
-            block_count: 0x79,
-            att_mtu: 156,
-            slave_sca: 500,
-            master_sca: 0,
-            ls_source: 1,
-            max_conn_event_length: 0xFFFF_FFFF,
-            hs_startup_time: 0x148,
-            viterbi_enable: 1,
-            options: 0,
-            hw_version: 0,
-            max_coc_initiator_nbr: 32,
-            min_tx_power: -40,
-            max_tx_power: 6,
-            rx_model_config: 0,
-            max_adv_set_nbr: 2,
-            max_adv_data_len: 1650,
-            tx_path_compens: 0,
-            rx_path_compens: 0,
-            ble_core_version: 11,
-            options_extension: 0,
-            max_add_eatt_bearers: 4,
-        }
-    }
-}
-
-const SHCI_OPCODE_BLE_INIT: u16 = shci_opcode(0x66);
 
 #[derive(Clone, Copy, defmt::Format)]
 #[allow(clippy::enum_variant_names)]
@@ -941,6 +918,17 @@ impl embedded_io::Write for VolatileWriter {
 struct AclDataPacket {
     header: LinkedListNode,
     acl_data_serial: AclDataSerial,
+}
+
+impl AclDataPacket {
+    /// Write the indicator, header and data of an ACL packet after the
+    /// buffer's list header, as far as the 251 data bytes the buffer holds.
+    unsafe fn writer(buf: *mut AclDataPacket) -> VolatileWriter {
+        VolatileWriter {
+            start: (buf as *mut u8).add(size_of::<LinkedListNode>()),
+            len: 5 + 251,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

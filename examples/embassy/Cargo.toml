@@ -2,6 +2,7 @@
 name = "stm32wb55-embassy"
 edition = "2024"
 version = "0.1.0"
+publish = false
 
 [dependencies]
 aligned = "0.4.3"
@@ -18,10 +19,11 @@ embassy-stm32 = { version = "0.6.0", features = [
     "memory-x",
     "exti",
     "executor-thread",
+    "unstable-pac",
 ] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-stm32wb-hci = { path = "../../", features = ["defmt"] }
-bt-hci = "0.10.1"
+stm32wb-hci = { path = "../../crates/stm32wb-hci", features = ["defmt"] }
+bt-hci = "0.11.0"
 embedded-io = "0.7.1"
 embassy-futures = "0.1.2"

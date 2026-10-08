@@ -1,0 +1,644 @@
+//! Procedural macros that derive `stm32wb-hci` declarations from the bundled
+//! STM32WB catalog, so the crate cannot drift from what the CPU2 wireless
+//! binaries accept and emit.
+
+mod bearer;
+mod cfg;
+mod command;
+mod complete;
+mod dispatch;
+mod event;
+mod standard;
+mod status;
+mod structs;
+
+use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use stm32wb_catalog::{Bundled, Catalog, Platform, Profile, bundled};
+
+/// Every platform's bundled catalog, in `Platform::ALL` order.
+pub(crate) fn catalogs() -> syn::Result<Vec<&'static Bundled>> {
+    Platform::ALL
+        .into_iter()
+        .map(|platform| {
+            bundled(platform).map_err(|error| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "the bundled {} catalog is invalid: {error}",
+                        platform.package()
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Expand a declaration for each of the catalogs that `has` its entry,
+/// and for STM32WB if none does, so its error names the missing entry. Each
+/// expansion is gated to its own platform's targets; an error from another
+/// platform than STM32WB names it.
+pub(crate) fn per_platform(
+    catalogs: &[&'static Bundled],
+    has: impl Fn(&Catalog) -> bool,
+    mut expand: impl FnMut(&'static Bundled) -> syn::Result<TokenStream2>,
+) -> syn::Result<TokenStream2> {
+    let having = catalogs
+        .iter()
+        .copied()
+        .filter(|bundled| has(&bundled.catalog))
+        .collect::<Vec<_>>();
+    if having.is_empty() {
+        return expand(catalogs[0]);
+    }
+    let mut tokens = TokenStream2::new();
+    for bundled in having {
+        tokens
+            .extend(expand(bundled).map_err(|error| on_platform(bundled.catalog.platform, error))?);
+    }
+    Ok(tokens)
+}
+
+/// `error`, naming `platform` unless it is STM32WB.
+pub(crate) fn on_platform(platform: Platform, error: syn::Error) -> syn::Error {
+    match platform {
+        Platform::Stm32wb => error,
+        Platform::Stm32wba => {
+            syn::Error::new(error.span(), format!("{}: {error}", platform.package()))
+        }
+    }
+}
+
+/// Require exactly one release feature (`fw_*` for STM32WB, `wba_*` for
+/// STM32WBA) and exactly one `stack-*` feature (a BLE stack profile), both of
+/// the same platform, and a profile the release has.
+///
+/// The features themselves are declared in `stm32wb-hci`'s manifest, which a
+/// test keeps in sync with the catalogs; each also enables its platform's
+/// feature. This macro only counts the enabled ones, so its lists always come
+/// from the catalogs.
+#[proc_macro]
+pub fn check_target(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return error("check_target! takes no arguments");
+    }
+    let mut catalogs = Vec::new();
+    for platform in Platform::ALL {
+        match bundled(platform) {
+            Ok(bundled) => catalogs.push(&bundled.catalog),
+            Err(error) => return self::error(&format!("a bundled catalog is invalid: {error}")),
+        }
+    }
+    let releases = catalogs
+        .iter()
+        .flat_map(|catalog| {
+            catalog
+                .versions()
+                .map(|release| catalog.platform.release_feature(release))
+        })
+        .collect::<Vec<_>>();
+    let profiles = Profile::ALL
+        .iter()
+        .map(|profile| profile.feature_name())
+        .collect::<Vec<_>>();
+    let platforms = Platform::ALL
+        .iter()
+        .map(|platform| platform.feature().to_owned())
+        .collect::<Vec<_>>();
+    let listed = |describe: &dyn Fn(&Catalog) -> String| {
+        catalogs
+            .iter()
+            .map(|catalog| describe(catalog))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let release_message = format!(
+        "enable exactly one release feature, naming the release of the BLE stack ({})",
+        listed(&|catalog| format!(
+            "{}* for {}: {}",
+            catalog.platform.release_feature_prefix(),
+            catalog.platform.package(),
+            catalog
+                .versions()
+                .map(|release| release.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    );
+    let profile_message = format!(
+        "enable exactly one stack-* feature, naming the BLE stack profile ({})",
+        listed(&|catalog| format!(
+            "for {}: {}",
+            catalog.platform.package(),
+            catalog
+                .platform
+                .profiles()
+                .iter()
+                .map(|profile| profile.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    );
+    let platform_message = "the release and stack-* features must name the same platform";
+    let release_error = exactly_one(&releases, &release_message);
+    let profile_error = exactly_one(&profiles, &profile_message);
+    let platform_error = exactly_one(&platforms, platform_message);
+    let missing_errors = catalogs.iter().flat_map(|catalog| {
+        catalog.versions().filter_map(move |release| {
+            let present = catalog.profiles_in(release);
+            let missing = catalog
+                .platform
+                .profiles()
+                .iter()
+                .filter(|profile| !present.contains(profile))
+                .map(|profile| profile.feature_name())
+                .collect::<Vec<_>>();
+            if missing.is_empty() {
+                return None;
+            }
+            let feature = catalog.platform.release_feature(release);
+            let message = format!(
+                "{} {release} has no {} profile; its profiles are {}",
+                catalog.platform.package(),
+                missing.join(" or "),
+                present
+                    .iter()
+                    .map(|profile| profile.feature_name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Some(quote! {
+                #[cfg(all(feature = #feature, any(#(feature = #missing),*)))]
+                ::core::compile_error!(#message);
+            })
+        })
+    });
+    quote!(#release_error #profile_error #platform_error #(#missing_errors)*).into()
+}
+
+/// A `compile_error!` unless exactly one of `features` is enabled, raised
+/// while expanding, before any error the wrong features cause.
+fn exactly_one(features: &[String], message: &str) -> TokenStream2 {
+    let pairs = features.iter().enumerate().flat_map(|(index, first)| {
+        features[index + 1..]
+            .iter()
+            .map(move |second| quote!(all(feature = #first, feature = #second)))
+    });
+    quote! {
+        #[cfg(any(not(any(#(feature = #features),*)), #(#pairs),*))]
+        ::core::compile_error!(#message);
+    }
+}
+
+/// Declare an ST vendor command from its generated C name.
+///
+/// The opcode, the completion kind, and the targets the command exists on
+/// come from the catalog; the declaration names and types the fields. Fields
+/// must match the catalog's members in order, spelled in snake case or mapped
+/// with `#[wire(name = "<member>")]`, and each type's `HciWireType::WIDTH`
+/// must equal the member's encoded width.
+///
+/// A Command Complete command that returns more than its status declares the
+/// rest after `->`; bt-hci checks the status itself. The return parameters
+/// become a plain struct decoded in catalog order.
+///
+/// A byte field counted by another member leaves the count undeclared: as a
+/// parameter it is declared `&'a [u8]`, its count is written from its length,
+/// and the command is built with `try_new`, which rejects fields over the
+/// catalog's capacity; as a return parameter it is declared
+/// `BoundedBytes<CAPACITY>` and decoded after its count.
+///
+/// A union parameter leaves its selector undeclared as well: it is declared
+/// with a type implementing `HciWireUnion` whose alternatives are exactly the
+/// catalog's, such as `Uuid`, and the selector is written from the value's
+/// alternative.
+///
+/// An optional parameter, which the catalog allows only at the end, is
+/// declared `Option<T>` and written only if `Some`. The parameters stop at
+/// the first one omitted, so with several of them the command is built with
+/// `try_new`, which rejects one supplied after an omitted one.
+///
+/// A field the catalog adds in a later release is marked with
+/// `#[wire(since = "<release>")]`, the first release that has it, and a field
+/// it removes with `#[wire(before = "<release>")]`, the first release without
+/// it. Each set of fields that exist together becomes its own declaration,
+/// compiled only for the releases that have exactly those fields.
+///
+/// A parameter whose type stands for some values, such as a `bool` or a type
+/// `wire_values!` declares, is checked against the values the catalog
+/// documents for its member on STM32WB, in every release: each value of the
+/// type must be documented, and a member documenting no values takes an
+/// integer. A value only some releases document is declared with the
+/// `#[cfg]` selecting them, so each release checks the values it has. A
+/// parameter whose type is a set of flags `wire_flags!` declares is checked
+/// the same way against the bits its member documents, and may not stand
+/// for a member documenting values, whose lists name no combinations. A
+/// duration `wire_duration!` declares is checked against
+/// the unit its member documents, and its range and special values against
+/// the documented values. A member documenting a unit takes a duration in
+/// that unit or an integer, and no other member takes a duration. Offsets
+/// `wire_values!` declares with lengths, such as those of the configuration
+/// data, are also checked against the length each of their values documents.
+/// A return parameter is checked the same way, but a type standing for some
+/// values must be declared `OrUnknown<T>`, so decoding keeps a value the
+/// catalog does not document rather than failing. Integers stand for no
+/// values and are not checked.
+///
+/// A `u16` member the catalog documents as addressing an ATT bearer is
+/// declared `AttBearer`, and no other member is; its enhanced range must be
+/// the selected release's. A member that only addresses a bearer from a
+/// later release is declared twice, as `ConnHandle` with `before` and as
+/// `AttBearer` with `since`.
+///
+/// A member that is a C structure, or an array of them, is declared with the
+/// type [`vendor_struct!`] declares for that structure: `T`, `[T; N]`,
+/// `&'a [T]` for a counted parameter, or `BoundedArray<T, CAPACITY>` for a
+/// counted return parameter.
+///
+/// ```ignore
+/// vendor_command! {
+///     /// Set the radio activity events to report.
+///     aci_hal_set_radio_activity_mask => HalSetRadioActivityMask {
+///         radio_activity_mask: u16,
+///     }
+/// }
+///
+/// vendor_command! {
+///     /// Read the low-level configuration data at `offset`.
+///     aci_hal_read_config_data => HalReadConfigData { offset: u8 } -> HalConfigData {
+///         data: BoundedBytes<250>,
+///     }
+/// }
+///
+/// vendor_command! {
+///     /// Read the current anchor period and the largest free slot.
+///     aci_hal_get_anchor_period => HalGetAnchorPeriod {} -> HalAnchorPeriod {
+///         anchor_period: u32,
+///         max_free_slot: u32,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an ST system (SHCI) command from its C function name.
+///
+/// The catalog checks the fields as for [`vendor_command!`], `since` and
+/// `before` included, and the command's return parameters after the status
+/// are declared after `->`. The command is not a bt-hci command: it wraps its
+/// parameters and implements `SystemCommand`, which the system channel's
+/// transport sends it with.
+///
+/// ```ignore
+/// system_command! {
+///     /// Read the state of the firmware upgrade service.
+///     SHCI_C2_FUS_GetState => FusGetState {} -> FusState {
+///         error_code: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input, command::Channel::System)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare the Rust type standing for one of the catalog's C structures.
+///
+/// Fields must match the structure's members in order, as for
+/// [`vendor_command!`], in every definition of the structure, and are checked
+/// against the values the catalog documents for them as parameters are. A
+/// structure some return or event carries is decoded, so a field standing for
+/// some values is declared `OrUnknown<T>` there.
+///
+/// The type exists on the targets where a command or event uses the
+/// structure, and implements `FromHciBytes`, `HciWireType`, and
+/// `CatalogStruct`, which commands check their structure members against,
+/// and `WriteHci` if a command sends it.
+///
+/// ```ignore
+/// vendor_struct! {
+///     /// A peer device address.
+///     Peer_Entry_t => PeerEntry {
+///         peer_address_type: AddressType,
+///         peer_address: BdAddr,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_struct(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as structs::Input);
+    structs::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an ST vendor event from its generated C name.
+///
+/// The vendor event code and the targets the event exists on come from the
+/// catalog; the declaration names and types the parameters, which must match
+/// the catalog's members as for [`vendor_command!`], `since` and `before`
+/// included. The event becomes a plain struct implementing `FromHciBytes`
+/// for the parameters after the code, and `VendorEvent`, which decodes a
+/// bt-hci vendor event carrying the code.
+///
+/// A byte parameter counted by another member leaves the count undeclared and
+/// is declared `&'a [u8]`, borrowing the event; a list of structures is
+/// declared `Elements<'a, T>`, with `T` the type [`vendor_struct!`] declares,
+/// and decodes each element as it is read. The struct then takes that
+/// lifetime.
+///
+/// Parameters are checked against the values the catalog documents for them
+/// as return parameters of [`vendor_command!`] are: a type standing for some
+/// values is declared `OrUnknown<T>`.
+///
+/// ```ignore
+/// vendor_event! {
+///     /// A warning from the wireless stack, with data depending on its type.
+///     aci_warning_event => HalWarningEvent {
+///         warning_type: u8,
+///         data: &'a [u8],
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an ST system (SHCI) event from its generated C name.
+///
+/// The catalog checks the parameters as for [`vendor_event!`]. The event
+/// becomes a plain struct implementing `FromHciBytes` for the parameters
+/// after its sub-event code, and `SystemEvent`, which decodes a system event
+/// carrying the code.
+///
+/// ```ignore
+/// system_event! {
+///     /// The wireless CPU is about to write to flash.
+///     SHCI_SUB_EVT_NVM_START_WRITE => NvmStartWriteEvent {
+///         number_of_words: u32,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input, command::Channel::System)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare a Bluetooth Core event bt-hci lacks from its generated C name.
+///
+/// The declaration is checked and generated as for [`vendor_event!`], but
+/// implements bt-hci's `LeEventParams` with the catalog's subevent code for
+/// an LE meta event, or `EventParams` with its event code for any other, so
+/// bt-hci decodes it like its own. Every other Core event is listed in
+/// [`standard_events!`] with bt-hci's type.
+///
+/// ```ignore
+/// standard_event! {
+///     /// A Channel Sounding test ended.
+///     hci_le_cs_test_end_complete_event => LeCsTestEndComplete {
+///         status: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_event(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as event::Input);
+    event::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Require a declaration of every vendor and system command and event the
+/// catalog lists for the selected target.
+///
+/// Invoked once, in `stm32wb_hci::catalog`. It defines a marker type for each
+/// catalog entry and the `Declared` trait, which [`vendor_command!`],
+/// [`system_command!`], [`vendor_event!`], and [`system_event!`] implement
+/// for the markers of the entries they declare, on the targets they declare
+/// them for. A target whose binary implements an
+/// entry nothing declares fails to compile, naming the entry.
+#[proc_macro]
+pub fn catalog_complete(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return error("catalog_complete! takes no arguments");
+    }
+    catalogs()
+        .and_then(|catalogs| {
+            complete::expand(&catalogs).map_err(|error| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!("a bundled catalog is invalid: {error}"),
+                )
+            })
+        })
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare a Bluetooth Core command bt-hci declares differently from the
+/// catalog, or lacks, from its generated C name.
+///
+/// The declaration is checked and generated as for [`vendor_command!`], in
+/// the command's own opcode group, and implements `Supported` on the targets
+/// implementing the command. Every other Core command is listed in
+/// [`standard_commands!`] with bt-hci's type.
+///
+/// ```ignore
+/// standard_command! {
+///     /// Terminate a connection, completing with Command Status.
+///     hci_disconnect => Disconnect {
+///         connection_handle: ConnHandle,
+///         reason: u8,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_command(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as command::Input);
+    command::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Check bt-hci's types for the Bluetooth Core commands against the catalog,
+/// and mark each `Supported` on the targets whose binary implements it.
+///
+/// Each entry names a catalog command, by any name it had, and the bt-hci
+/// type sending it, by its path in `bt_hci::cmd`. On every target the command exists on, the type's opcode
+/// must be the catalog's, it must be a `SyncCmd` for a Command Complete
+/// command or an `AsyncCmd` for a Command Status one, and its parameters and
+/// return parameters after the status must be `FixedSizeValue`s of the
+/// catalog's width wherever the catalog's width is fixed.
+///
+/// ```ignore
+/// standard_commands! {
+///     hci_reset => controller_baseband::Reset,
+///     hci_le_set_extended_advertising_data => le::LeSetExtAdvData<'a>,
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_commands(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as standard::Input);
+    standard::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Check bt-hci's types for the Bluetooth Core events against the catalog.
+///
+/// Each entry names a catalog event, by any name it had, and the bt-hci type
+/// decoding it, by its path in `bt_hci::event`. On every target the event
+/// exists on, the type's event code, or LE meta subevent code, must be the
+/// catalog's, checked at compile time. Where the catalog's width is fixed, a
+/// generated test checks that bt-hci decodes exactly that width.
+///
+/// ```ignore
+/// standard_events! {
+///     hci_disconnection_complete_event => DisconnectionComplete,
+///     hci_le_connection_complete_event => le::LeConnectionComplete,
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as standard::Input);
+    standard::expand_events(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// The last enhanced ATT bearer the selected release documents, as
+/// `LAST_ENHANCED` constants for the releases of every platform.
+///
+/// Invoked once, in `stm32wb_hci::wire::AttBearer`'s `impl` block. Every
+/// parameter the catalog lists as addressing an ATT bearer must give the same
+/// range in a release.
+#[proc_macro]
+pub fn att_bearer_range(input: TokenStream) -> TokenStream {
+    if !input.is_empty() {
+        return error("att_bearer_range! takes no arguments");
+    }
+    match Platform::ALL
+        .into_iter()
+        .map(|platform| {
+            bundled(platform)
+                .map_err(|error| format!("a bundled catalog is invalid: {error}"))
+                .and_then(bearer::expand)
+        })
+        .collect::<Result<TokenStream2, _>>()
+    {
+        Ok(tokens) => tokens.into(),
+        Err(message) => error(&message),
+    }
+}
+
+/// Declare an enum of every ST vendor event the selected target emits.
+///
+/// Each variant names a catalog event, the variant, and the type
+/// [`vendor_event!`] declares for the event. A variant exists on the targets
+/// the event does, the enum must list every vendor event of the catalog
+/// exactly once, and each type must be the one declared for its event.
+/// `from_vendor` decodes a bt-hci vendor event into the variant its code
+/// selects.
+///
+/// ```ignore
+/// vendor_events! {
+///     /// Every ST vendor event of the selected target.
+///     pub enum AciEvent<'a> {
+///         aci_warning_event => HalWarning(hal::HalWarningEvent<'a>),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vendor_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input, command::Channel::Vendor)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an enum of the Bluetooth Core events [`standard_event!`] declares
+/// that the selected target emits.
+///
+/// The variants are checked as for [`vendor_events!`], against the types
+/// [`standard_event!`] declares, but need not cover every Core event: bt-hci
+/// decodes the others. `from_packet` decodes an event packet into the variant
+/// its event code, or LE meta subevent code, selects.
+///
+/// ```ignore
+/// standard_events_enum! {
+///     /// The Core events bt-hci does not decode as the catalog lists them.
+///     pub enum StandardEvent<'a> {
+///         hci_le_cs_test_end_complete_event => LeCsTestEndComplete(LeCsTestEndComplete),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn standard_events_enum(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declare an enum of every ST system (SHCI) event the selected target emits.
+///
+/// The variants are checked as for [`vendor_events!`], against the types
+/// [`system_event!`] declares. `from_system_params` decodes a system event,
+/// sub-event code first, into the variant its code selects.
+///
+/// ```ignore
+/// system_events! {
+///     /// Every ST system event of the selected target.
+///     pub enum ShciEvent<'a> {
+///         SHCI_SUB_EVT_CODE_READY => Ready(ReadyEvent),
+///         // ...
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn system_events(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as dispatch::Input);
+    dispatch::expand(input, command::Channel::System)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Check that a type stands for exactly the status codes the BLE stack
+/// defines besides success, `BLE_STATUS_*` in `ble_defs.h`, on every
+/// release: each of its values is one the release defines, and each code
+/// the release defines is one of its values. A code only some releases
+/// define is declared with the `#[cfg]` selecting them.
+///
+/// ```ignore
+/// check_statuses!(BleStatus);
+/// ```
+#[proc_macro]
+pub fn check_statuses(input: TokenStream) -> TokenStream {
+    let ty = syn::parse_macro_input!(input as syn::Type);
+    status::expand(ty)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn error(message: &str) -> TokenStream {
+    let message = format!("stm32wb-hci-macros: {message}");
+    quote::quote_spanned!(Span::call_site() => ::core::compile_error!(#message);).into()
+}
