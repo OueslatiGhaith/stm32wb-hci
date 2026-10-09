@@ -1501,11 +1501,21 @@ pub type BoundedBytes<const MAX_LEN: usize> = BoundedArray<u8, MAX_LEN>;
 impl<T: Copy, const MAX_LEN: usize> BoundedArray<T, MAX_LEN> {
     /// Copy `elements`, which must not exceed the field's capacity.
     pub fn new(elements: &[T]) -> Result<Self, FromHciBytesError> {
-        let mut array = Self::default();
-        for element in elements {
-            array.push(*element)?;
+        if elements.len() > MAX_LEN {
+            return Err(FromHciBytesError::InvalidSize);
         }
-        Ok(array)
+        let Some(&first) = elements.first() else {
+            return Ok(Self::default());
+        };
+
+        // Slots past `len` repeat the first element, as `push` does.
+        let mut array = [first; MAX_LEN];
+        array[..elements.len()].copy_from_slice(elements);
+
+        Ok(Self {
+            elements: Some(array),
+            len: elements.len(),
+        })
     }
 
     /// Append `element`, which must fit the field's capacity.
