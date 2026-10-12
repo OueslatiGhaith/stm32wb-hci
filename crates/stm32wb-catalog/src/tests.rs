@@ -1366,3 +1366,16 @@ fn lengths_end_the_labels() {
     };
     assert!(flags.lengths(Profile::Light).unwrap_err().contains("bits"));
 }
+
+#[test]
+fn unresolved_layouts_state_only_a_reason() {
+    let parse = |layout: &str| {
+        toml::from_str::<std::collections::BTreeMap<String, Layout>>(&format!("l = {layout}"))
+    };
+    assert_eq!(
+        parse(r#"{ unresolved = "an enum" }"#).unwrap()["l"],
+        Layout::Unresolved("an enum".into())
+    );
+    parse(r#"{ unresolved = "an enum", typo = 1 }"#).unwrap_err();
+    parse(r#"{ unresolved = " " }"#).unwrap_err();
+}
