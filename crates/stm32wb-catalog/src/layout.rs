@@ -356,6 +356,20 @@ fn envelope(fields: &[Field], structs: &Structs) -> Result<Envelope, Error> {
                 if variants.is_empty() {
                     return Err(Error::invalid(format!("union {} is empty", field.name)));
                 }
+                for (index, variant) in variants.iter().enumerate() {
+                    if variants[..index]
+                        .iter()
+                        .any(|earlier| earlier.tag == variant.tag)
+                    {
+                        return Err(Error::invalid(format!(
+                            "union {} lists the variant for {} twice",
+                            field.name,
+                            variant
+                                .tag
+                                .map_or("every other value".to_owned(), |tag| tag.to_string())
+                        )));
+                    }
+                }
                 let widths = variants.iter().map(|variant| usize::from(variant.width));
                 (widths.clone().min().unwrap_or(0), widths.max().unwrap_or(0))
             }

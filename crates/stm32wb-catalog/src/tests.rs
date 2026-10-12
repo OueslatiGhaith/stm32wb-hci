@@ -1416,3 +1416,16 @@ fn unresolved_layouts_state_only_a_reason() {
     parse(r#"{ unresolved = "an enum", typo = 1 }"#).unwrap_err();
     parse(r#"{ unresolved = " " }"#).unwrap_err();
 }
+
+#[test]
+fn unions_list_each_variant_once() {
+    let union = |variants: &str| {
+        fields(&["Type: u8", &format!("UUID: union(Type) {{ {variants} }}")])
+            .envelope(&Structs::new())
+    };
+    union("1 => 2, 2 => 16, _ => 2").unwrap();
+    for variants in ["1 => 2, 1 => 16", "_ => 2, 1 => 16, _ => 4"] {
+        let error = union(variants).unwrap_err();
+        assert!(error.to_string().contains("twice"), "{error}");
+    }
+}
