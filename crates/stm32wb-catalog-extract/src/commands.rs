@@ -66,7 +66,9 @@ pub fn extract(
         if function.get_kind() != EntityKind::FunctionDecl || !function.is_definition() {
             continue;
         }
-        let name = function.get_name().unwrap_or_default();
+        let name = function
+            .get_name()
+            .context("a command wrapper has no name")?;
         let command = analyze(function, &name, records, scope).with_context(|| name.to_owned())?;
         commands.push(command);
     }

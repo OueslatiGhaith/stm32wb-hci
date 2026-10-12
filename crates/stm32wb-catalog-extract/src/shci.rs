@@ -174,7 +174,7 @@ pub fn commands(
         if function.get_kind() != EntityKind::FunctionDecl || !function.is_definition() {
             continue;
         }
-        let name = function.get_name().unwrap_or_default();
+        let name = function.get_name().context("an SHCI wrapper has no name")?;
         let sends = descendants(function)
             .into_iter()
             .filter(|node| {
