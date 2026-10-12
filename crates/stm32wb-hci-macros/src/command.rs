@@ -124,6 +124,7 @@ impl InputField {
         let mut wire_name = None;
         let mut bounds = [Bounds::default(); 2];
         let mut platform = None;
+        let mut given = Vec::new();
         for attr in &field.attrs {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
@@ -134,6 +135,13 @@ impl InputField {
                 ));
             }
             attr.parse_nested_meta(|meta| {
+                // A repeated key would silently replace the earlier value.
+                if let Some(key) = meta.path.get_ident() {
+                    if given.contains(key) {
+                        return Err(meta.error(format!("`{key}` is given twice")));
+                    }
+                    given.push(key.clone());
+                }
                 let bound = [
                     ("since", Platform::Stm32wb, true),
                     ("before", Platform::Stm32wb, false),
@@ -3625,5 +3633,27 @@ mod tests {
         assert!(error.contains("is not a Bluetooth Core command"), "{error}");
         let error = expand_str("hci_le_transmitter_test => Test {}").unwrap_err();
         assert!(error.contains("is not an ST vendor command"), "{error}");
+    }
+
+    #[test]
+    fn wire_keys_are_given_once() {
+        let field = |attrs: &str| {
+            let field = syn::parse::Parser::parse_str(
+                syn::Field::parse_named,
+                &format!("{attrs} interval: u16"),
+            )
+            .unwrap();
+            InputField::new(field)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        field(r#"#[wire(name = "Interval", since = "1.16.0")]"#).unwrap();
+        for attrs in [
+            r#"#[wire(since = "1.16.0", since = "1.17.0")]"#,
+            r#"#[wire(name = "A")] #[wire(name = "B")]"#,
+        ] {
+            let error = field(attrs).unwrap_err();
+            assert!(error.contains("is given twice"), "{attrs}: {error}");
+        }
     }
 }
