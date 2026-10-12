@@ -348,9 +348,6 @@ fn render(catalog: &Catalog) -> Result<String> {
 }
 
 fn audit(catalog: &Catalog, annotations: &Path) -> Result<()> {
-    if !annotations.exists() {
-        return Ok(());
-    }
     Annotations::load(annotations).and_then(|annotations| annotations.audit(catalog))?;
     Ok(())
 }

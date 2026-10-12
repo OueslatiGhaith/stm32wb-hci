@@ -974,3 +974,15 @@ fn lists_outside_their_place_are_errors() {
     let outside = error("/**\n * Values:\n * - 0x00: Off\n */");
     assert!(outside.contains("outside any @param block"), "{outside}");
 }
+
+#[test]
+fn audit_rejects_a_missing_annotations_file() {
+    let catalog = stm32wb_catalog::Catalog::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../stm32wb-catalog/catalog/stm32wb.toml"),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let error = crate::audit(&catalog, &directory.path().join("missing.toml")).unwrap_err();
+    assert!(error.to_string().contains("could not read"), "{error}");
+}
