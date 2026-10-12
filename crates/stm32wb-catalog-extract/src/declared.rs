@@ -80,12 +80,20 @@ fn params(
     structs: &mut Structs,
 ) -> Result<Layout, String> {
     let mut fields = Vec::new();
-    for index in 0.. {
-        let record_name = format!("{name}_cp{index}");
-        let Some(record) = records.get(&record_name) else {
-            break;
-        };
-        record_fields(&record_name, record, records, structs, &mut fields)?;
+    let mut parts = 0;
+    while let Some((record_name, record)) = records.get_key_value(&format!("{name}_cp{parts}")) {
+        record_fields(record_name, record, records, structs, &mut fields)?;
+        parts += 1;
+    }
+    // The parts are numbered from 0; one after a gap would be dropped.
+    let prefix = format!("{name}_cp");
+    if let Some(stray) = records.keys().find(|record| {
+        record
+            .strip_prefix(&prefix)
+            .and_then(|index| index.parse::<usize>().ok())
+            .is_some_and(|index| index >= parts)
+    }) {
+        return Err(format!("{stray} follows a gap in the parameter parts"));
     }
     Ok(Layout::Fields(fields))
 }

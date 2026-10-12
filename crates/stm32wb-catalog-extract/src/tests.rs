@@ -8,7 +8,7 @@ use clang::{Clang, Index};
 use stm32wb_catalog::{CommandScope, Completion, Domain, DomainKind, EventScope, Layout};
 
 use crate::c::{self, Shim};
-use crate::{commands, events, shci, snapshot};
+use crate::{commands, declared, events, shci, snapshot};
 
 /// libclang allows one `Clang` instance per process at a time.
 static CLANG: Mutex<()> = Mutex::new(());
@@ -985,4 +985,27 @@ fn audit_rejects_a_missing_annotations_file() {
     let directory = tempfile::tempdir().unwrap();
     let error = crate::audit(&catalog, &directory.path().join("missing.toml")).unwrap_err();
     assert!(error.to_string().contains("could not read"), "{error}");
+}
+
+/// A parameter part after a gap in the `_cpN` numbering is not dropped.
+#[test]
+fn declared_parts_have_no_gaps() {
+    let layout = |parts: &str| {
+        with_fixture(parts, |unit| {
+            declared::command("aci_x", Completion::CommandStatus, &c::records(unit)).0
+        })
+    };
+    let contiguous = layout(
+        "typedef __PACKED_STRUCT { uint8_t A; } aci_x_cp0;
+         typedef __PACKED_STRUCT { uint8_t B; } aci_x_cp1;",
+    );
+    assert_eq!(contiguous.fields().map(<[_]>::len), Some(2));
+    let gap = layout(
+        "typedef __PACKED_STRUCT { uint8_t A; } aci_x_cp0;
+         typedef __PACKED_STRUCT { uint8_t C; } aci_x_cp2;",
+    );
+    let Layout::Unresolved(reason) = gap else {
+        panic!("{gap:?}");
+    };
+    assert!(reason.contains("aci_x_cp2 follows a gap"), "{reason}");
 }
