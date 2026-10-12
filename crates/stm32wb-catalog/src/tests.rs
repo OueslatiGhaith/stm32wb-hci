@@ -460,7 +460,11 @@ fn domains_have_their_own_histories() {
     returned.domains[0].1 = true;
     let mut flags = documented(&["0x00: None", "0x03: Two bits"]);
     flags.domains[0].2.kind = DomainKind::Flags;
+    let noted = documented(&["0x00: ADV_IND", "0x02: ADV_SCAN_IND (Host only)"]);
+    let uninterpreted = documented(&["0x00: ADV_IND", "0x02: ADV_SCAN_IND (Peripheral only)"]);
+    merge_snapshots(Platform::Stm32wb, vec![snapshot("1.15.0", vec![noted])]).unwrap();
     for (command, expected) in [
+        (uninterpreted, "cannot interpret"),
         (unknown, "is not a member"),
         (too_wide, "which a u8 cannot hold"),
         (unordered, "out of order"),
@@ -624,6 +628,75 @@ values = [\"0x00..=0x01\"]
     annotated("sysevt_ready_rsp: u8").unwrap();
     let error = annotated("other: u8").unwrap_err().to_string();
     assert!(error.contains("sysevt_ready_rsp"), "{error}");
+}
+
+/// An override replaces the extracted layout, so the values the headers
+/// document for its members must fit the override too.
+#[test]
+fn overrides_fit_the_documented_values() {
+    let catalog = Catalog::from_toml(&SAMPLE.replace(
+        "[[events]]",
+        "[[commands.domains]]
+releases = \"1.18.0\"
+member = \"Advertising_Type\"
+values = [\"0x00..=0x03\"]
+
+[[events]]",
+    ))
+    .unwrap();
+    let overridden = |ty: &str| {
+        Annotations::from_toml(&format!(
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            releases = "1.18.0"
+            source = "x"
+            reason = "y"
+            override = true
+            params = ["{ty}"]"#
+        ))
+        .unwrap()
+        .audit(&catalog)
+    };
+    overridden("Advertising_Type: u16").unwrap();
+    let error = overridden("Other: u16").unwrap_err().to_string();
+    assert!(error.contains("Advertising_Type"), "{error}");
+}
+
+#[test]
+fn annotations_reject_ambiguous_command_names() {
+    let catalog = Catalog::from_toml(&format!(
+        r#"{SAMPLE}
+[[commands]]
+scope = "vendor"
+opcode = "0xFC84"
+
+[[commands.names]]
+releases = "1.15.0..=1.18.0"
+name = "aci_gap_set_discoverable"
+
+[[commands.availability]]
+releases = "1.15.0..=1.18.0"
+profiles = ["full-extended"]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.18.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+"#
+    ))
+    .unwrap();
+    let error = Annotations::from_toml(
+        r#"[[annotations]]
+        command = "aci_gap_set_discoverable"
+        source = "x"
+        reason = "y"
+        exclude = true"#,
+    )
+    .unwrap()
+    .audit(&catalog)
+    .unwrap_err();
+    assert!(error.to_string().contains("ambiguous"), "{error}");
 }
 
 #[test]
@@ -1258,6 +1331,25 @@ fn items_follow_the_platform_and_profile_conditions() {
         .ranges(Profile::Full)
         .unwrap_err();
     assert!(error.contains("cannot interpret"), "{error}");
+    let noted = domain(
+        DomainKind::Values,
+        &[
+            "0x00: CONFIG_DATA_PUBLIC_ADDRESS_OFFSET; Bluetooth public address; 6 bytes",
+            "0x08: CONFIG_DATA_ER_OFFSET (Host only); Encryption root key; 16 bytes",
+        ],
+    );
+    for profile in [Profile::Full, Profile::HciLayer, Profile::WbaLinkLayerOnly] {
+        assert_eq!(noted.ranges(profile).unwrap(), [(0, 0), (8, 8)]);
+    }
+    for label in [
+        "0x08: CONFIG_DATA_ER_OFFSET (Controller only); 16 bytes",
+        "0x01: Resolving [supported from v2]",
+    ] {
+        let error = domain(DomainKind::Values, &[label])
+            .ranges(Profile::Full)
+            .unwrap_err();
+        assert!(error.contains("cannot interpret"), "{error}");
+    }
     let flags = domain(
         DomainKind::Flags,
         &[
@@ -1310,4 +1402,38 @@ fn lengths_end_the_labels() {
         ..offsets
     };
     assert!(flags.lengths(Profile::Light).unwrap_err().contains("bits"));
+}
+
+#[test]
+fn unresolved_layouts_state_only_a_reason() {
+    let parse = |layout: &str| {
+        toml::from_str::<std::collections::BTreeMap<String, Layout>>(&format!("l = {layout}"))
+    };
+    assert_eq!(
+        parse(r#"{ unresolved = "an enum" }"#).unwrap()["l"],
+        Layout::Unresolved("an enum".into())
+    );
+    parse(r#"{ unresolved = "an enum", typo = 1 }"#).unwrap_err();
+    parse(r#"{ unresolved = " " }"#).unwrap_err();
+}
+
+#[test]
+fn unions_list_each_variant_once() {
+    let union = |variants: &str| {
+        fields(&["Type: u8", &format!("UUID: union(Type) {{ {variants} }}")])
+            .envelope(&Structs::new())
+    };
+    union("1 => 2, 2 => 16, _ => 2").unwrap();
+    for variants in ["1 => 2, 1 => 16", "_ => 2, 1 => 16, _ => 4"] {
+        let error = union(variants).unwrap_err();
+        assert!(error.to_string().contains("twice"), "{error}");
+    }
+}
+
+#[test]
+fn availability_names_some_profile() {
+    let error =
+        Catalog::from_toml(&SAMPLE.replacen(r#"profiles = ["full-extended"]"#, "profiles = []", 1))
+            .unwrap_err();
+    assert!(error.to_string().contains("names no profile"), "{error}");
 }

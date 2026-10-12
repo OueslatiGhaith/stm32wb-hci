@@ -33,12 +33,21 @@ pub struct Documented {
     pub profiles: Vec<Profile>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TableKind {
     Commands,
     StandardEvents,
     LeMetaEvents,
     VendorEvents,
+}
+
+impl TableKind {
+    const ALL: [Self; 4] = [
+        Self::Commands,
+        Self::StandardEvents,
+        Self::LeMetaEvents,
+        Self::VendorEvents,
+    ];
 }
 
 /// The entries the interface document at `path` lists, with the profiles of
@@ -94,7 +103,7 @@ fn parse_interface_availability(
     platform: Platform,
 ) -> Result<BTreeMap<Key, Documented>> {
     let mut availability = BTreeMap::new();
-    let mut recognized = 0usize;
+    let mut recognized = BTreeSet::new();
     for table in parse_html_tables(source) {
         let Some(header) = table.first() else {
             continue;
@@ -102,7 +111,7 @@ fn parse_interface_availability(
         let Some(kind) = table_kind(header) else {
             continue;
         };
-        recognized += 1;
+        recognized.insert(kind);
         let columns = profile_columns(header, platform)?;
         for row in table.iter().skip(1) {
             if row.len() != header.len() {
@@ -150,8 +159,12 @@ fn parse_interface_availability(
             }
         }
     }
-    if recognized == 0 {
-        bail!("no availability tables were found");
+    // A table under an unrecognized header would drop its entries unnoticed.
+    if let Some(kind) = TableKind::ALL
+        .into_iter()
+        .find(|kind| !recognized.contains(kind))
+    {
+        bail!("no table lists {kind:?}");
     }
     Ok(availability)
 }
@@ -274,23 +287,48 @@ pub fn binaries(tag: &CubeTag) -> Result<Vec<SnapshotBinary>> {
         let notes_path = format!("{directory}/Release_Notes.html");
         let notes = tag.read_text(&notes_path)?;
         let mapping = parse_release_notes(&notes).with_context(|| notes_path.to_owned())?;
-        for &profile in Platform::Stm32wb.profiles() {
-            let Some(file) = family.binary_file_name(profile) else {
-                continue;
-            };
-            let Some(documented) = mapping.get(&file) else {
-                continue;
-            };
-            if *documented != profile {
-                bail!("{notes_path}: {file} is documented as {documented}");
-            }
-            if !files.contains(&format!("{directory}/{file}")) {
-                bail!("{notes_path} lists {file}, which is not in the tag");
-            }
-            binaries.push(SnapshotBinary { family, profile });
-        }
+        let profiles = family_profiles(family, mapping, |file| {
+            files.contains(&format!("{directory}/{file}"))
+        })
+        .with_context(|| notes_path.to_owned())?;
+        binaries.extend(
+            profiles
+                .into_iter()
+                .map(|profile| SnapshotBinary { family, profile }),
+        );
     }
     Ok(binaries)
+}
+
+/// The profiles a family's release notes document binaries of, each binary
+/// named as the catalog expects and present in the tag.
+fn family_profiles(
+    family: Family,
+    mut mapping: BTreeMap<String, Profile>,
+    present: impl Fn(&str) -> bool,
+) -> Result<Vec<Profile>> {
+    let mut profiles = Vec::new();
+    for &profile in Platform::Stm32wb.profiles() {
+        let Some(file) = family.binary_file_name(profile) else {
+            continue;
+        };
+        let Some(documented) = mapping.remove(&file) else {
+            continue;
+        };
+        if documented != profile {
+            bail!("{file} is documented as {documented}");
+        }
+        if !present(&file) {
+            bail!("the notes list {file}, which is not in the tag");
+        }
+        profiles.push(profile);
+    }
+    // A binary under a name the catalog does not expect would otherwise
+    // drop its profile unnoticed.
+    if let Some((file, profile)) = mapping.first_key_value() {
+        bail!("{file} is documented as {profile}, but the catalog expects another name for it");
+    }
+    Ok(profiles)
 }
 
 /// File name -> documented profile, for rows naming a BLE stack profile.
@@ -381,6 +419,14 @@ mod tests {
         <table>
             <tr><th>Event name</th><th>LE subevent code</th><th>BF</th></tr>
             <tr><td>ACI_WARNING_EVENT</td><td>0x0006</td><td>Y</td></tr>
+        </table>
+        <table>
+            <tr><th>Event name</th><th>Event code</th><th>BF</th></tr>
+            <tr><td>HCI_DISCONNECTION_COMPLETE_EVENT</td><td>0x05</td><td>Y</td></tr>
+        </table>
+        <table>
+            <tr><th>Event name</th><th>Vendor specific subevent code</th><th>BF</th></tr>
+            <tr><td>ACI_GAP_PROC_COMPLETE_EVENT</td><td>0x0007</td><td>Y</td></tr>
         </table>"#;
         let availability = parse_interface_availability(html, Platform::Stm32wb).unwrap();
         let discoverable = &availability[&Key::Command(CommandScope::Vendor, 0xFC83)];
@@ -397,6 +443,14 @@ mod tests {
 
         let unknown = html.replace("<td>Y</td><td></td>", "<td>?</td><td></td>");
         assert!(parse_interface_availability(&unknown, Platform::Stm32wb).is_err());
+
+        // A table under a header the parser does not know loses its entries.
+        let renamed = html.replace("<th>Event code</th>", "<th>Event opcode</th>");
+        let error = format!(
+            "{:#}",
+            parse_interface_availability(&renamed, Platform::Stm32wb).unwrap_err()
+        );
+        assert!(error.contains("StandardEvents"), "{error}");
 
         // Columns name the profiles of the document's platform.
         let wba = html.replace("<th>PO</th>", "<th>BP</th>");
@@ -472,6 +526,28 @@ mod tests {
             "<td>PO (Peripheral Only)</td>",
         );
         assert!(parse_release_notes(&short).is_err(), "a row missing a cell");
+
+        let present = |_: &str| true;
+        assert_eq!(
+            family_profiles(Family::Wb5x, mapping.clone(), present).unwrap(),
+            [Profile::FullExtended, Profile::Light]
+        );
+        let renamed = html.replace("BLE_Stack_light_fw", "BLE_Stack_light_v2_fw");
+        let error = format!(
+            "{:#}",
+            family_profiles(
+                Family::Wb5x,
+                parse_release_notes(&renamed).unwrap(),
+                present
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("expects another name"), "{error}");
+        let error = format!(
+            "{:#}",
+            family_profiles(Family::Wb5x, mapping, |_| false).unwrap_err()
+        );
+        assert!(error.contains("not in the tag"), "{error}");
         assert!(same_name(
             "aci_gap_set_discoverable",
             "ACI_GAP_SET_DISCOVERABLE"

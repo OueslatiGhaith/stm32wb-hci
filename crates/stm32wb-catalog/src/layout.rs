@@ -214,7 +214,7 @@ pub type Structs = BTreeMap<String, Vec<Field>>;
 /// A layout extracted from the generated source, or the reason it could not
 /// be derived without guessing.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(into = "LayoutRepr", from = "LayoutRepr")]
+#[serde(into = "LayoutRepr", try_from = "LayoutRepr")]
 pub enum Layout {
     Fields(Vec<Field>),
     Unresolved(String),
@@ -241,23 +241,38 @@ impl Layout {
 #[serde(untagged)]
 enum LayoutRepr {
     Fields(Vec<Field>),
-    Unresolved { unresolved: String },
+    Unresolved(UnresolvedRepr),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnresolvedRepr {
+    unresolved: String,
 }
 
 impl From<Layout> for LayoutRepr {
     fn from(layout: Layout) -> Self {
         match layout {
             Layout::Fields(fields) => Self::Fields(fields),
-            Layout::Unresolved(unresolved) => Self::Unresolved { unresolved },
+            Layout::Unresolved(unresolved) => Self::Unresolved(UnresolvedRepr { unresolved }),
         }
     }
 }
 
-impl From<LayoutRepr> for Layout {
-    fn from(repr: LayoutRepr) -> Self {
+impl TryFrom<LayoutRepr> for Layout {
+    type Error = String;
+
+    fn try_from(repr: LayoutRepr) -> Result<Self, String> {
         match repr {
-            LayoutRepr::Fields(fields) => Self::Fields(fields),
-            LayoutRepr::Unresolved { unresolved } => Self::Unresolved(unresolved),
+            LayoutRepr::Fields(fields) => Ok(Self::Fields(fields)),
+            LayoutRepr::Unresolved(UnresolvedRepr { unresolved })
+                if unresolved.trim().is_empty() =>
+            {
+                Err("an unresolved layout must state why".to_owned())
+            }
+            LayoutRepr::Unresolved(UnresolvedRepr { unresolved }) => {
+                Ok(Self::Unresolved(unresolved))
+            }
         }
     }
 }
@@ -340,6 +355,20 @@ fn envelope(fields: &[Field], structs: &Structs) -> Result<Envelope, Error> {
                 require_scalar_reference(&earlier, &field.name, selector)?;
                 if variants.is_empty() {
                     return Err(Error::invalid(format!("union {} is empty", field.name)));
+                }
+                for (index, variant) in variants.iter().enumerate() {
+                    if variants[..index]
+                        .iter()
+                        .any(|earlier| earlier.tag == variant.tag)
+                    {
+                        return Err(Error::invalid(format!(
+                            "union {} lists the variant for {} twice",
+                            field.name,
+                            variant
+                                .tag
+                                .map_or("every other value".to_owned(), |tag| tag.to_string())
+                        )));
+                    }
                 }
                 let widths = variants.iter().map(|variant| usize::from(variant.width));
                 (widths.clone().min().unwrap_or(0), widths.max().unwrap_or(0))

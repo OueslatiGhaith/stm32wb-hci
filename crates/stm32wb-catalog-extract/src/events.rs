@@ -51,13 +51,20 @@ pub fn extract(
         .get_children()
         .into_iter()
         .filter(|entity| entity.get_kind() == EntityKind::FunctionDecl)
-        .filter_map(|entity| Some((entity.get_name()?, entity)))
-        .collect::<BTreeMap<_, _>>();
-    let functions = entities
+        .map(|entity| Ok((entity.get_name().context("a callback has no name")?, entity)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut functions = BTreeMap::new();
+    for function in entities
         .iter()
         .filter(|entity| entity.get_kind() == EntityKind::FunctionDecl && entity.is_definition())
-        .filter_map(|entity| Some((entity.get_name()?, *entity)))
-        .collect::<BTreeMap<_, _>>();
+    {
+        let name = function
+            .get_name()
+            .context("a process function has no name")?;
+        if functions.insert(name.clone(), *function).is_some() {
+            bail!("{name} is defined twice");
+        }
+    }
 
     let mut events = Vec::new();
     for (table, scope) in TABLES {

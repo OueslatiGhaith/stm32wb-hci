@@ -112,13 +112,19 @@ pub fn extract(
             if function.get_kind() != EntityKind::FunctionDecl {
                 continue;
             }
-            let name = function.get_name().unwrap_or_default();
+            let name = function
+                .get_name()
+                .with_context(|| format!("{context}: a function has no name"))?;
             let parameters = function
                 .get_arguments()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|parameter| parameter.get_name().unwrap_or_default())
-                .collect();
+                .map(|parameter| {
+                    parameter
+                        .get_name()
+                        .with_context(|| format!("{context} {name}: a parameter has no name"))
+                })
+                .collect::<Result<_>>()?;
             let (domains, orphans) = crate::domains::domains_and_orphans(function)
                 .with_context(|| format!("{context} {name}"))?;
             orphaned_lists.extend(orphans.into_iter().map(|orphan| (name.clone(), orphan)));

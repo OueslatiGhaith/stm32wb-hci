@@ -8,7 +8,7 @@ use clang::{Clang, Index};
 use stm32wb_catalog::{CommandScope, Completion, Domain, DomainKind, EventScope, Layout};
 
 use crate::c::{self, Shim};
-use crate::{commands, events, shci, snapshot};
+use crate::{commands, declared, events, shci, snapshot};
 
 /// libclang allows one `Clang` instance per process at a time.
 static CLANG: Mutex<()> = Mutex::new(());
@@ -606,6 +606,13 @@ uint8_t Gap(uint8_t value) {
     shci_send(OPCODE(0x60), 2, buffer, response);
     return RESULT(0);
 }
+uint8_t Twice(uint8_t *p_first, uint8_t *p_second) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    shci_send(OPCODE(0x61), 0, 0, response);
+    *p_first = (uint8_t)RESULT(1);
+    *p_second = (uint8_t)RESULT(1);
+    return RESULT(0);
+}
 uint32_t LocalInformation(void) { return 0; }
 "#;
     let commands = with_fixture(source, |unit| shci::commands(unit, &c::records(unit))).unwrap();
@@ -647,6 +654,10 @@ uint32_t LocalInformation(void) { return 0; }
     assert!(matches!(
         &by_name["Gap"].params,
         Layout::Unresolved(reason) if reason.contains("written at [1]")
+    ));
+    assert!(matches!(
+        by_name["Twice"].returns.as_ref().unwrap(),
+        Layout::Unresolved(reason) if reason.contains("payload[1] is stored more than once")
     ));
 }
 
@@ -973,4 +984,39 @@ fn lists_outside_their_place_are_errors() {
     assert!(indent.contains("indented 6 rather than 8"), "{indent}");
     let outside = error("/**\n * Values:\n * - 0x00: Off\n */");
     assert!(outside.contains("outside any @param block"), "{outside}");
+}
+
+#[test]
+fn audit_rejects_a_missing_annotations_file() {
+    let catalog = stm32wb_catalog::Catalog::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../stm32wb-catalog/catalog/stm32wb.toml"),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let error = crate::audit(&catalog, &directory.path().join("missing.toml")).unwrap_err();
+    assert!(error.to_string().contains("could not read"), "{error}");
+}
+
+/// A parameter part after a gap in the `_cpN` numbering is not dropped.
+#[test]
+fn declared_parts_have_no_gaps() {
+    let layout = |parts: &str| {
+        with_fixture(parts, |unit| {
+            declared::command("aci_x", Completion::CommandStatus, &c::records(unit)).0
+        })
+    };
+    let contiguous = layout(
+        "typedef __PACKED_STRUCT { uint8_t A; } aci_x_cp0;
+         typedef __PACKED_STRUCT { uint8_t B; } aci_x_cp1;",
+    );
+    assert_eq!(contiguous.fields().map(<[_]>::len), Some(2));
+    let gap = layout(
+        "typedef __PACKED_STRUCT { uint8_t A; } aci_x_cp0;
+         typedef __PACKED_STRUCT { uint8_t C; } aci_x_cp2;",
+    );
+    let Layout::Unresolved(reason) = gap else {
+        panic!("{gap:?}");
+    };
+    assert!(reason.contains("aci_x_cp2 follows a gap"), "{reason}");
 }

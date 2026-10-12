@@ -174,7 +174,7 @@ pub fn commands(
         if function.get_kind() != EntityKind::FunctionDecl || !function.is_definition() {
             continue;
         }
-        let name = function.get_name().unwrap_or_default();
+        let name = function.get_name().context("an SHCI wrapper has no name")?;
         let sends = descendants(function)
             .into_iter()
             .filter(|node| {
@@ -451,7 +451,9 @@ fn returns_layout(function: Entity<'_>) -> Result<Layout, String> {
                 .and_then(parameter)
                 .ok_or_else(|| format!("payload[{index}] is stored in no pointer parameter"))?;
                 let name = pointer.strip_prefix("p_").unwrap_or(&pointer).to_owned();
-                stored.insert(index, (name, Scalar::U8));
+                if stored.insert(index, (name, Scalar::U8)).is_some() {
+                    return Err(format!("payload[{index}] is stored more than once"));
+                }
             }
             // memcpy(&pParam->member, &payload[index], sizeof(pParam->member));
             EntityKind::CallExpr if node.get_name().as_deref() == Some("memcpy") => {
@@ -478,7 +480,12 @@ fn returns_layout(function: Entity<'_>) -> Result<Layout, String> {
                 if int_value(length) != Some(i64::from(scalar.width())) {
                     return Err(format!("payload[{index}] is copied with another length"));
                 }
-                stored.insert(index, (member.get_name().unwrap_or_default(), scalar));
+                let name = member
+                    .get_name()
+                    .ok_or_else(|| format!("payload[{index}] is copied into an unnamed member"))?;
+                if stored.insert(index, (name, scalar)).is_some() {
+                    return Err(format!("payload[{index}] is stored more than once"));
+                }
             }
             _ => {}
         }

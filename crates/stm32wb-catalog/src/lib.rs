@@ -779,6 +779,13 @@ fn validate_history(
         return Err(Error::invalid(format!("{} has an empty name", label())));
     }
     for entry in availability {
+        if entry.profiles.is_empty() {
+            return Err(Error::invalid(format!(
+                "{}: availability in {} names no profile",
+                label(),
+                entry.releases
+            )));
+        }
         if let Some(profile) = entry
             .profiles
             .iter()

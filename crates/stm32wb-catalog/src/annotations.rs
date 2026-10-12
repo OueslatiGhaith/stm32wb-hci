@@ -115,26 +115,38 @@ impl Annotation {
 
     fn entry<'a>(&self, catalog: &'a Catalog) -> Result<Entry<'a>, Error> {
         match (&self.command, &self.event) {
-            (Some(name), None) => catalog
-                .command_named(name)
-                .map(Entry::Command)
-                .ok_or_else(|| Error::audit(format!("{}: no such command", self.label()))),
-            (None, Some(name)) => {
-                let mut matches = catalog
-                    .events
-                    .iter()
-                    .filter(|event| event.names.iter().any(|named| &named.name == name));
-                match (matches.next(), matches.next()) {
-                    (Some(event), None) => Ok(Entry::Event(event)),
-                    (None, _) => Err(Error::audit(format!("{}: no such event", self.label()))),
-                    (Some(_), Some(_)) => Err(Error::audit(format!(
-                        "{}: the name is ambiguous",
-                        self.label()
-                    ))),
-                }
-            }
+            (Some(name), None) => self
+                .unique(
+                    "command",
+                    catalog
+                        .commands
+                        .iter()
+                        .filter(|command| command.names.iter().any(|named| &named.name == name)),
+                )
+                .map(Entry::Command),
+            (None, Some(name)) => self
+                .unique(
+                    "event",
+                    catalog
+                        .events
+                        .iter()
+                        .filter(|event| event.names.iter().any(|named| &named.name == name)),
+                )
+                .map(Entry::Event),
             _ => Err(Error::audit(format!(
                 "{}: set exactly one of `command` or `event`",
+                self.label()
+            ))),
+        }
+    }
+
+    /// The one entry the annotation's name selects.
+    fn unique<T>(&self, kind: &str, mut matches: impl Iterator<Item = T>) -> Result<T, Error> {
+        match (matches.next(), matches.next()) {
+            (Some(entry), None) => Ok(entry),
+            (None, _) => Err(Error::audit(format!("{}: no such {kind}", self.label()))),
+            (Some(_), Some(_)) => Err(Error::audit(format!(
+                "{}: the name is ambiguous",
                 self.label()
             ))),
         }
@@ -309,36 +321,7 @@ fn audit_one(annotation: &Annotation, catalog: &Catalog) -> Result<(), Error> {
                 }
             };
             match (extracted, annotation.replaces_extracted) {
-                (Some(Layout::Unresolved(_)), false) => {
-                    // What the headers document for the members the
-                    // extractor could not lay out must fit the annotation.
-                    let annotated = Layout::Fields(fields.to_vec());
-                    let (domains, bearers) = match &entry {
-                        Entry::Command(command) => (
-                            &command.domains,
-                            command
-                                .definition_at(release)
-                                .filter(|_| slot == LayoutSlot::Params)
-                                .map_or(&[][..], |definition| &definition.bearers),
-                        ),
-                        Entry::Event(event) => (
-                            &event.domains,
-                            event
-                                .definition_at(release)
-                                .map_or(&[][..], |definition| &definition.bearers),
-                        ),
-                    };
-                    let context = || format!("{label} in {release}");
-                    for domain in domains.iter().filter(|domain| {
-                        domain.releases.contains(release)
-                            && domain.returned == (slot == LayoutSlot::Returns)
-                    }) {
-                        crate::domain::validate_domain(&annotated, domain)
-                            .map_err(|error| error.context(context()))?;
-                    }
-                    crate::validate_bearers(&annotated, bearers)
-                        .map_err(|error| error.context(context()))?;
-                }
+                (Some(Layout::Unresolved(_)), false) => {}
                 (Some(Layout::Fields(extracted)), false) if extracted.as_slice() == fields => {
                     return Err(Error::audit(format!(
                         "{label}: stale in {release}; the extractor now derives this {} itself",
@@ -371,6 +354,35 @@ fn audit_one(annotation: &Annotation, catalog: &Catalog) -> Result<(), Error> {
                     )));
                 }
             }
+            // What the headers document for the members, whether the
+            // extractor left them unresolved or laid them out wrongly, must
+            // fit the annotation that replaces them.
+            let annotated = Layout::Fields(fields.to_vec());
+            let (domains, bearers) = match &entry {
+                Entry::Command(command) => (
+                    &command.domains,
+                    command
+                        .definition_at(release)
+                        .filter(|_| slot == LayoutSlot::Params)
+                        .map_or(&[][..], |definition| &definition.bearers),
+                ),
+                Entry::Event(event) => (
+                    &event.domains,
+                    event
+                        .definition_at(release)
+                        .map_or(&[][..], |definition| &definition.bearers),
+                ),
+            };
+            let context = || format!("{label} in {release}");
+            for domain in domains.iter().filter(|domain| {
+                domain.releases.contains(release)
+                    && domain.returned == (slot == LayoutSlot::Returns)
+            }) {
+                crate::domain::validate_domain(&annotated, domain)
+                    .map_err(|error| error.context(context()))?;
+            }
+            crate::validate_bearers(&annotated, bearers)
+                .map_err(|error| error.context(context()))?;
         }
     }
     Ok(())
