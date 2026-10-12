@@ -606,6 +606,13 @@ uint8_t Gap(uint8_t value) {
     shci_send(OPCODE(0x60), 2, buffer, response);
     return RESULT(0);
 }
+uint8_t Twice(uint8_t *p_first, uint8_t *p_second) {
+    uint8_t buffer[16]; TL_EvtPacket_t *response = (TL_EvtPacket_t *)buffer;
+    shci_send(OPCODE(0x61), 0, 0, response);
+    *p_first = (uint8_t)RESULT(1);
+    *p_second = (uint8_t)RESULT(1);
+    return RESULT(0);
+}
 uint32_t LocalInformation(void) { return 0; }
 "#;
     let commands = with_fixture(source, |unit| shci::commands(unit, &c::records(unit))).unwrap();
@@ -647,6 +654,10 @@ uint32_t LocalInformation(void) { return 0; }
     assert!(matches!(
         &by_name["Gap"].params,
         Layout::Unresolved(reason) if reason.contains("written at [1]")
+    ));
+    assert!(matches!(
+        by_name["Twice"].returns.as_ref().unwrap(),
+        Layout::Unresolved(reason) if reason.contains("payload[1] is stored more than once")
     ));
 }
 
