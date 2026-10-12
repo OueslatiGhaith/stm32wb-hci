@@ -1429,3 +1429,11 @@ fn unions_list_each_variant_once() {
         assert!(error.to_string().contains("twice"), "{error}");
     }
 }
+
+#[test]
+fn availability_names_some_profile() {
+    let error =
+        Catalog::from_toml(&SAMPLE.replacen(r#"profiles = ["full-extended"]"#, "profiles = []", 1))
+            .unwrap_err();
+    assert!(error.to_string().contains("names no profile"), "{error}");
+}
