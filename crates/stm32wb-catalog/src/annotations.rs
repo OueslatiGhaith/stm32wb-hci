@@ -309,36 +309,7 @@ fn audit_one(annotation: &Annotation, catalog: &Catalog) -> Result<(), Error> {
                 }
             };
             match (extracted, annotation.replaces_extracted) {
-                (Some(Layout::Unresolved(_)), false) => {
-                    // What the headers document for the members the
-                    // extractor could not lay out must fit the annotation.
-                    let annotated = Layout::Fields(fields.to_vec());
-                    let (domains, bearers) = match &entry {
-                        Entry::Command(command) => (
-                            &command.domains,
-                            command
-                                .definition_at(release)
-                                .filter(|_| slot == LayoutSlot::Params)
-                                .map_or(&[][..], |definition| &definition.bearers),
-                        ),
-                        Entry::Event(event) => (
-                            &event.domains,
-                            event
-                                .definition_at(release)
-                                .map_or(&[][..], |definition| &definition.bearers),
-                        ),
-                    };
-                    let context = || format!("{label} in {release}");
-                    for domain in domains.iter().filter(|domain| {
-                        domain.releases.contains(release)
-                            && domain.returned == (slot == LayoutSlot::Returns)
-                    }) {
-                        crate::domain::validate_domain(&annotated, domain)
-                            .map_err(|error| error.context(context()))?;
-                    }
-                    crate::validate_bearers(&annotated, bearers)
-                        .map_err(|error| error.context(context()))?;
-                }
+                (Some(Layout::Unresolved(_)), false) => {}
                 (Some(Layout::Fields(extracted)), false) if extracted.as_slice() == fields => {
                     return Err(Error::audit(format!(
                         "{label}: stale in {release}; the extractor now derives this {} itself",
@@ -371,6 +342,35 @@ fn audit_one(annotation: &Annotation, catalog: &Catalog) -> Result<(), Error> {
                     )));
                 }
             }
+            // What the headers document for the members, whether the
+            // extractor left them unresolved or laid them out wrongly, must
+            // fit the annotation that replaces them.
+            let annotated = Layout::Fields(fields.to_vec());
+            let (domains, bearers) = match &entry {
+                Entry::Command(command) => (
+                    &command.domains,
+                    command
+                        .definition_at(release)
+                        .filter(|_| slot == LayoutSlot::Params)
+                        .map_or(&[][..], |definition| &definition.bearers),
+                ),
+                Entry::Event(event) => (
+                    &event.domains,
+                    event
+                        .definition_at(release)
+                        .map_or(&[][..], |definition| &definition.bearers),
+                ),
+            };
+            let context = || format!("{label} in {release}");
+            for domain in domains.iter().filter(|domain| {
+                domain.releases.contains(release)
+                    && domain.returned == (slot == LayoutSlot::Returns)
+            }) {
+                crate::domain::validate_domain(&annotated, domain)
+                    .map_err(|error| error.context(context()))?;
+            }
+            crate::validate_bearers(&annotated, bearers)
+                .map_err(|error| error.context(context()))?;
         }
     }
     Ok(())

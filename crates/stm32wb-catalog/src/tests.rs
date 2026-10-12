@@ -626,6 +626,38 @@ values = [\"0x00..=0x01\"]
     assert!(error.contains("sysevt_ready_rsp"), "{error}");
 }
 
+/// An override replaces the extracted layout, so the values the headers
+/// document for its members must fit the override too.
+#[test]
+fn overrides_fit_the_documented_values() {
+    let catalog = Catalog::from_toml(&SAMPLE.replace(
+        "[[events]]",
+        "[[commands.domains]]
+releases = \"1.18.0\"
+member = \"Advertising_Type\"
+values = [\"0x00..=0x03\"]
+
+[[events]]",
+    ))
+    .unwrap();
+    let overridden = |ty: &str| {
+        Annotations::from_toml(&format!(
+            r#"[[annotations]]
+            command = "aci_gap_set_discoverable"
+            releases = "1.18.0"
+            source = "x"
+            reason = "y"
+            override = true
+            params = ["{ty}"]"#
+        ))
+        .unwrap()
+        .audit(&catalog)
+    };
+    overridden("Advertising_Type: u16").unwrap();
+    let error = overridden("Other: u16").unwrap_err().to_string();
+    assert!(error.contains("Advertising_Type"), "{error}");
+}
+
 #[test]
 fn annotations_are_audited() {
     let cases = [
