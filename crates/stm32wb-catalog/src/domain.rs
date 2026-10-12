@@ -405,6 +405,13 @@ pub(crate) fn validate_domain(layout: &Layout, domain: &MemberDomain) -> Result<
     if domain.domain.unit_us == Some(0) {
         return Err(Error::invalid(format!("{member} has a zero unit")));
     }
+    // Every condition a label states must be one the catalog interprets.
+    for profile in Profile::ALL {
+        domain
+            .domain
+            .items(profile)
+            .map_err(|error| Error::invalid(format!("{member}: {error}")))?;
+    }
     Ok(())
 }
 
@@ -439,6 +446,22 @@ fn profiles_named(label: &str) -> Option<&'static [Profile]> {
     }
 }
 
+/// The parenthesized or bracketed phrases of a label, where it states
+/// conditions such as `(not supported)` or `[only for STM32WBA]`.
+fn qualifiers(label: &str) -> impl Iterator<Item = &str> {
+    label
+        .split(['(', '['])
+        .skip(1)
+        .filter_map(|rest| rest.split_once([')', ']']).map(|(qualifier, _)| qualifier))
+}
+
+/// Qualifiers that state no condition the catalog applies. `Host only`
+/// marks some `CONFIG_DATA_*` offsets in STM32WB 1.19.1..=1.21.0 and STM32WBA
+/// 1.3.1..=1.5.0 only; the releases before and after document the same
+/// offsets without it, so it reads as a note rather than a profile
+/// restriction.
+const NOTES: [&str; 1] = ["Host only"];
+
 impl Domain {
     /// The items the BLE stack of `profile` accepts: every item, except
     /// those whose label says they are not supported, not supported on the
@@ -446,7 +469,8 @@ impl Domain {
     /// `STM32WB` or `STM32WBA`), or only for profiles other than `profile`,
     /// such as the full stack or the BO variant. An item labelled
     /// `otherwise` is accepted when no item restricted to some profiles is.
-    /// A label naming any other condition is an error rather than a guess.
+    /// A label naming any other condition, other than the [`NOTES`], is an
+    /// error rather than a guess.
     fn items(&self, profile: Profile) -> Result<Vec<&DomainItem>, String> {
         let mut items = Vec::new();
         let mut otherwise = Vec::new();
@@ -475,14 +499,24 @@ impl Domain {
                     otherwise.push(item);
                     false
                 }
-                (None, None) if label.contains("STM32WB") || label.contains("variant") => {
+                (None, None)
+                    if label.ends_with("(not supported)") || label.ends_with("[not supported]") =>
+                {
+                    false
+                }
+                (None, None)
+                    if label.contains("STM32WB")
+                        || label.contains("variant")
+                        || qualifiers(label).any(|qualifier| {
+                            !NOTES.contains(&qualifier)
+                                && (qualifier.contains("only") || qualifier.contains("supported"))
+                        }) =>
+                {
                     return Err(format!(
                         "{item} names a condition the catalog cannot interpret"
                     ));
                 }
-                (None, None) => {
-                    !label.ends_with("(not supported)") && !label.ends_with("[not supported]")
-                }
+                (None, None) => true,
             };
             if applies {
                 items.push(item);

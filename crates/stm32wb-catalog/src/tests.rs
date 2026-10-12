@@ -460,7 +460,11 @@ fn domains_have_their_own_histories() {
     returned.domains[0].1 = true;
     let mut flags = documented(&["0x00: None", "0x03: Two bits"]);
     flags.domains[0].2.kind = DomainKind::Flags;
+    let noted = documented(&["0x00: ADV_IND", "0x02: ADV_SCAN_IND (Host only)"]);
+    let uninterpreted = documented(&["0x00: ADV_IND", "0x02: ADV_SCAN_IND (Peripheral only)"]);
+    merge_snapshots(Platform::Stm32wb, vec![snapshot("1.15.0", vec![noted])]).unwrap();
     for (command, expected) in [
+        (uninterpreted, "cannot interpret"),
         (unknown, "is not a member"),
         (too_wide, "which a u8 cannot hold"),
         (unordered, "out of order"),
@@ -1290,6 +1294,25 @@ fn items_follow_the_platform_and_profile_conditions() {
         .ranges(Profile::Full)
         .unwrap_err();
     assert!(error.contains("cannot interpret"), "{error}");
+    let noted = domain(
+        DomainKind::Values,
+        &[
+            "0x00: CONFIG_DATA_PUBLIC_ADDRESS_OFFSET; Bluetooth public address; 6 bytes",
+            "0x08: CONFIG_DATA_ER_OFFSET (Host only); Encryption root key; 16 bytes",
+        ],
+    );
+    for profile in [Profile::Full, Profile::HciLayer, Profile::WbaLinkLayerOnly] {
+        assert_eq!(noted.ranges(profile).unwrap(), [(0, 0), (8, 8)]);
+    }
+    for label in [
+        "0x08: CONFIG_DATA_ER_OFFSET (Controller only); 16 bytes",
+        "0x01: Resolving [supported from v2]",
+    ] {
+        let error = domain(DomainKind::Values, &[label])
+            .ranges(Profile::Full)
+            .unwrap_err();
+        assert!(error.contains("cannot interpret"), "{error}");
+    }
     let flags = domain(
         DomainKind::Flags,
         &[
