@@ -115,26 +115,38 @@ impl Annotation {
 
     fn entry<'a>(&self, catalog: &'a Catalog) -> Result<Entry<'a>, Error> {
         match (&self.command, &self.event) {
-            (Some(name), None) => catalog
-                .command_named(name)
-                .map(Entry::Command)
-                .ok_or_else(|| Error::audit(format!("{}: no such command", self.label()))),
-            (None, Some(name)) => {
-                let mut matches = catalog
-                    .events
-                    .iter()
-                    .filter(|event| event.names.iter().any(|named| &named.name == name));
-                match (matches.next(), matches.next()) {
-                    (Some(event), None) => Ok(Entry::Event(event)),
-                    (None, _) => Err(Error::audit(format!("{}: no such event", self.label()))),
-                    (Some(_), Some(_)) => Err(Error::audit(format!(
-                        "{}: the name is ambiguous",
-                        self.label()
-                    ))),
-                }
-            }
+            (Some(name), None) => self
+                .unique(
+                    "command",
+                    catalog
+                        .commands
+                        .iter()
+                        .filter(|command| command.names.iter().any(|named| &named.name == name)),
+                )
+                .map(Entry::Command),
+            (None, Some(name)) => self
+                .unique(
+                    "event",
+                    catalog
+                        .events
+                        .iter()
+                        .filter(|event| event.names.iter().any(|named| &named.name == name)),
+                )
+                .map(Entry::Event),
             _ => Err(Error::audit(format!(
                 "{}: set exactly one of `command` or `event`",
+                self.label()
+            ))),
+        }
+    }
+
+    /// The one entry the annotation's name selects.
+    fn unique<T>(&self, kind: &str, mut matches: impl Iterator<Item = T>) -> Result<T, Error> {
+        match (matches.next(), matches.next()) {
+            (Some(entry), None) => Ok(entry),
+            (None, _) => Err(Error::audit(format!("{}: no such {kind}", self.label()))),
+            (Some(_), Some(_)) => Err(Error::audit(format!(
+                "{}: the name is ambiguous",
                 self.label()
             ))),
         }

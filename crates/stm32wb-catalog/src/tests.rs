@@ -663,6 +663,43 @@ values = [\"0x00..=0x03\"]
 }
 
 #[test]
+fn annotations_reject_ambiguous_command_names() {
+    let catalog = Catalog::from_toml(&format!(
+        r#"{SAMPLE}
+[[commands]]
+scope = "vendor"
+opcode = "0xFC84"
+
+[[commands.names]]
+releases = "1.15.0..=1.18.0"
+name = "aci_gap_set_discoverable"
+
+[[commands.availability]]
+releases = "1.15.0..=1.18.0"
+profiles = ["full-extended"]
+
+[[commands.definitions]]
+releases = "1.15.0..=1.18.0"
+completion = "command-complete"
+params = []
+returns = ["Status: u8"]
+"#
+    ))
+    .unwrap();
+    let error = Annotations::from_toml(
+        r#"[[annotations]]
+        command = "aci_gap_set_discoverable"
+        source = "x"
+        reason = "y"
+        exclude = true"#,
+    )
+    .unwrap()
+    .audit(&catalog)
+    .unwrap_err();
+    assert!(error.to_string().contains("ambiguous"), "{error}");
+}
+
+#[test]
 fn annotations_are_audited() {
     let cases = [
         (
