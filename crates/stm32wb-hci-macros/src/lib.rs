@@ -6,6 +6,7 @@ mod bearer;
 mod cfg;
 mod command;
 mod complete;
+mod direct;
 mod dispatch;
 mod event;
 mod standard;
@@ -472,6 +473,24 @@ pub fn catalog_complete(input: TokenStream) -> TokenStream {
 pub fn standard_command(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as command::Input);
     command::expand(input, command::Channel::Standard)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Compile the item, a hand-written `Direct` implementation, only with the
+/// `direct` feature on the STM32WBA targets whose stack implements the
+/// command it names.
+///
+/// ```ignore
+/// #[direct_available(hci_le_set_extended_scan_parameters)]
+/// impl Direct for bt_hci::cmd::le::LeSetExtScanParams { ... }
+/// ```
+#[proc_macro_attribute]
+pub fn direct_available(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let c_name = syn::parse_macro_input!(attr as syn::Ident);
+    let item = TokenStream2::from(item);
+    direct::available(&c_name)
+        .map(|predicate| quote!(#[cfg(all(feature = "direct", #predicate))] #item))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

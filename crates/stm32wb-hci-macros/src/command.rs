@@ -352,6 +352,16 @@ fn expand_on(
         tokens.extend(expanded);
     }
     let c_name = input.c_name.to_string();
+    if channel != Channel::System {
+        let name = &input.params.name;
+        let platform = bundled.catalog.platform;
+        tokens.extend(crate::direct::expand(bundled, &c_name, |releases| {
+            let fields = fields_in(&input.params, platform, releases);
+            let generics =
+                crate::direct::lifetime_generics(fields.fields.iter().map(|field| &field.ty));
+            (quote!(#name #generics), generics)
+        })?);
+    }
     tokens.extend(
         complete::declared(bundled, complete::Kind::Command, &c_name)
             .map_err(|error| syn::Error::new(input.c_name.span(), error.to_string()))?,
