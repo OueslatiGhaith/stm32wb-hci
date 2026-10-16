@@ -22,6 +22,8 @@
 //! - `shci` declares the system commands and events of the CPU2 system
 //!   channel, on STM32WB.
 //! - [`adv_data`] builds advertising and scan response data.
+//! - `direct`, with the `direct` feature on STM32WBA, executes commands by
+//!   calling the BLE stack library's function for each.
 //! - [`wire`] holds the traits and buffers the declarations are built on.
 //!
 //! # Controller model
@@ -50,6 +52,8 @@ pub mod aci;
 pub mod adv_data;
 #[doc(hidden)]
 pub mod catalog;
+#[cfg(all(feature = "direct", feature = "_stm32wba"))]
+pub mod direct;
 pub mod event;
 #[cfg(feature = "_stm32wb")]
 pub mod shci;

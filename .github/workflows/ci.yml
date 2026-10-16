@@ -40,6 +40,13 @@ jobs:
             cargo test --lib --no-default-features --features "$features"
             echo "::endgroup::"
           done
+      - name: Test the direct calls of every distinct STM32WBA release and stack profile
+        run: |
+          for features in $(cargo run -q -p stm32wb-catalog-extract -- targets --platform stm32wba); do
+            echo "::group::$features,direct"
+            cargo test --lib --test direct --no-default-features --features "$features,direct"
+            echo "::endgroup::"
+          done
 
   example:
     runs-on: ubuntu-latest

@@ -94,6 +94,10 @@ stack-wba-peripheral-only = ["_stm32wba"]
 stack-wba-link-layer-only = ["_stm32wba"]
 stack-wba-link-layer-only-basic = ["_stm32wba"]
 
+# STM32WBA only: implement `direct::Direct`, which executes a command by
+# calling its BLE stack library function. Linking needs that library.
+direct = []
+
 # The platform, which the release and stack profile features enable; not
 # meant to be enabled directly.
 _stm32wb = []

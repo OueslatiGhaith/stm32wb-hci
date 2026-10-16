@@ -380,6 +380,9 @@ fn expand_entry(
             });
         }
     }
+    tokens.extend(crate::direct::expand(bundled, &c_name, |_| {
+        (quote!(#ty), generics.clone())
+    })?);
     tokens.extend(
         complete::declared(bundled, complete::Kind::Command, &c_name)
             .map_err(|failure| error(failure.to_string()))?,
