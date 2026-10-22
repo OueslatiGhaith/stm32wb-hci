@@ -1896,7 +1896,7 @@ dependencies = [
 
 [[package]]
 name = "stm32wb-hci"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "bt-hci",
  "bt-hci-transport",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "stm32wb-hci-macros"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
