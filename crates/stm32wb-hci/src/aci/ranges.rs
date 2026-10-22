@@ -15,11 +15,26 @@ const MAX_PA_LEVEL: u8 = 0x1F;
 #[cfg(not(feature = "fw_1_15_0"))]
 const MAX_PA_LEVEL: u8 = 0x23;
 
-/// The largest L2CAP PDU payload a credit based channel accepts: 1.17.1
-/// lowered it to the 248 bytes a link layer packet carries.
-#[cfg(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0"))]
+/// The largest L2CAP PDU payload a credit based channel accepts: STM32WB
+/// 1.17.1 and STM32WBA 1.2.0 lowered it to the 248 bytes a link layer packet
+/// carries.
+#[cfg(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1"
+))]
 const MAX_COC_MPS: u16 = 0xFFFD;
-#[cfg(not(any(feature = "fw_1_15_0", feature = "fw_1_16_0", feature = "fw_1_17_0")))]
+#[cfg(not(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1"
+)))]
 const MAX_COC_MPS: u16 = 0x00F8;
 
 /// The highest result of a credit based connection: 1.23.0 documents
@@ -77,8 +92,8 @@ const MAX_COC_CONNECT_RESULT: u16 = 0x000C;
 )))]
 const MAX_COC_CONNECT_RESULT: u16 = 0x000F;
 
-/// The highest result of a credit based reconfiguration: 1.23.0 documents
-/// only those the specification defines.
+/// The highest result of a credit based reconfiguration: STM32WB 1.23.0 and
+/// STM32WBA 1.7.0 document only those the specification defines.
 #[cfg(any(
     feature = "fw_1_15_0",
     feature = "fw_1_16_0",
@@ -92,7 +107,17 @@ const MAX_COC_CONNECT_RESULT: u16 = 0x000F;
     feature = "fw_1_20_0",
     feature = "fw_1_21_0",
     feature = "fw_1_22_0",
-    feature = "fw_1_22_1"
+    feature = "fw_1_22_1",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0",
+    feature = "wba_1_6_0",
+    feature = "wba_1_6_1"
 ))]
 const MAX_COC_RECONF_RESULT: u16 = 0x000C;
 #[cfg(not(any(
@@ -108,7 +133,17 @@ const MAX_COC_RECONF_RESULT: u16 = 0x000C;
     feature = "fw_1_20_0",
     feature = "fw_1_21_0",
     feature = "fw_1_22_0",
-    feature = "fw_1_22_1"
+    feature = "fw_1_22_1",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0",
+    feature = "wba_1_6_0",
+    feature = "wba_1_6_1"
 )))]
 const MAX_COC_RECONF_RESULT: u16 = 0x0004;
 
@@ -219,7 +254,8 @@ wire_range! {
 
 wire_range! {
     /// The largest PDU payload a credit based channel accepts, from 23
-    /// bytes to 0xFFFD before 1.17.1 and to 248 from 1.17.1.
+    /// bytes to 0xFFFD before STM32WB 1.17.1 and STM32WBA 1.2.0, and to 248
+    /// from them.
     pub struct CocMps: u16 {
         values = 0x0017..=MAX_COC_MPS;
     }
@@ -308,7 +344,7 @@ wire_range! {
 
 wire_range! {
     /// The result of a credit based reconfiguration: 0 on success, up to
-    /// 0x0C before 1.23.0 and 4 from 1.23.0.
+    /// 0x0C before STM32WB 1.23.0 and STM32WBA 1.7.0, and 4 from them.
     pub struct CocReconfResult: u16 {
         values = 0x0000..=MAX_COC_RECONF_RESULT;
     }
