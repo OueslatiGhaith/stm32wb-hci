@@ -33,7 +33,8 @@ wire_flags! {
         const PASS_KEY_REQUEST = 0x0004;
         /// `ACI_GAP_AUTHORIZATION_REQ_EVENT`.
         const AUTHORIZATION_REQUEST = 0x0008;
-        /// `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`, before 1.22.0.
+        /// `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`, before STM32WB
+        /// 1.22.0 and STM32WBA 1.6.0.
         #[cfg(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -45,7 +46,15 @@ wire_flags! {
             feature = "fw_1_19_0",
             feature = "fw_1_19_1",
             feature = "fw_1_20_0",
-            feature = "fw_1_21_0"
+            feature = "fw_1_21_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0"
         ))]
         const PERIPHERAL_SECURITY_INITIATED = 0x0010;
         /// `ACI_GAP_BOND_LOST_EVENT`.
@@ -76,11 +85,17 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// How an advertising set is configured. Using LE Coded as the primary
-    /// PHY is not supported on STM32WB.
+    /// How an advertising set is configured.
     pub struct AdvMode: u8 {
         /// Advertise with the random address set for this advertising set.
         const SPECIFIC_RANDOM_ADDRESS = 0x01;
+        /// Use LE Coded as the primary advertising PHY, on STM32WBA from
+        /// 1.2.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(feature = "wba_1_0_0", feature = "wba_1_1_0", feature = "wba_1_1_1"))
+        ))]
+        const LE_CODED_PRIMARY = 0x02;
     }
 }
 
@@ -105,22 +120,27 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// The PHYs to scan advertisements on. LE Coded is not supported on
-    /// STM32WB.
+    /// The PHYs to scan advertisements on.
     pub struct ScanningPhys: u8 {
         /// LE 1M.
         const LE_1M = 0x01;
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const LE_CODED = 0x04;
     }
 }
 
 wire_flags! {
-    /// The PHYs to connect with: LE 1M also scans connectable advertisements.
-    /// LE Coded is not supported on STM32WB.
+    /// The PHYs to connect with: LE 1M and LE Coded also scan connectable
+    /// advertisements.
     pub struct InitiatingPhys: u8 {
         /// LE 1M.
         const LE_1M = 0x01;
         /// LE 2M.
         const LE_2M = 0x02;
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const LE_CODED = 0x04;
     }
 }
 
@@ -163,12 +183,23 @@ wire_flags! {
         const AUTHORIZED_WRITE = 0x10;
         /// `ENCRY_WRITE`.
         const ENCRYPTED_WRITE = 0x20;
-        /// `SC_READ`: reading requires a Secure Connections link, from 1.24.0.
-        #[cfg(feature = "fw_1_24_0")]
+        /// `SC_READ`: reading requires a Secure Connections link, on STM32WB
+        /// from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
         const SECURE_CONNECTIONS_READ = 0x40;
-        /// `SC_WRITE`: writing requires a Secure Connections link, from
-        /// 1.24.0.
-        #[cfg(feature = "fw_1_24_0")]
+        /// `SC_WRITE`: writing requires a Secure Connections link, on
+        /// STM32WB from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
         const SECURE_CONNECTIONS_WRITE = 0x80;
     }
 }
@@ -245,14 +276,42 @@ wire_flags! {
         const TX_TEST_MODE = 0x0040;
         /// RX test mode.
         const RX_TEST_MODE = 0x0080;
+        /// Periodic advertising. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const PERIODIC_ADVERTISING = 0x0200;
+        /// Periodic sync. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const PERIODIC_SYNC = 0x0400;
+        /// ISO broadcast. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_BROADCAST = 0x0800;
+        /// ISO sync. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_SYNC = 0x1000;
+        /// ISO peripheral connection. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_PERIPHERAL_CONNECTION = 0x2000;
+        /// ISO central connection. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_CENTRAL_CONNECTION = 0x4000;
     }
 }
 
 wire_flags! {
     /// The HAL events the host receives.
     pub struct HalEventMask: u32 {
-        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`. STM32WB only.
-        #[cfg(feature = "_stm32wb")]
+        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`. STM32WB only, except that
+        /// STM32WBA documents it too before 1.5.0.
+        #[cfg(any(
+            feature = "_stm32wb",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1"
+        ))]
         const SCAN_REQUEST_REPORT = 0x0000_0001;
         /// `ACI_HAL_SYNC_EVENT`. STM32WBA only.
         #[cfg(feature = "_stm32wba")]
@@ -297,7 +356,10 @@ mod tests {
 
     use super::*;
     use crate::aci::values::{AddressType, Privacy};
-    use crate::wire::{HciWireType, OrUnknown, flags_documented, is_opaque, values_documented};
+    use crate::wire::{
+        HciWireType, OrUnknown, documented_flags_declared, documented_values_declared,
+        flags_documented, is_opaque, values_documented,
+    };
 
     #[test]
     fn flags_encode_as_their_bits() {
@@ -311,7 +373,10 @@ mod tests {
             Err(FromHciBytesError::InvalidValue)
         );
         RadioActivityMask::all().write_hci(&mut buffer[..]).unwrap();
+        #[cfg(feature = "_stm32wb")]
         assert_eq!(buffer, [0xEF, 0x00]);
+        #[cfg(feature = "_stm32wba")]
+        assert_eq!(buffer, [0xEF, 0x7E]);
         assert_eq!(<RadioActivityMask as HciWireType>::WIDTH, 2);
         assert!(role.contains(Role::CENTRAL) && !role.contains(Role::OBSERVER));
         assert_eq!(format!("{role:?}").as_str(), "Role(PERIPHERAL | CENTRAL)");
@@ -336,6 +401,19 @@ mod tests {
         );
         assert!(!is_opaque::<Role>());
         assert!(flags_documented::<u8>(0), "integers stand for no flags");
+    }
+
+    #[test]
+    fn every_documented_flag_must_be_declared() {
+        assert!(documented_flags_declared::<Role>(0x0F));
+        assert!(
+            !documented_flags_declared::<Role>(0x1F),
+            "0x10 cannot be sent"
+        );
+        assert!(
+            !documented_values_declared::<Role>(&[(0, 0x0F)]),
+            "flags declare no values"
+        );
     }
 
     #[cfg(feature = "fw_1_24_0")]

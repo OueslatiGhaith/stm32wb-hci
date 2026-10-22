@@ -9,6 +9,13 @@
 //! `#[wire(platform = "...")]`, and `wba_since` and `wba_before` bound the
 //! STM32CubeWBA releases a field exists in as `since` and `before` bound the
 //! STM32CubeWB ones.
+//!
+//! A parameter's type must stand only for values the catalog documents for
+//! it, and, for a command parameter, for every one of them, so that none is
+//! impossible to send. A documented value the type deliberately leaves out,
+//! such as an entry ST copied from another table, is declared on the field
+//! with `#[wire(omit(<value>, "<reason>"))]`; omitting a value no release
+//! documents is an error.
 
 pub mod att;
 pub mod durations;

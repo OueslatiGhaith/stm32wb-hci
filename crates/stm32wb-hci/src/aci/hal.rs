@@ -44,6 +44,10 @@ vendor_command! {
     /// Write a value to the low-level configuration data at `offset`;
     /// [`entry`](Self::entry) also checks its length.
     aci_hal_write_config_data => HalWriteConfigData {
+        #[wire(omit(
+            0x34,
+            "STM32WB 1.17.0..=1.21.0 and STM32WBA 1.1.0..=1.5.0 document the GAP additional record number without its length"
+        ))]
         offset: ConfigDataOffset,
         value: &'a [u8],
     }

@@ -134,8 +134,7 @@ wire_values! {
 }
 
 wire_values! {
-    /// A GAP procedure. Terminating a procedure also documents `0x00`, for
-    /// none, which is left out.
+    /// A GAP procedure.
     pub enum GapProcedure: u8 {
         /// `GAP_LIMITED_DISCOVERY_PROC`.
         LimitedDiscovery = 0x01,
@@ -438,6 +437,30 @@ wire_values! {
         AppendBoth = 0x04,
         /// Clear and set both lists.
         SetBoth = 0x05,
+        /// Append the bonded devices, and the devices given, to the
+        /// resolving list, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedResolvingList = 0x08,
+        /// Clear the resolving list and set it to the bonded devices and the
+        /// devices given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedResolvingList = 0x09,
+        /// Append the bonded devices, and the devices given, to the Filter
+        /// Accept List, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedFilterAcceptList = 0x0A,
+        /// Clear the Filter Accept List and set it to the bonded devices and
+        /// the devices given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedFilterAcceptList = 0x0B,
+        /// Append the bonded devices, and the devices given, to both lists,
+        /// on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedBoth = 0x0C,
+        /// Clear both lists and set them to the bonded devices and the devices
+        /// given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedBoth = 0x0D,
     }
 }
 
@@ -513,13 +536,15 @@ wire_values! {
 }
 
 wire_values! {
-    /// The PHY of the secondary advertising channel. The LE Coded PHY is
-    /// not supported on STM32WB.
+    /// The PHY of the secondary advertising channel.
     pub enum SecondaryAdvPhy: u8 {
         /// LE 1M.
         Le1M = 0x01,
         /// LE 2M.
         Le2M = 0x02,
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        LeCoded = 0x03,
     }
 }
 
@@ -536,6 +561,10 @@ wire_values! {
 wire_values! {
     /// The connection procedure of an extended connection.
     pub enum ConnectionProcedure: u8 {
+        /// Connect to the advertiser of a periodic advertising train, on
+        /// STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        PeriodicAdvertisingConnection = 0x04,
         /// Connect to any device of the Filter Accept List.
         AutoConnectionEstablishment = 0x08,
         /// Connect to one device.
@@ -661,6 +690,25 @@ wire_values! {
         Cleared = 0x03,
         /// Passkey entry completed.
         EntryCompleted = 0x04,
+    }
+}
+
+wire_values! {
+    /// Whether pairing requires protection against man-in-the-middle attacks.
+    pub enum MitmMode: u8 {
+        /// MITM protection is not required.
+        NotRequired = 0x00,
+        /// MITM protection is required.
+        Required = 0x01,
+        /// MITM protection is used when the IO capabilities allow it, on
+        /// STM32WB from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
+        Optional = 0x02,
     }
 }
 
@@ -940,12 +988,16 @@ wire_values! {
         SmpMode = 0xB0 => [u8; 1],
         /// `CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET`: the channels scanning uses,
         /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap). STM32WB
-        /// only.
-        #[cfg(feature = "_stm32wb")]
+        /// only, except that STM32WBA 1.0.0 documents it too.
+        #[cfg(any(feature = "_stm32wb", feature = "wba_1_0_0"))]
         ScanChannelMap = 0xC0 => [u8; 1],
         /// `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET`: whether background scanning
-        /// is enabled, on STM32WB from 1.16.0.
-        #[cfg(all(feature = "_stm32wb", not(feature = "fw_1_15_0")))]
+        /// is enabled, on STM32WB from 1.16.0, and on STM32WBA 1.0.0, which
+        /// documents it too.
+        #[cfg(any(
+            all(feature = "_stm32wb", not(feature = "fw_1_15_0")),
+            feature = "wba_1_0_0"
+        ))]
         BackgroundScanMode = 0xC1 => [u8; 1],
         /// `CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET`: the link layer's RSSI
         /// golden range, on STM32WBA from 1.5.0.
@@ -1033,6 +1085,21 @@ wire_values! {
         IdentityRoot = 0x18 => [u8; 16],
         /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
         StaticRandomAddress = 0x2E => [u8; 6],
+        /// `CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET`: the link layer's RSSI
+        /// golden range, on STM32WBA from 1.5.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(
+                feature = "wba_1_0_0",
+                feature = "wba_1_1_0",
+                feature = "wba_1_1_1",
+                feature = "wba_1_2_0",
+                feature = "wba_1_3_1",
+                feature = "wba_1_4_0",
+                feature = "wba_1_4_1"
+            ))
+        ))]
+        RssiGoldenRange = 0xC2 => [u8; 2],
     }
 }
 
@@ -1042,8 +1109,8 @@ mod tests {
 
     use super::*;
     use crate::wire::{
-        HciWireType, OrUnknown, decodes_any, flags_documented, is_opaque, lengths_documented,
-        values_documented,
+        HciWireType, OrUnknown, decodes_any, documented_flags_declared, documented_values_declared,
+        flags_documented, is_opaque, lengths_documented, values_documented,
     };
 
     #[test]
@@ -1075,6 +1142,39 @@ mod tests {
         assert!(!is_opaque::<Privacy>(), "undocumented member");
         assert!(values_documented::<u8>(&[]), "integers stand for no values");
         assert!(is_opaque::<u8>());
+    }
+
+    #[test]
+    fn every_documented_value_must_be_declared() {
+        let privacy = &[(0, 0), (2, 2)][..];
+        assert!(documented_values_declared::<Privacy>(privacy));
+        assert!(
+            !documented_values_declared::<Privacy>(&[(0, 2)]),
+            "1 cannot be sent"
+        );
+        assert!(documented_values_declared::<bool>(&[(0, 1)]));
+        assert!(
+            documented_values_declared::<u8>(&[(0, 0xFF)]),
+            "an integer sends any value"
+        );
+        assert!(
+            documented_values_declared::<OwnAddressType>(&[(0, 1), (2, 3)]),
+            "ranges are covered value by value"
+        );
+        assert!(!documented_values_declared::<OwnAddressType>(&[(0, 4)]));
+    }
+
+    #[test]
+    fn value_types_declare_every_combination_of_documented_flags() {
+        assert!(
+            documented_flags_declared::<ScanningFilterPolicy>(0x03),
+            "0, 1, 2 and 3 are the combinations of 0x01 and 0x02"
+        );
+        assert!(!documented_flags_declared::<ScanningFilterPolicy>(0x07));
+        assert!(
+            documented_flags_declared::<u8>(0xFF),
+            "an integer sends any flags"
+        );
     }
 
     #[test]
@@ -1195,7 +1295,7 @@ mod tests {
     fn offsets_give_their_documented_lengths() {
         assert_eq!(ConfigDataOffset::EncryptionRoot.length(), 16);
         assert_eq!(ReadableConfigDataOffset::StaticRandomAddress.length(), 6);
-        let lengths = &[(0x00, 6), (0x08, 16), (0x18, 16), (0x2E, 6)][..];
+        let lengths = &[(0x00, 6), (0x08, 16), (0x18, 16), (0x2E, 6), (0xC2, 2)][..];
         assert!(lengths_documented::<ReadableConfigDataOffset>(lengths));
         assert!(
             !lengths_documented::<ReadableConfigDataOffset>(&lengths[..3]),

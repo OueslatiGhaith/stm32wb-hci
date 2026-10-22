@@ -156,6 +156,104 @@ pub const fn values_documented<T: HciWireType>(documented: &[(i64, i64)]) -> boo
     true
 }
 
+/// Whether `T` stands for every value the catalog documents for a member
+/// listing values, each documented item being an inclusive range: each lies
+/// within the union of its values and ranges, so that none is impossible to
+/// send. A flags type never does; a type standing for no particular values
+/// always does.
+#[doc(hidden)]
+pub const fn documented_values_declared<T: HciWireType>(documented: &[(i64, i64)]) -> bool {
+    if T::BITS.is_some() {
+        return false;
+    }
+    if T::VALUES.is_none() && T::RANGES.is_none() {
+        return true;
+    }
+    let mut index = 0;
+    while index < documented.len() {
+        let (first, last) = documented[index];
+        if !declared(first, last, T::VALUES, T::RANGES) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// Whether `first..=last` lies within the union of `values` and `ranges`.
+const fn declared(
+    first: i64,
+    last: i64,
+    values: Option<&[i64]>,
+    ranges: Option<&[(i64, i64)]>,
+) -> bool {
+    let mut next = first;
+    loop {
+        let mut end = None;
+        if let Some(values) = values {
+            let mut item = 0;
+            while item < values.len() {
+                if values[item] == next {
+                    end = Some(next);
+                }
+                item += 1;
+            }
+        }
+        if let Some(ranges) = ranges {
+            let mut item = 0;
+            while item < ranges.len() {
+                let (from, to) = ranges[item];
+                if from <= next && next <= to {
+                    end = match end {
+                        Some(end) if end >= to => Some(end),
+                        _ => Some(to),
+                    };
+                }
+                item += 1;
+            }
+        }
+        match end {
+            None => return false,
+            Some(end) if end >= last => return true,
+            Some(end) => next = end + 1,
+        }
+    }
+}
+
+/// Whether `T` may set every flag the catalog documents for a member listing
+/// flags, `documented` being their union, so that none is impossible to
+/// send. A value type must stand for each combination of the flags; a range
+/// never does; a type standing for no particular values or flags always does.
+#[doc(hidden)]
+pub const fn documented_flags_declared<T: HciWireType>(documented: u64) -> bool {
+    if T::RANGES.is_some() {
+        return false;
+    }
+    if let Some(bits) = T::BITS {
+        return documented & !bits == 0;
+    }
+    let Some(values) = T::VALUES else {
+        return true;
+    };
+    if documented.count_ones() > 16 {
+        return false;
+    }
+    let mut combination = documented;
+    loop {
+        let mut item = 0;
+        while item < values.len() && values[item] != combination as i64 {
+            item += 1;
+        }
+        if item == values.len() {
+            return false;
+        }
+        if combination == 0 {
+            return true;
+        }
+        combination = (combination - 1) & documented;
+    }
+}
+
 /// Whether `T` stands for exactly the `documented` values: each of its
 /// values is documented, and each documented value is one of its values.
 #[doc(hidden)]
@@ -863,13 +961,16 @@ macro_rules! wire_flags {
 ///     }
 /// }
 /// ```
+///
+/// The upper bound may be a constant, for a range that differs between
+/// releases or platforms.
 #[macro_export]
 macro_rules! wire_duration {
     (
         $(#[$attr:meta])*
         $vis:vis struct $name:ident: $repr:ident {
             unit_us = $unit:expr;
-            units = $min:literal..=$max:literal;
+            units = $min:literal..=$max:expr;
             $(
                 $(#[$special_attr:meta])*
                 const $special:ident = $value:expr;
@@ -982,7 +1083,7 @@ macro_rules! wire_duration {
             const UNIT_US: ::core::option::Option<u32> = ::core::option::Option::Some($unit);
         }
 
-        $crate::wire_range!(@encoding $name: $repr [$($special)*]);
+        $crate::wire_range!(@encoding $name: $repr [$($special [])*]);
     };
 }
 
@@ -1002,7 +1103,8 @@ macro_rules! wire_duration {
 /// ```
 ///
 /// The upper bound may be a constant, for a range only some releases
-/// extend.
+/// extend. A special value may follow its documentation with one
+/// `#[cfg(...)]`, for a value only some releases or profiles accept.
 #[macro_export]
 macro_rules! wire_range {
     (
@@ -1010,7 +1112,8 @@ macro_rules! wire_range {
         $vis:vis struct $name:ident: $repr:ident {
             values = $min:literal..=$max:expr;
             $(
-                $(#[$special_attr:meta])*
+                $(#[doc = $special_doc:literal])*
+                $(#[cfg($special_cfg:meta)])?
                 const $special:ident = $value:expr;
             )*
         }
@@ -1037,7 +1140,8 @@ macro_rules! wire_range {
             /// The highest value of the range.
             pub const MAX: Self = Self($max);
             $(
-                $(#[$special_attr])*
+                $(#[doc = $special_doc])*
+                $(#[cfg($special_cfg)])?
                 pub const $special: Self = Self($value);
             )*
 
@@ -1060,6 +1164,7 @@ macro_rules! wire_range {
         impl ::core::fmt::Debug for $name {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 $(
+                    $(#[cfg($special_cfg)])?
                     if *self == Self::$special {
                         return f.write_str(::core::concat!(
                             ::core::stringify!($name),
@@ -1078,13 +1183,16 @@ macro_rules! wire_range {
             const RANGES: ::core::option::Option<&'static [(i64, i64)]> =
                 ::core::option::Option::Some(&[
                     ($min as i64, $max as i64),
-                    $(($name::$special.0 as i64, $name::$special.0 as i64),)*
+                    $(
+                        $(#[cfg($special_cfg)])?
+                        ($name::$special.0 as i64, $name::$special.0 as i64),
+                    )*
                 ]);
         }
 
-        $crate::wire_range!(@encoding $name: $repr [$($special)*]);
+        $crate::wire_range!(@encoding $name: $repr [$($special [$($special_cfg)?])*]);
     };
-    (@encoding $name:ident: $repr:ident [$($special:ident)*]) => {
+    (@encoding $name:ident: $repr:ident [$($special:ident [$($special_cfg:meta)?])*]) => {
         impl ::core::convert::From<$name> for $repr {
             fn from(value: $name) -> $repr {
                 value.0
@@ -1096,6 +1204,7 @@ macro_rules! wire_range {
 
             fn try_from(raw: $repr) -> ::core::result::Result<Self, Self::Error> {
                 $(
+                    $(#[cfg($special_cfg)])?
                     if raw == $name::$special.0 {
                         return ::core::result::Result::Ok($name::$special);
                     }

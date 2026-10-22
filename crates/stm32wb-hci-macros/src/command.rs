@@ -13,7 +13,7 @@ use stm32wb_catalog::{
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Attribute, Ident, LitStr, Token, Type, braced};
+use syn::{Attribute, Ident, LitInt, LitStr, Token, Type, braced, parenthesized};
 
 use crate::{cfg, complete};
 
@@ -48,8 +48,18 @@ pub(crate) struct InputField {
     bounds: [Bounds; 2],
     /// The only platform with the field, if it is not on both.
     platform: Option<(Platform, Span)>,
+    /// The documented values the field's type deliberately does not stand
+    /// for, each with the reason.
+    omitted: Vec<Omission>,
     pub(crate) name: Ident,
     pub(crate) ty: Type,
+}
+
+/// A documented value a field's type deliberately does not stand for.
+#[derive(Clone)]
+struct Omission {
+    value: i64,
+    span: Span,
 }
 
 /// The releases of one platform a field exists in.
@@ -124,19 +134,23 @@ impl InputField {
         let mut wire_name = None;
         let mut bounds = [Bounds::default(); 2];
         let mut platform = None;
+        let mut omitted: Vec<Omission> = Vec::new();
         let mut given = Vec::new();
         for attr in &field.attrs {
             if !attr.path().is_ident("wire") {
                 return Err(syn::Error::new(
                     attr.span(),
                     "only #[wire(name = \"...\", since = \"...\", before = \"...\", \
-                     wba_since = \"...\", wba_before = \"...\", platform = \"...\")] is \
-                     supported on fields",
+                     wba_since = \"...\", wba_before = \"...\", platform = \"...\", \
+                     omit(<value>, \"<reason>\"))] is supported on fields",
                 ));
             }
             attr.parse_nested_meta(|meta| {
-                // A repeated key would silently replace the earlier value.
-                if let Some(key) = meta.path.get_ident() {
+                // A repeated key would silently replace the earlier value;
+                // each omission adds a value instead.
+                if let Some(key) = meta.path.get_ident()
+                    && key != "omit"
+                {
                     if given.contains(key) {
                         return Err(meta.error(format!("`{key}` is given twice")));
                     }
@@ -177,11 +191,35 @@ impl InputField {
                         })?;
                     platform = Some((only, name.span()));
                     Ok(())
+                } else if meta.path.is_ident("omit") {
+                    let content;
+                    parenthesized!(content in meta.input);
+                    let value: LitInt = content.parse()?;
+                    content.parse::<Token![,]>()?;
+                    let reason: LitStr = content.parse()?;
+                    if !content.is_empty() {
+                        return Err(content.error("expected `omit(<value>, \"<reason>\")`"));
+                    }
+                    if reason.value().trim().is_empty() {
+                        return Err(syn::Error::new(
+                            reason.span(),
+                            "say why the type leaves the value out",
+                        ));
+                    }
+                    let parsed = value.base10_parse::<i64>()?;
+                    if omitted.iter().any(|omission| omission.value == parsed) {
+                        return Err(syn::Error::new(value.span(), "the value is omitted twice"));
+                    }
+                    omitted.push(Omission {
+                        value: parsed,
+                        span: value.span(),
+                    });
+                    Ok(())
                 } else {
                     Err(meta.error(
                         "expected `name = \"<catalog member>\"`, `since`, `before`, \
-                         `wba_since`, or `wba_before` = \"<release>\", or \
-                         `platform = \"<platform>\"`",
+                         `wba_since`, or `wba_before` = \"<release>\", \
+                         `platform = \"<platform>\"`, or `omit(<value>, \"<reason>\")`",
                     ))
                 }
             })?;
@@ -201,6 +239,7 @@ impl InputField {
             wire_name,
             bounds,
             platform,
+            omitted,
             name: field.ident.expect("parse_named yields named fields"),
             ty: field.ty,
         })
@@ -1708,6 +1747,17 @@ pub(crate) fn value_assertions(
             } => (*field, *member, *value),
             _ => continue,
         };
+        if let Some(omission) = field.omitted.first()
+            && (decoded || is_integer(ty))
+        {
+            let message = if decoded {
+                "only encoded parameters omit values; a decoded one keeps them in `OrUnknown<T>`"
+            } else {
+                "an integer stands for every value; there is nothing to omit"
+            };
+            assertions.push(quote_spanned! {omission.span=> ::core::compile_error!(#message);});
+            continue;
+        }
         if is_integer(ty) {
             continue;
         }
@@ -1715,6 +1765,24 @@ pub(crate) fn value_assertions(
             .iter()
             .position(|other| ptr::eq(other, member))
             .expect("the member is one of the members");
+        for omission in &field.omitted {
+            let documented = groups.iter().any(|group| match &group.documents[position] {
+                Documented::Values(ranges, _, _) => ranges
+                    .iter()
+                    .any(|(first, last)| (*first..=*last).contains(&omission.value)),
+                Documented::Flags(bits) => {
+                    omission.value > 0 && *bits & omission.value as u64 == omission.value as u64
+                }
+                _ => false,
+            });
+            if !documented {
+                let message = format!(
+                    "{owner}.{}: the catalog documents {:#x} for {} in no release; remove the omission",
+                    field.name, omission.value, member.name
+                );
+                assertions.push(quote_spanned! {omission.span=> ::core::compile_error!(#message);});
+            }
+        }
         for group in groups {
             let cfg = group
                 .cfg
@@ -1791,6 +1859,9 @@ pub(crate) fn value_assertions(
                     );
                 });
             }
+            if !decoded {
+                assertions.extend(reverse_assertion(owner, field, member, ty, group, position));
+            }
             let (check, message) = match &group.documents[position] {
                 Documented::Values(ranges, _, _) => {
                     let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
@@ -1854,6 +1925,87 @@ pub(crate) fn value_assertions(
         }
     }
     assertions
+}
+
+/// Assert at compile time that the type of an encoded `field` stands for
+/// each value or flag the catalog documents for its member in `group`, other
+/// than those the field omits, so that no documented value is impossible to
+/// send.
+fn reverse_assertion(
+    owner: &Ident,
+    field: &InputField,
+    member: &Field,
+    ty: &Type,
+    group: &DocumentedGroup,
+    position: usize,
+) -> Option<TokenStream> {
+    let cfg = group
+        .cfg
+        .as_ref()
+        .map(|predicate| quote!(#[cfg(#predicate)]));
+    let omitted = field.omitted.iter().map(|omission| omission.value);
+    let (check, listed) = match &group.documents[position] {
+        Documented::Values(ranges, _, _) => {
+            let ranges = omitted.fold(ranges.clone(), |ranges, value| without(&ranges, value));
+            let pairs = ranges.iter().map(|(first, last)| quote!((#first, #last)));
+            let listed = ranges
+                .iter()
+                .map(|(first, last)| {
+                    if first == last {
+                        first.to_string()
+                    } else {
+                        format!("{first}..={last}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                quote!(::stm32wb_hci::wire::documented_values_declared::<#ty>(&[#(#pairs),*])),
+                format!("one of {listed}"),
+            )
+        }
+        Documented::Flags(bits) => {
+            let bits = omitted.fold(*bits, |bits, value| bits & !(value as u64));
+            let listed = (0..u64::BITS)
+                .map(|bit| 1u64 << bit)
+                .filter(|flag| bits & flag != 0)
+                .map(|flag| format!("{flag:#x}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                quote!(::stm32wb_hci::wire::documented_flags_declared::<#ty>(#bits)),
+                format!("the flags {listed}"),
+            )
+        }
+        Documented::Nothing | Documented::Unreadable(_) => return None,
+    };
+    let message = format!(
+        "{owner}.{}: the catalog documents {} as {listed} on {}; the declared type must stand for each of them, or the field must omit one with #[wire(omit(<value>, \"<reason>\"))]",
+        field.name, member.name, group.releases
+    )
+    .replace('{', "{{")
+    .replace('}', "}}");
+    Some(quote_spanned! {ty.span()=>
+        #cfg
+        const _: () = ::core::assert!(#check, #message);
+    })
+}
+
+/// `ranges` without `value`, splitting the range holding it.
+fn without(ranges: &[(i64, i64)], value: i64) -> Vec<(i64, i64)> {
+    ranges
+        .iter()
+        .flat_map(|&(first, last)| {
+            if (first..=last).contains(&value) {
+                [(first, value - 1), (value + 1, last)]
+                    .into_iter()
+                    .filter(|(first, last)| first <= last)
+                    .collect::<Vec<_>>()
+            } else {
+                vec![(first, last)]
+            }
+        })
+        .collect()
 }
 
 /// The facts a declaration is generated from, identical on the wire in every
@@ -3380,6 +3532,101 @@ mod tests {
         );
         // Integers stand for no values, so they are not checked.
         assert!(!tokens.contains(":: < u8 >"), "{tokens}");
+    }
+
+    #[test]
+    fn value_types_must_stand_for_every_documented_value() {
+        let tokens = expand_str(
+            "aci_gap_init => GapInit {
+                 role: Role,
+                 privacy_enabled: Privacy,
+                 device_name_char_len: u8,
+             } -> GapService {
+                 service_handle: u16,
+                 dev_name_char_handle: u16,
+                 appearance_char_handle: u16,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "documented_values_declared :: < Privacy > (& [(0i64 , 0i64) , (2i64 , 2i64)])"
+            ),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("documented_flags_declared :: < Role > (15u64)"),
+            "{tokens}"
+        );
+        // Return parameters keep undocumented values in `OrUnknown` instead.
+        assert!(!tokens.contains(":: < u16 >"), "{tokens}");
+    }
+
+    #[test]
+    fn omitted_values_are_left_out_of_the_reverse_check() {
+        let tokens = expand_str(
+            "aci_gap_terminate_gap_proc => GapTerminateGapProc {
+                 #[wire(omit(0x00, \"a copy of the event mask's entry\"))]
+                 procedure_code: GapProcedure,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains(
+                "documented_values_declared :: < GapProcedure > (& [(1i64 , 1i64) , (2i64 , 2i64)"
+            ),
+            "{tokens}"
+        );
+        assert!(!tokens.contains("compile_error"), "{tokens}");
+    }
+
+    #[test]
+    fn omissions_must_be_documented_somewhere() {
+        let tokens = expand_str(
+            "aci_gap_terminate_gap_proc => GapTerminateGapProc {
+                 #[wire(omit(0x03, \"not documented anywhere\"))]
+                 procedure_code: GapProcedure,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("documents 0x3 for Procedure_Code in no release; remove the omission"),
+            "{tokens}"
+        );
+    }
+
+    #[test]
+    fn omissions_need_an_encoded_typed_field_and_a_reason() {
+        let tokens = expand_str(
+            "aci_gap_terminate_gap_proc => GapTerminateGapProc {
+                 #[wire(omit(0x00, \"a copy of the event mask's entry\"))]
+                 procedure_code: u8,
+             }",
+        )
+        .unwrap();
+        assert!(
+            tokens.contains("an integer stands for every value"),
+            "{tokens}"
+        );
+        let error = expand_str(
+            "aci_gap_terminate_gap_proc => GapTerminateGapProc {
+                 #[wire(omit(0x00, \" \"))]
+                 procedure_code: GapProcedure,
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("say why the type leaves the value out"),
+            "{error}"
+        );
+        let error = expand_str(
+            "aci_gap_terminate_gap_proc => GapTerminateGapProc {
+                 #[wire(omit(0x00, \"one\"), omit(0x00, \"two\"))]
+                 procedure_code: GapProcedure,
+             }",
+        )
+        .unwrap_err();
+        assert!(error.contains("the value is omitted twice"), "{error}");
     }
 
     #[test]
