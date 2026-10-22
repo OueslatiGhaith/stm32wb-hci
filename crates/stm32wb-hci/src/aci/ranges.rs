@@ -165,10 +165,23 @@ wire_range! {
 }
 
 wire_range! {
-    /// A transmit power, from -127 to +20 dBm. The 0x7F 1.18.0 adds for no
-    /// preference is left out.
+    /// A transmit power, from -127 to +20 dBm.
     pub struct TxPower: i8 {
         values = -127..=20;
+        /// The host has no preference, on STM32WB from 1.18.0 and STM32WBA
+        /// from 1.2.0.
+        #[cfg(not(any(
+            feature = "fw_1_15_0",
+            feature = "fw_1_16_0",
+            feature = "fw_1_17_0",
+            feature = "fw_1_17_1",
+            feature = "fw_1_17_2",
+            feature = "fw_1_17_3",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1"
+        )))]
+        const NO_PREFERENCE = 127;
     }
 }
 
@@ -377,6 +390,11 @@ mod tests {
     fn the_first_release_has_fewer_pa_levels() {
         assert_eq!(PaLevel::MAX.get(), 0x1F);
         assert_eq!(CocMps::MAX.get(), 0xFFFD);
+        assert_eq!(
+            TxPower::from_hci_bytes_complete(&[0x7F]),
+            Err(FromHciBytesError::InvalidValue),
+            "no preference arrives in 1.18.0"
+        );
     }
 
     #[cfg(feature = "fw_1_24_0")]
@@ -384,5 +402,13 @@ mod tests {
     fn later_releases_have_more_pa_levels() {
         assert_eq!(PaLevel::MAX.get(), 0x23);
         assert_eq!(CocMps::MAX.get(), 248);
+        assert_eq!(
+            TxPower::from_hci_bytes_complete(&[0x7F]).unwrap(),
+            TxPower::NO_PREFERENCE
+        );
+        assert_eq!(
+            format!("{:?}", TxPower::NO_PREFERENCE).as_str(),
+            "TxPower(NO_PREFERENCE)"
+        );
     }
 }
