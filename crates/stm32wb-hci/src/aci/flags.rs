@@ -33,7 +33,8 @@ wire_flags! {
         const PASS_KEY_REQUEST = 0x0004;
         /// `ACI_GAP_AUTHORIZATION_REQ_EVENT`.
         const AUTHORIZATION_REQUEST = 0x0008;
-        /// `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`, before 1.22.0.
+        /// `ACI_GAP_PERIPHERAL_SECURITY_INITIATED_EVENT`, before STM32WB
+        /// 1.22.0 and STM32WBA 1.6.0.
         #[cfg(any(
             feature = "fw_1_15_0",
             feature = "fw_1_16_0",
@@ -45,7 +46,15 @@ wire_flags! {
             feature = "fw_1_19_0",
             feature = "fw_1_19_1",
             feature = "fw_1_20_0",
-            feature = "fw_1_21_0"
+            feature = "fw_1_21_0",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1",
+            feature = "wba_1_5_0"
         ))]
         const PERIPHERAL_SECURITY_INITIATED = 0x0010;
         /// `ACI_GAP_BOND_LOST_EVENT`.
@@ -174,12 +183,23 @@ wire_flags! {
         const AUTHORIZED_WRITE = 0x10;
         /// `ENCRY_WRITE`.
         const ENCRYPTED_WRITE = 0x20;
-        /// `SC_READ`: reading requires a Secure Connections link, from 1.24.0.
-        #[cfg(feature = "fw_1_24_0")]
+        /// `SC_READ`: reading requires a Secure Connections link, on STM32WB
+        /// from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
         const SECURE_CONNECTIONS_READ = 0x40;
-        /// `SC_WRITE`: writing requires a Secure Connections link, from
-        /// 1.24.0.
-        #[cfg(feature = "fw_1_24_0")]
+        /// `SC_WRITE`: writing requires a Secure Connections link, on
+        /// STM32WB from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
         const SECURE_CONNECTIONS_WRITE = 0x80;
     }
 }
