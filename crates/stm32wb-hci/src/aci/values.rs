@@ -989,12 +989,16 @@ wire_values! {
         SmpMode = 0xB0 => [u8; 1],
         /// `CONFIG_DATA_LL_SCAN_CHAN_MAP_OFFSET`: the channels scanning uses,
         /// as an [`AdvChannelMap`](crate::aci::flags::AdvChannelMap). STM32WB
-        /// only.
-        #[cfg(feature = "_stm32wb")]
+        /// only, except that STM32WBA 1.0.0 documents it too.
+        #[cfg(any(feature = "_stm32wb", feature = "wba_1_0_0"))]
         ScanChannelMap = 0xC0 => [u8; 1],
         /// `CONFIG_DATA_LL_BG_SCAN_MODE_OFFSET`: whether background scanning
-        /// is enabled, on STM32WB from 1.16.0.
-        #[cfg(all(feature = "_stm32wb", not(feature = "fw_1_15_0")))]
+        /// is enabled, on STM32WB from 1.16.0, and on STM32WBA 1.0.0, which
+        /// documents it too.
+        #[cfg(any(
+            all(feature = "_stm32wb", not(feature = "fw_1_15_0")),
+            feature = "wba_1_0_0"
+        ))]
         BackgroundScanMode = 0xC1 => [u8; 1],
         /// `CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET`: the link layer's RSSI
         /// golden range, on STM32WBA from 1.5.0.
@@ -1082,6 +1086,21 @@ wire_values! {
         IdentityRoot = 0x18 => [u8; 16],
         /// `CONFIG_DATA_RANDOM_ADDRESS_OFFSET`: the static random address.
         StaticRandomAddress = 0x2E => [u8; 6],
+        /// `CONFIG_DATA_LL_RSSI_GOLDEN_RANGE_OFFSET`: the link layer's RSSI
+        /// golden range, on STM32WBA from 1.5.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(
+                feature = "wba_1_0_0",
+                feature = "wba_1_1_0",
+                feature = "wba_1_1_1",
+                feature = "wba_1_2_0",
+                feature = "wba_1_3_1",
+                feature = "wba_1_4_0",
+                feature = "wba_1_4_1"
+            ))
+        ))]
+        RssiGoldenRange = 0xC2 => [u8; 2],
     }
 }
 
@@ -1244,7 +1263,7 @@ mod tests {
     fn offsets_give_their_documented_lengths() {
         assert_eq!(ConfigDataOffset::EncryptionRoot.length(), 16);
         assert_eq!(ReadableConfigDataOffset::StaticRandomAddress.length(), 6);
-        let lengths = &[(0x00, 6), (0x08, 16), (0x18, 16), (0x2E, 6)][..];
+        let lengths = &[(0x00, 6), (0x08, 16), (0x18, 16), (0x2E, 6), (0xC2, 2)][..];
         assert!(lengths_documented::<ReadableConfigDataOffset>(lengths));
         assert!(
             !lengths_documented::<ReadableConfigDataOffset>(&lengths[..3]),
