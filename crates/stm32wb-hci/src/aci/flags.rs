@@ -76,11 +76,17 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// How an advertising set is configured. Using LE Coded as the primary
-    /// PHY is not supported on STM32WB.
+    /// How an advertising set is configured.
     pub struct AdvMode: u8 {
         /// Advertise with the random address set for this advertising set.
         const SPECIFIC_RANDOM_ADDRESS = 0x01;
+        /// Use LE Coded as the primary advertising PHY, on STM32WBA from
+        /// 1.2.0.
+        #[cfg(all(
+            feature = "_stm32wba",
+            not(any(feature = "wba_1_0_0", feature = "wba_1_1_0", feature = "wba_1_1_1"))
+        ))]
+        const LE_CODED_PRIMARY = 0x02;
     }
 }
 
@@ -105,22 +111,27 @@ wire_flags! {
 }
 
 wire_flags! {
-    /// The PHYs to scan advertisements on. LE Coded is not supported on
-    /// STM32WB.
+    /// The PHYs to scan advertisements on.
     pub struct ScanningPhys: u8 {
         /// LE 1M.
         const LE_1M = 0x01;
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const LE_CODED = 0x04;
     }
 }
 
 wire_flags! {
-    /// The PHYs to connect with: LE 1M also scans connectable advertisements.
-    /// LE Coded is not supported on STM32WB.
+    /// The PHYs to connect with: LE 1M and LE Coded also scan connectable
+    /// advertisements.
     pub struct InitiatingPhys: u8 {
         /// LE 1M.
         const LE_1M = 0x01;
         /// LE 2M.
         const LE_2M = 0x02;
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const LE_CODED = 0x04;
     }
 }
 

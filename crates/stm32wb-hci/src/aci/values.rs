@@ -537,13 +537,15 @@ wire_values! {
 }
 
 wire_values! {
-    /// The PHY of the secondary advertising channel. The LE Coded PHY is
-    /// not supported on STM32WB.
+    /// The PHY of the secondary advertising channel.
     pub enum SecondaryAdvPhy: u8 {
         /// LE 1M.
         Le1M = 0x01,
         /// LE 2M.
         Le2M = 0x02,
+        /// LE Coded. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        LeCoded = 0x03,
     }
 }
 
@@ -560,6 +562,10 @@ wire_values! {
 wire_values! {
     /// The connection procedure of an extended connection.
     pub enum ConnectionProcedure: u8 {
+        /// Connect to the advertiser of a periodic advertising train, on
+        /// STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        PeriodicAdvertisingConnection = 0x04,
         /// Connect to any device of the Filter Accept List.
         AutoConnectionEstablishment = 0x08,
         /// Connect to one device.
