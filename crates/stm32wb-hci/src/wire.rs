@@ -156,6 +156,104 @@ pub const fn values_documented<T: HciWireType>(documented: &[(i64, i64)]) -> boo
     true
 }
 
+/// Whether `T` stands for every value the catalog documents for a member
+/// listing values, each documented item being an inclusive range: each lies
+/// within the union of its values and ranges, so that none is impossible to
+/// send. A flags type never does; a type standing for no particular values
+/// always does.
+#[doc(hidden)]
+pub const fn documented_values_declared<T: HciWireType>(documented: &[(i64, i64)]) -> bool {
+    if T::BITS.is_some() {
+        return false;
+    }
+    if T::VALUES.is_none() && T::RANGES.is_none() {
+        return true;
+    }
+    let mut index = 0;
+    while index < documented.len() {
+        let (first, last) = documented[index];
+        if !declared(first, last, T::VALUES, T::RANGES) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// Whether `first..=last` lies within the union of `values` and `ranges`.
+const fn declared(
+    first: i64,
+    last: i64,
+    values: Option<&[i64]>,
+    ranges: Option<&[(i64, i64)]>,
+) -> bool {
+    let mut next = first;
+    loop {
+        let mut end = None;
+        if let Some(values) = values {
+            let mut item = 0;
+            while item < values.len() {
+                if values[item] == next {
+                    end = Some(next);
+                }
+                item += 1;
+            }
+        }
+        if let Some(ranges) = ranges {
+            let mut item = 0;
+            while item < ranges.len() {
+                let (from, to) = ranges[item];
+                if from <= next && next <= to {
+                    end = match end {
+                        Some(end) if end >= to => Some(end),
+                        _ => Some(to),
+                    };
+                }
+                item += 1;
+            }
+        }
+        match end {
+            None => return false,
+            Some(end) if end >= last => return true,
+            Some(end) => next = end + 1,
+        }
+    }
+}
+
+/// Whether `T` may set every flag the catalog documents for a member listing
+/// flags, `documented` being their union, so that none is impossible to
+/// send. A value type must stand for each combination of the flags; a range
+/// never does; a type standing for no particular values or flags always does.
+#[doc(hidden)]
+pub const fn documented_flags_declared<T: HciWireType>(documented: u64) -> bool {
+    if T::RANGES.is_some() {
+        return false;
+    }
+    if let Some(bits) = T::BITS {
+        return documented & !bits == 0;
+    }
+    let Some(values) = T::VALUES else {
+        return true;
+    };
+    if documented.count_ones() > 16 {
+        return false;
+    }
+    let mut combination = documented;
+    loop {
+        let mut item = 0;
+        while item < values.len() && values[item] != combination as i64 {
+            item += 1;
+        }
+        if item == values.len() {
+            return false;
+        }
+        if combination == 0 {
+            return true;
+        }
+        combination = (combination - 1) & documented;
+    }
+}
+
 /// Whether `T` stands for exactly the `documented` values: each of its
 /// values is documented, and each documented value is one of its values.
 #[doc(hidden)]

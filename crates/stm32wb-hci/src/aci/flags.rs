@@ -300,8 +300,18 @@ wire_flags! {
 wire_flags! {
     /// The HAL events the host receives.
     pub struct HalEventMask: u32 {
-        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`. STM32WB only.
-        #[cfg(feature = "_stm32wb")]
+        /// `ACI_HAL_SCAN_REQ_REPORT_EVENT`. STM32WB only, except that
+        /// STM32WBA documents it too before 1.5.0.
+        #[cfg(any(
+            feature = "_stm32wb",
+            feature = "wba_1_0_0",
+            feature = "wba_1_1_0",
+            feature = "wba_1_1_1",
+            feature = "wba_1_2_0",
+            feature = "wba_1_3_1",
+            feature = "wba_1_4_0",
+            feature = "wba_1_4_1"
+        ))]
         const SCAN_REQUEST_REPORT = 0x0000_0001;
         /// `ACI_HAL_SYNC_EVENT`. STM32WBA only.
         #[cfg(feature = "_stm32wba")]
@@ -346,7 +356,10 @@ mod tests {
 
     use super::*;
     use crate::aci::values::{AddressType, Privacy};
-    use crate::wire::{HciWireType, OrUnknown, flags_documented, is_opaque, values_documented};
+    use crate::wire::{
+        HciWireType, OrUnknown, documented_flags_declared, documented_values_declared,
+        flags_documented, is_opaque, values_documented,
+    };
 
     #[test]
     fn flags_encode_as_their_bits() {
@@ -388,6 +401,19 @@ mod tests {
         );
         assert!(!is_opaque::<Role>());
         assert!(flags_documented::<u8>(0), "integers stand for no flags");
+    }
+
+    #[test]
+    fn every_documented_flag_must_be_declared() {
+        assert!(documented_flags_declared::<Role>(0x0F));
+        assert!(
+            !documented_flags_declared::<Role>(0x1F),
+            "0x10 cannot be sent"
+        );
+        assert!(
+            !documented_values_declared::<Role>(&[(0, 0x0F)]),
+            "flags declare no values"
+        );
     }
 
     #[cfg(feature = "fw_1_24_0")]

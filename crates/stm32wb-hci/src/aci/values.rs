@@ -134,8 +134,7 @@ wire_values! {
 }
 
 wire_values! {
-    /// A GAP procedure. Terminating a procedure also documents `0x00`, for
-    /// none, which is left out.
+    /// A GAP procedure.
     pub enum GapProcedure: u8 {
         /// `GAP_LIMITED_DISCOVERY_PROC`.
         LimitedDiscovery = 0x01,
@@ -1110,8 +1109,8 @@ mod tests {
 
     use super::*;
     use crate::wire::{
-        HciWireType, OrUnknown, decodes_any, flags_documented, is_opaque, lengths_documented,
-        values_documented,
+        HciWireType, OrUnknown, decodes_any, documented_flags_declared, documented_values_declared,
+        flags_documented, is_opaque, lengths_documented, values_documented,
     };
 
     #[test]
@@ -1143,6 +1142,39 @@ mod tests {
         assert!(!is_opaque::<Privacy>(), "undocumented member");
         assert!(values_documented::<u8>(&[]), "integers stand for no values");
         assert!(is_opaque::<u8>());
+    }
+
+    #[test]
+    fn every_documented_value_must_be_declared() {
+        let privacy = &[(0, 0), (2, 2)][..];
+        assert!(documented_values_declared::<Privacy>(privacy));
+        assert!(
+            !documented_values_declared::<Privacy>(&[(0, 2)]),
+            "1 cannot be sent"
+        );
+        assert!(documented_values_declared::<bool>(&[(0, 1)]));
+        assert!(
+            documented_values_declared::<u8>(&[(0, 0xFF)]),
+            "an integer sends any value"
+        );
+        assert!(
+            documented_values_declared::<OwnAddressType>(&[(0, 1), (2, 3)]),
+            "ranges are covered value by value"
+        );
+        assert!(!documented_values_declared::<OwnAddressType>(&[(0, 4)]));
+    }
+
+    #[test]
+    fn value_types_declare_every_combination_of_documented_flags() {
+        assert!(
+            documented_flags_declared::<ScanningFilterPolicy>(0x03),
+            "0, 1, 2 and 3 are the combinations of 0x01 and 0x02"
+        );
+        assert!(!documented_flags_declared::<ScanningFilterPolicy>(0x07));
+        assert!(
+            documented_flags_declared::<u8>(0xFF),
+            "an integer sends any flags"
+        );
     }
 
     #[test]

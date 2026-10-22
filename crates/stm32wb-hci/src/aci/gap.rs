@@ -328,6 +328,10 @@ vendor_command! {
 vendor_command! {
     /// Terminate the GAP procedure `procedure_code`.
     aci_gap_terminate_gap_proc => GapTerminateGapProc {
+        #[wire(omit(
+            0x00,
+            "documented as \"No events\", copied from the GAP event mask; no procedure to terminate"
+        ))]
         procedure_code: GapProcedure,
     }
 }
