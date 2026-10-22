@@ -689,6 +689,25 @@ wire_values! {
 }
 
 wire_values! {
+    /// Whether pairing requires protection against man-in-the-middle attacks.
+    pub enum MitmMode: u8 {
+        /// MITM protection is not required.
+        NotRequired = 0x00,
+        /// MITM protection is required.
+        Required = 0x01,
+        /// MITM protection is used when the IO capabilities allow it, on
+        /// STM32WB from 1.24.0 and STM32WBA from 1.8.0.
+        #[cfg(any(
+            feature = "fw_1_24_0",
+            feature = "wba_1_8_0",
+            feature = "wba_1_9_0",
+            feature = "wba_1_10_0"
+        ))]
+        Optional = 0x02,
+    }
+}
+
+wire_values! {
     /// Whether pairing uses Secure Connections.
     pub enum ScSupport: u8 {
         /// Secure Connections pairing is not supported.

@@ -23,7 +23,7 @@ use crate::aci::values::{
     AddDevicesMode, AddressType, AdvDataOperation, AdvFilterPolicy, AdvertisingType,
     AuthorizationResponse, ConnectableOwnAddressType, ConnectionProcedure, DirectedAdvertisingType,
     DisconnectReason, FilterDuplicates, FragmentPreference, GapProcedure, InitiatorFilterPolicy,
-    IoCapability, NonConnectableAdvertisingType, OobDataType, OobDevice, OwnAddressType,
+    IoCapability, MitmMode, NonConnectableAdvertisingType, OobDataType, OobDevice, OwnAddressType,
     PairingFailureReason, PairingStatus, PasskeyInputType, Privacy, ScSupport, ScanProcedure,
     ScanRespDataOperation, ScanType, ScanningFilterPolicy, SecondaryAdvPhy, SecurityLevel,
     SecurityMode, UndirectedAdvFilterPolicy, UseFixedPin,
@@ -92,7 +92,7 @@ vendor_command! {
     /// requirements of pairing, and the fixed passkey if `use_fixed_pin` is 0.
     aci_gap_set_authentication_requirement => GapSetAuthenticationRequirement {
         bonding_mode: bool,
-        mitm_mode: bool,
+        mitm_mode: MitmMode,
         sc_support: ScSupport,
         key_press_notification_support: bool,
         min_encryption_key_size: u8,
