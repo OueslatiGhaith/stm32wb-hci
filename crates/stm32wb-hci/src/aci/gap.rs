@@ -6,9 +6,9 @@ use stm32wb_hci_macros::{vendor_command, vendor_event, vendor_struct};
 
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::durations::{
-    AdvDuration, AdvInterval, CeLength, ConnInterval, DirectAdvInterval, ExtAdvInterval,
-    ExtScanInterval, ExtScanWindow, PreferredConnInterval, ScanDuration, ScanInterval, ScanPeriod,
-    ScanWindow, SupervisionTimeout,
+    AdvDuration, AdvInterval, CeLength, ConnInterval, DirectAdvInterval, DiscoveryScanInterval,
+    DiscoveryScanWindow, ExtAdvInterval, ExtScanInterval, ExtScanWindow, PreferredConnInterval,
+    ScanDuration, ScanInterval, ScanPeriod, ScanWindow, SupervisionTimeout,
 };
 #[allow(unused_imports, reason = "the HCI-layer profiles have no GAP commands")]
 use crate::aci::flags::{
@@ -238,8 +238,8 @@ vendor_command! {
 vendor_command! {
     /// Scan for devices in general or limited discoverable mode.
     aci_gap_start_general_discovery_proc => GapStartGeneralDiscoveryProc {
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: DiscoveryScanInterval,
+        le_scan_window: DiscoveryScanWindow,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
     }
@@ -264,8 +264,8 @@ vendor_struct! {
 vendor_command! {
     /// Connect to any of the listed peers as soon as it advertises.
     aci_gap_start_auto_connection_establish_proc => GapStartAutoConnectionEstablishProc {
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: ExtScanInterval,
+        le_scan_window: ExtScanWindow,
         own_address_type: ConnectableOwnAddressType,
         conn_interval_min: ConnInterval,
         conn_interval_max: ConnInterval,
@@ -284,8 +284,8 @@ vendor_command! {
     /// Scan for connectable peers, reporting them for the host to select one.
     aci_gap_start_general_connection_establish_proc => GapStartGeneralConnectionEstablishProc {
         le_scan_type: ScanType,
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: ExtScanInterval,
+        le_scan_window: ExtScanWindow,
         own_address_type: OwnAddressType,
         scanning_filter_policy: ScanningFilterPolicy,
         filter_duplicates: bool,
@@ -296,8 +296,8 @@ vendor_command! {
     /// Scan for the listed peers and connect to the one the host selects.
     aci_gap_start_selective_connection_establish_proc => GapStartSelectiveConnectionEstablishProc {
         le_scan_type: ScanType,
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: ExtScanInterval,
+        le_scan_window: ExtScanWindow,
         own_address_type: OwnAddressType,
         scanning_filter_policy: ScanningFilterPolicy,
         filter_duplicates: bool,
@@ -311,8 +311,8 @@ vendor_command! {
 vendor_command! {
     /// Connect to a peer.
     aci_gap_create_connection => GapCreateConnection {
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: ExtScanInterval,
+        le_scan_window: ExtScanWindow,
         peer_address_type: AddressType,
         peer_address: BdAddr,
         own_address_type: ConnectableOwnAddressType,
@@ -381,8 +381,8 @@ vendor_command! {
 vendor_command! {
     /// Scan and report every advertising packet, without GAP filtering.
     aci_gap_start_observation_proc => GapStartObservationProc {
-        le_scan_interval: ScanInterval,
-        le_scan_window: ScanWindow,
+        le_scan_interval: ExtScanInterval,
+        le_scan_window: ExtScanWindow,
         le_scan_type: ScanType,
         own_address_type: OwnAddressType,
         filter_duplicates: bool,
@@ -1064,8 +1064,8 @@ mod tests {
 
     #[test]
     fn counted_structures_encode_element_by_element() {
-        let interval = ScanInterval::from_units(0x10).unwrap();
-        let window = ScanWindow::from_units(0x10).unwrap();
+        let interval = ExtScanInterval::from_units(0x10).unwrap();
+        let window = ExtScanWindow::from_units(0x10).unwrap();
         let peers = peers();
         let command = GapStartSelectiveConnectionEstablishProc::try_new(
             ScanType::Active,

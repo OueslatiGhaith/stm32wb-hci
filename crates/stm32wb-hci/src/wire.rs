@@ -863,13 +863,16 @@ macro_rules! wire_flags {
 ///     }
 /// }
 /// ```
+///
+/// The upper bound may be a constant, for a range that differs between
+/// releases or platforms.
 #[macro_export]
 macro_rules! wire_duration {
     (
         $(#[$attr:meta])*
         $vis:vis struct $name:ident: $repr:ident {
             unit_us = $unit:expr;
-            units = $min:literal..=$max:literal;
+            units = $min:literal..=$max:expr;
             $(
                 $(#[$special_attr:meta])*
                 const $special:ident = $value:expr;

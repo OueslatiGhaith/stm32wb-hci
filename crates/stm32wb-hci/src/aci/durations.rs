@@ -9,6 +9,13 @@
 
 use crate::wire_duration;
 
+/// The longest scan interval and window when scanning for extended
+/// advertising: 15 s on STM32WB, 40.96 s on STM32WBA.
+#[cfg(feature = "_stm32wb")]
+const MAX_EXT_SCAN_UNITS: u16 = 0x5DC0;
+#[cfg(feature = "_stm32wba")]
+const MAX_EXT_SCAN_UNITS: u16 = 0xFFFF;
+
 wire_duration! {
     /// The interval between legacy advertising events, from 20 ms to
     /// 10.24 s. The 3.75 ms interval of high duty cycle directed advertising
@@ -41,9 +48,8 @@ wire_duration! {
 }
 
 wire_duration! {
-    /// The interval between the starts of two scan windows, from 2.5 ms to
-    /// 10.24 s. The intervals up to 15 s some commands accept when scanning
-    /// for extended advertising are left out.
+    /// The interval between the starts of two scan windows when scanning only
+    /// for legacy advertising, from 2.5 ms to 10.24 s.
     pub struct ScanInterval: u16 {
         unit_us = 625;
         units = 0x0004..=0x4000;
@@ -51,9 +57,8 @@ wire_duration! {
 }
 
 wire_duration! {
-    /// How long each scan lasts, from 2.5 ms to 10.24 s, and at most the scan
-    /// interval. The windows up to 15 s some commands accept when scanning
-    /// for extended advertising are left out.
+    /// How long each scan lasts when scanning only for legacy advertising,
+    /// from 2.5 ms to 10.24 s, and at most the scan interval.
     pub struct ScanWindow: u16 {
         unit_us = 625;
         units = 0x0004..=0x4000;
@@ -62,21 +67,125 @@ wire_duration! {
 
 wire_duration! {
     /// The interval between the starts of two scan windows when scanning for
-    /// extended advertising, from 2.5 ms to 15 s.
+    /// extended advertising, from 2.5 ms to 15 s on STM32WB and 40.96 s on
+    /// STM32WBA.
     pub struct ExtScanInterval: u16 {
         unit_us = 625;
-        units = 0x0004..=0x5DC0;
+        units = 0x0004..=MAX_EXT_SCAN_UNITS;
     }
 }
 
 wire_duration! {
     /// How long each scan lasts when scanning for extended advertising, from
-    /// 2.5 ms to 15 s, and at most the scan interval.
+    /// 2.5 ms to 15 s on STM32WB and 40.96 s on STM32WBA, and at most the
+    /// scan interval.
     pub struct ExtScanWindow: u16 {
         unit_us = 625;
-        units = 0x0004..=0x5DC0;
+        units = 0x0004..=MAX_EXT_SCAN_UNITS;
     }
 }
+
+/// The scan interval of the general discovery procedure: an
+/// [`ExtScanInterval`] before STM32WB 1.22.0 and STM32WBA 1.6.0, which then
+/// limit it to legacy advertising's [`ScanInterval`].
+#[cfg(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0"
+))]
+pub type DiscoveryScanInterval = ExtScanInterval;
+/// The scan interval of the general discovery procedure: an
+/// [`ExtScanInterval`] before STM32WB 1.22.0 and STM32WBA 1.6.0, which then
+/// limit it to legacy advertising's [`ScanInterval`].
+#[cfg(not(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0"
+)))]
+pub type DiscoveryScanInterval = ScanInterval;
+
+/// The scan window of the general discovery procedure: an [`ExtScanWindow`]
+/// before STM32WB 1.22.0 and STM32WBA 1.6.0, which then limit it to legacy
+/// advertising's [`ScanWindow`].
+#[cfg(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0"
+))]
+pub type DiscoveryScanWindow = ExtScanWindow;
+/// The scan window of the general discovery procedure: an [`ExtScanWindow`]
+/// before STM32WB 1.22.0 and STM32WBA 1.6.0, which then limit it to legacy
+/// advertising's [`ScanWindow`].
+#[cfg(not(any(
+    feature = "fw_1_15_0",
+    feature = "fw_1_16_0",
+    feature = "fw_1_17_0",
+    feature = "fw_1_17_1",
+    feature = "fw_1_17_2",
+    feature = "fw_1_17_3",
+    feature = "fw_1_18_0",
+    feature = "fw_1_19_0",
+    feature = "fw_1_19_1",
+    feature = "fw_1_20_0",
+    feature = "fw_1_21_0",
+    feature = "wba_1_0_0",
+    feature = "wba_1_1_0",
+    feature = "wba_1_1_1",
+    feature = "wba_1_2_0",
+    feature = "wba_1_3_1",
+    feature = "wba_1_4_0",
+    feature = "wba_1_4_1",
+    feature = "wba_1_5_0"
+)))]
+pub type DiscoveryScanWindow = ScanWindow;
 
 wire_duration! {
     /// How long an extended scan lasts, from 10 ms to 655.35 s.
@@ -230,5 +339,34 @@ mod tests {
         assert!(unit_documented::<Role>(None));
         assert!(!flags_documented::<CeLength>(0xFFFF), "a range is no flags");
         assert!(!is_opaque::<CeLength>());
+    }
+
+    #[cfg(feature = "_stm32wb")]
+    #[test]
+    fn stm32wb_scans_extended_advertising_for_up_to_15_s() {
+        assert_eq!(ExtScanInterval::MAX.units(), 0x5DC0);
+        assert_eq!(
+            ExtScanWindow::from_micros(15_000_000),
+            Some(ExtScanWindow::MAX)
+        );
+    }
+
+    #[cfg(feature = "_stm32wba")]
+    #[test]
+    fn stm32wba_scans_extended_advertising_for_up_to_40_96_s() {
+        assert_eq!(ExtScanInterval::MAX.units(), 0xFFFF);
+        assert_eq!(ExtScanWindow::MAX.as_micros(), Some(40_959_375));
+    }
+
+    #[cfg(feature = "fw_1_21_0")]
+    #[test]
+    fn general_discovery_scans_extended_advertising_before_1_22_0() {
+        assert_eq!(DiscoveryScanInterval::MAX, ExtScanInterval::MAX);
+    }
+
+    #[cfg(feature = "fw_1_22_0")]
+    #[test]
+    fn general_discovery_scans_legacy_advertising_from_1_22_0() {
+        assert_eq!(DiscoveryScanWindow::MAX, ScanWindow::MAX);
     }
 }
