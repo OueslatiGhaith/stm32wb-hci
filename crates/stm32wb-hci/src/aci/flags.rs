@@ -245,6 +245,24 @@ wire_flags! {
         const TX_TEST_MODE = 0x0040;
         /// RX test mode.
         const RX_TEST_MODE = 0x0080;
+        /// Periodic advertising. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const PERIODIC_ADVERTISING = 0x0200;
+        /// Periodic sync. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const PERIODIC_SYNC = 0x0400;
+        /// ISO broadcast. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_BROADCAST = 0x0800;
+        /// ISO sync. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_SYNC = 0x1000;
+        /// ISO peripheral connection. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_PERIPHERAL_CONNECTION = 0x2000;
+        /// ISO central connection. STM32WBA only.
+        #[cfg(feature = "_stm32wba")]
+        const ISO_CENTRAL_CONNECTION = 0x4000;
     }
 }
 
@@ -311,7 +329,10 @@ mod tests {
             Err(FromHciBytesError::InvalidValue)
         );
         RadioActivityMask::all().write_hci(&mut buffer[..]).unwrap();
+        #[cfg(feature = "_stm32wb")]
         assert_eq!(buffer, [0xEF, 0x00]);
+        #[cfg(feature = "_stm32wba")]
+        assert_eq!(buffer, [0xEF, 0x7E]);
         assert_eq!(<RadioActivityMask as HciWireType>::WIDTH, 2);
         assert!(role.contains(Role::CENTRAL) && !role.contains(Role::OBSERVER));
         assert_eq!(format!("{role:?}").as_str(), "Role(PERIPHERAL | CENTRAL)");

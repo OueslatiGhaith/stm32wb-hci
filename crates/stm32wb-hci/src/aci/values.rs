@@ -438,6 +438,30 @@ wire_values! {
         AppendBoth = 0x04,
         /// Clear and set both lists.
         SetBoth = 0x05,
+        /// Append the bonded devices, and the devices given, to the
+        /// resolving list, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedResolvingList = 0x08,
+        /// Clear the resolving list and set it to the bonded devices and the
+        /// devices given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedResolvingList = 0x09,
+        /// Append the bonded devices, and the devices given, to the Filter
+        /// Accept List, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedFilterAcceptList = 0x0A,
+        /// Clear the Filter Accept List and set it to the bonded devices and
+        /// the devices given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedFilterAcceptList = 0x0B,
+        /// Append the bonded devices, and the devices given, to both lists,
+        /// on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        AppendBondedBoth = 0x0C,
+        /// Clear both lists and set them to the bonded devices and the devices
+        /// given, on STM32WBA from 1.10.0.
+        #[cfg(feature = "wba_1_10_0")]
+        SetBondedBoth = 0x0D,
     }
 }
 
